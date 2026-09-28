@@ -1,0 +1,17 @@
+R36_WORLDGEN_STRUCTURES_CSHARP_2026-09-13
+Unity 2022.3.62f3
+
+Production implementation is C# only. No JavaScript files are included in the Unity project.
+Reference main/genWorker files were used only outside the project to verify algorithms and deterministic outputs.
+
+Added/finished:
+- desert wells
+- desert pyramids
+- pillager outposts
+- ruined portals
+- deepslate mineshafts
+- source-compatible structure/mineshaft RNG semantics
+- source T2 natural-decoration clear zones for trees around non-ship structures
+- structure block registry/render/collision/mining/blast integration
+
+Ship structures/gameplay remain intentionally excluded.

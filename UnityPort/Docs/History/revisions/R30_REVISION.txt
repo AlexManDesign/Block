@@ -1,0 +1,15 @@
+R30_MOB_MOVEMENT_SOURCE_EXACT_2026-09-12
+
+Target: Unity 2022.3.62f3
+Source of truth: main(20260911-163700).js
+Source SHA256: ab90b89ba9c081fc442f3de02ec3afad431a44ce7a709a5c180c8a5c5ee86e3c
+
+R30 ports the ordinary-world mob movement/state timing directly from main.js:
+- shared 20 Hz ad()/Hp()/bp() clock and interpolation
+- No()/Ki()/Up() movement/path semantics
+- gt()/An()/W1() collision semantics for the static voxel world
+- Dp() land physics, turning, jumping, spider climbing and unstuck
+- pf()/yp()/Yp()/Mp() aquatic movement, flee and hunter behavior
+- source state ordering, timers and shared random stream architecture
+
+Known dependency not faked: moving-ship collision/floor/attachment (Fs/CE/C7) requires the moving-ship runtime, which is not yet ported.

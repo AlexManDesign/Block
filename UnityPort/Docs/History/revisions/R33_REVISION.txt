@@ -1,0 +1,19 @@
+R33_SOURCE_OBJECT_RENDER_FALLING_2026-09-13
+
+- Split W7 particles from h7 block/item drops so source aI() can be reproduced without merging passes.
+- Added MainSourceObjectRenderer persistent direct batches for kB falling blocks, pP boat/minecart geometry,
+  nT fishing bobber/line, yd ender-pearl geometry/projectile constants, and $B red boxes.
+- VoxelWorld direct draw order now follows main.js:
+  terrain -> W7 -> kB -> h7 -> pP -> tI opaque slot -> nT -> yd -> Bd -> rP -> $B -> water -> tI water slot -> glass.
+- Added source falling-block gameplay for Sand/RedSand/Gravel: rE same+above edit hook, ry pre-scan,
+  low-to-high settling order, gravity 28.
+- Added source transient textures: bobber from tex (nearest to 16x16), iron/TNT originals,
+  ender pearl exact procedural fallback TA seed 9057, white/red service tiles.
+- Added R33 validation and updated R19/R21/R24/R26 pass-order validators for the expanded source order.
+
+Intentional remaining work:
+- tI moving ship geometry/physics is still a reserved pass slot only.
+- TNT textures are prepared, but placed/primed TNT inventory/block gameplay is not yet wired.
+- pP vehicle geometry is available through the source renderer API; full boat/minecart riding physics is not wired.
+- fishing cast/bobber physics/render API is present; inventory/rod interaction and catch/reel loot are not wired.
+- pearl render/physics API is present; full special-shape collision/damage/inventory use remains to port.

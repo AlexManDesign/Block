@@ -1,0 +1,31 @@
+Blockcraft Unity Port
+Revision: R28_MOB_SYSTEMS_2026-09-12
+Target: Unity 2022.3.62f3
+Source: main(20260911-163700).js
+
+R28 expands the source-backed mob systems for all current main.js mob kinds:
+pig, cow, sheep, chicken, zombie, skeleton, creeper, spider, enderman,
+salmon, shark, slime_big, slime_med and slime_small.
+
+Key additions: baby/breeding state, sheep colors/shearing/regrowth, chicken eggs,
+source drop tables, slime splitting, chunk streaming mob persistence, complete
+skeleton arrow stuck/pickup/world-render lifecycle, source-style passive overflow
+cleanup and a closer creeper ray explosion solver. Item world geometry is now
+rendered through main_items.png separately from block-atlas transient geometry.
+
+Known surrounding-system dependencies remain documented in R28_MOB_SYSTEMS_REPORT.md.
+
+Arrow parity completion:
+- separate main_items batch for mob item drops + arrows
+- source 20 Hz shared-style cadence (.05 s, .3 s clamp, max 3 ticks)
+- source <=0.4 block substeps
+- source 7-iteration impact binary search
+- source An/W1 point collision boxes for supported special block shapes
+- 8 s flight / 60 s stuck lifetime / 2.2 pickup radius / block-change release
+
+SOURCE ARROW PARITY FINALIZATION
+- The seven-iteration block-impact binary search is directly from main.js, not a Unity-added heuristic.
+- Arrow collision now uses SourcePointCollision, mirroring the static-world An()/W1() point-collision rules for supported source shapes.
+- Stuck arrows release only from the changed-hit-block notification, with source (0,-0.5,0) velocity, direction reset and age reset.
+- Mob knockback uses arrowPos - velocity*0.05, matching main.js.
+- Remaining dependency: source An() also checks moving-ship Fs(); full moving-ship collision is not yet ported.

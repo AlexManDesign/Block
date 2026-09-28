@@ -1,0 +1,6 @@
+R50_SHIP_RUNTIME_PARITY_CSHARP_2026-09-17
+Unity target: 2022.3.62f3
+Canonical source: main/meshWorker/genWorker 2026-09-17 + tex archive
+Current gates: R50 59/59, R49 current 30/30, R49 shipwreck/render 41/41, R48 inventory/tools 67/67, R32 water/light 31/31.
+No production JavaScript under Assets.
+Unity Editor/compiler was not available in the execution environment; see R50_SHIP_RUNTIME_PARITY_REPORT.md.

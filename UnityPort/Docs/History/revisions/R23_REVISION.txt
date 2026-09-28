@@ -1,0 +1,10 @@
+Blockcraft Unity Port
+Revision: R23_WARNING_VERIFIED_2026-09-11
+Unity: 2022.3.62f3
+
+MobAI.cs in this revision DOES NOT contain a field named climbing.
+Expected declaration near the old warning line:
+    bool onGround,fleeing,simPoseReady,dead;
+
+The spider climbing behaviour remains implemented through Def.Climber and vertical movement logic.
+PortAutoSetup no longer prints the informational "Blockcraft port demo scene created" Debug.Log.

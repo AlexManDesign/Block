@@ -1,0 +1,11 @@
+R39 BIOME PRECISION C#
+Unity 2022.3.62f3
+2026-09-13
+
+- Source-critical biome/height/density arithmetic uses double precision.
+- Packed biome lookup remains tree/pruned and allocation-free.
+- Rare source NaN height semantics are represented explicitly.
+- 15000/15000 source-oracle column parity across 3 seeds.
+- R20-R39 regression: 1107/1107 PASS.
+- Unity production tree: 0 JavaScript files.
+- Ships intentionally excluded.

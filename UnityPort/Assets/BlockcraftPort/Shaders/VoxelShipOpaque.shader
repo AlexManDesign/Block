@@ -1,0 +1,41 @@
+Shader "Blockcraft/VoxelShipOpaque"
+{
+    Properties { _MainTex ("Atlas", 2D) = "white" {} }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" "Queue"="Geometry" }
+        LOD 100
+        Cull Off
+        ZWrite On
+        ZTest Less
+        Blend Off
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #pragma target 3.0
+            #include "UnityCG.cginc"
+            sampler2D _MainTex; sampler2D _VoxelLightmap;
+            half _VoxelWorldLight; half4 _VoxelFogColor; float _VoxelFogNear; float _VoxelFogFar; float _VoxelHeldLight;
+            struct appdata { float4 vertex:POSITION; float2 uv:TEXCOORD0; float3 ssb:TEXCOORD1; };
+            struct v2f { float4 pos:SV_POSITION; half2 uv:TEXCOORD0; half3 ssb:TEXCOORD1; float dist:TEXCOORD2; };
+            v2f vert(appdata v)
+            {
+                v2f o; float3 wp=mul(unity_ObjectToWorld,v.vertex).xyz;
+                o.pos=mul(UNITY_MATRIX_VP,float4(wp,1.0));o.uv=v.uv;o.dist=distance(wp,_WorldSpaceCameraPos.xyz);o.ssb=v.ssb;
+                if(o.ssb.x>2.0)o.ssb.x-=4.0;
+                o.ssb.z=max(v.ssb.z,(_VoxelHeldLight-o.dist)/15.0);return o;
+            }
+            half4 frag(v2f i):SV_Target
+            {
+                half4 tc=tex2D(_MainTex,i.uv);clip(tc.a-.5);
+                half2 lmuv=half2((saturate(i.ssb.z)*15.0+.5)/16.0,(saturate(i.ssb.y)*15.0+.5)/16.0);
+                half3 lm=tex2D(_VoxelLightmap,lmuv).rgb*_VoxelWorldLight;half3 rgb=tc.rgb*i.ssb.x*lm;
+                half fog=(half)saturate((i.dist-_VoxelFogNear)/max(.001,_VoxelFogFar-_VoxelFogNear));rgb=lerp(rgb,_VoxelFogColor.rgb,fog);
+                return half4(rgb,1.0);
+            }
+            ENDCG
+        }
+    }
+}

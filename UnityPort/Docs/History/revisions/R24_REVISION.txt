@@ -1,0 +1,14 @@
+Blockcraft Unity Port revision: R24_SOURCE_RENDER_2026-09-11
+Target: Unity 2022.3.62f3
+
+Current renderer/streaming architecture is reworked from the supplied current main.js/meshWorker.js:
+- one adaptive source-style frame deadline
+- WT=10 bounded generation look-ahead
+- up to 3 mesh sends / 6 completed results when deadline permits
+- whole-chunk background mesh premerge for full rebuilds
+- predictive Unity Mesh upload EWMA
+- pooled/value-type streaming payloads
+- direct chunk CommandBuffers; no chunk MeshRenderer/MeshFilter
+
+MobAI.cs still contains no field named 'climbing'; spider climbing remains implemented through Def.Climber movement logic.
+See R24_SOURCE_RENDER_REPORT.md and Tools/validate_r24_source_render.py.

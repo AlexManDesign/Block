@@ -1,0 +1,7 @@
+R38_BIOME_ECOLOGY_ORE_RNG_COMPILE
+Unity 2022.3.62f3
+C# production only; zero JavaScript files under Assets/Packages/ProjectSettings.
+- Fixed CS0136 in MainSourceObjectRenderer minecart curve branch by using curveSpeed.
+- Added exact raw 32-bit source hash path for ore RNG, including .31/.77 offsets.
+- Guarded slime-only biome/chunk spawn lookups so normal mob attempts avoid unnecessary biome work.
+- Ships remain intentionally excluded.

@@ -1,0 +1,26 @@
+R81_VISIBLE_MESH_PRIORITY_2026-09-21
+Unity 2022.3.62f3
+
+Purpose:
+Fix visual-only black chunk holes where voxel/block data exists but the corresponding GPU mesh has not yet been published.
+
+Production behavior change:
+- Mesh publication priority only.
+- 5x5 player safety core first.
+- Then loaded chunks whose real non-air bounds intersect the current camera frustum.
+- Then forward preload cone.
+- Then off-screen/back chunks.
+- Squared source distance remains the ordering key inside each tier.
+
+Not changed:
+- render distance
+- fog distance
+- frame/streaming budget
+- chunk generation order
+- meshing algorithms
+- shaders
+- lighting
+- fluids
+- AI/mobs
+
+Temporary diagnostics remain explicitly marked BC_TEMP_DEBUG and are tracked in TEMP_DEBUG_CLEANUP.md.

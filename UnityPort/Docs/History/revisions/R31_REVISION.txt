@@ -1,0 +1,26 @@
+R31_MOB_BEHAVIOR_SOURCE_EXACT_2026-09-12
+
+Source baseline:
+main(20260911-163700).js
+SHA256 ab90b89ba9c081fc442f3de02ec3afad431a44ce7a709a5c180c8a5c5ee86e3c
+
+Scope: continue mob AI/behavior parity after R30. Moving-ship runtime intentionally NOT changed.
+
+Key source-parity changes:
+- vp()/TryUnstuck consumes the tick even when a colliding mob cannot find an escape cell.
+- Shark Mp() target cache is held for the source 0.4 s refresh interval, including cached player prey.
+- fd()/eu()/Xp()/D2()/Wp()/cd()/$p() spawn random-flow and candidate selection follow main.js ordering.
+- Shark 12 s timer resets even when hunter cap is already full.
+- Per-chunk passive 10% attempt does not consult the global passive cap.
+- Enderman stare honors carved-pumpkin vision through an explicit player-controller hook.
+- Player mob/explosion damage supports source armor points: 4% per point, max 80%, JS round, minimum 1.
+- Creeper B2 block tracing uses source $J resistance categories rather than mining hardness.
+- Creeper explosion preserves source-style hit insertion order and 12% x2 break particles.
+- Creeper explosion now damages other mobs through source oR() 8-block radial falloff and knockback.
+- Sheep shearing item drop origin is exactly y + 0.6.
+- Source age state retained/incremented at the shared 20 Hz tick.
+
+Known deferred dependencies:
+- Moving ships / ship collision / ship explosion cells are intentionally deferred by user request.
+- Inventory/armor durability and actual carved-pumpkin equipment UI are not yet ported; hooks are ready.
+- Audio/death-particle parity remains outside this AI pass.

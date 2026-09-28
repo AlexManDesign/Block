@@ -1,0 +1,15 @@
+R37 BIOME DECOR CSHARP
+Date: 2026-09-13
+Unity: 2022.3.62f3
+
+Production implementation is C# only. main/genWorker are external reference/oracle inputs and are not packaged as production JavaScript.
+
+Changes:
+- Added appended-only FloweringAzaleaLeaves semantic BlockId; all previous serialized BlockId values remain unchanged.
+- Cherry Grove tree crowns now match source C2(): oak-log trunk, flowering-azalea top, [2,3,2] azalea/flowering-azalea mixed crown with threshold 0.25.
+- Lush cave q<0.06 floor decoration now emits FloweringAzaleaLeaves.
+- Reuses existing flowering_azalea_leaves atlas tile; no new atlas tile/UV mutation.
+- Caches 16x16 aquifer flags and TreeKind candidates once per generated chunk for plant/tree passes; border +/-5 tree scan remains exact.
+- Ship gameplay/structures remain excluded by project scope.
+
+Static/source-oracle regression: R20-R37 = 955/955 PASS; production .js files = 0.

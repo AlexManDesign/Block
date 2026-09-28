@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Compile check for Editor scripts: runtime scripts + Editor folders + UnityEditor.dll (Unity3D.SDK 2021.1). -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <NoWarn>CS0414;CS0649;CS0169;CS0219;CS0162;CS0168;CS0067;CS1701;CS1702</NoWarn>
+    <DefineConstants>UNITY_STANDALONE;ENABLE_MONO;UNITY_EDITOR</DefineConstants>
+    <BaseIntermediateOutputPath>obj-editor/</BaseIntermediateOutputPath>
+    <UnityRefDir Condition="'$(UnityRefDir)'==''">$(MSBuildThisFileDirectory)../.cache/unityengine.modules/lib/netstandard2.0</UnityRefDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../UnityPort/Assets/**/*.cs" />
+    <Reference Include="$(UnityRefDir)/*.dll" />
+    <Reference Include="$(MSBuildThisFileDirectory)../.cache/unityeditor/UnityEditor.dll" />
+  </ItemGroup>
+</Project>

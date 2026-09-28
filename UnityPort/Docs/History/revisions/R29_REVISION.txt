@@ -1,0 +1,21 @@
+Blockcraft Unity Port
+Revision: R29_MOB_AI_SOURCE_COLLISION_2026-09-12
+Target: Unity 2022.3.62f3
+Source: main(20260911-163700).js
+
+R29 continues R28 mob AI parity:
+- mob movement/path/spawn now use source An()/W1()-style collision boxes
+- Rp/Lp/yh/Up A* standability and immediate null-path rebuild semantics
+- Gp ledge + Vp water avoidance parity
+- deeper yp()/pf()/Yp() aquatic escape/movement parity
+- source bp() ordering and 0.7 s lava/fire residual state
+- Enderman Np() sight semantics with glass/glassy transparency
+- direct No()-style love movement and horizontal mate distance
+- source Xp() spawn Ae()/gt() semantics
+- JS Math.round parity through SourceMath.JsRound
+- immediate dead-state despawn before Unity deferred Destroy
+
+Validation: R20 65/65, R21 46/46, R24 44/44, R26 39/39,
+R27 31/31, R28 109/109, R29 109/109 PASS.
+
+See R29_MOB_AI_SOURCE_COLLISION_REPORT.md for remaining dependencies.

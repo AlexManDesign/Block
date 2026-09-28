@@ -1,0 +1,6 @@
+node_modules/
+tools/**/bin/
+tools/**/obj/
+tools/.cache/
+reference/pretty/
+tools/compile-check/obj-editor/
