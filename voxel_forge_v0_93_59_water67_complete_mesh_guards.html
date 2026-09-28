@@ -111,8 +111,8 @@ const MODS_KEY='vf_engine_mods_v1',XRAY_STATE_KEY='vf_engine_xray_active_v1';
 const RENDER_SETTINGS_KEY='vf_render_settings_v1',GAME_SETTINGS_KEY='vf_settings_main_v1';
 const MAIN_RD_VALUES=[4,6,8,12,16,20,25,30,40,50],MAIN_SIM_VALUES=[4,6,8,12,16,20];
 const DEVICE_RD_CAP=(()=>{const dm=(navigator&&navigator.deviceMemory)||0,mob=!!(navigator&&/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent||''));return dm&&dm<=2?8:(dm&&dm<=4)||mob?12:20})();
-const gameSettings={renderDist:6,simDist:6,sensitivity:1,sound:true,clouds:true};
-try{const a=JSON.parse(localStorage.getItem(GAME_SETTINGS_KEY)||'{}');if(MAIN_RD_VALUES.includes(a.renderDist))gameSettings.renderDist=Math.min(a.renderDist,DEVICE_RD_CAP);if(MAIN_SIM_VALUES.includes(a.simDist))gameSettings.simDist=Math.min(a.simDist,DEVICE_RD_CAP);if(Number.isFinite(a.sensitivity)&&a.sensitivity>=.3&&a.sensitivity<=2)gameSettings.sensitivity=a.sensitivity;if(typeof a.sound==='boolean')gameSettings.sound=a.sound;if(typeof a.clouds==='boolean')gameSettings.clouds=a.clouds;else{const old=JSON.parse(localStorage.getItem(RENDER_SETTINGS_KEY)||'{}');if(old&&old.clouds===false)gameSettings.clouds=false}}catch{}
+const gameSettings={renderDist:6,simDist:6,sensitivity:1,sound:true,clouds:true,dynRes:true};
+try{const a=JSON.parse(localStorage.getItem(GAME_SETTINGS_KEY)||'{}');if(MAIN_RD_VALUES.includes(a.renderDist))gameSettings.renderDist=Math.min(a.renderDist,DEVICE_RD_CAP);if(MAIN_SIM_VALUES.includes(a.simDist))gameSettings.simDist=Math.min(a.simDist,DEVICE_RD_CAP);if(Number.isFinite(a.sensitivity)&&a.sensitivity>=.3&&a.sensitivity<=2)gameSettings.sensitivity=a.sensitivity;if(typeof a.sound==='boolean')gameSettings.sound=a.sound;if(typeof a.dynRes==='boolean')gameSettings.dynRes=a.dynRes;if(typeof a.clouds==='boolean')gameSettings.clouds=a.clouds;else{const old=JSON.parse(localStorage.getItem(RENDER_SETTINGS_KEY)||'{}');if(old&&old.clouds===false)gameSettings.clouds=false}}catch{}
 let cloudsEnabled=gameSettings.clouds;
 function persistGameSettings(){try{localStorage.setItem(GAME_SETTINGS_KEY,JSON.stringify(gameSettings));localStorage.setItem(RENDER_SETTINGS_KEY,JSON.stringify({clouds:gameSettings.clouds}))}catch{}}
 function applyRenderDistanceSetting(v,notify=true){const vals=MAIN_RD_VALUES.filter(x=>x<=DEVICE_RD_CAP),n=vals.includes(+v)?+v:Math.min(6,DEVICE_RD_CAP);gameSettings.renderDist=n;if(renderDistance!==n){renderDistance=n;lastStreamCx=999;lastStreamCz=999;queue=[]}persistGameSettings();if(notify&&typeof toast==='function')toast('Дальность: '+n+' чанков')}
@@ -3698,7 +3698,27 @@ const frustumPlanes=new Float32Array(24),frustumSigns=new Uint8Array(6),frustumT
 function updateFrustum(m){const p=frustumPlanes;p[0]=m[3]+m[0];p[1]=m[7]+m[4];p[2]=m[11]+m[8];p[3]=m[15]+m[12];p[4]=m[3]-m[0];p[5]=m[7]-m[4];p[6]=m[11]-m[8];p[7]=m[15]-m[12];p[8]=m[3]+m[1];p[9]=m[7]+m[5];p[10]=m[11]+m[9];p[11]=m[15]+m[13];p[12]=m[3]-m[1];p[13]=m[7]-m[5];p[14]=m[11]-m[9];p[15]=m[15]-m[13];p[16]=m[3]+m[2];p[17]=m[7]+m[6];p[18]=m[11]+m[10];p[19]=m[15]+m[14];p[20]=m[3]-m[2];p[21]=m[7]-m[6];p[22]=m[11]-m[10];p[23]=m[15]-m[14];for(let i=0,o=0;i<6;i++,o+=4){const a=p[o],b=p[o+1],c=p[o+2];frustumSigns[i]=(a>0?1:0)|(b>0?2:0)|(c>0?4:0);frustumTols[i]=.35*(Math.abs(a)+Math.abs(b)+Math.abs(c))}}
 function aabbVisible(x0,y0,z0,x1,y1,z1){const p=frustumPlanes;for(let i=0,o=0;i<6;i++,o+=4){const s=frustumSigns[i],x=s&1?x1:x0,y=s&2?y1:y0,z=s&4?z1:z0;if(p[o]*x+p[o+1]*y+p[o+2]*z+p[o+3]<-frustumTols[i])return false}return true}
 const proj=new Float32Array(16),view=new Float32Array(16),vp=new Float32Array(16);
-function resize(){const d=Math.min(devicePixelRatio||1,DPR_CAP),w=Math.max(1,Math.floor(innerWidth*d)),h=Math.max(1,Math.floor(innerHeight*d));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}}addEventListener('resize',resize);resize();
+// Dynamic resolution: scale the backbuffer down in steps when the GPU cannot keep up
+// with the display refresh, and back up when there is clear headroom. Primary signal is
+// the GPU timer (avgGpuFrameMs); without it, long frames that the CPU does not explain.
+const DYN_RES_STEPS=[1,.85,.72,.6,.5];
+let renderScale=1,dynResIdx=0,dynResChangedAt=0,dynResSlowSince=0,dynResFastSince=0,dynResUpWait=3000,dynResLastUpAt=-1e9,dynFrameEma=16.7,dynVsyncMs=16.7;
+function setDynResIdx(i,now){i=Math.max(0,Math.min(DYN_RES_STEPS.length-1,i));if(i===dynResIdx)return;if(i<dynResIdx)dynResLastUpAt=now;else if(now-dynResLastUpAt<4000)dynResUpWait=Math.min(30000,dynResUpWait*2);dynResIdx=i;renderScale=DYN_RES_STEPS[i];dynResChangedAt=now;dynResSlowSince=dynResFastSince=0;canvas.style.imageRendering=renderScale<1?'auto':'';resize()}
+function updateDynamicResolution(now,frameInterval){
+ if(gameSettings.dynRes===false){if(dynResIdx)setDynResIdx(0,now);return}
+ if(!(frameInterval>2&&frameInterval<250))return;
+ dynFrameEma+=(frameInterval-dynFrameEma)*.1;
+ // Display interval estimate: fast to follow shorter frames, slow drift up (refresh-rate changes).
+ dynVsyncMs=Math.max(6,Math.min(34,frameInterval<dynVsyncMs?frameInterval:dynVsyncMs*1.0005));
+ if(!started||!worldReady||pauseOpen||document.hidden||now-dynResChangedAt<1500)return;
+ const budget=dynVsyncMs,gpu=gpuTimerExt&&avgGpuFrameMs>0?avgGpuFrameMs:0,cpu=avgForegroundCpuMs+lastBackgroundCpuMs;
+ const slow=gpu?gpu>budget*.92:(dynFrameEma>budget*1.25&&cpu<dynFrameEma*.6);
+ const up=DYN_RES_STEPS[Math.max(0,dynResIdx-1)]/renderScale,
+       fast=dynResIdx>0&&(gpu?gpu*up*up<budget*.7:dynFrameEma<=budget*1.08);
+ if(slow){if(!dynResSlowSince)dynResSlowSince=now;if(now-dynResSlowSince>1000)setDynResIdx(dynResIdx+1,now)}else dynResSlowSince=0;
+ if(fast){if(!dynResFastSince)dynResFastSince=now;if(now-dynResFastSince>dynResUpWait)setDynResIdx(dynResIdx-1,now)}else dynResFastSince=0;
+}
+function resize(){const d=Math.min(devicePixelRatio||1,DPR_CAP)*renderScale,w=Math.max(1,Math.floor(innerWidth*d)),h=Math.max(1,Math.floor(innerHeight*d));if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h)}}addEventListener('resize',resize);resize();
 
 // Selection outline — slightly expanded on all six sides to avoid z-fighting.
 const lineVAO=gl.createVertexArray(),lineVBO=gl.createBuffer(),eps=.002,lo=-eps,hi=1+eps;
@@ -3856,7 +3876,7 @@ function renderSettingsUI(){const root=document.getElementById('settingsContent'
  const sd=document.createElement('select');for(const v of MAIN_SIM_VALUES.filter(x=>x<=DEVICE_RD_CAP)){const o=document.createElement('option');o.value=v;o.textContent=v+' чанков';o.selected=v===simulationDistance;sd.appendChild(o)}sd.onchange=()=>{applySimulationDistanceSetting(+sd.value);renderSettingsUI()};add('Дальность симуляции',sd,'Мобы и жидкости · эффективно '+activeSimulationDistance()+' чанков (не больше дальности прорисовки)');
  const sen=document.createElement('input');sen.type='range';sen.min='.3';sen.max='2';sen.step='.1';sen.value=gameSettings.sensitivity;const sv=document.createElement('div');sv.className='settingsValue';sv.textContent='×'+(+sen.value).toFixed(1);sen.oninput=()=>{gameSettings.sensitivity=+sen.value;sv.textContent='×'+gameSettings.sensitivity.toFixed(1);persistGameSettings()};const sw=document.createElement('div');sw.append(sen,sv);const sl=document.createElement('label');sl.textContent='Чувствительность мыши';grid.append(sl,sw);
  const sound=document.createElement('input');sound.type='checkbox';sound.checked=gameSettings.sound;sound.onchange=()=>setSoundEnabled(sound.checked);const sr=document.createElement('div');sr.className='toggleRow';sr.append(sound,document.createTextNode('Звук'));add('Sound',sr);
- const clouds=document.createElement('input');clouds.type='checkbox';clouds.checked=cloudsEnabled;clouds.onchange=()=>{gameSettings.clouds=clouds.checked;cloudsEnabled=clouds.checked;persistGameSettings();toast('Облака '+(cloudsEnabled?'включены':'выключены'))};const cr=document.createElement('div');cr.className='toggleRow';cr.append(clouds,document.createTextNode('Облака'));add('Clouds',cr);
+ const clouds=document.createElement('input');clouds.type='checkbox';clouds.checked=cloudsEnabled;clouds.onchange=()=>{gameSettings.clouds=clouds.checked;cloudsEnabled=clouds.checked;persistGameSettings();toast('Облака '+(cloudsEnabled?'включены':'выключены'))};const cr=document.createElement('div');cr.className='toggleRow';cr.append(clouds,document.createTextNode('Облака'));add('Clouds',cr);const dyn=document.createElement('input');dyn.type='checkbox';dyn.checked=gameSettings.dynRes!==false;dyn.onchange=()=>{gameSettings.dynRes=dyn.checked;persistGameSettings();toast('Динамическое разрешение '+(dyn.checked?'включено':'выключено'))};const dr=document.createElement('div');dr.className='toggleRow';dr.append(dyn,document.createTextNode('Динамическое разрешение'));add('Resolution',dr,'Снижает разрешение рендера, когда видеокарта не успевает · сейчас ×'+renderScale);
  root.appendChild(grid);const p=document.createElement('p');p.className='settingsHint';p.textContent='Render Distance отвечает за видимые чанки. Simulation Distance ограничивает тики мобов и жидкостей по X/Z; высота Y не отключает симуляцию. Настройки сохраняются отдельно от мира.';root.appendChild(p)}
 function openSettingsUI(){renderSettingsUI();document.getElementById('settingsUI').classList.remove('hidden')}
 function closeSettingsUI(){document.getElementById('settingsUI').classList.add('hidden')}
@@ -3915,7 +3935,7 @@ function updateStats(){let mobs=0;for(const m of liveMobs)if(!m.dead)mobs++;docu
 gen ${genPending.size}/${genJobs.length} · mesh ${meshPending.size}/${meshJobs.length}/${meshDoneCount()} · light ${lightDirtyCount()}
 мобы ${mobs} · edits ${edits.size} · draw ${drawCalls} · tris ${Math.round(triangles/1000)}k · O/C/W/T ${opaqueDraws}/${cutoutDraws}/${waterDraws}/${transDraws}
 tri O/C/W/T ${Math.round(opaqueTrisFrame/1000)}k/${Math.round(cutoutTrisFrame/1000)}k/${Math.round(waterTrisFrame/1000)}k/${Math.round(transTrisFrame/1000)}k
-CPU render ${avgRenderCpuMs.toFixed(1)} · GPU ${avgGpuFrameMs?avgGpuFrameMs.toFixed(1):'-'} · mesh-init FULL+GUARD · vis ${avgRenderVisMs.toFixed(1)} · terrain ${avgRenderTerrainMs.toFixed(1)} · entity ${avgRenderEntityMs.toFixed(1)} · trans ${avgRenderTransMs.toFixed(1)} · map ${avgMinimapMs.toFixed(1)} · bg ${lastBackgroundCpuMs.toFixed(1)}
+CPU render ${avgRenderCpuMs.toFixed(1)} · GPU ${avgGpuFrameMs?avgGpuFrameMs.toFixed(1):'-'} · res ×${renderScale} · mesh-init FULL+GUARD · vis ${avgRenderVisMs.toFixed(1)} · terrain ${avgRenderTerrainMs.toFixed(1)} · entity ${avgRenderEntityMs.toFixed(1)} · trans ${avgRenderTransMs.toFixed(1)} · map ${avgMinimapMs.toFixed(1)} · bg ${lastBackgroundCpuMs.toFixed(1)}
 mesh-skip O/C/W/X ${meshSelectiveOpaqueSkips}/${meshSelectiveCutoutSkips}/${meshSelectiveWaterSkips}/${meshSelectiveTransSkips}
 XYZ ${player.x.toFixed(1)} ${player.y.toFixed(1)} ${player.z.toFixed(1)}
 биом ${biomeAt(player.x,player.z)}${(()=>{const cb=caveBiomeAt(player.x,Math.floor(player.y),player.z);return cb?` · cave ${['','LUSH','DRIPSTONE','DEEP_DARK'][cb]}`:''})()}`;document.getElementById('mode').textContent='v'+GAME_VERSION+' · '+ENGINE_BUILD+' · SAVE S'+SAVE_SCHEMA_VERSION+'/W'+SAVE_WORLD_VERSION+' · '+(player.creative?'CREATOR':'SURVIVAL')+(player.flying?' · ПОЛЁТ':'')+(xrayActive?' · X-RAY':'')}
@@ -4022,7 +4042,7 @@ function render(now){
   const transMs=performance.now()-transStart;avgRenderTransMs+=(transMs-avgRenderTransMs)*.08;
   const overlayStart=performance.now(),hit=raycast();drawMainSelectionOutline(hit);drawMainPrimedOutlines(now);drawMainFirstPersonHeld(dt,now);const overlayMs=performance.now()-overlayStart;avgRenderOverlayMs+=(overlayMs-avgRenderOverlayMs)*.08;
  }
- endGpuFrameTimer();lastRenderCpuMs=performance.now()-renderStart;avgRenderCpuMs+=(lastRenderCpuMs-avgRenderCpuMs)*.08;const mapStart=performance.now();updateMinimap(now);const mapMs=performance.now()-mapStart;avgMinimapMs+=(mapMs-avgMinimapMs)*.08;lastFrameCpuMs=performance.now()-frameStart;const fg=Math.max(0,lastFrameCpuMs-lastBackgroundCpuMs);avgForegroundCpuMs+=(fg-avgForegroundCpuMs)*.08;frames++;if(now-fpsT>500){fps=Math.round(frames*1000/(now-fpsT));frames=0;fpsT=now;updateStats()}requestAnimationFrame(render)
+ endGpuFrameTimer();lastRenderCpuMs=performance.now()-renderStart;avgRenderCpuMs+=(lastRenderCpuMs-avgRenderCpuMs)*.08;const mapStart=performance.now();updateMinimap(now);const mapMs=performance.now()-mapStart;avgMinimapMs+=(mapMs-avgMinimapMs)*.08;lastFrameCpuMs=performance.now()-frameStart;const fg=Math.max(0,lastFrameCpuMs-lastBackgroundCpuMs);avgForegroundCpuMs+=(fg-avgForegroundCpuMs)*.08;updateDynamicResolution(now,frameInterval);frames++;if(now-fpsT>500){fps=Math.round(frames*1000/(now-fpsT));frames=0;fpsT=now;updateStats()}requestAnimationFrame(render)
 }
 
 function initSpawn(){if(!workerEngineStarted)initWorkerEngine();const cx=Math.floor(player.x/CHUNK),cz=Math.floor(player.z/CHUNK);if(!chunkFastGet(cx,cz)&&!workerEngineFailed)queueChunkGeneration(cx,cz);lastStreamCx=999;lastStreamCz=999;queue=[];refreshQueue();pumpGenWorkers()}
