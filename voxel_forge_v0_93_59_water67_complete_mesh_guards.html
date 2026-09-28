@@ -3961,7 +3961,9 @@ function render(now){
   gl.disable(gl.BLEND);
 
   if(underwater){
-   restoreTerrainProgram();
+   // Dedicated water shader: alpha comes from geometry only (no texture-alpha double
+   // transparency) and no terrain underwater tint is applied to the surface itself.
+   bindWaterCommon(eye,fog,fogNear,fogFar,now,0);
    gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
    gl.depthMask(false);gl.depthFunc(gl.LESS);gl.disable(gl.CULL_FACE);
    waterDraws=drawWaterBucketFrontToBack(waterRenderList,true,waterRenderCount);
@@ -3974,7 +3976,7 @@ function render(now){
    gl.colorMask(true,true,true,true);
 
    // Water colour: only the closest water surface selected above survives.
-   restoreTerrainProgram();
+   bindWaterCommon(eye,fog,fogNear,fogFar,now,0);
    gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
    gl.depthMask(false);gl.depthFunc(gl.LEQUAL);gl.disable(gl.CULL_FACE);
    waterDraws=drawWaterBucketFrontToBack(waterRenderList,true,waterRenderCount);
