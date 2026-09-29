@@ -102,6 +102,7 @@ const UI = {
     show('clickToPlay', false);
   },
   onWorldReady() {
+    clearTimeout(this.hintT); show('hint', true); this.hintT = setTimeout(() => show('hint', false), 20000);
     if (IS_TOUCH) { this.game.paused = false; return; }
     show('clickToPlay', true);
     $('clickToPlay').textContent = T('clickToPlay');

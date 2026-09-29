@@ -8853,10 +8853,23 @@ class Game {
       $('loadBar').style.width = Math.round(100 * ready / need) + '%';
       if (ready < need) { this.renderFrame(0); return; }
       if (this.needSpawnDrop) {
-        const x = Math.floor(p.pos[0]), z = Math.floor(p.pos[2]);
-        let y = WORLD_MAX_Y - 1;
-        while (y > WORLD_MIN_Y) { const b = w.getBlock(x, y, z); if ((SOLID[b] && !(FLAGS[b] & BF_LEAVES) && !/LOG|STEM/.test(B_KEY[b])) || isWaterId(b)) break; y--; }
-        p.pos[1] = y + 1.01;
+        const sx = Math.floor(p.pos[0]), sz = Math.floor(p.pos[2]);
+        let best = null;
+        for (let r = 0; r <= 12 && !best; r++) for (let dx = -r; dx <= r && !best; dx++) for (let dz = -r; dz <= r && !best; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+          const x = sx + dx, z = sz + dz;
+          let y = WORLD_MAX_Y - 1;
+          while (y > WORLD_MIN_Y && !w.getBlock(x, y, z)) y--;
+          const g = w.getBlock(x, y, z);
+          if ((g === B.GRASS || g === B.SAND || g === B.SNOW || g === B.DIRT || g === B.PODZOL || g === B.MYCELIUM || g === B.RED_SAND || g === B.STONE) &&
+            (w.getLight(x, y + 1, z) >> 4) === 15) best = [x, y + 1, z];
+        }
+        if (!best) {
+          let y = WORLD_MAX_Y - 1;
+          while (y > WORLD_MIN_Y && !SOLID[w.getBlock(sx, y, sz)] && !isWaterId(w.getBlock(sx, y, sz))) y--;
+          best = [sx, y + 1, sz];
+        }
+        p.pos = [best[0] + 0.5, best[1] + 0.01, best[2] + 0.5];
         this.spawn = p.pos.slice();
         this.needSpawnDrop = false;
       }
@@ -9818,6 +9831,7 @@ const UI = {
     show('clickToPlay', false);
   },
   onWorldReady() {
+    clearTimeout(this.hintT); show('hint', true); this.hintT = setTimeout(() => show('hint', false), 20000);
     if (IS_TOUCH) { this.game.paused = false; return; }
     show('clickToPlay', true);
     $('clickToPlay').textContent = T('clickToPlay');
