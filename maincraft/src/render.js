@@ -564,7 +564,7 @@ class Renderer {
     gl.uniform3fv(p.u.uSunDir, env.sunDir);
     gl.uniform4f(p.u.uSunset, env.sunsetColor[0], env.sunsetColor[1], env.sunsetColor[2], env.sunset);
     gl.uniform1f(p.u.uStars, env.stars);
-    gl.uniform1f(p.u.uVoid, 0.25);
+    gl.uniform1f(p.u.uVoid, 0.85);
     gl.bindVertexArray(this.emptyVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     // sun & moon as billboards at distance 100 along their directions
@@ -679,43 +679,65 @@ class Renderer {
     const gl = this.gl, N = this.cloudN, g = this.cloudGrid;
     const S = 12, H = 4, Y = 192.33;
     const drift = time * 0.6;
-    const R = Math.min(32, Math.ceil(env.far / S) + 2);
+    const R = Math.min(40, Math.ceil(env.far / S) + 2);
     const ox = cam[0] + drift, oz = cam[2];
     const gx0 = Math.floor(ox / S), gz0 = Math.floor(oz / S);
-    const verts = this.cloudVerts || (this.cloudVerts = new Float32Array(200000 * 10));
-    let n = 0;
-    const cy0 = Y - cam[1], cy1 = Y + H - cam[1];
     const col = env.cloudColor;
-    const put = (x, y, z, sh) => {
-      if (n + 10 > verts.length) return;
-      verts[n++] = x; verts[n++] = y; verts[n++] = z; verts[n++] = 0.5; verts[n++] = 0.5; verts[n++] = this.whiteLayer;
-      verts[n++] = col[0] * sh; verts[n++] = col[1] * sh; verts[n++] = col[2] * sh; verts[n++] = 0.8;
-    };
-    const quad = (a, b, c, d, sh) => { put(...a, sh); put(...b, sh); put(...c, sh); put(...a, sh); put(...c, sh); put(...d, sh); };
-    const at = (x, z) => g[((z % N + N) % N) * N + ((x % N + N) % N)];
-    for (let dz = -R; dz <= R; dz++) for (let dx = -R; dx <= R; dx++) {
-      if (dx * dx + dz * dz > R * R) continue;
-      const cx = gx0 + dx, cz = gz0 + dz;
-      if (!at(cx, cz)) continue;
-      const x0 = cx * S - drift - cam[0], x1 = x0 + S, z0 = cz * S - cam[2], z1 = z0 + S;
-      if (cy1 > 0 || true) quad([x0, cy1, z1], [x1, cy1, z1], [x1, cy1, z0], [x0, cy1, z0], 1.0);
-      quad([x0, cy0, z0], [x1, cy0, z0], [x1, cy0, z1], [x0, cy0, z1], 0.7);
-      if (!at(cx + 1, cz)) quad([x1, cy0, z1], [x1, cy0, z0], [x1, cy1, z0], [x1, cy1, z1], 0.9);
-      if (!at(cx - 1, cz)) quad([x0, cy0, z0], [x0, cy0, z1], [x0, cy1, z1], [x0, cy1, z0], 0.9);
-      if (!at(cx, cz + 1)) quad([x0, cy0, z1], [x1, cy0, z1], [x1, cy1, z1], [x0, cy1, z1], 0.8);
-      if (!at(cx, cz - 1)) quad([x1, cy0, z0], [x0, cy0, z0], [x0, cy1, z0], [x1, cy1, z0], 0.8);
+    const colKey = Math.round(col[0] * 64);
+    const cm = this.cloudMesh || (this.cloudMesh = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), n: 0, key: '' });
+    const key = gx0 + ',' + gz0 + ',' + R + ',' + colKey;
+    if (cm.key !== key) {
+      cm.key = key;
+      const out = [];
+      const put = (x, y, z, sh) => out.push(x, y, z, 0.5, 0.5, this.whiteLayer, col[0] * sh, col[1] * sh, col[2] * sh, 0.8);
+      const quad = (a, b, c, d, sh) => { put(...a, sh); put(...b, sh); put(...c, sh); put(...a, sh); put(...c, sh); put(...d, sh); };
+      const at = (x, z) => g[((z % N + N) % N) * N + ((x % N + N) % N)];
+      for (let dz = -R; dz <= R; dz++) for (let dx = -R; dx <= R; dx++) {
+        if (dx * dx + dz * dz > R * R) continue;
+        const cx = gx0 + dx, cz = gz0 + dz;
+        if (!at(cx, cz)) continue;
+        const x0 = dx * S, x1 = x0 + S, z0 = dz * S, z1 = z0 + S, y0 = 0, y1 = H;
+        quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], 1.0);
+        quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], 0.7);
+        if (!at(cx + 1, cz)) quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], 0.9);
+        if (!at(cx - 1, cz)) quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], 0.9);
+        if (!at(cx, cz + 1)) quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], 0.8);
+        if (!at(cx, cz - 1)) quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], 0.8);
+      }
+      cm.n = out.length / 10;
+      gl.bindVertexArray(cm.vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, cm.vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
+      gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 40, 12);
+      gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 40, 24);
+      gl.bindVertexArray(null);
     }
-    if (!n) return;
-    const cenv = { fogStart: env.far * 0.7, fogEnd: env.far * 1.6, fogColor: env.fogColor };
+    if (!cm.n) return;
+    // translate grid-space mesh to camera-relative space
+    const tx = gx0 * S - drift - cam[0], ty = Y - cam[1], tz = gz0 * S - cam[2];
+    const T = this.cloudT || (this.cloudT = new Float32Array(16));
+    T.fill(0); T[0] = T[5] = T[10] = T[15] = 1; T[12] = tx; T[13] = ty; T[14] = tz;
+    const vp = this.cloudVP || (this.cloudVP = new Float32Array(16));
+    M4.mul(vp, this.vp, T);
+    const p = this.progArr;
+    gl.useProgram(p);
+    gl.uniformMatrix4fv(p.u.uVP, false, vp);
+    // fog distance is measured in mesh space; approximate by far distances
+    gl.uniform2f(p.u.uFog, env.far * 0.9 + 400, env.far * 2 + 600);
+    gl.uniform3fv(p.u.uFogColor, env.fogColor);
+    gl.uniform1f(p.u.uAlphaRef, 0);
+    gl.uniform1i(p.u.uTex, 0);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(gl.CULL_FACE);
-    // depth prepass so overlapping faces do not double-blend
+    gl.bindVertexArray(cm.vao);
     gl.colorMask(false, false, false, false);
-    this.drawArr(verts.subarray(0, n), n / 10, cenv, 0, null);
+    gl.drawArrays(gl.TRIANGLES, 0, cm.n);
     gl.colorMask(true, true, true, true);
     gl.depthFunc(gl.EQUAL); gl.depthMask(false);
-    this.drawArr(verts.subarray(0, n), n / 10, cenv, 0, null);
+    gl.drawArrays(gl.TRIANGLES, 0, cm.n);
     gl.depthFunc(gl.LEQUAL); gl.depthMask(true);
+    gl.bindVertexArray(null);
     gl.disable(gl.BLEND);
   }
 

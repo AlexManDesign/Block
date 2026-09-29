@@ -78,6 +78,9 @@ body.nohud #hud>*:not(#debug){display:none}
 .invTop{display:flex;justify-content:center}
 .craftRow{display:flex;align-items:center;gap:12px}.arrow{font-size:24px;color:#555}
 .slot.result{width:52px;height:52px}
+.furnace{display:flex;align-items:center;gap:22px;justify-content:center;padding:6px}.fcol{display:flex;flex-direction:column;align-items:center;gap:4px}
+.flame{width:16px;height:16px;background:#555;position:relative}.flame i{position:absolute;left:0;bottom:0;width:100%;background:linear-gradient(#ff0,#f60)}
+.prog{width:44px;height:12px;background:#777;position:relative}.prog i{position:absolute;left:0;top:0;height:100%;background:#fff}
 #cursorItem{position:fixed;z-index:50;pointer-events:none;background:none!important;border:none!important}
 #touch{position:fixed;inset:0;pointer-events:none;z-index:12}
 #touch>*{pointer-events:auto;position:absolute}
@@ -158,7 +161,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
 </script>
 <script>
 const ASSETS = "@ASSETS@";
-/*@INCLUDE blockdata.js,blocks.js,noise.js,worldgen.js,mesher.js,shapes.js,world.js,render.js,player.js,audio.js,interact.js,craft.js,save.js,ui.js,game.js,menus.js,main.js*/
+/*@INCLUDE blockdata.js,blocks.js,noise.js,worldgen.js,mesher.js,shapes.js,world.js,render.js,player.js,entities.js,audio.js,interact.js,craft.js,save.js,ui.js,game.js,menus.js,main.js*/
 </script>
 </body>
 </html>

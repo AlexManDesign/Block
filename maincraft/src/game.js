@@ -77,6 +77,7 @@ class Game {
     this.world = w;
     this.pendingSave = new Map();
     this.particles.length = 0;
+    this.ents = new Entities(this);
     this.r.buildClouds(meta.seed | 0);
     const p = this.player;
     p.vel = [0, 0, 0]; p.flying = false; p.fallStart = null;
@@ -349,6 +350,8 @@ class Game {
     if (this.mode === 'survival') this.survivalTick(dt);
     this.updateCamera();
     this.interact(dt);
+    this.ents.update(dt);
+    this.tickFurnaces(dt);
     this.updateParticles(dt);
   }
 
@@ -415,6 +418,22 @@ class Game {
     }
   }
   pointerFree() { return this.paused || UI.invOpen; }
+  // melee attack on a mob under the crosshair; returns true when a mob was hit
+  attack() {
+    if (!this.ents) return false;
+    const p = this.player, eye = p.eye(), l = p.look();
+    const hit = this.ents.raycastMob(eye, l, 3.5);
+    if (!hit || (this.target && this.target.t < hit.t)) return false;
+    const held = this.inv[this.sel], t = toolInfo(held);
+    let dmg = 1;
+    if (t) dmg = t.tool === 'sword' ? [0, 4, 5, 6, 4, 7][t.tier] : t.tool === 'axe' ? [0, 3, 4, 5, 3, 6][t.tier] : 2;
+    const crit = !p.onGround && p.vel[1] < 0;
+    this.ents.damageMob(hit.e, Math.round(dmg * (crit ? 1.5 : 1)), p.pos);
+    this.swing();
+    this.damageTool();
+    this.surv.exh += 0.1;
+    return true;
+  }
   swing() { this.swingT = 1; }
 
   doBreak(x, y, z) {
@@ -431,7 +450,7 @@ class Game {
   onBlockBroken(x, y, z, id, m, byUpdate) {
     if (this.mode !== 'survival') return;
     const drops = dropsFor(id, m, byUpdate ? null : this.inv[this.sel]);
-    for (const d of drops) this.giveItem(d.id, d.count);
+    for (const d of drops) this.ents.dropItem(d.id, d.count, x + 0.5, y + 0.3, z + 0.5);
     this.surv.exh += 0.005;
   }
 
@@ -444,8 +463,18 @@ class Game {
       if (!this.eating) this.eating = { t: 0 };
       return;
     }
+    if (hid === IT.SHEARS && this.ents) {
+      const h = this.ents.raycastMob(p.eye(), p.look(), 3.5);
+      if (h && h.e.type === 'sheep' && !h.e.sheared) { h.e.sheared = true; this.ents.dropItem(B.WOOL_WHITE, 1 + (Math.random() * 3 | 0), h.e.pos[0], h.e.pos[1] + 1, h.e.pos[2]); this.swing(); this.damageTool(); return; }
+    }
     if (!tg) return;
     const id = tg.id, m = tg.meta;
+    const edef = hid && isItem(hid) ? itemDef(hid)[5] : null;
+    if (edef && edef.mob) {
+      const n = FACE_N[tg.face];
+      this.ents.spawnMob(edef.mob, tg.x + n[0] + 0.5, tg.y + n[1] + (n[1] < 0 ? -1 : 0), tg.z + n[2] + 0.5);
+      this.consumeHeld(); this.swing(); return;
+    }
     const sh = SHAPE[id];
     // interactions
     if (!this.keys.ShiftLeft && !this.keys.ShiftRight) {
@@ -463,6 +492,7 @@ class Game {
       }
       if (id === B.CRAFTING_TABLE && this.mode === 'survival') { UI.openInventory('craft3'); return; }
       if (id === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
+      if (id === B.FURNACE || id === B.FURNACE_LIT) { UI.openFurnace(tg.x, tg.y, tg.z); return; }
       if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { this.explode(tg.x + 0.5, tg.y + 0.5, tg.z + 0.5, 4, tg); return; }
     }
     if (!hid) return;
@@ -765,6 +795,31 @@ class Game {
     }
   }
 
+  tickFurnaces(dt) {
+    const F = this.meta && this.meta.furnaces;
+    if (!F) return;
+    for (const k in F) {
+      const f = F[k], s = f.slots;
+      const out = s[0] ? SMELT[s[0].id] : 0;
+      const canOut = out && (!s[2] || (s[2].id === out && s[2].count < maxStack(out)));
+      if (f.burn <= 0 && canOut && s[1] && fuelValue(s[1].id)) {
+        f.burnMax = f.burn = fuelValue(s[1].id) / 8;
+        if (s[1].id === IT.LAVA_BUCKET) s[1] = { id: IT.BUCKET, count: 1 }; else if (--s[1].count <= 0) s[1] = null;
+      }
+      const was = f.lit;
+      if (f.burn > 0) { f.burn -= dt; f.lit = true; if (canOut) { f.cook += dt; if (f.cook >= 10) { f.cook = 0; if (s[2]) s[2].count++; else s[2] = { id: out, count: 1 }; if (--s[0].count <= 0) s[0] = null; } } else f.cook = 0; }
+      else { f.lit = false; f.cook = Math.max(0, f.cook - dt * 2); }
+      if (was !== f.lit) {
+        const [x, y, z] = k.split(',').map(Number);
+        if (!this.world.isLoaded(x, z)) continue;
+        const cur = this.world.getBlock(x, y, z);
+        if (cur === B.FURNACE || cur === B.FURNACE_LIT) this.world.setBlock(x, y, z, f.lit ? B.FURNACE_LIT : B.FURNACE, this.world.getMeta(x, y, z));
+        else delete F[k];
+      }
+      if (UI.invOpen && UI.invKind === 'furnace' && UI.furnace === f && UI.furnaceEls && (this.frameN & 7) === 0) UI.refreshInventory();
+    }
+  }
+
   // ------------------------------------------------------------------ particles
   spawnParticles(x, y, z, id, n, hit) {
     if (!id) return;
@@ -805,13 +860,14 @@ class Game {
     const cam = this.cam;
     const time = performance.now() / 1000;
     const tick = Math.floor(performance.now() / 50);
-    r.renderWorld(w, cam, p.yaw, p.pitch, env, time, tick);
+    const vy = this.camMode === 2 ? p.yaw + Math.PI : p.yaw, vpch = this.camMode === 2 ? -p.pitch : p.pitch;
+    r.renderWorld(w, cam, vy, vpch, env, time, tick);
     const gl = r.gl;
     // clouds
     if (Settings.clouds && !env.underwater) r.drawClouds(cam, env, time + this.time * DAY_LEN);
     // entities / particles / player model
     this.drawParticles(env);
-    if (this.camMode) this.drawPlayerModel(env);
+    if (this.ents) this.ents.render(env, cam);
     r.renderTranslucent(cam, env, time, tick);
     // selection outline + cracks
     if (this.target && !this.hideHud) this.drawSelection(env);
@@ -923,14 +979,14 @@ class Game {
     }
     const id = held.id;
     const cube = !isItem(id) && (SHAPE[id] === SH.CUBE || SHAPE[id] === SH.SLAB || SHAPE[id] === SH.STAIRS || SHAPE[id] === SH.CHEST || SHAPE[id] === SH.CACTUS || SHAPE[id] === SH.FARMLAND || SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL);
-    const rotY = 0.78, rotX = 0.15;
+    const rotY = 0.78, rotX = 0.32;
     const tf = (x, y, z) => {
       let x1 = x * Math.cos(rotY) + z * Math.sin(rotY), z1 = -x * Math.sin(rotY) + z * Math.cos(rotY);
       let y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX); z1 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
       return [x1 + 0.56 + bx - swingA * 0.25, y1 - 0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0), z1 - 1.0 - swingA * 0.2];
     };
     if (cube) {
-      const s = 0.13;
+      const s = 0.105;
       const h = SHAPE[id] === SH.SLAB ? 0 : s;
       const L = [FTEX[id * 6], FTEX[id * 6 + 1], FTEX[id * 6 + 2], FTEX[id * 6 + 3], FTEX[id * 6 + 4], FTEX[id * 6 + 5]];
       if (FLAGS[id] & BF_FACING) L[4] = FRONT[id];
@@ -953,7 +1009,7 @@ class Game {
   }
 
   // MC-style box with standard skin unwrap. M maps local coords -> camera relative
-  pushModelBox(out, M, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint) {
+  pushModelBox(out, M, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
     const tc = tint || [1, 1, 1];
     const faces = [
       // [corners(4) as [x,y,z]], uv rect [u0,v0,u1,v1], shade
@@ -961,11 +1017,11 @@ class Game {
       [[[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], [u + d + w, v + d, u + d + w + d, v + d + h], 0.72], // -x
       [[[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], [u + d, v, u + d + w, v + d], 1.0],               // top
       [[[x1, y0, z1], [x0, y0, z1], [x0, y0, z0], [x1, y0, z0]], [u + d + w, v, u + d + w + w, v + d], 0.55],      // bottom
-      [[[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], [u + d, v + d, u + d + w, v + d + h], 0.9],       // front (+z)
-      [[[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], [u + d + w + d, v + d, u + d + w + d + w, v + d + h], 0.8], // back
+      [[[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], [u + d + w + d, v + d, u + d + w + d + w, v + d + h], 0.8], // back (+z)
+      [[[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], [u + d, v + d, u + d + w, v + d + h], 0.9],       // front (-z)
     ];
     for (const [q, uv, sh] of faces) {
-      const U = [[uv[0], uv[3]], [uv[2], uv[3]], [uv[2], uv[1]], [uv[0], uv[1]]];
+      const U = mirror ? [[uv[2], uv[3]], [uv[0], uv[3]], [uv[0], uv[1]], [uv[2], uv[1]]] : [[uv[0], uv[3]], [uv[2], uv[3]], [uv[2], uv[1]], [uv[0], uv[1]]];
       const P = q.map(c => M(c[0], c[1], c[2]));
       for (const i of [0, 1, 2, 0, 2, 3]) {
         out.push(P[i][0], P[i][1], P[i][2], U[i][0] / tw, U[i][1] / th, 0, light * sh * tc[0], light * sh * tc[1], light * sh * tc[2], 1);
@@ -986,7 +1042,7 @@ class Game {
       let y1 = y * Math.cos(rx) - z * Math.sin(rx), z1 = y * Math.sin(rx) + z * Math.cos(rx);
       let X = x + px, Y = y1 + py, Z = z1 + pz;
       if (fn) [X, Y, Z] = fn(X, Y, Z);
-      const cy = Math.cos(-yaw + Math.PI), sy = Math.sin(-yaw + Math.PI);
+      const cy = Math.cos(yaw), sy = Math.sin(yaw);
       const wx = X * cy - Z * sy, wz = X * sy + Z * cy;
       return [p.pos[0] + wx - cam[0], p.pos[1] + Y - cam[1], p.pos[2] + wz - cam[2]];
     };
@@ -1037,7 +1093,7 @@ class Game {
       Sfx.init(); Sfx.resume();
       if (!this.playing || this.loadingWorld) return;
       if (document.pointerLockElement !== cv) { if (!UI.invOpen && !this.surv.dead) { cv.requestPointerLock(); } return; }
-      if (e.button === 0) { this.mouse.l = true; this.mouse.lT = 0; }
+      if (e.button === 0) { if (!this.attack()) { this.mouse.l = true; this.mouse.lT = 0; } }
       if (e.button === 2) { this.mouse.r = true; this.mouse.rFirst = true; }
       if (e.button === 1) { e.preventDefault(); this.pickBlock(); }
     });
@@ -1086,8 +1142,11 @@ class Game {
   dropHeld() {
     const s = this.inv[this.sel];
     if (!s) return;
+    const p = this.player, l = p.look(), e = p.eye();
+    const one = { ...s, count: 1 };
     if (this.mode === 'survival') { if (--s.count <= 0) this.inv[this.sel] = null; }
     else this.inv[this.sel] = null;
+    this.ents.dropItem(one.id, this.mode === 'survival' ? 1 : s.count, e[0] + l[0] * 0.4, e[1] - 0.3, e[2] + l[2] * 0.4, [l[0] * 6, l[1] * 6 + 2, l[2] * 6]);
     this.updateHotbar();
   }
 }

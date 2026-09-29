@@ -180,6 +180,14 @@ const ITEM_TABLE = [
   ['SHEARS', 'Shears', 'Ножницы', 'item_shears', 1, { tool: 'shears', tier: 3 }],
   ['BOW', 'Bow', 'Лук', 'item_bow', 1],
   ['FLINT_AND_STEEL', 'Flint and Steel', 'Огниво', 'flint_and_steel', 1],
+  ['SPAWN_EGG_PIG', 'Pig Spawn Egg', 'Яйцо призыва свиньи', 'item_spawn_egg', 64, { mob: 'pig' }],
+  ['SPAWN_EGG_COW', 'Cow Spawn Egg', 'Яйцо призыва коровы', 'item_spawn_egg', 64, { mob: 'cow' }],
+  ['SPAWN_EGG_SHEEP', 'Sheep Spawn Egg', 'Яйцо призыва овцы', 'item_spawn_egg', 64, { mob: 'sheep' }],
+  ['SPAWN_EGG_CHICKEN', 'Chicken Spawn Egg', 'Яйцо призыва курицы', 'item_spawn_egg', 64, { mob: 'chicken' }],
+  ['SPAWN_EGG_ZOMBIE', 'Zombie Spawn Egg', 'Яйцо призыва зомби', 'item_spawn_egg', 64, { mob: 'zombie' }],
+  ['SPAWN_EGG_SKELETON', 'Skeleton Spawn Egg', 'Яйцо призыва скелета', 'item_spawn_egg', 64, { mob: 'skeleton' }],
+  ['SPAWN_EGG_CREEPER', 'Creeper Spawn Egg', 'Яйцо призыва крипера', 'item_spawn_egg', 64, { mob: 'creeper' }],
+  ['SPAWN_EGG_SPIDER', 'Spider Spawn Egg', 'Яйцо призыва паука', 'item_spawn_egg', 64, { mob: 'spider' }],
 ];
 for (const [mat, en, ru, tier] of [['wooden', 'Wooden', 'Деревянн', 1], ['stone', 'Stone', 'Каменн', 2],
   ['iron', 'Iron', 'Железн', 3], ['golden', 'Golden', 'Золот', 4], ['diamond', 'Diamond', 'Алмазн', 5]]) {

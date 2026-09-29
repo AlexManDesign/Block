@@ -240,6 +240,13 @@ const UI = {
     this.chestItems = g.chests[this.chestPos] || new Array(27).fill(null);
     this.openInventory('chest');
   },
+  openFurnace(x, y, z) {
+    const g = this.game;
+    const F = g.meta.furnaces || (g.meta.furnaces = {});
+    this.furnacePos = `${x},${y},${z}`;
+    this.furnace = F[this.furnacePos] || (F[this.furnacePos] = { slots: [null, null, null], burn: 0, burnMax: 0, cook: 0 });
+    this.openInventory('furnace');
+  },
   saveChest() {
     const g = this.game;
     if (this.chestItems.some(s => s)) g.chests[this.chestPos] = this.chestItems; else delete g.chests[this.chestPos];
@@ -320,7 +327,15 @@ const UI = {
       root.append(trash);
     } else {
       const top = el('div', { class: 'invTop' });
-      if (kind === 'chest') {
+      if (kind === 'furnace') {
+        const f = this.furnace;
+        root.append(el('div', { class: 'invTitle' }, T('furnace')));
+        const sl = (i) => { const e = slotEl(f.slots[i]); e.onmousedown = (ev) => { ev.preventDefault(); if (i === 2) { if (f.slots[2] && (!this.cursor || this.cursor.id === f.slots[2].id)) { if (this.cursor) this.cursor.count += f.slots[2].count; else this.cursor = f.slots[2]; f.slots[2] = null; } } else this.clickSlot(f.slots, i, ev.button, false); this.refreshInventory(); }; return e; };
+        const flame = el('div', { class: 'flame' }, el('i', { style: `height:${f.burnMax ? Math.round(100 * f.burn / f.burnMax) : 0}%` }));
+        const prog = el('div', { class: 'prog' }, el('i', { style: `width:${Math.round(f.cook / 10 * 100)}%` }));
+        this.furnaceEls = { flame, prog };
+        root.append(el('div', { class: 'furnace' }, el('div', { class: 'fcol' }, sl(0), flame, sl(1)), prog, sl(2)));
+      } else if (kind === 'chest') {
         root.append(el('div', { class: 'invTitle' }, T('chest')));
         root.append(mkGrid(this.chestItems, 0, 27, 9, (i, b, sh) => {
           if (sh && this.chestItems[i]) { const s = this.chestItems[i]; this.chestItems[i] = null; const r = g.giveItem(s.id, s.count); if (r) this.chestItems[i] = { ...s, count: r }; }
