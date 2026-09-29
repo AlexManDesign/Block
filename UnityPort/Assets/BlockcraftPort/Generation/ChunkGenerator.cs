@@ -51,6 +51,14 @@ namespace BlockcraftPort
         static bool Mountain(BiomeId b)=>b==BiomeId.Mountain||b==BiomeId.Peaks||b==BiomeId.Meadow||b==BiomeId.Grove||b==BiomeId.SnowySlopes||b==BiomeId.JaggedPeaks||b==BiomeId.StonyPeaks||b==BiomeId.Windswept;
         float G(int x,int z)=>n.Hash(x,z); float G3(int x,int y,int z)=>n.Hash3(x,y,z); float DA(float x,float z)=>n.ClassicValue(x,z); float EA(float x,float y,float z)=>n.Value3(x,y,z); static float Signed(float v)=>v*2f-1f;
 
+#if PARITY_HARNESS
+        // Offline profiling only: per-stage wall time of GenerateSource (single-threaded harness use).
+        public static readonly double[] StageMs=new double[14];
+        public static readonly string[] StageNames={"biome columns","density lattice","interpolate","surface+plants","trees","caves/rock","aquifers","sea flood","ores","cave deco","structures","mineshafts","to unity column","light bake"};
+        [ThreadStatic] static System.Diagnostics.Stopwatch stageSw;[ThreadStatic] static double stageLast;
+        static void StageStart(){if(stageSw==null)stageSw=System.Diagnostics.Stopwatch.StartNew();stageLast=stageSw.Elapsed.TotalMilliseconds;}
+        static void StageMark(int i){double t=stageSw.Elapsed.TotalMilliseconds;StageMs[i]+=t-stageLast;stageLast=t;}
+#endif
         public ChunkColumn Generate(ChunkCoord unityCoord)
         {
             // Generate the exact source chunk, then reflect its Z cells into Unity.  The -1 in the
@@ -74,6 +82,9 @@ namespace BlockcraftPort
             int wx0=cc.X*S,wz0=cc.Z*S;
             try
             {
+#if PARITY_HARNESS
+            StageStart();
+#endif
             // Cache the 16x16 source-column biome samples once for every stage that uses the same
             // chunk columns (surface, sea freezing and exported biome/height arrays).
             for(int lx=0;lx<S;lx++)for(int lz=0;lz<S;lz++)
@@ -83,12 +94,21 @@ namespace BlockcraftPort
                 bool aq=IsAquiferXZ(wx,wz);columnAquifers[ci]=(byte)(aq?1:0);
                 columnTrees[ci]=aq?TreeKind.None:TreeAt(wx,wz,bs,false);
             }
+#if PARITY_HARNESS
+            StageMark(0);
+#endif
             for(int gx=0;gx<gxz;gx++)for(int gz=0;gz<gxz;gz++){int wx=wx0+gx*stepXZ,wz=wz0+gz*stepXZ,o=(gx*gxz+gz)*gy;var columnBiome=gx<gxz-1&&gz<gxz-1?columnBiomes[(gx*stepXZ)*S+gz*stepXZ]:Biomes.Sample(wx,wz);for(int yy=0;yy<gy;yy++)density[o+yy]=Biomes.TerrainDensity(columnBiome,wx,MinY+yy*stepY,wz);}
+#if PARITY_HARNESS
+            StageMark(1);
+#endif
             for(int cx=0;cx<S/stepXZ;cx++)for(int cz=0;cz<S/stepXZ;cz++)for(int cy=0;cy<H/stepY;cy++)
             {
                 int q=(cx*gxz+cz)*gy+cy;double a=density[q],b=density[q+1],c=density[q+gy],d=density[q+gy+1],e=density[q+gxz*gy],f=density[q+gxz*gy+1],g=density[q+gxz*gy+gy],h=density[q+gxz*gy+gy+1];int baseY=MinY+cy*stepY;
                 for(int dx=0;dx<stepXZ;dx++){double tx=dx/(double)stepXZ;double a0=a+(e-a)*tx,b0=b+(f-b)*tx,c0=c+(g-c)*tx,d0=d+(h-d)*tx;for(int dz=0;dz<stepXZ;dz++){double tz=dz/(double)stepXZ;double lo=a0+(c0-a0)*tz,hi=b0+(d0-b0)*tz;int lx=cx*stepXZ+dx,lz=cz*stepXZ+dz;for(int dy=0;dy<stepY;dy++){int y=baseY+dy;double den=lo+(hi-lo)*(dy/(double)stepY);blocks[Idx(lx,y,lz)]=(ushort)(den>0?BlockId.Stone:y<=Sea?BlockId.Water:BlockId.Air);}}}
             }
+#if PARITY_HARNESS
+            StageMark(2);
+#endif
             // Surface/subsurface + water/land decoration.
             for(int lx=0;lx<S;lx++)for(int lz=0;lz<S;lz++)
             {
@@ -108,6 +128,9 @@ namespace BlockcraftPort
                     else PlacePlantDense(blocks,meta,wx0,wz0,wx,wz,top,bs,columnAquifers[lx*S+lz]!=0,columnTrees[lx*S+lz]);
                 }
             }
+#if PARITY_HARNESS
+            StageMark(3);
+#endif
             // Trees sample beyond chunk borders, exactly C2's source range. genWorker T2() suppresses
             // roots inside future structure clear-zones; precompute those zones once per chunk.
             var treeExclusions=structures.BuildTreeExclusions(wx0,wz0,5);
@@ -118,20 +141,46 @@ namespace BlockcraftPort
                 if(kind!=TreeKind.None&&!MainStructureGenerator.DecorationBlocked(treeExclusions,wx,wz))
                     PlaceTreeDense(blocks,wx0,wz0,wx,wz,kind);
             }
-            // Cave/rock pass.
+#if PARITY_HARNESS
+            StageMark(4);
+#endif
+            // Cave/rock pass. Noise-cell caches are per thread; reset them so a different seed/world
+            // on the same worker thread can never reuse corner values.
+            System.Array.Clear(CaveCells,0,CaveCells.Length);
             for(int lx=0;lx<S;lx++)for(int lz=0;lz<S;lz++)
             {
                 int wx=wx0+lx,wz=wz0+lz,top=MinY;for(int y=MaxY;y>MinY;y--)if(CaveReplace((BlockId)blocks[Idx(lx,y,lz)])){top=y;break;}
                 for(int y=MinY;y<=top;y++){int ii=Idx(lx,y,lz);BlockId old=(BlockId)blocks[ii];if(!CaveReplace(old))continue;if(BedrockNoise(wx,y,wz)){blocks[ii]=(ushort)BlockId.Bedrock;continue;}int cave=Cave(wx,y,wz,top);if(cave==1){blocks[ii]=0;continue;}if(cave==2||cave==3){BlockId fluid=cave==2?BlockId.Water:BlockId.Lava;blocks[ii]=(ushort)fluid;for(int q=ii-1;q>Col(lx,lz)&&blocks[q]==0;q--)blocks[q]=(ushort)fluid;continue;}if(old==BlockId.Stone)blocks[ii]=(ushort)RockVariant(wx,y,wz);}
             }
+#if PARITY_HARNESS
+            StageMark(5);
+#endif
             CarveAquifers(blocks,wx0,wz0,cc.X,cc.Z);
+#if PARITY_HARNESS
+            StageMark(6);
+#endif
             SeaFloodAndFreeze(blocks,columnBiomes);
+#if PARITY_HARNESS
+            StageMark(7);
+#endif
             GenerateOres(blocks,wx0,wz0,cc.X,cc.Z);
+#if PARITY_HARNESS
+            StageMark(8);
+#endif
             DecorateCaves(blocks,meta,wx0,wz0);
+#if PARITY_HARNESS
+            StageMark(9);
+#endif
             // genWorker D2() then i4(): surface structures (including shipwrecks) followed by deepslate mineshafts.
             structures.ApplySurfaceStructures(blocks,meta,wx0,wz0,cc.X,cc.Z);
+#if PARITY_HARNESS
+            StageMark(10);
+#endif
             structures.ApplyMineshafts(blocks,wx0,wz0,cc.X,cc.Z);
 
+#if PARITY_HARNESS
+            StageMark(11);
+#endif
             // Write the generated source chunk straight into the reflected Unity column. The previous
             // port first materialized a complete source ChunkColumn and immediately copied it, doubling
             // transient section allocations for every streamed chunk. This is byte-for-byte equivalent.
@@ -145,9 +194,16 @@ namespace BlockcraftPort
                 int y0=MinY+sy*16;bool any=false;
                 for(int lx=0;lx<16&&!any;lx++)for(int sz=0;sz<16&&!any;sz++)for(int ly=0;ly<16;ly++){int si=Idx(lx,y0+ly,sz);if(blocks[si]!=0||meta[si]!=0){any=true;break;}}
                 if(!any)continue;var d=dst.EnsureSection(sy);
-                for(int lx=0;lx<16;lx++)for(int uz=0;uz<16;uz++){int sz=15-uz;for(int ly=0;ly<16;ly++){int si=Idx(lx,y0+ly,sz),di=((lx*16)+uz)*16+ly;ushort b=blocks[si];d.Blocks[di]=b;d.Meta[di]=SourceCoords.SourceMetaToUnity((BlockId)b,meta[si]);if(b!=0)d.NonAir++;}}
+                for(int lx=0;lx<16;lx++)for(int uz=0;uz<16;uz++){int sz=15-uz;for(int ly=0;ly<16;ly++){int si=Idx(lx,y0+ly,sz),di=((lx*16)+uz)*16+ly;ushort b=blocks[si];d.Blocks[di]=b;byte sm=meta[si];d.Meta[di]=sm!=0||SourceCoords.HasDirectionalMeta((BlockId)b)?SourceCoords.SourceMetaToUnity((BlockId)b,sm):(byte)0;if(b!=0)d.NonAir++;}}
             }
-            VoxelLighting.BakeColumn(dst);dst.Revision=0;return dst;
+#if PARITY_HARNESS
+            StageMark(12);
+#endif
+            VoxelLighting.BakeColumn(dst);dst.Revision=0;
+#if PARITY_HARNESS
+            StageMark(13);
+#endif
+            return dst;
             }
             finally
             {
@@ -208,8 +264,12 @@ if(s.Height<=Sea||s.Height>=MaxY-3||aquifer||tree!=TreeKind.None)return BlockId.
         }
 
         bool BedrockNoise(int x,int y,int z)=>y<=MinY||y<MinY+5&&G3(x,y,z)<(MinY+5-y)/5f;
-        BlockId RockVariant(int x,int y,int z){if(y<=0)return EA(x*.07f+71.7f,y*.07f-51.5f,z*.07f+31.3f)>.86f?BlockId.Tuff:BlockId.Deepslate;if(y<8&&G3(x+7,y-3,z+5)<(8-y)/8f)return BlockId.Deepslate;if(y<84){if(EA(x*.085f+5.1f,y*.085f-3.3f,z*.085f+9.7f)>.85f)return BlockId.Granite;if(EA(x*.085f-8.8f,y*.085f+6.6f,z*.085f-2.2f)>.85f)return BlockId.Diorite;if(EA(x*.085f+14.4f,y*.085f+11.1f,z*.085f+4.4f)>.85f)return BlockId.Andesite;}return BlockId.Stone;}
-        int Cave(int x,int y,int z,int top){if(y<=MinY+5||y>top)return 0;if(y==top)return 0;int depth=top-y;float fade=depth<8?depth/8f:1;if(y<MinY+14)fade=Math.Min(fade,(y-(MinY+5))/9f);if(fade<=0)return 0;float amp=1+Signed(EA(x*.09f+2.2f,y*.09f-4.4f,z*.09f+6.6f))*.85f;bool cave=false;if(y<110){float f=Signed(EA(x*.012f+11.1f,y*.018f-7.7f,z*.012f+4.4f));if(f*f<.026f*.026f*fade*fade*amp)cave=true;}if(!cave){const float w=.045f;float xx=x+Signed(EA(x*w+61.1f,y*w-22.2f,z*w+13.3f))*15,yy=y+Signed(EA(x*w+9.9f,y*w+2.2f,z*w-51.1f))*10,zz=z+Signed(EA(x*w-31.7f,y*w+44.4f,z*w-8.8f))*15,d=EA(x*.02f+5.5f,y*.02f-3.3f,z*.02f+7.7f),lim=(.3f+1.8f*d*d)*amp;if(y<90){float a=Signed(EA(xx*.022f+12.3f,yy*.022f-7.7f,zz*.022f+4.1f)),b=Signed(EA(xx*.022f-41.9f,yy*.022f+23.3f,zz*.022f-9.5f));if(a*a+b*b<.016f*fade*lim)cave=true;}if(!cave&&EA(x*.006f+90.1f,y*.006f+5.5f,z*.006f-30.2f)>.5f){float a=Signed(EA(xx*.04f+5.1f,yy*.04f-8.2f,zz*.04f+3.3f)),b=Signed(EA(xx*.04f-7.7f,yy*.04f+9.9f,zz*.04f-2.1f));if(a*a+b*b<.009f*fade*lim)cave=true;}}if(!cave)return 0;if(y<=MinY+12)return 3;if(depth>12&&EA(x*.012f+401.1f,y*.005f-77.7f,z*.012f+220.2f)>.52f){float q=EA(x*.013f+11.3f,.5f,z*.013f-9.9f);int wl=(int)Math.Floor(-14+(q-.5f)*44);if(wl>Sea)wl=Sea;if(y<=wl)return 2;}return 1;}
+        BlockId RockVariant(int x,int y,int z){var C=CaveCells;if(y<=0)return n.Value3(ref C[13],x*.07f+71.7f,y*.07f-51.5f,z*.07f+31.3f)>.86f?BlockId.Tuff:BlockId.Deepslate;if(y<8&&G3(x+7,y-3,z+5)<(8-y)/8f)return BlockId.Deepslate;if(y<84){if(n.Value3(ref C[14],x*.085f+5.1f,y*.085f-3.3f,z*.085f+9.7f)>.85f)return BlockId.Granite;if(n.Value3(ref C[15],x*.085f-8.8f,y*.085f+6.6f,z*.085f-2.2f)>.85f)return BlockId.Diorite;if(n.Value3(ref C[16],x*.085f+14.4f,y*.085f+11.1f,z*.085f+4.4f)>.85f)return BlockId.Andesite;}return BlockId.Stone;}
+        // Per-thread lattice-cell caches for the Value3 call sites of Cave()/RockVariant(). The cave pass
+        // walks each column upwards, so consecutive voxels mostly stay in one noise cell per site.
+        [ThreadStatic] static MainTerrainNoise.Cell3[] caveCells;
+        static MainTerrainNoise.Cell3[] CaveCells=>caveCells??(caveCells=new MainTerrainNoise.Cell3[17]);
+        int Cave(int x,int y,int z,int top){if(y<=MinY+5||y>top)return 0;if(y==top)return 0;int depth=top-y;float fade=depth<8?depth/8f:1;if(y<MinY+14)fade=Math.Min(fade,(y-(MinY+5))/9f);if(fade<=0)return 0;var C=CaveCells;float amp=1+Signed(n.Value3(ref C[0],x*.09f+2.2f,y*.09f-4.4f,z*.09f+6.6f))*.85f;bool cave=false;if(y<110){float f=Signed(n.Value3(ref C[1],x*.012f+11.1f,y*.018f-7.7f,z*.012f+4.4f));if(f*f<.026f*.026f*fade*fade*amp)cave=true;}if(!cave){const float w=.045f;float xx=x+Signed(n.Value3(ref C[2],x*w+61.1f,y*w-22.2f,z*w+13.3f))*15,yy=y+Signed(n.Value3(ref C[3],x*w+9.9f,y*w+2.2f,z*w-51.1f))*10,zz=z+Signed(n.Value3(ref C[4],x*w-31.7f,y*w+44.4f,z*w-8.8f))*15,d=n.Value3(ref C[5],x*.02f+5.5f,y*.02f-3.3f,z*.02f+7.7f),lim=(.3f+1.8f*d*d)*amp;if(y<90){float a=Signed(n.Value3(ref C[6],xx*.022f+12.3f,yy*.022f-7.7f,zz*.022f+4.1f)),b=Signed(n.Value3(ref C[7],xx*.022f-41.9f,yy*.022f+23.3f,zz*.022f-9.5f));if(a*a+b*b<.016f*fade*lim)cave=true;}if(!cave&&n.Value3(ref C[8],x*.006f+90.1f,y*.006f+5.5f,z*.006f-30.2f)>.5f){float a=Signed(n.Value3(ref C[9],xx*.04f+5.1f,yy*.04f-8.2f,zz*.04f+3.3f)),b=Signed(n.Value3(ref C[10],xx*.04f-7.7f,yy*.04f+9.9f,zz*.04f-2.1f));if(a*a+b*b<.009f*fade*lim)cave=true;}}if(!cave)return 0;if(y<=MinY+12)return 3;if(depth>12&&n.Value3(ref C[11],x*.012f+401.1f,y*.005f-77.7f,z*.012f+220.2f)>.52f){float q=n.Value3(ref C[12],x*.013f+11.3f,.5f,z*.013f-9.9f);int wl=(int)Math.Floor(-14+(q-.5f)*44);if(wl>Sea)wl=Sea;if(y<=wl)return 2;}return 1;}
 
         struct Mulberry{int s;public Mulberry(int v){s=v;}public double Next(){unchecked{s+=1831565813;int e=(s^(int)((uint)s>>15))*(1|s);e=(e+(e^(int)((uint)e>>7))*(61|e))^e;return (uint)(e^(int)((uint)e>>14))/4294967296.0;}}}
         Tunnel Feature(int cx,int cz){long key=((long)cx<<32)^(uint)cz;if(!tunnelCache.TryGetValue(key,out var t)){var built=BuildTunnel(cx,cz)??NoTunnel;t=tunnelCache.GetOrAdd(key,built);}return t.Exists?t:null;}

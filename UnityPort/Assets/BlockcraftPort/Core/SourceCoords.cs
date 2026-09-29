@@ -85,6 +85,29 @@ namespace BlockcraftPort
             }
         }
 
+        static bool[] directional;
+        /// <summary>True when MirrorMetadata can change this block's metadata (false = identity).</summary>
+        public static bool HasDirectionalMeta(BlockId id)
+        {
+            var t = directional;
+            if (t == null)
+            {
+                t = new bool[SourceBlockData.Count];
+                for (int i = 0; i < t.Length; i++)
+                {
+                    switch (BlockRegistry.Get((BlockId)i).Shape)
+                    {
+                        case BlockShape.Stairs: case BlockShape.Trapdoor: case BlockShape.Ladder: case BlockShape.Door:
+                        case BlockShape.Bed: case BlockShape.Button: case BlockShape.Torch: case BlockShape.FlatFaces:
+                        case BlockShape.ShipWheel: case BlockShape.Chest:
+                            t[i] = true; break;
+                    }
+                }
+                directional = t;
+            }
+            return (uint)id < (uint)t.Length && t[(int)id];
+        }
+
         public static byte SourceMetaToUnity(BlockId id, byte sourceMeta) => MirrorMetadata(id, sourceMeta);
         public static byte UnityMetaToSource(BlockId id, byte unityMeta) => MirrorMetadata(id, unityMeta);
     }

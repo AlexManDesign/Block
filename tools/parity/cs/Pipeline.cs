@@ -36,6 +36,8 @@ static class PipelineBench
         { MeshChunk(world, nb, new ChunkCoord(ox + x, oz + z), ref verts, ref tris, ref sections); meshed++; }
         double meshMs = sw.Elapsed.TotalMilliseconds;
         Console.WriteLine($"gen    {genMs / cols.Count,7:F2} ms/chunk  ({cols.Count} chunks)");
+        for (int i = 0; i < ChunkGenerator.StageMs.Length; i++)
+            Console.WriteLine($"   {ChunkGenerator.StageNames[i],-16} {ChunkGenerator.StageMs[i] / cols.Count,7:F2} ms/chunk");
         Console.WriteLine($"stitch {stitchMs / cols.Count,7:F2} ms/chunk");
         Console.WriteLine($"mesh   {meshMs / meshed,7:F2} ms/chunk  ({meshed} chunks, {sections} sections, {verts / meshed} verts/chunk, {tris / meshed} tris/chunk)");
         return 0;

@@ -149,14 +149,55 @@ namespace BlockcraftPort
         }
         double Hash3Exact(int x,int y,int z)=>Hash3BitsTrunc(x,y,z)/4294967296.0;
 
+        /// <summary>floor() for values well inside the int range, without the double round trip.</summary>
+        static int FastFloor(float v){int i=(int)v;return v<i?i-1:i;}
+        const int HX=374761393, HY=668265263, HZ=2147483423;
+        static float Mix3(int r)
+        {
+            unchecked { r ^= (int)((uint)r >> 13); r *= 1274126177; r ^= (int)((uint)r >> 16); return (uint)r / 4294967296f; }
+        }
+
         public float Value3(float x,float y,float z)
         {
-            int ix=(int)Math.Floor(x), iy=(int)Math.Floor(y), iz=(int)Math.Floor(z);
+            // Hot path of cave carving (up to ten calls per voxel). Same arithmetic as Hash3() on the
+            // eight corners: the corner hashes are the base hash plus the per-axis multipliers
+            // (wrapping int arithmetic), so each corner costs one add instead of three multiplies.
+            int ix=FastFloor(x), iy=FastFloor(y), iz=FastFloor(z);
             float fx=x-ix, fy=y-iy, fz=z-iz;
             float ux=Smooth(fx), uy=Smooth(fy), uz=Smooth(fz);
-            float a=Hash3(ix,iy,iz), b=Hash3(ix+1,iy,iz), c=Hash3(ix,iy+1,iz), d=Hash3(ix+1,iy+1,iz);
-            float e=Hash3(ix,iy,iz+1), f=Hash3(ix+1,iy,iz+1), g=Hash3(ix,iy+1,iz+1), h=Hash3(ix+1,iy+1,iz+1);
+            int r0; unchecked { r0=(ix+seed)*HX + iy*HY + (iz-seed)*HZ; }
+            float a,b,c,d,e,f,g,h;
+            unchecked
+            {
+                a=Mix3(r0); b=Mix3(r0+HX); c=Mix3(r0+HY); d=Mix3(r0+HX+HY);
+                e=Mix3(r0+HZ); f=Mix3(r0+HX+HZ); g=Mix3(r0+HY+HZ); h=Mix3(r0+HX+HY+HZ);
+            }
             float l0=a+(b-a)*ux, l1=c+(d-c)*ux, l2=e+(f-e)*ux, l3=g+(h-g)*ux;
+            float q0=l0+(l1-l0)*uy, q1=l2+(l3-l2)*uy;
+            return q0+(q1-q0)*uz;
+        }
+
+        /// <summary>The eight corner values of the last lattice cell one Value3 call site used.</summary>
+        public struct Cell3 { public int X, Y, Z; public bool Valid; public float A, B, C, D, E, F, G, H; }
+
+        /// <summary>
+        /// Value3() for a call site that is evaluated at consecutive voxels (e.g. walking a column
+        /// upwards): the corner hashes are reused while the point stays in the same lattice cell.
+        /// Bit-identical to Value3().
+        /// </summary>
+        public float Value3(ref Cell3 c,float x,float y,float z)
+        {
+            int ix=FastFloor(x), iy=FastFloor(y), iz=FastFloor(z);
+            if(!c.Valid||ix!=c.X||iy!=c.Y||iz!=c.Z)
+            {
+                int r0; unchecked { r0=(ix+seed)*HX + iy*HY + (iz-seed)*HZ;
+                c.A=Mix3(r0); c.B=Mix3(r0+HX); c.C=Mix3(r0+HY); c.D=Mix3(r0+HX+HY);
+                c.E=Mix3(r0+HZ); c.F=Mix3(r0+HX+HZ); c.G=Mix3(r0+HY+HZ); c.H=Mix3(r0+HX+HY+HZ); }
+                c.X=ix; c.Y=iy; c.Z=iz; c.Valid=true;
+            }
+            float fx=x-ix, fy=y-iy, fz=z-iz;
+            float ux=Smooth(fx), uy=Smooth(fy), uz=Smooth(fz);
+            float l0=c.A+(c.B-c.A)*ux, l1=c.C+(c.D-c.C)*ux, l2=c.E+(c.F-c.E)*ux, l3=c.G+(c.H-c.G)*ux;
             float q0=l0+(l1-l0)*uy, q1=l2+(l3-l2)*uy;
             return q0+(q1-q0)*uz;
         }
