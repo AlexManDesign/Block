@@ -305,6 +305,20 @@ namespace BlockcraftPort
         // Independent Unity budgets can all fire in the same frame and add up to a hitch; the source
         // instead stops background-result work when the current display-frame headroom is consumed.
         double sourceRefreshMs=16.6;
+        // Upper bound for main-thread streaming work per frame (integration, light stitch, uploads).
+        // Heavy work (generation, meshing) runs on worker threads and is not limited by this slice.
+        public float MaxStreamingSliceMs = 6f;
+
+        static double DisplayRefreshMs()
+        {
+#if UNITY_2022_2_OR_NEWER
+            double hz=Screen.currentResolution.refreshRateRatio.value;
+#else
+            double hz=Screen.currentResolution.refreshRate;
+#endif
+            if(!(hz>=24.0&&hz<=500.0))hz=60.0;
+            return 1000.0/hz;
+        }
         double estimatedChunkIntegrateMs=.35;
         double estimatedMeshUploadMs=2.0;
         double estimatedUnloadMs=.35,estimatedGpuDropMs=.35,estimatedCpuTrimMs=.25;
@@ -379,13 +393,20 @@ namespace BlockcraftPort
             int cores=Mathf.Max(1,SystemInfo.processorCount);
             int sourceWorkers=Mathf.Clamp(cores-1,2,4);
             int unityWorkers=cores<=2?1:Mathf.Min(sourceWorkers,Mathf.Max(2,cores/2));
-            baseGenerationJobs=unityWorkers;
+            // Generation is by far the most expensive stage (~10x a chunk mesh after the mesher/light
+            // optimisations), so it gets every core not needed by the main/render threads. Mesh workers
+            // keep the source-sized pool. Worker threads run BelowNormal, so they yield to the frame.
+            int genWorkers=cores<=2?1:Mathf.Clamp(cores-2,unityWorkers,8);
+            baseGenerationJobs=genWorkers;
             baseMeshJobs=unityWorkers;
-            burstGenerationJobs=unityWorkers;
+            burstGenerationJobs=genWorkers;
             burstMeshJobs=unityWorkers;
-            backgroundWorkerBudget=unityWorkers*2;
-            MaxGenerationJobs=unityWorkers;
+            backgroundWorkerBudget=genWorkers+unityWorkers;
+            MaxGenerationJobs=genWorkers;
             MaxMeshJobs=unityWorkers;
+            // main.js keeps WT=10 requests in flight for its 2-4 workers; keep the same ~3 requests per
+            // worker so a wider native pool is never starved by the request window.
+            MaxPendingGeneration=Mathf.Max(10,genWorkers*3);
             adaptiveWorkerBoost=false;
             Generator = new ChunkGenerator(seed);
             LoadPersistentEditsSource(sourceEdits);
@@ -568,9 +589,14 @@ namespace BlockcraftPort
             }
             double workStartMs=NowMs();
             double frameMs=Time.unscaledDeltaTime*1000.0;
-            if(frameMs>1.0&&frameMs<40.0)sourceRefreshMs+=(frameMs-sourceRefreshMs)*.05;
             UpdateAdaptiveWorkerBudget((float)frameMs);
-            double workBudgetMs=Math.Max(sourceRefreshMs*.75,sourceRefreshMs-5.0);
+            // main.js derives its deadline from the requestAnimationFrame interval, which the browser
+            // locks to the display refresh. Unity runs uncapped (vSyncCount 0), so deriving the budget
+            // from the *measured* frame time created a feedback loop: streaming work filled 75% of the
+            // frame, the frame got longer, the budget grew with it and FPS settled at ~4x the base frame
+            // cost whenever work was queued. Use the display interval instead, capped to a fixed slice.
+            sourceRefreshMs=DisplayRefreshMs();
+            double workBudgetMs=Math.Min(Math.Max(sourceRefreshMs*.75,sourceRefreshMs-5.0),MaxStreamingSliceMs);
             double deadlineMs=workStartMs+workBudgetMs;
             LastStreamingBudgetMs=(float)workBudgetMs;
 
