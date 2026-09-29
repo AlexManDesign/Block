@@ -119,7 +119,24 @@ try {
   await ev(() => { xrayActive = false; });
   check('xray-camera-uniforms', xr < 1e-3, `max |terrainProg.uVP - vp| = ${xr.toExponential(2)}`);
 
-  // 5. Streaming on a 144 Hz display (short frame budget) while flying: the world must keep loading.
+  // 5. Cave culling + buried-face removal must not change the image (only isolated crack pixels may differ).
+  if (await ev(() => typeof sectionCulling !== 'undefined')) {
+    const cullViews = [[room[0] + .5, room[1] + .2, room[2] + 4.5, 0, 0.12], [room[0] + .5, 90, room[2] + .5, 0.6, 1.1], [room[0] + .5, 75, room[2] + .5, 2.2, 0.15]];
+    let worst = 0, cut = [];
+    await ev(() => { pauseOpen = true; mainLightFlicker = 0; mainLightFlickerTarget = 0; mainLightFlickerAt = 1e15; });
+    for (const v of cullViews) {
+      await ev(() => { sectionCulling = true; drawHiddenFaces = false; }); await hold(v, 6);
+      const on = await shot('cull_on'); const tOn = await ev(() => triangles);
+      await ev(() => { sectionCulling = false; drawHiddenFaces = true; }); await hold(v, 4);
+      const off = await shot('cull_off'); const tOff = await ev(() => triangles);
+      const n = await decoder.evaluate(async ([a, b]) => { const ld = async s => { const im = new Image(); im.src = 'data:image/png;base64,' + s; await im.decode(); const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; const g = c.getContext('2d'); g.drawImage(im, 0, 0); return g.getImageData(0, 0, c.width, c.height).data; }; const A = await ld(a), B2 = await ld(b); let n = 0; for (let i = 0; i < A.length; i += 4) if (A[i] !== B2[i] || A[i + 1] !== B2[i + 1] || A[i + 2] !== B2[i + 2]) n++; return n; }, [on.toString('base64'), off.toString('base64')]);
+      worst = Math.max(worst, n); cut.push(`${Math.round(tOff / 1000)}k->${Math.round(tOn / 1000)}k`);
+    }
+    await ev(() => { sectionCulling = true; drawHiddenFaces = false; pauseOpen = false; });
+    check('culling-image-identical', worst <= 800 * 450 * 0.0005, `max differing pixels ${worst} (triangles ${cut.join(', ')})`);
+  }
+
+  // 6. Streaming on a 144 Hz display (short frame budget) while flying: the world must keep loading.
   await ev(() => {
     const ob = window.frameBackgroundBudget;
     window.frameBackgroundBudget = function (hot) { streamFrameMs = 6.94; return ob(hot); };
