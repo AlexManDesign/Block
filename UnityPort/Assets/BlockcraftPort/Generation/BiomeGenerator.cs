@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Threading;
 
 namespace BlockcraftPort
@@ -11,15 +10,12 @@ namespace BlockcraftPort
     public sealed class BiomeGenerator
     {
         readonly MainTerrainNoise noise;
-        readonly ConcurrentDictionary<long, BiomeSample> cache = new ConcurrentDictionary<long, BiomeSample>();
-        int cacheInserts;
 
-        // Source iA() is called repeatedly for the same X/Z while T1() walks the vertical
-        // density lattice. ConcurrentDictionary is useful as the long-lived shared cache, but
-        // paying its synchronization/hash cost for every Y sample is unnecessary. A tiny
-        // thread-local direct-mapped front cache keeps the result bit-identical while making
-        // the hot path allocation-free and lock-free. Owner prevents cross-world seed reuse.
-        const int HotCacheSize = 2048;
+        // Source iA() is called repeatedly for the same X/Z while T1() walks the vertical density
+        // lattice and while trees/structures probe nearby columns. A per-thread direct-mapped cache
+        // keeps results bit-identical, lock-free and allocation-free. (A shared ConcurrentDictionary
+        // cost more in node allocation and stripe locking than recomputing Compute() on a miss.)
+        const int HotCacheSize = 16384;
         const int HotCacheMask = HotCacheSize - 1;
         static int nextOwner;
         readonly int cacheOwner;
@@ -119,22 +115,8 @@ namespace BlockcraftPort
             int hi=HotIndex(key);
             HotEntry e=h[hi];
             if(e.Valid && e.Owner==cacheOwner && e.Key==key) return e.Sample;
-            if(cache.TryGetValue(key,out var cached))
-            {
-                StoreHot(key,cached);
-                return cached;
-            }
             BiomeSample s=Compute(x,z);
-            // Same order-of-magnitude cap as genWorker UE. ConcurrentDictionary.Count takes every
-            // stripe lock, which serialised all generation threads on each cache miss; an atomic
-            // insertion counter gives the same bounded-size behaviour without the global lock.
-            if(Volatile.Read(ref cacheInserts)>400000)
-            {
-                cache.Clear();
-                Interlocked.Exchange(ref cacheInserts,0);
-            }
-            if(cache.TryAdd(key,s))Interlocked.Increment(ref cacheInserts);
-            StoreHot(key,s);
+            h[hi].Key=key; h[hi].Owner=cacheOwner; h[hi].Sample=s; h[hi].Valid=true;
             return s;
         }
 
