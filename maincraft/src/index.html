@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Maincraft</title>
+<style>
+:root{--slot:40px;--ui:#c6c6c6;font-family:'Minecraftia','Press Start 2P',ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;user-select:none;-webkit-user-select:none;touch-action:none}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block;image-rendering:pixelated;outline:none}
+.hidden{display:none!important}
+button{font:inherit;font-size:14px;color:#fff;text-shadow:2px 2px #3f3f3f;background:linear-gradient(#8a8a8a,#6b6b6b);border:2px solid #000;box-shadow:inset 2px 2px #aaa,inset -2px -2px #555;padding:10px 14px;min-width:240px;cursor:pointer;image-rendering:pixelated}
+button:hover:not(:disabled){background:linear-gradient(#9aa6e0,#7481c4);box-shadow:inset 2px 2px #c0c8ff,inset -2px -2px #3e4a8a}
+button:disabled{color:#a0a0a0;background:#555;cursor:default}
+input[type=text],input:not([type]){font:inherit;font-size:14px;background:#000;color:#fff;border:2px solid #a0a0a0;padding:9px;width:100%}
+.screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:30}
+.dirt{background:#2b2217 url() repeat;background-size:64px 64px;image-rendering:pixelated}
+#title{background:linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.55)),radial-gradient(circle at 50% 30%,#6f9fd8,#2b4b77 70%,#172437)}
+#title h1{font-size:clamp(34px,8vw,78px);margin:0 0 6px;letter-spacing:4px;color:#dcdcdc;text-shadow:4px 4px 0 #3a3a3a,6px 6px 0 #1b1b1b;transform:perspective(400px) rotateX(12deg)}
+#title .splash{color:#ff0;font-size:14px;text-shadow:2px 2px #3f3f00;transform:rotate(-12deg);margin:-12px 0 24px 260px;animation:pulse .6s infinite alternate}
+@keyframes pulse{to{transform:rotate(-12deg) scale(1.08)}}
+.panel{background:rgba(0,0,0,.55);border:2px solid #000;padding:18px;display:flex;flex-direction:column;gap:10px;align-items:stretch;width:min(520px,94vw);max-height:90vh}
+.panel h2{margin:0 0 6px;text-align:center;font-size:18px}
+#worldList{overflow:auto;min-height:160px;max-height:50vh;display:flex;flex-direction:column;gap:6px}
+.world{padding:8px 10px;border:2px solid transparent;cursor:pointer;display:flex;flex-direction:column;gap:2px;background:rgba(255,255,255,.04)}
+.world b{font-size:15px}.world span,.world small{font-size:11px;color:#aaa}
+.world.sel{border-color:#fff;background:rgba(255,255,255,.1)}
+.empty{color:#aaa;text-align:center;padding:30px 0;font-size:13px}
+.row{display:flex;gap:8px}.row button{flex:1;min-width:0}
+.opt{display:flex;align-items:center;gap:10px;font-size:12px}.opt>span:first-child{flex:0 0 42%}.opt input{flex:1}.opt>span:last-child{width:80px;text-align:right}
+.tog{min-width:0}
+#settingsList{display:flex;flex-direction:column;gap:8px;overflow:auto}
+#loading{background:#1b1510;z-index:40}
+#loading .bar{width:min(420px,80vw);height:10px;border:2px solid #666;background:#222}
+#loadBar{height:100%;width:0;background:#6c3;transition:width .2s}
+#hud{position:fixed;inset:0;pointer-events:none;z-index:10}
+body.nohud #hud>*:not(#debug){display:none}
+#cross{position:absolute;left:50%;top:50%;width:20px;height:20px;transform:translate(-50%,-50%);mix-blend-mode:difference}
+#cross:before,#cross:after{content:'';position:absolute;background:#fff}
+#cross:before{left:9px;top:0;width:2px;height:20px}#cross:after{left:0;top:9px;width:20px;height:2px}
+#hotbar{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);display:flex;background:rgba(0,0,0,.35);border:3px solid #2b2b2b;outline:2px solid #6b6b6b;pointer-events:auto}
+.slot{width:var(--slot);height:var(--slot);position:relative;display:flex;align-items:center;justify-content:center;background:#8b8b8b;border:2px solid;border-color:#373737 #fff #fff #373737}
+#hotbar .slot{background:rgba(0,0,0,.25);border:2px solid #4a4a4a;width:44px;height:44px}
+#hotbar .slot.sel{border:3px solid #fff;outline:2px solid #000;z-index:1}
+.slot img{width:78%;height:78%;image-rendering:pixelated;pointer-events:none}
+.slot .cnt{position:absolute;right:2px;bottom:0;font-size:12px;text-shadow:2px 2px #3f3f3f;pointer-events:none}
+.slot .dur{position:absolute;left:10%;bottom:3px;height:2px;pointer-events:none}
+#heldName{position:absolute;left:50%;bottom:110px;transform:translateX(-50%);font-size:14px;text-shadow:2px 2px #3f3f3f;opacity:0;white-space:nowrap}
+#heldName.fade{animation:fade 2.2s}
+@keyframes fade{0%,70%{opacity:1}100%{opacity:0}}
+#survBars{position:absolute;left:50%;bottom:62px;transform:translateX(-50%);width:420px;height:40px}
+#hearts,#food,#air{position:absolute;display:flex;gap:1px}
+#hearts{left:0;bottom:0}#food{right:0;bottom:0;flex-direction:row-reverse}#air{right:0;bottom:20px;flex-direction:row-reverse}
+#survBars i{display:block;width:18px;height:18px;background-size:100% 100%;image-rendering:pixelated}
+#debug{position:absolute;left:4px;top:4px;font-size:12px;line-height:1.35;white-space:pre;background:rgba(0,0,0,.35);padding:4px 6px;font-family:ui-monospace,Menlo,Consolas,monospace}
+#hint{position:absolute;left:50%;top:8px;transform:translateX(-50%);font-size:11px;color:#ddd;text-shadow:1px 1px #000;max-width:90vw;text-align:center;opacity:.85}
+#hurt{position:fixed;inset:0;pointer-events:none;z-index:9;background:radial-gradient(transparent 50%,rgba(200,0,0,.5));opacity:0}
+#hurt.flash{animation:hurt .5s}
+@keyframes hurt{0%{opacity:1}100%{opacity:0}}
+#vignette{position:fixed;inset:0;pointer-events:none;z-index:8;background:radial-gradient(ellipse at center,transparent 60%,rgba(0,0,0,.28))}
+#pause,#death{background:rgba(0,0,0,.5);z-index:25}
+#death{background:rgba(120,0,0,.45)}#death h2{font-size:36px;text-shadow:3px 3px #3f0000}
+#clickToPlay{position:fixed;left:50%;top:60%;transform:translateX(-50%);z-index:20;font-size:16px;padding:12px 18px;background:rgba(0,0,0,.6);cursor:pointer}
+#inventory{position:fixed;inset:0;z-index:22;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center}
+#invBody{background:var(--ui);border:3px solid #000;box-shadow:inset 3px 3px #fff,inset -3px -3px #555;padding:14px;color:#3f3f3f;display:flex;flex-direction:column;gap:6px;position:relative;max-width:98vw;max-height:96vh;overflow:auto}
+.invTitle{font-size:13px;margin-top:4px}
+.grid{display:grid;gap:0}
+.hotrow{margin-top:6px}
+.catalog{display:grid;grid-template-columns:repeat(9,var(--slot));max-height:calc(var(--slot) * 5 + 4px);overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.catalog .slot{cursor:pointer}.grid .slot{cursor:pointer}
+.catalog .slot:hover,.grid .slot:hover{background:#a8a8a8}
+.tabs{display:flex;gap:4px;margin-top:-6px}
+.tab{width:40px;height:36px;display:flex;align-items:center;justify-content:center;background:#9c9c9c;border:2px solid #555;cursor:pointer}
+.tab.on{background:var(--ui);border-color:#fff #555 transparent #fff}.tab img{width:24px;height:24px;image-rendering:pixelated}
+.search{margin:2px 0}
+.trash{position:absolute;right:14px;bottom:14px;color:#a00;font-size:20px;cursor:pointer}
+.invTop{display:flex;justify-content:center}
+.craftRow{display:flex;align-items:center;gap:12px}.arrow{font-size:24px;color:#555}
+.slot.result{width:52px;height:52px}
+#cursorItem{position:fixed;z-index:50;pointer-events:none;background:none!important;border:none!important}
+#touch{position:fixed;inset:0;pointer-events:none;z-index:12}
+#touch>*{pointer-events:auto;position:absolute}
+#tJoy{left:24px;bottom:24px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.3)}
+#tKnob{position:absolute;left:40px;top:40px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.35)}
+.tb{width:58px;height:58px;border-radius:12px;background:rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff}
+.tb.on{background:rgba(255,255,255,.3)}
+#tJump{right:30px;bottom:110px}#tSneak{right:100px;bottom:40px}#tMode{right:30px;bottom:190px}#tInv{right:30px;top:20px}#tPause{right:100px;top:20px}
+body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
+#fatal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#200;color:#f88;font-size:16px;z-index:100;padding:20px;text-align:center}
+#boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#111;z-index:99;font-size:14px;color:#aaa}
+@media (max-width:640px){:root{--slot:34px}#hotbar .slot{width:36px;height:36px}#survBars{width:340px;bottom:52px}#survBars i{width:15px;height:15px}button{min-width:0}}
+</style>
+</head>
+<body>
+<canvas id="gl" tabindex="0"></canvas>
+<div id="vignette"></div>
+<div id="hurt"></div>
+<div id="boot">Loading...</div>
+<div id="fatal" class="hidden"></div>
+
+<div id="title" class="screen hidden">
+  <div id="titleMain" class="screen" style="position:static">
+    <h1>MAINCRAFT</h1>
+    <div class="splash">WebGL2!</div>
+    <button id="btnSingle" data-t="singleplayer"></button>
+    <button id="btnSettingsTitle" data-t="settings"></button>
+  </div>
+  <div id="worlds" class="panel hidden">
+    <h2 data-t="singleplayer"></h2>
+    <div id="worldList"></div>
+    <div class="row"><button id="btnPlay" data-t="play"></button><button id="btnCreate" data-t="create"></button></div>
+    <div class="row"><button id="btnDelete" data-t="del"></button><button id="btnBackWorlds" data-t="back"></button></div>
+  </div>
+  <div id="createWorld" class="panel hidden">
+    <h2 data-t="create"></h2>
+    <label style="font-size:12px" data-t="worldName"></label><input id="wName" maxlength="32">
+    <label style="font-size:12px" data-t="seed"></label><input id="wSeed" maxlength="40">
+    <button id="btnMode"></button>
+    <div class="row"><button id="btnDoCreate" data-t="createBtn"></button><button id="btnCancelCreate" data-t="cancel"></button></div>
+  </div>
+</div>
+<div id="settingsBox" class="screen hidden" style="background:rgba(0,0,0,.6);z-index:35">
+  <div class="panel"><h2 data-t="settings"></h2><div id="settingsList"></div><button id="btnSettingsDone" data-t="done"></button></div>
+</div>
+<div id="loading" class="screen hidden"><div id="loadText"></div><div class="bar"><div id="loadBar"></div></div></div>
+
+<div id="hud" class="hidden">
+  <div id="cross"></div>
+  <div id="hint"></div>
+  <div id="survBars" class="hidden"><div id="hearts"></div><div id="food"></div><div id="air"></div></div>
+  <div id="heldName"></div>
+  <div id="hotbar"></div>
+  <div id="debug" class="hidden"></div>
+</div>
+<div id="clickToPlay" class="hidden"></div>
+<div id="pause" class="screen hidden">
+  <h2 data-t="paused"></h2>
+  <button id="btnResume" data-t="resume"></button>
+  <button id="btnSettingsPause" data-t="settings"></button>
+  <button id="btnQuit" data-t="saveQuit"></button>
+</div>
+<div id="death" class="screen hidden">
+  <h2 data-t="died"></h2>
+  <button id="btnRespawn" data-t="respawn"></button>
+  <button id="btnDeathQuit" data-t="saveQuit"></button>
+</div>
+<div id="inventory" class="hidden"><div id="invBody"></div></div>
+<div id="cursorItem" class="slot hidden"></div>
+<div id="touch" class="hidden">
+  <div id="tJoy"><div id="tKnob"></div></div>
+  <div id="tJump" class="tb">⬆</div><div id="tSneak" class="tb">⬇</div><div id="tMode" class="tb"></div>
+  <div id="tInv" class="tb">▦</div><div id="tPause" class="tb">❚❚</div>
+</div>
+
+<script type="text/plain" id="worker-src">
+/*@INCLUDE blockdata.js,blocks.js,noise.js,worldgen.js,mesher.js,worker.js*/
+</script>
+<script>
+const ASSETS = "@ASSETS@";
+/*@INCLUDE blockdata.js,blocks.js,noise.js,worldgen.js,mesher.js,shapes.js,world.js,render.js,player.js,audio.js,interact.js,craft.js,save.js,ui.js,game.js,menus.js,main.js*/
+</script>
+</body>
+</html>
