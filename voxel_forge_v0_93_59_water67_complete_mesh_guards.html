@@ -488,7 +488,7 @@ out vec2 vUV;flat out vec3 vMat;out vec3 vLightDist;out vec3 vWorld;
 void main(){vec3 w=aPos;gl_Position=uVP*vec4(w,1.0);vUV=aUV;float cls=floor(aShadeAlpha/512.0);float q=aShadeAlpha-cls*512.0;float a8=floor(q*0.5),shade=q-a8*2.0;float sky4=floor(aLight/16.0),blk4=aLight-sky4*16.0,dist=distance(w,uCam);float block=max(blk4*(1.0/15.0),max(0.0,(uHeldLight-dist)/15.0));vMat=vec3(aTile,shade,a8*(1.0/255.0));vLightDist=vec3(sky4*(1.0/15.0),block,dist);vWorld=w;}`,
 `#version 300 es
 precision mediump float;in highp vec2 vUV;flat in highp vec3 vMat;in vec3 vLightDist;in highp vec3 vWorld;uniform highp sampler2DArray uAtlas;uniform highp sampler2DArray uAtlas2;uniform highp sampler2DArray uAtlas3;uniform highp sampler2D uLightmap;uniform vec3 uFogColor;uniform float uFogNear,uFogFar,uLight;out vec4 outColor;
-void main(){vec2 f=mix(vec2(0.035),vec2(0.965),fract(vUV));vec4 t=vMat.x<256.0?texture(uAtlas,vec3(f,vMat.x)):(vMat.x<512.0?texture(uAtlas2,vec3(f,vMat.x-256.0)):texture(uAtlas3,vec3(f,vMat.x-512.0)));float a=t.a*vMat.z;if(a<0.12)discard;vec3 lm=texture(uLightmap,vec2((vLightDist.y*15.0+0.5)/16.0,(vLightDist.x*15.0+0.5)/16.0)).rgb*uLight;vec3 c=t.rgb*vMat.y*lm;float fog=smoothstep(uFogNear,uFogFar,vLightDist.z);vec3 col=mix(c,uFogColor,fog);if(uFogFar>30.0&&vWorld.y<63.5){float depth=max(0.0,63.5-vWorld.y);float wf=clamp(1.0-exp(-(depth*0.055+max(vLightDist.z-6.0,0.0)*0.015)),0.0,0.72);col=mix(col,vec3(0.07,0.24,0.45),wf);}outColor=vec4(col,a);}`);
+void main(){vec2 f=mix(vec2(0.035),vec2(0.965),fract(vUV));highp vec2 lgx=dFdx(vUV),lgy=dFdy(vUV);highp float ld2=max(dot(lgx,lgx),1e-12),ld3=max(dot(lgy,lgy),1e-12);float lod=clamp(min(0.5*log2(max(ld2,ld3)),0.5*log2(min(ld2,ld3))+1.0)+4.0,0.0,4.0);vec4 t=vMat.x<256.0?textureLod(uAtlas,vec3(f,vMat.x),lod):(vMat.x<512.0?textureLod(uAtlas2,vec3(f,vMat.x-256.0),lod):textureLod(uAtlas3,vec3(f,vMat.x-512.0),lod));float a=t.a*vMat.z;if(a<0.12)discard;vec3 lm=texture(uLightmap,vec2((vLightDist.y*15.0+0.5)/16.0,(vLightDist.x*15.0+0.5)/16.0)).rgb*uLight;vec3 c=t.rgb*vMat.y*lm;float fog=smoothstep(uFogNear,uFogFar,vLightDist.z);vec3 col=mix(c,uFogColor,fog);if(uFogFar>30.0&&vWorld.y<63.5){float depth=max(0.0,63.5-vWorld.y);float wf=clamp(1.0-exp(-(depth*0.055+max(vLightDist.z-6.0,0.0)*0.015)),0.0,0.72);col=mix(col,vec3(0.07,0.24,0.45),wf);}outColor=vec4(col,a);}`);
 
 
 // v0.50: solid-only opaque meshes use a shader without alpha decode/discard.
@@ -501,7 +501,7 @@ out vec2 vUV;flat out vec2 vMat;out vec3 vLightDist;out vec3 vWorld;
 void main(){vec3 w=aPos;gl_Position=uVP*vec4(w,1.0);vUV=aUV;float shade=mod(aShadeAlpha,2.0);float sky4=floor(aLight/16.0),blk4=aLight-sky4*16.0,dist=distance(w,uCam);float block=max(blk4*(1.0/15.0),max(0.0,(uHeldLight-dist)/15.0));vMat=vec2(aTile,shade);vLightDist=vec3(sky4*(1.0/15.0),block,dist);vWorld=w;}`,
 `#version 300 es
 precision mediump float;in highp vec2 vUV;flat in highp vec2 vMat;in vec3 vLightDist;in highp vec3 vWorld;uniform highp sampler2DArray uAtlas;uniform highp sampler2DArray uAtlas2;uniform highp sampler2DArray uAtlas3;uniform highp sampler2D uLightmap;uniform vec3 uFogColor;uniform float uFogNear,uFogFar,uLight;out vec4 outColor;
-void main(){vec2 f=mix(vec2(0.035),vec2(0.965),fract(vUV));vec3 tex=(vMat.x<256.0?texture(uAtlas,vec3(f,vMat.x)):(vMat.x<512.0?texture(uAtlas2,vec3(f,vMat.x-256.0)):texture(uAtlas3,vec3(f,vMat.x-512.0)))).rgb;vec3 lm=texture(uLightmap,vec2((vLightDist.y*15.0+0.5)/16.0,(vLightDist.x*15.0+0.5)/16.0)).rgb*uLight;vec3 c=tex*vMat.y*lm;float fog=smoothstep(uFogNear,uFogFar,vLightDist.z);vec3 col=mix(c,uFogColor,fog);if(uFogFar>30.0&&vWorld.y<63.5){float depth=max(0.0,63.5-vWorld.y);float wf=clamp(1.0-exp(-(depth*0.055+max(vLightDist.z-6.0,0.0)*0.015)),0.0,0.72);col=mix(col,vec3(0.07,0.24,0.45),wf);}outColor=vec4(col,1.0);}`);
+void main(){vec2 f=mix(vec2(0.035),vec2(0.965),fract(vUV));highp vec2 lgx=dFdx(vUV),lgy=dFdy(vUV);highp float ld2=max(dot(lgx,lgx),1e-12),ld3=max(dot(lgy,lgy),1e-12);float lod=clamp(min(0.5*log2(max(ld2,ld3)),0.5*log2(min(ld2,ld3))+1.0)+4.0,0.0,4.0);vec3 tex=(vMat.x<256.0?textureLod(uAtlas,vec3(f,vMat.x),lod):(vMat.x<512.0?textureLod(uAtlas2,vec3(f,vMat.x-256.0),lod):textureLod(uAtlas3,vec3(f,vMat.x-512.0),lod))).rgb;vec3 lm=texture(uLightmap,vec2((vLightDist.y*15.0+0.5)/16.0,(vLightDist.x*15.0+0.5)/16.0)).rgb*uLight;vec3 c=tex*vMat.y*lm;float fog=smoothstep(uFogNear,uFogFar,vLightDist.z);vec3 col=mix(c,uFogColor,fog);if(uFogFar>30.0&&vWorld.y<63.5){float depth=max(0.0,63.5-vWorld.y);float wf=clamp(1.0-exp(-(depth*0.055+max(vLightDist.z-6.0,0.0)*0.015)),0.0,0.72);col=mix(col,vec3(0.07,0.24,0.45),wf);}outColor=vec4(col,1.0);}`);
 
 const terrainXrayProg=program(`#version 300 es
 precision highp float;
@@ -511,7 +511,7 @@ out vec2 vUV;flat out float vTile;out float vShade;out float vAlpha;out float vD
 void main(){vec3 w=aPos;gl_Position=uVP*vec4(w,1.0);vUV=aUV;vTile=aTile;float cls=floor(aShadeAlpha/512.0);float q=aShadeAlpha-cls*512.0;float a8=floor(q*0.5);vShade=q-a8*2.0;vAlpha=a8*(1.0/255.0);vClass=cls;float sky4=floor(aLight/16.0),blk4=aLight-sky4*16.0;vSky=sky4*(1.0/15.0);vDist=distance(w,uCam);vBlock=max(blk4*(1.0/15.0),max(0.0,(uHeldLight-vDist)/15.0));vWorld=w;}`,
 `#version 300 es
 precision highp float;in vec2 vUV;flat in float vTile;in float vShade;in float vAlpha;in float vDist;in float vSky;in float vBlock;in float vClass;in vec3 vWorld;uniform highp sampler2DArray uAtlas;uniform highp sampler2DArray uAtlas2;uniform highp sampler2DArray uAtlas3;uniform highp sampler2D uLightmap;uniform vec3 uFogColor;uniform float uFogNear,uFogFar,uLight;uniform int uXray;out vec4 outColor;
-void main(){vec2 f=mix(vec2(0.035),vec2(0.965),fract(vUV));vec4 t=vTile<256.0?texture(uAtlas,vec3(f,vTile)):(vTile<512.0?texture(uAtlas2,vec3(f,vTile-256.0)):texture(uAtlas3,vec3(f,vTile-512.0)));float a=t.a*vAlpha;if(a<0.12)discard;
+void main(){vec2 f=mix(vec2(0.035),vec2(0.965),fract(vUV));highp vec2 lgx=dFdx(vUV),lgy=dFdy(vUV);highp float ld2=max(dot(lgx,lgx),1e-12),ld3=max(dot(lgy,lgy),1e-12);float lod=clamp(min(0.5*log2(max(ld2,ld3)),0.5*log2(min(ld2,ld3))+1.0)+4.0,0.0,4.0);vec4 t=vTile<256.0?textureLod(uAtlas,vec3(f,vTile),lod):(vTile<512.0?textureLod(uAtlas2,vec3(f,vTile-256.0),lod):textureLod(uAtlas3,vec3(f,vTile-512.0),lod));float a=t.a*vAlpha;if(a<0.12)discard;
  if(uXray==1){if(vClass>0.5)discard;vec3 ed=min(fract(vWorld),1.0-fract(vWorld));float mn=min(ed.x,min(ed.y,ed.z));float mx=max(ed.x,max(ed.y,ed.z));float mid=ed.x+ed.y+ed.z-mn-mx;float w=fwidth(mid)+0.012;float line=1.0-smoothstep(0.0,w,mid);if(line<0.04)discard;outColor=vec4(t.rgb*(0.5+0.5*vShade),line*0.42);return;}
  if(uXray==2){if(vClass<0.5)discard;outColor=vec4(t.rgb,a);return;}
  vec3 lm=texture(uLightmap,vec2((vBlock*15.0+0.5)/16.0,(vSky*15.0+0.5)/16.0)).rgb*uLight;vec3 c=t.rgb*vShade*lm;float fog=smoothstep(uFogNear,uFogFar,vDist);outColor=vec4(mix(c,uFogColor,fog),a);}`);
@@ -527,7 +527,7 @@ out vec2 vUV;flat out vec3 vMat;flat out float vWaterClass;out vec3 vLightDist;
 void main(){vec3 w=aPos;gl_Position=uVP*vec4(w,1.0);vUV=aUV;float cls=floor(aShadeAlpha/512.0);float q=aShadeAlpha-cls*512.0;float a8=floor(q*0.5),shade=q-a8*2.0;float sky4=floor(aLight/16.0),blk4=aLight-sky4*16.0,dist=distance(w,uCam);float block=max(blk4*(1.0/15.0),max(0.0,(uHeldLight-dist)/15.0));vMat=vec3(aTile,shade,a8*(1.0/255.0));vWaterClass=cls;vLightDist=vec3(sky4*(1.0/15.0),block,dist);}`,
 `#version 300 es
 precision mediump float;in highp vec2 vUV;flat in highp vec3 vMat;flat in float vWaterClass;in vec3 vLightDist;uniform highp sampler2DArray uAtlas;uniform highp sampler2DArray uAtlas2;uniform highp sampler2DArray uAtlas3;uniform highp sampler2D uLightmap;uniform vec3 uFogColor;uniform float uFogNear,uFogFar,uLight;uniform highp float uTime,uFlowTile;uniform int uWaterPass;out vec4 outColor;
-void main(){if(uWaterPass==1&&vWaterClass>0.5)discard;if(uWaterPass==2&&vWaterClass<0.5)discard;highp vec2 q=vUV;if(abs(vMat.x-uFlowTile)<0.25){q*=0.5;q.y-=uTime*0.42;}vec2 f=mix(vec2(0.035),vec2(0.965),fract(q));vec4 t=vMat.x<256.0?texture(uAtlas,vec3(f,vMat.x)):(vMat.x<512.0?texture(uAtlas2,vec3(f,vMat.x-256.0)):texture(uAtlas3,vec3(f,vMat.x-512.0)));// Water opacity is controlled by the material alpha packed in geometry.
+void main(){if(uWaterPass==1&&vWaterClass>0.5)discard;if(uWaterPass==2&&vWaterClass<0.5)discard;highp vec2 q=vUV;if(abs(vMat.x-uFlowTile)<0.25){q*=0.5;q.y-=uTime*0.42;}vec2 f=mix(vec2(0.035),vec2(0.965),fract(q));highp vec2 lgx=dFdx(q),lgy=dFdy(q);highp float ld2=max(dot(lgx,lgx),1e-12),ld3=max(dot(lgy,lgy),1e-12);float lod=clamp(min(0.5*log2(max(ld2,ld3)),0.5*log2(min(ld2,ld3))+1.0)+4.0,0.0,4.0);vec4 t=vMat.x<256.0?textureLod(uAtlas,vec3(f,vMat.x),lod):(vMat.x<512.0?textureLod(uAtlas2,vec3(f,vMat.x-256.0),lod):textureLod(uAtlas3,vec3(f,vMat.x-512.0),lod));// Water opacity is controlled by the material alpha packed in geometry.
 // The runtime water tile already carries semi-transparency in its texture alpha;
 // multiplying both together made waterfalls double-transparent and revealed
 // the rear shells as blue stripes/holes. Use the tile only for colour/pattern.
@@ -743,11 +743,46 @@ function buildRuntimeWaterFlowCanvas(){
  }
  ctx.putImageData(dst,0,0);runtimeWaterFlowCanvas=c;return c
 }
+// Mipmaps for the terrain atlas pages (16->8->4->2->1). Built on the CPU from level 0:
+// colour is alpha-weighted (transparent texels do not darken edges) and, for cutout-style
+// tiles (binary alpha with holes), alpha is rescaled per level so the fraction of texels
+// passing the shader's a>=0.12 test matches level 0 (foliage does not thin out at distance).
+const ATLAS_MIP_LEVELS=5,ATLAS_ALPHA_CUT=31;
+function atlasMipDown(src,n){const m=n>>1,d=new Float32Array(m*m*4);for(let y=0;y<m;y++)for(let x=0;x<m;x++){let r=0,g=0,b=0,a=0,pr=0,pg=0,pb=0;for(let k=0;k<4;k++){const o=(((y*2+(k>>1))*n)+x*2+(k&1))*4,al=src[o+3];r+=src[o]*al;g+=src[o+1]*al;b+=src[o+2]*al;a+=al;pr+=src[o];pg+=src[o+1];pb+=src[o+2]}const o=(y*m+x)*4;if(a>0){d[o]=r/a;d[o+1]=g/a;d[o+2]=b/a}else{d[o]=pr/4;d[o+1]=pg/4;d[o+2]=pb/4}d[o+3]=a/4}return d}
+function atlasAlphaCoverage(p,s){let c=0;const n=p.length>>2;for(let i=3;i<p.length;i+=4)if(Math.min(255,p[i]*s)>=ATLAS_ALPHA_CUT)c++;return c/n}
+function buildAtlasTileMips(tile0){
+ // tile0: 16x16 RGBA bytes (layer orientation). Returns [level1..level4] as Uint8 arrays.
+ let binary=true,holes=false;for(let i=3;i<tile0.length;i+=4){const a=tile0[i];if(a>8&&a<247){binary=false;break}if(a<=8)holes=true}
+ const keepCov=binary&&holes,cov0=keepCov?atlasAlphaCoverage(tile0,1):0,out=[];
+ let cur=Float32Array.from(tile0),n=16;
+ for(let l=1;l<ATLAS_MIP_LEVELS;l++){
+  cur=atlasMipDown(cur,n);n>>=1;let s=1;
+  if(keepCov){let lo=0,hi=64;for(let it=0;it<18;it++){const mid=(lo+hi)/2;if(atlasAlphaCoverage(cur,mid)>=cov0)hi=mid;else lo=mid}s=hi}
+  const u=new Uint8Array(cur.length);for(let i=0;i<cur.length;i++)u[i]=Math.max(0,Math.min(255,Math.round((i&3)===3?cur[i]*s:cur[i])));out.push(u);
+ }
+ return out
+}
+function uploadTerrainAtlasMips(pages,fb){
+ // Level 0 of every tile is read back from what was just uploaded, so orientation matches.
+ const W=512,full=new Uint8Array(W*W*4);
+ gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,atlasTex,0);gl.readPixels(0,0,W,W,gl.RGBA,gl.UNSIGNED_BYTE,full);
+ const levels=[];for(let p=0;p<3;p++){const a=[];for(let l=1;l<ATLAS_MIP_LEVELS;l++){const s=16>>l;a.push(new Uint8Array(s*s*4*256))}levels.push(a)}
+ const t0=new Uint8Array(16*16*4);
+ for(let ti=0;ti<TILE_NAMES.length;ti++){
+  const page=ti>>8,layer=ti&255;
+  if(ti===WATER_FLOW_TILE){gl.framebufferTextureLayer(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,pages[page],0,layer);gl.readPixels(0,0,16,16,gl.RGBA,gl.UNSIGNED_BYTE,t0)}
+  else{const col=ti&31,row=ti>>5,x0=col*16,y0=(31-row)*16;for(let y=0;y<16;y++)t0.set(full.subarray(((y0+y)*W+x0)*4,((y0+y)*W+x0+16)*4),y*64)}
+  const mips=buildAtlasTileMips(t0);for(let l=0;l<mips.length;l++)levels[page][l].set(mips[l],layer*mips[l].length);
+ }
+ const flip=gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL),pre=gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+ for(let p=0;p<3;p++){gl.bindTexture(gl.TEXTURE_2D_ARRAY,pages[p]);for(let l=1;l<ATLAS_MIP_LEVELS;l++){const s=16>>l;gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,l,0,0,0,s,s,256,gl.RGBA,gl.UNSIGNED_BYTE,levels[p][l-1])}gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAX_LEVEL,ATLAS_MIP_LEVELS-1);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.NEAREST_MIPMAP_LINEAR)}
+ gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,flip);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,pre);
+}
 function buildTerrainAtlasArrays(){
  // Three sampler2DArray pages cover 768 tiles; fail atomically if the atlas cannot fit.
  if(!atlasTex||atlasImg.naturalWidth<512||atlasImg.naturalHeight<512||TILE_NAMES.length>768)return [null,null,null];
  const pages=[gl.createTexture(),gl.createTexture(),gl.createTexture()],fb=gl.createFramebuffer();
- for(const tex of pages){gl.bindTexture(gl.TEXTURE_2D_ARRAY,tex);gl.texStorage3D(gl.TEXTURE_2D_ARRAY,1,gl.RGBA8,16,16,256);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE)}
+ for(const tex of pages){gl.bindTexture(gl.TEXTURE_2D_ARRAY,tex);gl.texStorage3D(gl.TEXTURE_2D_ARRAY,ATLAS_MIP_LEVELS,gl.RGBA8,16,16,256);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAX_LEVEL,0);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE)}
  gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,atlasTex,0);
  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE){gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.deleteFramebuffer(fb);for(const t of pages)gl.deleteTexture(t);return [null,null,null]}
  for(let ti=0;ti<TILE_NAMES.length;ti++){
@@ -756,6 +791,7 @@ function buildTerrainAtlasArrays(){
    const prevFlip=gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,layer,16,16,1,gl.RGBA,gl.UNSIGNED_BYTE,buildRuntimeWaterFlowCanvas());gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,prevFlip)
   }else{const col=ti&31,row=ti>>5;gl.copyTexSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,layer,col*16,(31-row)*16,16,16)}
  }
+ try{uploadTerrainAtlasMips(pages,fb)}catch(e){console.warn('atlas mipmaps disabled',e)}
  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.deleteFramebuffer(fb);gl.bindTexture(gl.TEXTURE_2D_ARRAY,null);return pages
 }
 function bindTerrainAtlasPages(){if(!atlasArray||!atlasArray2||!atlasArray3)return false;gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D_ARRAY,atlasArray);gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D_ARRAY,atlasArray2);gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D_ARRAY,atlasArray3);gl.activeTexture(gl.TEXTURE0);return true}
@@ -2912,7 +2948,7 @@ out vec2 vUV;flat out float vTile;flat out float vShade;flat out vec3 vTint;out 
 void main(){vec3 w=aPos;gl_Position=uVP*vec4(w,1.0);vUV=aUV;vTile=aTile;vShade=aShade;vTint=aTint;float sky4=floor(aLight/16.0),blk4=aLight-sky4*16.0,dist=distance(w,uCam);float block=max(blk4*(1.0/15.0),max(0.0,(uHeldLight-dist)/15.0));vLightDist=vec3(sky4*(1.0/15.0),block,dist);}`,
 `#version 300 es
 precision highp float;in vec2 vUV;flat in float vTile;flat in float vShade;flat in vec3 vTint;in vec3 vLightDist;uniform highp sampler2DArray uAtlas;uniform highp sampler2DArray uAtlas2;uniform highp sampler2DArray uAtlas3;uniform highp sampler2D uLightmap;uniform vec3 uFogColor;uniform float uFogNear,uFogFar,uLight;out vec4 outColor;
-void main(){vec2 f=mix(vec2(0.035),vec2(0.965),fract(vUV));vec4 t=vTile<256.0?texture(uAtlas,vec3(f,vTile)):(vTile<512.0?texture(uAtlas2,vec3(f,vTile-256.0)):texture(uAtlas3,vec3(f,vTile-512.0)));if(t.a<0.12)discard;vec3 lm=texture(uLightmap,vec2((vLightDist.y*15.0+0.5)/16.0,(vLightDist.x*15.0+0.5)/16.0)).rgb*uLight;vec3 c=t.rgb*vTint*vShade*lm;float fog=smoothstep(uFogNear,uFogFar,vLightDist.z);vec3 col=mix(c,uFogColor,fog);outColor=vec4(col,t.a);}`);
+void main(){vec2 f=mix(vec2(0.035),vec2(0.965),fract(vUV));highp vec2 lgx=dFdx(vUV),lgy=dFdy(vUV);highp float ld2=max(dot(lgx,lgx),1e-12),ld3=max(dot(lgy,lgy),1e-12);float lod=clamp(min(0.5*log2(max(ld2,ld3)),0.5*log2(min(ld2,ld3))+1.0)+4.0,0.0,4.0);vec4 t=vTile<256.0?textureLod(uAtlas,vec3(f,vTile),lod):(vTile<512.0?textureLod(uAtlas2,vec3(f,vTile-256.0),lod):textureLod(uAtlas3,vec3(f,vTile-512.0),lod));if(t.a<0.12)discard;vec3 lm=texture(uLightmap,vec2((vLightDist.y*15.0+0.5)/16.0,(vLightDist.x*15.0+0.5)/16.0)).rgb*uLight;vec3 c=t.rgb*vTint*vShade*lm;float fog=smoothstep(uFogNear,uFogFar,vLightDist.z);vec3 col=mix(c,uFogColor,fog);outColor=vec4(col,t.a);}`);
 const UBP={vp:gl.getUniformLocation(breakParticleProg,'uVP'),cam:gl.getUniformLocation(breakParticleProg,'uCam'),fog:gl.getUniformLocation(breakParticleProg,'uFogColor'),fogN:gl.getUniformLocation(breakParticleProg,'uFogNear'),fogF:gl.getUniformLocation(breakParticleProg,'uFogFar'),light:gl.getUniformLocation(breakParticleProg,'uLight'),atlas:gl.getUniformLocation(breakParticleProg,'uAtlas'),atlas2:gl.getUniformLocation(breakParticleProg,'uAtlas2'),atlas3:gl.getUniformLocation(breakParticleProg,'uAtlas3'),lightmap:gl.getUniformLocation(breakParticleProg,'uLightmap'),hand:gl.getUniformLocation(breakParticleProg,'uHeldLight')};
 gl.useProgram(breakParticleProg);gl.uniform1i(UBP.atlas,0);gl.uniform1i(UBP.lightmap,1);gl.uniform1i(UBP.atlas2,2);gl.uniform1i(UBP.atlas3,3);
 const breakParticleVAO=gl.createVertexArray(),breakParticleVBO=gl.createBuffer();gl.bindVertexArray(breakParticleVAO);gl.bindBuffer(gl.ARRAY_BUFFER,breakParticleVBO);gl.bufferData(gl.ARRAY_BUFFER,breakParticleVerts.byteLength,gl.DYNAMIC_DRAW);for(let a=0;a<=5;a++)gl.enableVertexAttribArray(a);gl.vertexAttribPointer(0,3,gl.FLOAT,false,44,0);gl.vertexAttribPointer(1,2,gl.FLOAT,false,44,12);gl.vertexAttribPointer(2,1,gl.FLOAT,false,44,20);gl.vertexAttribPointer(3,1,gl.FLOAT,false,44,24);gl.vertexAttribPointer(4,1,gl.FLOAT,false,44,28);gl.vertexAttribPointer(5,3,gl.FLOAT,false,44,32);gl.bindVertexArray(null);
