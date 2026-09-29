@@ -69,7 +69,7 @@ namespace BlockcraftPort
         {
             get
             {
-                if(IsCreative)return selected;
+                // main hn(): both modes hold whatever is in p.survInv[p.hotbarSel].
                 MainInventoryStackData s=survivalInventory.Selected;
                 return s!=null&&s.block?(BlockId)s.blockId:BlockId.Air;
             }
@@ -120,7 +120,6 @@ namespace BlockcraftPort
         float lastSpaceAt = -10f;
         float lastForwardAt = -10f;
         bool sprintLatch;
-        BlockId selected = BlockId.Grass;
         readonly MainSurvivalInventory survivalInventory=new MainSurvivalInventory();
         bool miningActive;
         bool miningOnShip;
@@ -192,7 +191,7 @@ namespace BlockcraftPort
         }
         void SyncSurvivalHeldVisual()
         {
-            if(IsCreative)return;MainInventoryStackData s=survivalInventory.Selected;
+            MainInventoryStackData s=survivalInventory.Selected;
             if(s==null||s.block){FirstPersonPrimaryItemTexture=null;FirstPersonPrimaryItemTint=Color.white;FirstPersonBowCharge=0f;return;}
             if(MainInventoryCatalog.TryVisibleItemKey(s,out string key)){FirstPersonPrimaryItemTexture=key;FirstPersonPrimaryItemTint=Color.white;}
             else FirstPersonPrimaryItemTexture=null;
@@ -763,20 +762,8 @@ namespace BlockcraftPort
 
         void HandleHotbarAndActions(VoxelWorld world)
         {
-            if(IsCreative)
             {
-                if (Input.GetKeyDown(KeyCode.Alpha1)) selected = BlockId.Grass;
-                if (Input.GetKeyDown(KeyCode.Alpha2)) selected = BlockId.Stone;
-                if (Input.GetKeyDown(KeyCode.Alpha3)) selected = BlockId.OakLog;
-                if (Input.GetKeyDown(KeyCode.Alpha4)) selected = BlockId.OakLeaves;
-                if (Input.GetKeyDown(KeyCode.Alpha5)) selected = BlockId.Sand;
-                if (Input.GetKeyDown(KeyCode.Alpha6)) selected = BlockId.Water;
-                if (Input.GetKeyDown(KeyCode.Alpha7)) selected = BlockId.Ice;
-                if (Input.GetKeyDown(KeyCode.Alpha8)) selected = BlockId.Cactus;
-                if (Input.GetKeyDown(KeyCode.Alpha9)) selected = BlockId.DiamondOre;
-            }
-            else
-            {
+                // main: one 36-slot inventory for both modes; creative fills it from the E screen.
                 if(Input.GetKeyDown(KeyCode.Alpha1))survivalInventory.SelectHotbar(0);
                 if(Input.GetKeyDown(KeyCode.Alpha2))survivalInventory.SelectHotbar(1);
                 if(Input.GetKeyDown(KeyCode.Alpha3))survivalInventory.SelectHotbar(2);

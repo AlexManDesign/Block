@@ -201,6 +201,10 @@ namespace BlockcraftPort
             // the normal mob simulation/spawn cadence starts only after the world-live gate opens.
             spawner.enabled=false;
 
+            // main.js HUD: hotbar, crosshair, hearts/food/armour/air.
+            var hud = new GameObject("MainHud").AddComponent<MainHud>();
+            hud.Player = pc;
+
             var perf = new GameObject("MainPerformanceHud").AddComponent<MainPerformanceHud>();
             perf.World=world;
 

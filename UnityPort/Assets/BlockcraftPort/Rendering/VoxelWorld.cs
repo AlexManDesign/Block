@@ -2163,11 +2163,15 @@ namespace BlockcraftPort
                 directCandidates.Clear();
                 DirectCandidateRebuilds++;
                 int rr=RenderDistance;
-                // Preserve main.js square scan order, but do dictionary lookups only when the
-                // render structure/center changes. Camera-only updates reuse these references.
-                for(int dx=-rr;dx<=rr;dx++)for(int dz=-rr;dz<=rr;dz++)
+                // main.js scans the square row by row. Here the same square is visited nearest ring
+                // first: opaque chunks are then submitted front-to-back (early-Z rejects hidden
+                // fragments of far chunks instead of shading them), and the alpha passes walk the
+                // list backwards (far-to-near blending). Dictionary lookups still happen only when
+                // the render structure/center changes; camera-only updates reuse these references.
+                int[] order=NearFirstOffsets(rr);
+                for(int k=0;k<order.Length;k+=2)
                 {
-                    ChunkCoord cc=new ChunkCoord(center.X+dx,center.Z+dz);
+                    ChunkCoord cc=new ChunkCoord(center.X+order[k],center.Z+order[k+1]);
                     if(renders.TryGetValue(cc,out var cr)&&cr.Drawable)directCandidates.Add(cr);
                 }
                 directCandidatesValid=true;
@@ -2249,13 +2253,14 @@ namespace BlockcraftPort
 
             Material wm=materials[1],tm=materials[2];
             // Source draws every world-water mesh first, then moving-ship water, then transparent/glass.
-            for(int i=0;i<directVisibleScratch.Count;i++)
+            // Visible chunks are near-first, so walk them backwards: far-to-near blending.
+            for(int i=directVisibleScratch.Count-1;i>=0;i--)
             {
                 var cr=directVisibleScratch[i];if(!cr.HasWater)continue;
                 water.DrawMesh(cr.Mesh,DirectIdentity,wm,1,0);
                 LastChunkDrawCalls++;
             }
-            for(int i=0;i<directVisibleScratch.Count;i++)
+            for(int i=directVisibleScratch.Count-1;i>=0;i--)
             {
                 var cr=directVisibleScratch[i];if(!cr.HasTransparent)continue;
                 glass.DrawMesh(cr.Mesh,DirectIdentity,tm,2,0);
@@ -2298,6 +2303,24 @@ namespace BlockcraftPort
             // main.js clouds are after world water + transparent/glass; selection/debug lines are last.
             MainSkyRenderer.AppendClouds(alpha);
             MainSelectionOutline.AppendDirect(alpha);
+        }
+
+        static int[] nearFirstOffsets=System.Array.Empty<int>();
+        static int nearFirstRadius=-1;
+        /// <summary>(dx,dz) pairs of the (2r+1)^2 square sorted by distance, ties in main.js scan order.</summary>
+        static int[] NearFirstOffsets(int r)
+        {
+            if(r==nearFirstRadius)return nearFirstOffsets;
+            int side=2*r+1,n=side*side;
+            var keys=new long[n];var idx=new int[n];int k=0;
+            for(int dx=-r;dx<=r;dx++)for(int dz=-r;dz<=r;dz++)
+            {
+                keys[k]=((long)(dx*dx+dz*dz)<<32)|(uint)k;idx[k]=k;k++;
+            }
+            System.Array.Sort(keys,idx);
+            var o=new int[n*2];
+            for(int i=0;i<n;i++){int s=idx[i];o[i*2]=s/side-r;o[i*2+1]=s%side-r;}
+            nearFirstOffsets=o;nearFirstRadius=r;return o;
         }
 
         // main.js Rh()/h2(): extract row4 +/- row1/2/3 and test the positive AABB vertex.

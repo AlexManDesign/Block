@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Inventory icon parity: port MainIconPainter over the Unity atlas.png vs main.js Hn() canvases. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PortDir>$(MSBuildThisFileDirectory)../../../../UnityPort/Assets/BlockcraftPort/</PortDir>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0414;CS0649;CS0169;CS0219;CS0162;CS0168</NoWarn>
+    <DefineConstants>PARITY_HARNESS</DefineConstants>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(PortDir)Core/BlockId.cs;$(PortDir)Core/SourceBlockData.g.cs;$(PortDir)Core/SourceItemData.g.cs;$(PortDir)Rendering/MainIcons.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)*.cs" />
+  </ItemGroup>
+</Project>

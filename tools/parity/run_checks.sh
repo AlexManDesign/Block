@@ -37,3 +37,5 @@ for mode in "2" "1 1" "1 2" "1 3"; do
 done
 echo "== placement / use / support parity (main.js kT/gT/nA in headless Chromium)"
 "$here/place/run_place.sh" "$out/place" | tail -1
+echo "== inventory icon parity (main.js Hn() canvases)"
+"$here/icons/run_icons.sh" "$out/icons" | tail -2

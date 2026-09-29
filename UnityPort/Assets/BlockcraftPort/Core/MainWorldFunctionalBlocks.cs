@@ -34,7 +34,7 @@ namespace BlockcraftPort
             public bool lit;
         }
 
-        enum ScreenKind : byte { None, Inventory2, Crafting3, Furnace, Chest }
+        enum ScreenKind : byte { None, Inventory2, Crafting3, Furnace, Chest, Creative }
 
         static MainWorldFunctionalBlocks instance;
         public static MainWorldFunctionalBlocks Instance=>instance;
@@ -83,7 +83,9 @@ namespace BlockcraftPort
             TickFurnaces(Mathf.Min(Time.unscaledDeltaTime,.1f));
             if(Input.GetKeyDown(KeyCode.E))
             {
-                if(UiOpen)CloseUi(true);else if(!player.IsCreative)OpenInventory(false);
+                // main HE(): survival opens the 2x2 inventory, creative the tabbed item picker.
+                if(UiOpen){if(!(screen==ScreenKind.Creative&&creativeView==CreativeView.Search&&GUIUtility.keyboardControl!=0))CloseUi(true);}
+                else if(!player.IsCreative)OpenInventory(false);else OpenCreative();
             }
             if(UiOpen&&Input.GetKeyDown(KeyCode.Escape))CloseUi(true);
         }
@@ -237,6 +239,8 @@ namespace BlockcraftPort
         void CloseUi(bool returnCraft)
         {
             if(returnCraft&&(screen==ScreenKind.Inventory2||screen==ScreenKind.Crafting3))ReturnCraftingGrid();
+            // main YE(): the creative carry is discarded; survival returns it to the inventory.
+            if(screen==ScreenKind.Creative)cursor=null;
             if(returnCraft&&cursor!=null)ReturnOrDrop(cursor);
             cursor=null;matchedRecipe=null;screen=ScreenKind.None;
             if(player!=null){player.SetGameplayUiOpen(false);Cursor.lockState=CursorLockMode.Locked;Cursor.visible=false;}
@@ -266,6 +270,7 @@ namespace BlockcraftPort
         {
             if(!UiOpen||player==null)return;EnsureStyles();float sw=Screen.width,sh=Screen.height;GUI.Box(new Rect(0,0,sw,sh),GUIContent.none);
             float w=Mathf.Min(780,sw-30),h=Mathf.Min(620,sh-30),x=(sw-w)*.5f,y=(sh-h)*.5f;GUI.Box(new Rect(x,y,w,h),GUIContent.none);
+            if(screen==ScreenKind.Creative){DrawCreative(x,y,w,h);return;}
             string title=screen==ScreenKind.Inventory2?"Inventory / Инвентарь":screen==ScreenKind.Crafting3?"Crafting / Верстак":screen==ScreenKind.Furnace?"Furnace / Печь":screen==ScreenKind.Chest?(ChestSections(openedBlock).Count>1?"Large Chest / Большой сундук":"Chest / Сундук"):"";
             GUI.Label(new Rect(x+20,y+10,w-40,34),title,titleStyle);
             if(GUI.Button(new Rect(x+w-42,y+10,30,30),"×"))CloseUi(true);
@@ -328,9 +333,201 @@ namespace BlockcraftPort
         }
         void DrawStack(Rect r,MainInventoryStackData s,bool box)
         {
-            if(box)GUI.Box(r,GUIContent.none);if(s==null)return;string label=s.block?((BlockId)s.blockId).ToString():ShortItem(s.itemKey);GUI.Label(new Rect(r.x+2,r.y+2,r.width-4,r.height-4),label,tinyStyle);if(s.count>1)GUI.Label(new Rect(r.x+r.width-22,r.y+r.height-20,20,18),s.count.ToString());if(s.dur>=0)GUI.Label(new Rect(r.x+2,r.y+r.height-18,r.width-4,16),"d:"+s.dur,tinyStyle);
+            if(box)GUI.Box(r,GUIContent.none);if(s==null)return;
+            // main L3()/Hn(): atlas-painted icon, count pill and durability bar.
+            MainIcons.DrawStack(r,s);
+            if(box&&r.Contains(Event.current.mousePosition))hoverName=MainIcons.Name(s,MainHud.UiRussian);
         }
         static string ShortItem(string k){if(string.IsNullOrEmpty(k))return "?";return k.StartsWith("item_",StringComparison.Ordinal)?k.Substring(5).Replace('_',' '):k.Replace('_',' ');}
+
+        // ---- main.js creative inventory (HE()/y2()/b2()/jR()/V3()) --------------------------------
+        enum CreativeView : byte { Tab, Search, Survival }
+        CreativeView creativeView=CreativeView.Tab;
+        int creativeTab;             // main M2
+        string creativeSearch="";    // main ME
+        bool cursorInfinite;         // main se.inf
+        Vector2 creativeScroll;
+        string hoverName;
+        GUIStyle creativeTitle,creativeName,tabStyle;
+
+        void OpenCreative()
+        {
+            if(player==null)return;CloseUi(false);screen=ScreenKind.Creative;cursor=null;cursorInfinite=false;
+            if(creativeView==CreativeView.Survival)creativeView=CreativeView.Tab;BeginUi();
+        }
+
+        /// <summary>Stack for a reference numeric id (blocks below 2000, items above).</summary>
+        static MainInventoryStackData SourceStack(int sourceId,int count)
+        {
+            if(sourceId>=SourceItemData.ItemIdBase)
+            {
+                int k=sourceId-SourceItemData.ItemIdBase;
+                return new MainInventoryStackData{block=false,itemKey=SourceItemData.Tex[k],count=count,dur=-1};
+            }
+            BlockId id=SourceBlockData.FromSourceId(sourceId);
+            // main FLINT_AND_STEEL is a block id; the port inventory keeps it as the flint item key.
+            if(id==BlockId.FlintAndSteel)return new MainInventoryStackData{block=false,itemKey="flint_and_steel",count=count,dur=-1};
+            return new MainInventoryStackData{block=true,blockId=(int)id,count=count,dur=-1};
+        }
+        static string SourceName(int sourceId,bool ru)
+        {
+            if(sourceId>=SourceItemData.ItemIdBase){int k=sourceId-SourceItemData.ItemIdBase;return ru?SourceItemData.NameRu[k]:SourceItemData.NameEn[k];}
+            return MainIcons.BlockName(SourceBlockData.FromSourceId(sourceId),ru);
+        }
+
+        List<int> CreativeEntries()
+        {
+            var list=new List<int>();
+            if(creativeView==CreativeView.Search)
+            {
+                // main b2() search: every tab entry once, filtered by the localized name.
+                var seen=new HashSet<int>();string q=(creativeSearch??"").Trim().ToLowerInvariant();bool ru=MainHud.UiRussian;
+                for(int t=0;t<SourceCreativeTabs.Count;t++)foreach(int id in SourceCreativeTabs.Entries[t])
+                    if(seen.Add(id)&&(q.Length==0||SourceName(id,ru).ToLowerInvariant().Contains(q)))list.Add(id);
+            }
+            else list.AddRange(SourceCreativeTabs.Entries[Mathf.Clamp(creativeTab,0,SourceCreativeTabs.Count-1)]);
+            return list;
+        }
+
+        void DrawCreative(float x,float y,float w,float h)
+        {
+            if(creativeTitle==null)
+            {
+                creativeTitle=new GUIStyle(GUI.skin.label){fontSize=18,fontStyle=FontStyle.Bold,alignment=TextAnchor.MiddleLeft};
+                creativeName=new GUIStyle(GUI.skin.label){fontSize=14,alignment=TextAnchor.MiddleRight};
+                tabStyle=new GUIStyle(GUI.skin.button){padding=new RectOffset(4,4,4,4)};
+            }
+            bool ru=MainHud.UiRussian;hoverName=null;
+            float tab=44f,pad=12f;
+            // Top row: building / colored / natural / functional (+ search on the right).
+            float tx=x+pad;
+            for(int t=0;t<SourceCreativeTabs.Count;t++)
+            {
+                if(!SourceCreativeTabs.Top[t])continue;
+                if(TabButton(new Rect(tx,y+pad,tab,tab),MainIcons.SourceId(SourceCreativeTabs.IconSourceId[t]),creativeView==CreativeView.Tab&&creativeTab==t,ru?SourceCreativeTabs.NameRu[t]:SourceCreativeTabs.NameEn[t]))
+                {CreativeLeaveSurvival();creativeView=CreativeView.Tab;creativeTab=t;creativeSearch="";creativeScroll=Vector2.zero;}
+                tx+=tab+4f;
+            }
+            if(TabButton(new Rect(x+w-pad-tab,y+pad,tab,tab),MainIcons.Block(BlockId.Glass),creativeView==CreativeView.Search,ru?"Поиск":"Search Items"))
+            {CreativeLeaveSurvival();creativeView=CreativeView.Search;creativeScroll=Vector2.zero;}
+            if(GUI.Button(new Rect(x+w-pad-tab-40f,y+pad+7f,30f,30f),"×"))CloseUi(true);
+
+            string title=creativeView==CreativeView.Search?(ru?"Поиск предметов":"Search Items"):creativeView==CreativeView.Survival?(ru?"Инвентарь выживания":"Survival Inventory"):(ru?SourceCreativeTabs.NameRu[creativeTab]:SourceCreativeTabs.NameEn[creativeTab]);
+            float by=y+h-pad-tab;               // bottom tab row
+            float hy=by-12f-50f;                // hotbar row
+            Rect body=new Rect(x+pad,y+pad+tab+8f,w-2*pad,hy-(y+pad+tab+8f)-30f);
+            GUI.Label(new Rect(body.x,body.y,body.width*.5f,24f),title,creativeTitle);
+            if(creativeView==CreativeView.Search)
+            {
+                GUI.SetNextControlName("creativeSearch");
+                string ns=GUI.TextField(new Rect(body.x+body.width*.5f,body.y,body.width*.5f,24f),creativeSearch??"");
+                if(ns!=creativeSearch){creativeSearch=ns;creativeScroll=Vector2.zero;}
+            }
+            Rect grid=new Rect(body.x,body.y+30f,body.width,body.height-30f);
+            if(creativeView==CreativeView.Survival)DrawSurvivalGrid(grid);
+            else DrawCreativeGrid(grid);
+
+            // Hotbar in "inv" mode: main V3() swap semantics.
+            float cell=46f,hx=x+(w-9*cell)*.5f;
+            for(int i=0;i<9;i++)
+            {
+                Rect r=new Rect(hx+i*cell,hy,cell-4f,cell-4f);int si=i;
+                MainIcons.Fill(r,new Color(.1f,.1f,.1f,.6f));DrawStack(r,player.SurvivalInventory.Get(si),false);MainIcons.SlotNumber(r,i+1);
+                if(r.Contains(Event.current.mousePosition)){MainIcons.Frame(r,new Color(1,1,1,.5f),2f);var hs=player.SurvivalInventory.Get(si);if(hs!=null)hoverName=MainIcons.Name(hs,ru);}
+                if(Event.current.type==EventType.MouseDown&&Event.current.button==0&&r.Contains(Event.current.mousePosition)){CreativeHotbarClick(si);Event.current.Use();}
+            }
+            // Bottom row: tools / combat / food / ingredients / eggs (+ survival inventory on the right).
+            tx=x+pad;
+            for(int t=0;t<SourceCreativeTabs.Count;t++)
+            {
+                if(SourceCreativeTabs.Top[t])continue;
+                if(TabButton(new Rect(tx,by,tab,tab),MainIcons.SourceId(SourceCreativeTabs.IconSourceId[t]),creativeView==CreativeView.Tab&&creativeTab==t,ru?SourceCreativeTabs.NameRu[t]:SourceCreativeTabs.NameEn[t]))
+                {CreativeLeaveSurvival();creativeView=CreativeView.Tab;creativeTab=t;creativeSearch="";creativeScroll=Vector2.zero;}
+                tx+=tab+4f;
+            }
+            if(TabButton(new Rect(x+w-pad-tab,by,tab,tab),MainIcons.Block(BlockId.Chest),creativeView==CreativeView.Survival,ru?"Инвентарь выживания":"Survival Inventory"))
+                CreativeEnterSurvival();
+
+            // main invName: hovered entry, or the carried stack.
+            string label=hoverName??(cursor!=null?MainIcons.Name(cursor,ru):"");
+            GUI.Label(new Rect(x+pad,hy-28f,w-2*pad,24f),label,creativeName);
+            if(cursor!=null)DrawStack(new Rect(Event.current.mousePosition.x-22,Event.current.mousePosition.y-22,44,44),cursor,false);
+            // main inv pointerdown outside cells/tabs: drop the carried stack (creative just clears it).
+            if(Event.current.type==EventType.MouseDown&&cursor!=null){cursor=null;cursorInfinite=false;Event.current.Use();}
+        }
+
+        bool TabButton(Rect r,Texture2D icon,bool active,string tip)
+        {
+            if(active)MainIcons.Fill(new Rect(r.x-2,r.y-2,r.width+4,r.height+4),new Color(1f,1f,1f,.85f));
+            bool hit=GUI.Button(r,GUIContent.none,tabStyle);
+            if(icon!=null)GUI.DrawTexture(new Rect(r.x+6,r.y+6,r.width-12,r.height-12),icon,ScaleMode.ScaleToFit,true);
+            if(r.Contains(Event.current.mousePosition))hoverName=tip;
+            return hit;
+        }
+
+        void DrawCreativeGrid(Rect area)
+        {
+            List<int> entries=CreativeEntries();
+            float cell=48f;int cols=Mathf.Max(1,Mathf.FloorToInt((area.width-18f)/cell));int rows=(entries.Count+cols-1)/cols;
+            Rect view=new Rect(0,0,cols*cell,rows*cell);
+            creativeScroll=GUI.BeginScrollView(area,creativeScroll,view,false,true);
+            bool ru=MainHud.UiRussian;int carriedSource=-1;
+            for(int i=0;i<entries.Count;i++)
+            {
+                int id=entries[i];Rect r=new Rect((i%cols)*cell,(i/cols)*cell,cell-4f,cell-4f);
+                if(r.yMax<creativeScroll.y-cell||r.y>creativeScroll.y+area.height+cell)continue;
+                MainIcons.Fill(r,new Color(.12f,.12f,.12f,.55f));
+                Texture2D icon=MainIcons.SourceId(id);
+                if(icon!=null)GUI.DrawTexture(new Rect(r.x+5,r.y+5,r.width-10,r.height-10),icon,ScaleMode.ScaleToFit,true);
+                if(cursor!=null&&cursorInfinite&&MainSurvivalInventory.SameIdentity(cursor,SourceStack(id,1))){MainIcons.Frame(r,new Color(1f,.85f,.3f,1f),2f);carriedSource=id;}
+                if(r.Contains(Event.current.mousePosition)){MainIcons.Frame(r,new Color(1,1,1,.6f),2f);hoverName=SourceName(id,ru);}
+                if(Event.current.type==EventType.MouseDown&&Event.current.button==0&&r.Contains(Event.current.mousePosition))
+                {CreativeCellClick(id,Event.current.shift);Event.current.Use();}
+            }
+            GUI.EndScrollView();
+        }
+
+        /// <summary>main jR(): pick one (shift: a full stack) as an infinite carry; same id adds; other carry is discarded.</summary>
+        void CreativeCellClick(int sourceId,bool fullStack)
+        {
+            MainInventoryStackData pick=SourceStack(sourceId,1);int max=MainInventoryCatalog.MaxStack(pick);int n=fullStack?max:1;
+            if(cursor!=null&&cursorInfinite&&MainSurvivalInventory.SameIdentity(cursor,pick)){cursor.count=Mathf.Min(max,Mathf.Max(1,cursor.count)+n);return;}
+            if(cursor!=null){cursor=null;cursorInfinite=false;return;}
+            pick.count=n;cursor=pick;cursorInfinite=true;
+        }
+
+        /// <summary>main V3(): take a hotbar stack, or drop the carry into the slot (swapping out what was there).</summary>
+        void CreativeHotbarClick(int slot)
+        {
+            MainSurvivalInventory inv=player.SurvivalInventory;MainInventoryStackData t=inv.Get(slot);
+            if(cursor==null){if(t!=null){cursor=t.Clone();cursorInfinite=false;inv.Set(slot,null);player.NotifyInventoryChanged();}return;}
+            var put=cursor.Clone();if(put.count<1)put.count=1;inv.Set(slot,put);
+            if(t!=null){cursor=t.Clone();cursorInfinite=false;}else{cursor=null;cursorInfinite=false;}
+            player.NotifyInventoryChanged();MarkDirty();
+        }
+
+        void DrawSurvivalGrid(Rect area)
+        {
+            float cell=Mathf.Min(52,(area.width-16)/9f),x=area.x+(area.width-9*cell)*.5f;
+            for(int row=0;row<3;row++)for(int col=0;col<9;col++)
+            {
+                int si=9+row*9+col;
+                DrawInteractiveSlot(new Rect(x+col*cell,area.y+row*cell,cell-4,cell-4),()=>player.SurvivalInventory.Get(si),v=>{player.SurvivalInventory.Set(si,v);player.NotifyInventoryChanged();MarkDirty();});
+            }
+        }
+        /// <summary>main y2() "surv" tab: an infinite carry is dropped before switching (becomes a normal stack).</summary>
+        void CreativeEnterSurvival()
+        {
+            if(creativeView==CreativeView.Survival)return;
+            // The carried stack stays in hand as an ordinary (finite) stack (main B3()).
+            cursorInfinite=false;
+            creativeView=CreativeView.Survival;
+        }
+        void CreativeLeaveSurvival()
+        {
+            if(creativeView!=CreativeView.Survival)return;
+            if(cursor!=null){cursorInfinite=true;}
+        }
 
         public MainFurnaceSaveData[] CaptureFurnacesSource()
         {
