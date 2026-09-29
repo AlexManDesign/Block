@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Block placement / use / support parity: port Gameplay rules vs main.js kT()/gT()/nA(). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PortDir>$(MSBuildThisFileDirectory)../../../../UnityPort/Assets/BlockcraftPort/</PortDir>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0414;CS0649;CS0169;CS0219;CS0162;CS0168;CS0067;CS1701;CS1702;MSB3277;CS0660;CS0661</NoWarn>
+    <DefineConstants>UNITY_STANDALONE;PARITY_HARNESS</DefineConstants>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(PortDir)Core/BiomeId.cs;$(PortDir)Core/BlockId.cs;$(PortDir)Core/BlockRegistry.cs;$(PortDir)Core/SourceCoords.cs;$(PortDir)Core/VoxelConstants.cs;$(PortDir)Core/SourceBlockData.g.cs;$(PortDir)Core/ChunkCoord.cs" />
+    <Compile Include="$(PortDir)Rendering/AtlasLayout.cs" />
+    <Compile Include="$(PortDir)Gameplay/SourceBlockRules.cs;$(PortDir)Gameplay/MainBlockPlacement.cs;$(PortDir)Gameplay/MainBlockUpdates.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../shim/*.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)*.cs" />
+  </ItemGroup>
+</Project>

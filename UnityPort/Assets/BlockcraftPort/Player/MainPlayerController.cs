@@ -831,7 +831,9 @@ namespace BlockcraftPort
                     else if(wh&&hit.Id!=BlockId.Bedrock)
                     {
                         if(swingPhase<=.05f)swingPhase=1f;MainTransientRenderer.SpawnBreakParticles(hit.Block.x,hit.Block.y,hit.Block.z,hit.Id,10);
-                        world.SetBlock(hit.Block.x,hit.Block.y,hit.Block.z,BlockId.Air,0,true);
+                        // main gT(): other door/bed half goes too; aquatic plants leave water (Qo).
+                        BlockId after=MainBlockPlacement.BreakCompanions(world,hit.Block,hit.Id,false);
+                        world.SetBlock(hit.Block.x,hit.Block.y,hit.Block.z,after,0,true);
                     }
                 }
             }
@@ -874,7 +876,7 @@ namespace BlockcraftPort
                 }
                 // main DT(): using either half of a bed sets p.spawnPos immediately, even when it
                 // is not sleeping time. Full sleep UI/time-skip is a separate gameplay layer.
-                if(hasUseHit&&(hit.Id==BlockId.BedRedFoot||hit.Id==BlockId.BedRedHead))
+                if(hasUseHit&&SourceBlockRules.IsBed(hit.Id))
                 {
                     SetRespawnPoint(new Vector3(hit.Block.x+.5f,hit.Block.y+1f,hit.Block.z+.5f));
                     if(swingPhase<=.05f)swingPhase=1f;return;
@@ -884,32 +886,31 @@ namespace BlockcraftPort
                 {
                     if(swingPhase<=.05f)swingPhase=1f;return;
                 }
+                // main kT(): FLOWER_POT → HL(), door/gate/trapdoor → yL() before the held item.
+                if(hasUseHit)
+                {
+                    var use=MainBlockPlacement.UseTarget(PlacementContext(world),hit,SelectedBlock,out BlockId potPlant);
+                    if(use!=MainBlockPlacement.Result.None)
+                    {
+                        if(use==MainBlockPlacement.Result.Consumed)ConsumeSelectedInventory(1);
+                        if(potPlant!=BlockId.Air){int left=survivalInventory.AddBlock(potPlant,1);if(left>0)MainTransientRenderer.SpawnDroppedBlock(transform.position.x,transform.position.y+.6f,transform.position.z,potPlant,left);SyncSurvivalHeldVisual();}
+                        if(swingPhase<=.05f)swingPhase=1f;return;
+                    }
+                }
                 if(HandleSourceItemUse(world)){if(swingPhase<=.05f)swingPhase=1f;return;}
                 if(hasUseHit)
                 {
-                    Vector3Int b = hit.Block + hit.Normal;BlockId place=SelectedBlock;
-                    if (!IntersectsPlayer(b) && place != BlockId.Air && SourcePlacementAllowed(world,b,place))
-                    {
-                        if (swingPhase <= .05f) swingPhase = 1f;
-                        // main placement marks every LEAVES block with metadata bit 1 so dT() never
-                        // decays player-placed foliage. Natural generation remains meta 0.
-                        byte placeMeta=BlockRegistry.IsLeaf(place)?(byte)1:(byte)0;
-                        bool placed=place==BlockId.Chest?MainWorldFunctionalBlocks.PlaceChestWorld(b,mainYaw,true):world.SetBlock(b.x,b.y,b.z,place,placeMeta,true);
-                        if(placed&&!IsCreative)ConsumeSelectedInventory(1);
-                    }
+                    // main kT()/zL()/VL()/FL(): orientation metadata, support rules, slab merging,
+                    // two-cell doors/beds/tall plants, leaves meta 1 (never decays), chest pairing.
+                    var placed=MainBlockPlacement.Place(PlacementContext(world),hit,SelectedBlock);
+                    if(placed!=MainBlockPlacement.Result.None&&swingPhase<=.05f)swingPhase=1f;
+                    if(placed==MainBlockPlacement.Result.Consumed&&!IsCreative)ConsumeSelectedInventory(1);
                 }
             }
         }
 
-        static bool SourcePlacementAllowed(VoxelWorld world,Vector3Int p,BlockId place)
-        {
-            if(place==BlockId.OakSapling||place==BlockId.BirchSapling||place==BlockId.SpruceSapling||place==BlockId.JungleSapling||place==BlockId.AcaciaSapling||place==BlockId.DarkOakSapling)
-            {
-                BlockId below=world.GetBlock(p.x,p.y-1,p.z);
-                return below==BlockId.Grass||below==BlockId.Dirt||below==BlockId.Podzol||below==BlockId.Farmland||below==BlockId.FarmlandMoist;
-            }
-            return true;
-        }
+        MainBlockPlacement.Context PlacementContext(VoxelWorld world)
+            =>new MainBlockPlacement.Context{World=world,Yaw=mainYaw,Survival=!IsCreative,PlayerFeet=transform.position};
 
         bool HandleSourceItemUse(VoxelWorld world)
         {
@@ -933,7 +934,32 @@ namespace BlockcraftPort
                 }
             }
 
-            if(MainInventoryCatalog.TryGetTool(item,out MainToolDef useTool)&&useTool.Kind==MainToolKind.Hoe)
+            MainInventoryCatalog.TryGetTool(item,out MainToolDef useTool);
+            // main kT(): axe strips logs/stems (L0), keeping the axis metadata.
+            if(useTool.Kind==MainToolKind.Axe)
+            {
+                VoxelHit h;if(VoxelRaycast.Cast(world,AimOrigin,AimDirection,6f,out h))
+                {
+                    BlockId stripped=SourceBlockRules.StrippedOf(h.Id);
+                    if(stripped!=BlockId.Air)
+                    {
+                        bool ok=world.SetBlock(h.Block.x,h.Block.y,h.Block.z,stripped,world.GetMeta(h.Block.x,h.Block.y,h.Block.z),true);
+                        if(ok&&!IsCreative)DamageSelectedInventoryItem(1);
+                        return ok;
+                    }
+                }
+            }
+            // main kT(): shears carve a pumpkin and drop four pumpkin seeds.
+            if(useTool.Kind==MainToolKind.Shears)
+            {
+                VoxelHit h;if(VoxelRaycast.Cast(world,AimOrigin,AimDirection,6f,out h)&&h.Id==BlockId.Pumpkin)
+                {
+                    bool ok=world.SetBlock(h.Block.x,h.Block.y,h.Block.z,BlockId.CarvedPumpkin,0,true);
+                    if(ok){MainTransientRenderer.SpawnDroppedItem(h.Block.x+.5f,h.Block.y+.5f,h.Block.z+.5f,MobItemId.PumpkinSeeds,4);if(!IsCreative)DamageSelectedInventoryItem(1);}
+                    return ok;
+                }
+            }
+            if(useTool.Kind==MainToolKind.Hoe)
             {
                 VoxelHit h;if(VoxelRaycast.Cast(world,AimOrigin,AimDirection,6f,out h))
                 {
@@ -1066,72 +1092,20 @@ namespace BlockcraftPort
             }
             else
             {
-                Vector3Int b=miningBlock;ResetMining();center=(Vector3)b+Vector3.one*.5f;MainTransientRenderer.SpawnBreakParticles(b.x,b.y,b.z,broken,10);world.SetBlock(b.x,b.y,b.z,BlockId.Air,0,true);
+                Vector3Int b=miningBlock;ResetMining();center=(Vector3)b+Vector3.one*.5f;MainTransientRenderer.SpawnBreakParticles(b.x,b.y,b.z,broken,10);
+                // main eJ(): other door/bed half, flower-pot plant drop, Qo() water refill.
+                BlockId after=MainBlockPlacement.BreakCompanions(world,b,broken,true);
+                world.SetBlock(b.x,b.y,b.z,after,0,true);
             }
             if(canDrop)SpawnSourceMiningDrops(center,broken,hasTool?tool:default(MainToolDef));
             if(hasTool&&rule.Hardness>0f&&tool.Kind!=MainToolKind.Bow)DamageSelectedInventoryItem(1);
         }
 
-        void SpawnSourceMiningDrops(Vector3Int b,BlockId broken,MainToolDef tool)
-        { SpawnSourceMiningDrops((Vector3)b+Vector3.one*.5f,broken,tool); }
-
         void SpawnSourceMiningDrops(Vector3 center,BlockId broken,MainToolDef tool)
         {
-            float x=center.x,y=center.y,z=center.z;
             if(tool.Kind==MainToolKind.Shears&&BlockRegistry.IsLeaf(broken))
-            {MainTransientRenderer.SpawnDroppedBlock(x,y,z,broken);return;}
-            if(BlockRegistry.IsLeaf(broken)){MainLeafDecay.SpawnLeafDrops(x,y,z,broken);return;}
-            // main.js r2(), complete: every reference block, same rules and counts.
-            float r=Random.value;
-            string key=BlockRegistry.Key(broken);
-            switch(broken)
-            {
-                case BlockId.Stone: MainTransientRenderer.SpawnDroppedBlock(x,y,z,BlockId.Cobblestone);return;
-                case BlockId.Deepslate: MainTransientRenderer.SpawnDroppedBlock(x,y,z,BlockId.CobbledDeepslate);return;
-                case BlockId.Grass: case BlockId.Mycelium: case BlockId.Podzol: case BlockId.DirtPath:
-                    MainTransientRenderer.SpawnDroppedBlock(x,y,z,BlockId.Dirt);return;
-                case BlockId.Gravel:
-                    if(r<.15f)MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.Flint,1);else MainTransientRenderer.SpawnDroppedBlock(x,y,z,BlockId.Gravel);return;
-                case BlockId.Clay: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.ClayBall,4);return;
-                case BlockId.Melon: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.MelonSlice,3+Random.Range(0,3));return;
-                case BlockId.SweetBerryBush: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.SweetBerries,2);return;
-                case BlockId.Farmland: case BlockId.FarmlandMoist: MainTransientRenderer.SpawnDroppedBlock(x,y,z,BlockId.Dirt);return;
-                case BlockId.Fire: case BlockId.DeadBush: return;
-                case BlockId.Cobweb: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.String,1);return;
-                case BlockId.FurnaceLit:MainTransientRenderer.SpawnDroppedBlock(x,y,z,BlockId.Furnace);return;
-                case BlockId.Wheat3:
-                    MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.Wheat,1);MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.WheatSeeds,1+Random.Range(0,3));return;
-                case BlockId.Wheat0: case BlockId.Wheat1: case BlockId.Wheat2:
-                    MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.WheatSeeds,1);return;
-                case BlockId.Carrots3: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.Carrot,2+Random.Range(0,3));return;
-                case BlockId.Carrots0: case BlockId.Carrots1: case BlockId.Carrots2: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.Carrot,1);return;
-                case BlockId.Potatoes3: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.Potato,2+Random.Range(0,3));return;
-                case BlockId.Potatoes0: case BlockId.Potatoes1: case BlockId.Potatoes2: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.Potato,1);return;
-                case BlockId.PumpkinStem3: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.PumpkinSeeds,1+Random.Range(0,3));return;
-                case BlockId.PumpkinStem0: case BlockId.PumpkinStem1: case BlockId.PumpkinStem2: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.PumpkinSeeds,1);return;
-                case BlockId.MelonStem3: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.MelonSeeds,1+Random.Range(0,3));return;
-                case BlockId.MelonStem0: case BlockId.MelonStem1: case BlockId.MelonStem2: MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.MelonSeeds,1);return;
-                case BlockId.TallGrass: case BlockId.Fern: if(r<.2f)MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.WheatSeeds,1);return;
-            }
-            if(key=="COAL"||key.Contains("COAL_ORE")){MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.Coal,1);return;}
-            if(key=="DIAMOND"||key.Contains("DIAMOND_ORE")){MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.DiamondGem,1);return;}
-            if(key.Contains("EMERALD_ORE")){MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.EmeraldGem,1);return;}
-            if(key.Contains("COPPER_ORE")){MainTransientRenderer.SpawnDroppedItem(x,y,z,MobItemId.RawCopper,2+Random.Range(0,3));return;}
-            // main H1[]: breaking a bed head drops the (foot) bed item of the same colour.
-            if(key.StartsWith("BED_HEAD",System.StringComparison.Ordinal))
-            {
-                BlockId foot=BlockRegistry.FromKey(key=="BED_HEAD"?"BED":"BED_"+key.Substring(9));
-                MainTransientRenderer.SpawnDroppedBlock(x,y,z,foot!=BlockId.Air?foot:broken);return;
-            }
-            MainTransientRenderer.SpawnDroppedBlock(x,y,z,broken);
-        }
-
-        static BlockId HandDropVisual(BlockId id)
-        {
-            // main r2(): these world blocks drop dirt. Item-only drops (clay balls, seeds, etc.)
-            // will move to the item atlas once the inventory namespace is connected.
-            if(id==BlockId.Grass||id==BlockId.Mycelium||id==BlockId.Podzol)return BlockId.Dirt;
-            return id;
+            {MainTransientRenderer.SpawnDroppedBlock(center.x,center.y,center.z,broken);return;}
+            MainBlockDrops.Spawn(center.x,center.y,center.z,broken);
         }
 
         void ResetMining()

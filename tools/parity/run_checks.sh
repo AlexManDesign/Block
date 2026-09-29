@@ -3,6 +3,7 @@
 #   1. golden fingerprint of gen -> light stitch -> mesh (optimisations must not change output)
 #   2. worldgen parity vs reference genWorker.js on 24 widely spread chunks
 #   3. mesher parity vs reference meshWorker.js
+#   4. block placement / use / support rules vs main.js kT()/gT()/nA() (headless reference game)
 # Needs: dotnet 8, node 18+, python3 + numpy.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -34,3 +35,5 @@ for mode in "2" "1 1" "1 2" "1 3"; do
   $bin meshparity "$d" 0,0
   python3 "$here/compare_mesh.py" "$d" 0 | tail -1
 done
+echo "== placement / use / support parity (main.js kT/gT/nA in headless Chromium)"
+"$here/place/run_place.sh" "$out/place" | tail -1

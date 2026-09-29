@@ -379,6 +379,7 @@ namespace BlockcraftPort
         public void Configure(Transform player, Material opaque, Material water, Material transparent, Material xrayTerrain, int seed, int renderDistance, int[] sourceEdits = null)
         {
             Instance = this;
+            MainBlockUpdates.BindMainThread();
             Player = player;
             unchecked{worldQueryRevision++;}
             Seed = seed;
@@ -581,6 +582,8 @@ namespace BlockcraftPort
         void Update()
         {
             if (Player == null || Generator == null) return;
+            // main et[] neighbour callbacks for fluid edits committed by last frame's simulation.
+            MainBlockUpdates.Drain(this);
             UpdateStreamingViewDirection();
             if(!InitialWorldReady)
             {
@@ -2682,6 +2685,7 @@ namespace BlockcraftPort
                 MainLeafDecay.NotifyBlockChanged(m.X,m.Y,m.Z);
                 MainBlockLifecycle.NotifyBlockChanged(m.X,m.Y,m.Z);
                 MainSourceObjectRenderer.NotifyBlockChanged(m.X,m.Y,m.Z);
+                MainBlockUpdates.Enqueue(m.X,m.Y,m.Z,m.Id);
                 if(!(BlockRegistry.IsWater(old)&&BlockRegistry.IsWater(m.Id)))
                     lightEditQueue.Enqueue(new LightEdit(m.X,m.Y,m.Z,old,oldMeta,m.Id,0));
                 CollectSimulationDirtySections(cc,lx,m.Y,lz,waterDirtySectionsScratch);
@@ -2857,6 +2861,7 @@ namespace BlockcraftPort
                 MainLeafDecay.NotifyBlockChanged(m.X,m.Y,m.Z);
                 MainBlockLifecycle.NotifyBlockChanged(m.X,m.Y,m.Z);
                 MainSourceObjectRenderer.NotifyBlockChanged(m.X,m.Y,m.Z);
+                MainBlockUpdates.Enqueue(m.X,m.Y,m.Z,m.Id);
                 lightEditQueue.Enqueue(new LightEdit(m.X,m.Y,m.Z,old,oldMeta,m.Id,0));
                 CollectSimulationDirtySections(cc,lx,m.Y,lz,lavaDirtySectionsScratch);
             }
@@ -3114,6 +3119,9 @@ namespace BlockcraftPort
             // geometry sections, but now from already-corrected packed light. More distant sections
             // reached by light propagation are rebuilt asynchronously from the precise dirty set above.
             if(playerEdit) FastRebuildPlayerEditSections(playerEditSectionsScratch);
+            // main nA() -> et[]: support loss (Qu), concrete powder, coral, cactus, sponge.
+            MainBlockUpdates.Enqueue(wx,y,wz,id);
+            MainBlockUpdates.Drain(this);
             return true;
         }
 
