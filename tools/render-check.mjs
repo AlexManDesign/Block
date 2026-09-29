@@ -73,6 +73,10 @@ try {
   });
   check('lightmap-orientation', lm.maxDiff <= 2, `max |GPU-CPU| = ${lm.maxDiff} (sky15 GPU ${lm.gpuSky15} / CPU ${lm.cpuSky15})`);
 
+  // 1b. Grey foliage tiles (grass, ferns, vines, acacia/dark oak/jungle leaves) must be tinted (not grey).
+  const fol = await ev(() => { const c = document.createElement('canvas'); c.width = atlasImg.naturalWidth; c.height = atlasImg.naturalHeight; const g = c.getContext('2d'); g.drawImage(atlasImg, 0, 0); const per = c.width / 16, out = {}; for (const nm of ['short_grass', 'fern', 'acacia_leaves', 'dark_oak_leaves', 'vine']) { const ti = TILE_NAMES.indexOf(nm), d = g.getImageData((ti % per) * 16, Math.floor(ti / per) * 16, 16, 16).data; let sat = 0, n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 48) { sat += Math.max(d[i], d[i + 1], d[i + 2]) - Math.min(d[i], d[i + 1], d[i + 2]); n++; } out[nm] = +(sat / n).toFixed(1); } return out; });
+  check('foliage-tinted', Object.values(fol).every(v => v > 8), `mean saturation per tile ${JSON.stringify(fol)}`);
+
   // 2. A torch-lit room below sea level must not be tinted as if it were under water.
   const room = await ev(() => {
     const X = Math.floor(player.x), Z = Math.floor(player.z), Y = 18;
