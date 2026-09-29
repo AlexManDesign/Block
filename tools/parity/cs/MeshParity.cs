@@ -56,6 +56,8 @@ static class MeshParity
                 var r = ChunkMesher.Build(snap);
                 // Each layer gets its own compacted vertex list, like meshWorker ov/wv/tv.
                 AppendLayer(r, r.Opaque, r.OpaqueCount, layers[0], idx[0]);
+                // meshWorker keeps hidden ore faces in the opaque list; the port stores them separately.
+                AppendLayer(r, r.XrayHidden, r.XrayHiddenCount, layers[0], idx[0]);
                 AppendLayer(r, r.Water, r.WaterCount, layers[1], idx[1]);
                 AppendLayer(r, r.Transparent, r.TransparentCount, layers[2], idx[2]);
                 snap.Release(); r.ReleaseBuffers();

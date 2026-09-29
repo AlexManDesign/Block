@@ -77,6 +77,9 @@ namespace BlockcraftPort
         public VoxelVertex[] Vertices; public int VertexCount;
         public int[] Opaque,Water,Transparent;
         public int OpaqueCount,WaterCount,TransparentCount;
+        /// <summary>Faces of ores hidden behind opaque blocks; drawn only by the X-Ray pass (submesh 3).</summary>
+        public int[] XrayHidden;
+        public int XrayHiddenCount;
         public bool Empty=>VertexCount==0;
 
         // Meshing is the hottest producer in the streaming path. Keep its large arrays out of the
@@ -88,14 +91,15 @@ namespace BlockcraftPort
             if(Opaque!=null&&Opaque.Length!=0)ArrayPool<int>.Shared.Return(Opaque,false);
             if(Water!=null&&Water.Length!=0)ArrayPool<int>.Shared.Return(Water,false);
             if(Transparent!=null&&Transparent.Length!=0)ArrayPool<int>.Shared.Return(Transparent,false);
-            Vertices=null;Opaque=null;Water=null;Transparent=null;
-            VertexCount=OpaqueCount=WaterCount=TransparentCount=0;
+            if(XrayHidden!=null&&XrayHidden.Length!=0)ArrayPool<int>.Shared.Return(XrayHidden,false);
+            Vertices=null;Opaque=null;Water=null;Transparent=null;XrayHidden=null;
+            VertexCount=OpaqueCount=WaterCount=TransparentCount=XrayHiddenCount=0;
         }
 
         public void DetachBuffers()
         {
-            Vertices=null;Opaque=null;Water=null;Transparent=null;
-            VertexCount=OpaqueCount=WaterCount=TransparentCount=0;
+            Vertices=null;Opaque=null;Water=null;Transparent=null;XrayHidden=null;
+            VertexCount=OpaqueCount=WaterCount=TransparentCount=XrayHiddenCount=0;
         }
     }
 
@@ -112,7 +116,7 @@ namespace BlockcraftPort
         // This mirrors the exact same topology with half the index bytes; dense chunks keep Int32.
         public ushort[] Indices16; public int[] Indices; public int IndexCount;
         public bool Uses16BitIndices => Indices16!=null;
-        public int OpaqueCount,WaterCount,TransparentCount;
+        public int OpaqueCount,WaterCount,TransparentCount,XrayCount;
         public int MinSection=-1,MaxSection=-1;
 
         public static ChunkMeshPayload Rent()
@@ -127,7 +131,7 @@ namespace BlockcraftPort
             if(Vertices!=null&&Vertices.Length!=0)ArrayPool<VoxelVertex>.Shared.Return(Vertices,false);
             if(Indices16!=null&&Indices16.Length!=0)ArrayPool<ushort>.Shared.Return(Indices16,false);
             if(Indices!=null&&Indices.Length!=0)ArrayPool<int>.Shared.Return(Indices,false);
-            Vertices=null;Indices16=null;Indices=null;VertexCount=IndexCount=OpaqueCount=WaterCount=TransparentCount=0;
+            Vertices=null;Indices16=null;Indices=null;VertexCount=IndexCount=OpaqueCount=WaterCount=TransparentCount=XrayCount=0;
             MinSection=MaxSection=-1;
             Pool.Add(this);
         }

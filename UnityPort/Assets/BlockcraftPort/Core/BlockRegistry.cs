@@ -215,6 +215,9 @@ namespace BlockcraftPort
         /// air, water, a cross plant or a special-shaped block (h[] entry). Lava, glass, leaves, chests count.
         /// </summary>
         public static bool ConnectsPlain(BlockId id)=>TConnectPlain[(int)id];
+        static readonly bool[] TXrayOre=new bool[Capacity];
+        /// <summary>meshWorker V1[]==2 (ores): every face is emitted for the X-Ray pass.</summary>
+        public static bool IsXrayOre(BlockId id)=>TXrayOre[(int)id];
 
         static bool IsSourceBlock(BlockId id)=>(int)id>(int)BlockId.LavaFlow1&&(int)id<SourceBlockData.Count;
         static readonly System.Text.RegularExpressions.Regex LeafSupportKey=new System.Text.RegularExpressions.Regex("(^|_)LOG$|_WOOD$|^MUSHROOM_STEM$"); // main.js PT
@@ -248,6 +251,7 @@ namespace BlockcraftPort
                 uint f=SourceBlockData.Flags[i];
                 TSolidRender[i]=(f&SourceBlockData.FSolidRender)!=0;
                 TConnectPlain[i]=(f&(SourceBlockData.FWater|SourceBlockData.FCross|SourceBlockData.FShaped))==0;
+                TXrayOre[i]=(f&SourceBlockData.FXrayOre)!=0;
                 TFireFuel[i]=i!=(int)BlockId.Fire&&(FireFuelKey.IsMatch(SourceBlockData.Key[i])||(f&SourceBlockData.FCross)!=0);
             }
             for(int i=0;i<Capacity;i++)

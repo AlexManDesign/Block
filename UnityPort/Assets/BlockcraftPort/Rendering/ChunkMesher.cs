@@ -19,6 +19,7 @@ namespace BlockcraftPort
         [ThreadStatic] static List<int> scratchOpaque;
         [ThreadStatic] static List<int> scratchWater;
         [ThreadStatic] static List<int> scratchTransparent;
+        [ThreadStatic] static List<int> scratchXray;
 
         static List<T> Scratch<T>(ref List<T> list, int capacity)
         {
@@ -58,7 +59,7 @@ namespace BlockcraftPort
         public static MeshBuildResult Build(SectionSnapshot s)
         {
             var v=Scratch(ref scratchV,6144); var uv=Scratch(ref scratchUv,6144); var sl=Scratch(ref scratchLight,6144);
-            var terrain=Scratch(ref scratchOpaque,8192); var water=Scratch(ref scratchWater,2048); var transparent=Scratch(ref scratchTransparent,2048); int sy=s.Key.Section*16;
+            var terrain=Scratch(ref scratchOpaque,8192); var water=Scratch(ref scratchWater,2048); var transparent=Scratch(ref scratchTransparent,2048); var xray=Scratch(ref scratchXray,512); int sy=s.Key.Section*16;
             for(int x=0;x<16;x++)for(int z=0;z<16;z++)for(int y=0;y<16;y++)
             {
                 BlockId id=s.Get(x+1,y+1,z+1);if(id==BlockId.Air)continue;
@@ -107,7 +108,14 @@ namespace BlockcraftPort
                     {
                         if(!WaterFaceVisible(s,id,other,(FaceDir)f,x,y,z))continue;
                     }
-                    else if(!BlockRegistry.FaceVisible(id,other))continue;
+                    else if(!BlockRegistry.FaceVisible(id,other))
+                    {
+                        // meshWorker MC (V1[]==2): ores emit all six faces so the X-Ray pass can show them
+                        // through stone. The hidden ones go to a separate list that is only drawn in X-Ray
+                        // mode, instead of adding ~40% invisible triangles to every underground chunk.
+                        if(BlockRegistry.IsXrayOre(id))AddFace(v,uv,sl,xray,s,id,def,(FaceDir)f,x,y+sy,z,y,meta);
+                        continue;
+                    }
                     AddFace(v,uv,sl,dst,s,id,def,(FaceDir)f,x,y+sy,z,y,meta);
                 }
             }
@@ -121,18 +129,19 @@ namespace BlockcraftPort
                 return new MeshBuildResult
                 {
                     Key=s.Key,Stamp=s.Stamp,Vertices=Array.Empty<VoxelVertex>(),VertexCount=0,
-                    Opaque=Array.Empty<int>(),Water=Array.Empty<int>(),Transparent=Array.Empty<int>()
+                    Opaque=Array.Empty<int>(),Water=Array.Empty<int>(),Transparent=Array.Empty<int>(),XrayHidden=Array.Empty<int>()
                 };
 
             VoxelVertex[] packed=ArrayPool<VoxelVertex>.Shared.Rent(vertexCount);
             // Vertices were built in the source frame (local z in [0,16]); reflect Z into Unity space.
             for(int i=0;i<vertexCount;i++){Vector3 p=v[i];packed[i]=new VoxelVertex(new Vector3(p.x+worldOffset.x,p.y+worldOffset.y,16f-p.z+worldOffset.z),uv[i],sl[i]);}
-            int[] opaque=RentCopy(terrain),waterIndices=RentCopy(water),transparentIndices=RentCopy(transparent);
+            int[] opaque=RentCopy(terrain),waterIndices=RentCopy(water),transparentIndices=RentCopy(transparent),xrayIndices=RentCopy(xray);
             return new MeshBuildResult
             {
                 Key=s.Key,Stamp=s.Stamp,Vertices=packed,VertexCount=vertexCount,
                 Opaque=opaque,OpaqueCount=terrain.Count,Water=waterIndices,WaterCount=water.Count,
-                Transparent=transparentIndices,TransparentCount=transparent.Count
+                Transparent=transparentIndices,TransparentCount=transparent.Count,
+                XrayHidden=xrayIndices,XrayHiddenCount=xray.Count
             };
         }
 
@@ -538,7 +547,10 @@ namespace BlockcraftPort
             var n=N[(int)face];
             float a=WaterHeight(s,self,x,ly,z);
             float b=WaterHeight(s,other,x+n.x,ly+n.y,z+n.z);
-            return a>b+.001f; // meshWorker: render water-water side only when current surface is higher.
+            // meshWorker also skips this face when the current water is full height (water above it),
+            // leaving a see-through seam above the lower neighbour's surface. The port deliberately closes
+            // that seam; it is the only intentional mesher difference (tools/parity reports it on real chunks).
+            return a>b+.001f;
         }
 
         static void AddWaterShell(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,int x,int my,int z,int ly)

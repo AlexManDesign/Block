@@ -1546,24 +1546,24 @@ namespace BlockcraftPort
 
         static ChunkMeshPayload BuildCombinedPayload(MeshBuildResult[] results,int count)
         {
-            int totalVertices=0,totalIndices=0,opaque=0,water=0,transparent=0,minSection=-1,maxSection=-1;
+            int totalVertices=0,totalIndices=0,opaque=0,water=0,transparent=0,xray=0,minSection=-1,maxSection=-1;
             int[] offsets=ArrayPool<int>.Shared.Rent(Math.Max(1,count));
             try
             {
                 for(int i=0;i<count;i++)
                 {
                     ref MeshBuildResult r=ref results[i];offsets[i]=totalVertices;if(r.Empty)continue;
-                    totalVertices+=r.VertexCount;opaque+=r.OpaqueCount;water+=r.WaterCount;transparent+=r.TransparentCount;
+                    totalVertices+=r.VertexCount;opaque+=r.OpaqueCount;water+=r.WaterCount;transparent+=r.TransparentCount;xray+=r.XrayHiddenCount;
                     int sec=r.Key.Section;if(minSection<0||sec<minSection)minSection=sec;if(sec>maxSection)maxSection=sec;
                 }
-                totalIndices=opaque+water+transparent;if(totalVertices==0||totalIndices==0)return null;
+                totalIndices=opaque+water+transparent+xray;if(totalVertices==0||totalIndices==0)return null;
                 var p=ChunkMeshPayload.Rent();
                 p.Vertices=ArrayPool<VoxelVertex>.Shared.Rent(totalVertices);p.VertexCount=totalVertices;
                 bool use16=totalVertices<=65535; // UInt16 addresses vertices 0..65534 on the conservative cross-platform path.
                 if(use16)p.Indices16=ArrayPool<ushort>.Shared.Rent(totalIndices);
                 else p.Indices=ArrayPool<int>.Shared.Rent(totalIndices);
                 p.IndexCount=totalIndices;
-                p.OpaqueCount=opaque;p.WaterCount=water;p.TransparentCount=transparent;p.MinSection=minSection;p.MaxSection=maxSection;
+                p.OpaqueCount=opaque;p.WaterCount=water;p.TransparentCount=transparent;p.XrayCount=xray;p.MinSection=minSection;p.MaxSection=maxSection;
                 int vw=0;for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];if(r.VertexCount==0)continue;Array.Copy(r.Vertices,0,p.Vertices,vw,r.VertexCount);vw+=r.VertexCount;}
                 int iw=0;
                 if(use16)
@@ -1571,12 +1571,14 @@ namespace BlockcraftPort
                     for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];iw=CopyLayerIndices16(r.Opaque,r.OpaqueCount,p.Indices16,iw,offsets[i]);}
                     for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];iw=CopyLayerIndices16(r.Water,r.WaterCount,p.Indices16,iw,offsets[i]);}
                     for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];iw=CopyLayerIndices16(r.Transparent,r.TransparentCount,p.Indices16,iw,offsets[i]);}
+                    for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];iw=CopyLayerIndices16(r.XrayHidden,r.XrayHiddenCount,p.Indices16,iw,offsets[i]);}
                 }
                 else
                 {
                     for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];iw=CopyLayerIndices(r.Opaque,r.OpaqueCount,p.Indices,iw,offsets[i]);}
                     for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];iw=CopyLayerIndices(r.Water,r.WaterCount,p.Indices,iw,offsets[i]);}
                     for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];iw=CopyLayerIndices(r.Transparent,r.TransparentCount,p.Indices,iw,offsets[i]);}
+                    for(int i=0;i<count;i++){ref MeshBuildResult r=ref results[i];iw=CopyLayerIndices(r.XrayHidden,r.XrayHiddenCount,p.Indices,iw,offsets[i]);}
                 }
                 return p;
             }
@@ -2227,6 +2229,8 @@ namespace BlockcraftPort
                     var cr=directVisibleScratch[i];if(!cr.HasOpaque)continue;
                     terrain.DrawMesh(cr.Mesh,DirectIdentity,xm,0,1);
                     LastChunkDrawCalls++;
+                    // Ore faces hidden behind stone exist only for this pass (meshWorker draws them always).
+                    if(cr.HasXrayHidden){terrain.DrawMesh(cr.Mesh,DirectIdentity,xm,3,1);LastChunkDrawCalls++;}
                 }
             }
             else

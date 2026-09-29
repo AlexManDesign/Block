@@ -11,10 +11,8 @@ function load(name) {
   return import(pathToFileURL(tmp).href).then(m => m.default);
 }
 const gen = await load('genWorker'), mesh = await load('meshWorker');
-const ids = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, 'source_block_ids.json'), 'utf8'));
-// Face tile index = block id so UV parity can be checked through the port's own atlas mapping later.
-const faces = {}; for (const k in ids) faces[ids[k]] = { top: 1, side: 2, bottom: 3 };
-mesh.onmessage({ data: { t: 'init', faces, w: 256, h: 1024 } });
+const F = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '../../reference/data/faces.json'), 'utf8'));
+mesh.onmessage({ data: { t: 'init', faces: F.faces, w: F.w, h: F.h } });
 gen.onmessage({ data: { t: 'seed', seed: +seed, gen: 'deepslate' } });
 fs.mkdirSync(outdir, { recursive: true });
 const H = 384, chunks = new Map();

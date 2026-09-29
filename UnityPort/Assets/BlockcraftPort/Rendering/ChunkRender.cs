@@ -23,8 +23,8 @@ namespace BlockcraftPort
         {
             public bool Present;
             public VoxelVertex[] Vertices; public int VertexCount;
-            public int[] Opaque, Water, Transparent;
-            public int OpaqueCount,WaterCount,TransparentCount;
+            public int[] Opaque, Water, Transparent, Xray;
+            public int OpaqueCount,WaterCount,TransparentCount,XrayCount;
 
             public void Release()
             {
@@ -32,8 +32,9 @@ namespace BlockcraftPort
                 if(Opaque!=null&&Opaque.Length!=0)ArrayPool<int>.Shared.Return(Opaque,false);
                 if(Water!=null&&Water.Length!=0)ArrayPool<int>.Shared.Return(Water,false);
                 if(Transparent!=null&&Transparent.Length!=0)ArrayPool<int>.Shared.Return(Transparent,false);
-                Vertices=null;Opaque=null;Water=null;Transparent=null;
-                VertexCount=OpaqueCount=WaterCount=TransparentCount=0;Present=false;
+                if(Xray!=null&&Xray.Length!=0)ArrayPool<int>.Shared.Return(Xray,false);
+                Vertices=null;Opaque=null;Water=null;Transparent=null;Xray=null;
+                VertexCount=OpaqueCount=WaterCount=TransparentCount=XrayCount=0;Present=false;
             }
         }
 
@@ -44,7 +45,9 @@ namespace BlockcraftPort
         int[] cpuIndices;
         ushort[] cpuIndices16;
         readonly int[] sectionVertexOffsets=new int[VoxelConstants.SectionCount];
-        readonly SubMeshDescriptor[] subMeshes=new SubMeshDescriptor[3];
+        // Submeshes: 0 terrain, 1 water, 2 transparent, 3 ore faces hidden behind stone (X-Ray only).
+        public const int SubMeshCount=4;
+        readonly SubMeshDescriptor[] subMeshes=new SubMeshDescriptor[SubMeshCount];
         static readonly MeshUpdateFlags UploadFlags=MeshUpdateFlags.DontRecalculateBounds|MeshUpdateFlags.DontValidateIndices;
         static readonly MeshUpdateFlags BufferUploadFlags=UploadFlags|MeshUpdateFlags.DontNotifyMeshUsers;
         int vertexCapacity,indexCapacity;
@@ -54,8 +57,8 @@ namespace BlockcraftPort
         Vector3 cachedBoundsMin,cachedBoundsMax;
         bool objectActive=true;
         bool meshWritable=true;
-        int opaqueIndexCount,waterIndexCount,transparentIndexCount;
-        int descriptorVertexCount=-1,descriptorOpaqueCount=-1,descriptorWaterCount=-1,descriptorTransparentCount=-1;
+        int opaqueIndexCount,waterIndexCount,transparentIndexCount,xrayIndexCount;
+        int descriptorVertexCount=-1,descriptorOpaqueCount=-1,descriptorWaterCount=-1,descriptorTransparentCount=-1,descriptorXrayCount=-1;
         Bounds descriptorBounds;
         bool descriptorStateValid;
         ChunkMeshPayload premerged;
@@ -85,7 +88,7 @@ namespace BlockcraftPort
                 for(int i=0;i<sections.Length;i++)
                 {
                     var sd=sections[i];if(!sd.Present)continue;
-                    vertices+=sd.VertexCount;indices+=sd.OpaqueCount+sd.WaterCount+sd.TransparentCount;
+                    vertices+=sd.VertexCount;indices+=sd.OpaqueCount+sd.WaterCount+sd.TransparentCount+sd.XrayCount;
                 }
                 return vertices*VoxelVertexStrideBytes + indices*(vertices<=65535?sizeof(ushort):sizeof(int));
             }
@@ -139,7 +142,8 @@ namespace BlockcraftPort
                     Present=true,Vertices=r.Vertices,VertexCount=r.VertexCount,
                     Opaque=r.Opaque,OpaqueCount=r.OpaqueCount,
                     Water=r.Water,WaterCount=r.WaterCount,
-                    Transparent=r.Transparent,TransparentCount=r.TransparentCount
+                    Transparent=r.Transparent,TransparentCount=r.TransparentCount,
+                    Xray=r.XrayHidden,XrayCount=r.XrayHiddenCount
                 };
                 r.DetachBuffers();
             }
@@ -187,12 +191,12 @@ namespace BlockcraftPort
                 var sd=sections[i];if(!sd.Present)continue;
                 if(minSection<0)minSection=i;maxSection=i;
                 totalVertices+=sd.VertexCount;
-                totalIndices+=sd.OpaqueCount+sd.WaterCount+sd.TransparentCount;
+                totalIndices+=sd.OpaqueCount+sd.WaterCount+sd.TransparentCount+sd.XrayCount;
             }
             if(totalVertices==0)
             {
                 SetObjectActive(false);
-                opaqueIndexCount=waterIndexCount=transparentIndexCount=0;
+                opaqueIndexCount=waterIndexCount=transparentIndexCount=xrayIndexCount=0;
                 boundsMinSection=boundsMaxSection=-1;
                 if(mesh.subMeshCount!=0)mesh.subMeshCount=0;
                 descriptorStateValid=false;
@@ -237,11 +241,13 @@ namespace BlockcraftPort
                 for(int i=0;i<sections.Length;i++){var sd=sections[i];if(sd.Present)iWrite=CopyIndices16(sd.Water,sd.WaterCount,cpuIndices16,iWrite,sectionVertexOffsets[i]);}
                 int transparentStart16=iWrite;
                 for(int i=0;i<sections.Length;i++){var sd=sections[i];if(sd.Present)iWrite=CopyIndices16(sd.Transparent,sd.TransparentCount,cpuIndices16,iWrite,sectionVertexOffsets[i]);}
-                int terrainCount16=waterStart16,waterCount16=transparentStart16-waterStart16,transparentCount16=iWrite-transparentStart16;
-                opaqueIndexCount=terrainCount16;waterIndexCount=waterCount16;transparentIndexCount=transparentCount16;
+                int xrayStart16=iWrite;
+                for(int i=0;i<sections.Length;i++){var sd=sections[i];if(sd.Present)iWrite=CopyIndices16(sd.Xray,sd.XrayCount,cpuIndices16,iWrite,sectionVertexOffsets[i]);}
+                int terrainCount16=waterStart16,waterCount16=transparentStart16-waterStart16,transparentCount16=xrayStart16-transparentStart16;
+                opaqueIndexCount=terrainCount16;waterIndexCount=waterCount16;transparentIndexCount=transparentCount16;xrayIndexCount=iWrite-xrayStart16;
                 EnsureIndexBuffer(iWrite,IndexFormat.UInt16);
                 mesh.SetIndexBufferData(cpuIndices16,0,0,iWrite,BufferUploadFlags);
-                ApplySubMeshesIfChanged(totalVertices,terrainCount16,waterCount16,transparentCount16,waterStart16,transparentStart16,cachedBounds,meshReplaced);
+                ApplySubMeshesIfChanged(totalVertices,terrainCount16,waterCount16,transparentCount16,xrayIndexCount,waterStart16,transparentStart16,xrayStart16,cachedBounds,meshReplaced);
                 LastUploadUsed16BitIndices=true;LastUploadIndexCount=iWrite;
                 LastUploadBytes=totalVertices*VoxelVertexStrideBytes+iWrite*sizeof(ushort);
             }
@@ -252,11 +258,13 @@ namespace BlockcraftPort
                 for(int i=0;i<sections.Length;i++){var sd=sections[i];if(sd.Present)iWrite=CopyIndices(sd.Water,sd.WaterCount,cpuIndices,iWrite,sectionVertexOffsets[i]);}
                 int transparentStart=iWrite;
                 for(int i=0;i<sections.Length;i++){var sd=sections[i];if(sd.Present)iWrite=CopyIndices(sd.Transparent,sd.TransparentCount,cpuIndices,iWrite,sectionVertexOffsets[i]);}
-                int terrainCount=waterStart,waterCount=transparentStart-waterStart,transparentCount=iWrite-transparentStart;
-                opaqueIndexCount=terrainCount;waterIndexCount=waterCount;transparentIndexCount=transparentCount;
+                int xrayStart=iWrite;
+                for(int i=0;i<sections.Length;i++){var sd=sections[i];if(sd.Present)iWrite=CopyIndices(sd.Xray,sd.XrayCount,cpuIndices,iWrite,sectionVertexOffsets[i]);}
+                int terrainCount=waterStart,waterCount=transparentStart-waterStart,transparentCount=xrayStart-transparentStart;
+                opaqueIndexCount=terrainCount;waterIndexCount=waterCount;transparentIndexCount=transparentCount;xrayIndexCount=iWrite-xrayStart;
                 EnsureIndexBuffer(iWrite,IndexFormat.UInt32);
                 mesh.SetIndexBufferData(cpuIndices,0,0,iWrite,BufferUploadFlags);
-                ApplySubMeshesIfChanged(totalVertices,terrainCount,waterCount,transparentCount,waterStart,transparentStart,cachedBounds,meshReplaced);
+                ApplySubMeshesIfChanged(totalVertices,terrainCount,waterCount,transparentCount,xrayIndexCount,waterStart,transparentStart,xrayStart,cachedBounds,meshReplaced);
                 LastUploadUsed16BitIndices=false;LastUploadIndexCount=iWrite;
                 LastUploadBytes=totalVertices*VoxelVertexStrideBytes+iWrite*sizeof(int);
             }
@@ -268,7 +276,7 @@ namespace BlockcraftPort
             int totalVertices=p.VertexCount,totalIndices=p.IndexCount;
             if(totalVertices<=0||totalIndices<=0)
             {
-                SetObjectActive(false);opaqueIndexCount=waterIndexCount=transparentIndexCount=0;boundsMinSection=boundsMaxSection=-1;if(mesh.subMeshCount!=0)mesh.subMeshCount=0;descriptorStateValid=false;ReleaseCpuStaging();
+                SetObjectActive(false);opaqueIndexCount=waterIndexCount=transparentIndexCount=xrayIndexCount=0;boundsMinSection=boundsMaxSection=-1;if(mesh.subMeshCount!=0)mesh.subMeshCount=0;descriptorStateValid=false;ReleaseCpuStaging();
                 return meshReplaced||oldActive||oldLayerMask!=0||oldMin!=boundsMinSection||oldMax!=boundsMaxSection;
             }
             SetObjectActive(true);
@@ -296,28 +304,30 @@ namespace BlockcraftPort
                 LastUploadUsed16BitIndices=false;LastUploadIndexCount=totalIndices;
                 LastUploadBytes=totalVertices*VoxelVertexStrideBytes+totalIndices*sizeof(int);
             }
-            opaqueIndexCount=p.OpaqueCount;waterIndexCount=p.WaterCount;transparentIndexCount=p.TransparentCount;
-            int waterStart=opaqueIndexCount,transparentStart=waterStart+waterIndexCount;
-            ApplySubMeshesIfChanged(totalVertices,opaqueIndexCount,waterIndexCount,transparentIndexCount,waterStart,transparentStart,cachedBounds,meshReplaced);
+            opaqueIndexCount=p.OpaqueCount;waterIndexCount=p.WaterCount;transparentIndexCount=p.TransparentCount;xrayIndexCount=p.XrayCount;
+            int waterStart=opaqueIndexCount,transparentStart=waterStart+waterIndexCount,xrayStart=transparentStart+transparentIndexCount;
+            ApplySubMeshesIfChanged(totalVertices,opaqueIndexCount,waterIndexCount,transparentIndexCount,xrayIndexCount,waterStart,transparentStart,xrayStart,cachedBounds,meshReplaced);
             // The worker already provided the exact interleaved upload arrays, so no main-thread staging
             // copy is required for this full-chunk rebuild. Section buffers remain retained for edits.
             ReleaseCpuStaging();
             return meshReplaced||oldActive!=objectActive||oldLayerMask!=LayerMask||oldMin!=boundsMinSection||oldMax!=boundsMaxSection;
         }
 
-        void ApplySubMeshesIfChanged(int vertexCount,int opaqueCount,int waterCount,int transparentCount,int waterStart,int transparentStart,Bounds bounds,bool force)
+        void ApplySubMeshesIfChanged(int vertexCount,int opaqueCount,int waterCount,int transparentCount,int xrayCount,int waterStart,int transparentStart,int xrayStart,Bounds bounds,bool force)
         {
             bool same=descriptorStateValid&&!force&&
                       descriptorVertexCount==vertexCount&&descriptorOpaqueCount==opaqueCount&&
                       descriptorWaterCount==waterCount&&descriptorTransparentCount==transparentCount&&
+                      descriptorXrayCount==xrayCount&&
                       descriptorBounds.center==bounds.center&&descriptorBounds.size==bounds.size;
             if(same)return;
             subMeshes[0]=Descriptor(0,opaqueCount,vertexCount,bounds);
             subMeshes[1]=Descriptor(waterStart,waterCount,vertexCount,bounds);
             subMeshes[2]=Descriptor(transparentStart,transparentCount,vertexCount,bounds);
-            mesh.SetSubMeshes(subMeshes,0,3,UploadFlags);
+            subMeshes[3]=Descriptor(xrayStart,xrayCount,vertexCount,bounds);
+            mesh.SetSubMeshes(subMeshes,0,SubMeshCount,UploadFlags);
             descriptorVertexCount=vertexCount;descriptorOpaqueCount=opaqueCount;
-            descriptorWaterCount=waterCount;descriptorTransparentCount=transparentCount;
+            descriptorWaterCount=waterCount;descriptorTransparentCount=transparentCount;descriptorXrayCount=xrayCount;
             descriptorBounds=bounds;descriptorStateValid=true;
         }
 
@@ -443,7 +453,7 @@ namespace BlockcraftPort
         {
             objectActive=active;
         }
-        int LayerMask => (opaqueIndexCount>0?1:0)|(waterIndexCount>0?2:0)|(transparentIndexCount>0?4:0);
+        int LayerMask => (opaqueIndexCount>0?1:0)|(waterIndexCount>0?2:0)|(transparentIndexCount>0?4:0)|(xrayIndexCount>0?8:0);
         public Mesh Mesh => mesh;
         // Managed cache: frustum culling runs for hundreds of chunks while the camera moves.
         // Reading Mesh.bounds would cross into Unity native code once per candidate; bounds only change
@@ -451,10 +461,11 @@ namespace BlockcraftPort
         public Bounds Bounds => cachedBounds;
         public Vector3 BoundsMin => cachedBoundsMin;
         public Vector3 BoundsMax => cachedBoundsMax;
-        public bool Drawable => objectActive&&mesh!=null&&mesh.subMeshCount>=3;
+        public bool Drawable => objectActive&&mesh!=null&&mesh.subMeshCount>=SubMeshCount;
         public bool HasOpaque => opaqueIndexCount>0;
         public bool HasWater => waterIndexCount>0;
         public bool HasTransparent => transparentIndexCount>0;
+        public bool HasXrayHidden => xrayIndexCount>0;
         public int TriangleCount => (opaqueIndexCount+waterIndexCount+transparentIndexCount)/3;
         public bool Uses16BitIndices => currentIndexFormat==IndexFormat.UInt16;
 
