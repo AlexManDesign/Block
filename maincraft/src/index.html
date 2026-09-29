@@ -54,6 +54,7 @@ body.nohud #hud>*:not(#debug){display:none}
 #hearts{left:0;bottom:0}#food{right:0;bottom:0;flex-direction:row-reverse}#air{right:0;bottom:20px;flex-direction:row-reverse}
 #survBars i{display:block;width:18px;height:18px;background-size:100% 100%;image-rendering:pixelated}
 #debug{position:absolute;left:4px;top:4px;font-size:12px;line-height:1.35;white-space:pre;background:rgba(0,0,0,.35);padding:4px 6px;font-family:ui-monospace,Menlo,Consolas,monospace}
+#biomeInfo{position:absolute;left:4px;top:4px;font-size:13px;line-height:1.4;white-space:pre;text-shadow:1px 1px #000;background:rgba(0,0,0,.28);padding:3px 7px;border-radius:3px}
 #hint{position:absolute;left:50%;top:8px;transform:translateX(-50%);font-size:11px;color:#ddd;text-shadow:1px 1px #000;max-width:90vw;text-align:center;opacity:.85}
 #hurt{position:fixed;inset:0;pointer-events:none;z-index:9;background:radial-gradient(transparent 50%,rgba(200,0,0,.5));opacity:0}
 #hurt.flash{animation:hurt .5s}
@@ -135,6 +136,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
   <div id="heldName"></div>
   <div id="hotbar"></div>
   <div id="debug" class="hidden"></div>
+  <div id="biomeInfo"></div>
 </div>
 <div id="clickToPlay" class="hidden"></div>
 <div id="pause" class="screen hidden">
@@ -157,7 +159,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
 </div>
 
 <script type="text/plain" id="worker-src">
-/*@INCLUDE blockdata.js,blocks.js,noise.js,worldgen.js,mesher.js,worker.js*/
+/*@INCLUDE blockdata.js,blocks.js,noise.js,biometable.js,worldgen.js,mesher.js,worker.js*/
 </script>
 <script>
 const ASSETS = "@ASSETS@";

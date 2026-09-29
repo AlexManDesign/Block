@@ -211,7 +211,7 @@ class World {
           if (sky > 0) {
             const cost = LCOST[id];
             if (cost >= 15) sky = 0;
-            else if (cost > 1 || sky < 15) sky = Math.max(0, sky - cost + (sky === 15 && cost === 1 ? 1 : 0));
+            else if (sky < 15 || VDIM[id]) sky = Math.max(0, sky - cost);
             if (sky === 15) hm = WORLD_MIN_Y + s * 16 + ly;
           }
           const e = EMIT[id];
@@ -314,7 +314,7 @@ class World {
         const old = sec ? sec.light[li] : 0xF0;
         let nv;
         if (sky) {
-          nv = (d === 3 && cur === 15 && cost === 1) ? 15 : cur - cost;
+          nv = (d === 3 && cur === 15 && !VDIM[id]) ? 15 : cur - cost;
           if (nv > (old >> 4)) { this.setLightRaw(c, nx, ny, nz, (nv << 4) | (old & 15)); if (nv > 1) this.pushL(nx, ny, nz, nv); }
         } else {
           nv = cur - cost;
@@ -380,7 +380,7 @@ class World {
     this.propagateAdd(false);
     // ---- sky light
     this.lqh = this.lqt = 0; this.rqh = this.rqt = 0;
-    if (oldSky > 0 && newCost > LCOST[oldId]) {
+    if (oldSky > 0 && (newCost > LCOST[oldId] || VDIM[newId] > VDIM[oldId])) {
       const cur = this.getLight(x, y, z);
       this.setLightRaw(c, x, y, z, cur & 15);
       this.pushR(x, y, z, oldSky);
@@ -390,8 +390,9 @@ class World {
     this.propagateAdd(true);
     // heightmap maintenance (approximate: only raises/lowers at this column)
     const hmi = ((z & 15) << 4) | (x & 15);
-    if (newCost > 1 && y >= c.hm[hmi]) c.hm[hmi] = y + 1;
-    else if (newCost <= 1 && y + 1 === c.hm[hmi]) {
+    const shades = newCost > 1 || VDIM[newId];
+    if (shades && y >= c.hm[hmi]) c.hm[hmi] = y + 1;
+    else if (!shades && y + 1 === c.hm[hmi]) {
       let yy = y;
       while (yy > WORLD_MIN_Y && (this.getLight(x, yy, z) >> 4) === 15) yy--;
       c.hm[hmi] = yy + 1;
@@ -450,7 +451,7 @@ class World {
     c.edits.set(((y - WORLD_MIN_Y) << 8) | ((z & 15) << 4) | (x & 15), id | (meta << 16));
     this.dirtyCols.add(c.key);
     this.markDirtyAt(x, y, z);
-    if (LCOST[oldId] !== LCOST[id] || EMIT[oldId] !== EMIT[id]) this.relightAt(x, y, z, oldId, id);
+    if (LCOST[oldId] !== LCOST[id] || VDIM[oldId] !== VDIM[id] || EMIT[oldId] !== EMIT[id]) this.relightAt(x, y, z, oldId, id);
     if (!(opts && opts.noUpdate)) {
       this.scheduleAround(x, y, z);
       this.neighbourChanged(x, y, z);

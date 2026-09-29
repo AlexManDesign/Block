@@ -70,7 +70,7 @@ void main(){
   vUV = vec3(float((w1 >> 11) & 31u) * 0.0625, float((w1 >> 16) & 31u) * 0.0625, float(layer));
   vShade = float((w1 >> 21) & 255u) / 255.0;
   vLight = vec2(float(w2 & 255u), float((w2 >> 8) & 255u)) / 240.0;
-  float d = length(wp);
+  float d = max(length(wp.xz), abs(wp.y) * 0.5);
   vFog = clamp((d - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0);
 }`;
 const TERRAIN_FS = `#version 300 es
@@ -147,7 +147,7 @@ precision highp float;
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aUV; layout(location=2) in vec4 aCol;
 uniform mat4 uVP; uniform vec2 uFog;
 out vec3 vUV; out vec4 vCol; out float vFog;
-void main(){ vUV = aUV; vCol = aCol; gl_Position = uVP * vec4(aPos, 1.0); vFog = clamp((length(aPos) - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0); }`;
+void main(){ vUV = aUV; vCol = aCol; gl_Position = uVP * vec4(aPos, 1.0); vFog = clamp((max(length(aPos.xz), abs(aPos.y) * 0.5) - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0); }`;
 const ARR_FS = `#version 300 es
 precision mediump float; precision mediump sampler2DArray;
 uniform sampler2DArray uTex; uniform vec3 uFogColor; uniform float uAlphaRef;
@@ -183,7 +183,7 @@ class Renderer {
   constructor(canvas, assets) {
     this.canvas = canvas;
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: true, stencil: false,
-      powerPreference: 'high-performance', preserveDrawingBuffer: false, desynchronized: true });
+      powerPreference: 'high-performance', preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 is not supported');
     this.gl = gl;
     this.assets = assets;
@@ -564,7 +564,7 @@ class Renderer {
     gl.uniform3fv(p.u.uSunDir, env.sunDir);
     gl.uniform4f(p.u.uSunset, env.sunsetColor[0], env.sunsetColor[1], env.sunsetColor[2], env.sunset);
     gl.uniform1f(p.u.uStars, env.stars);
-    gl.uniform1f(p.u.uVoid, 0.85);
+    gl.uniform1f(p.u.uVoid, 1.0);
     gl.bindVertexArray(this.emptyVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     // sun & moon as billboards at distance 100 along their directions

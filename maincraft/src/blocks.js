@@ -31,7 +31,7 @@ const NB = BLOCK_TABLE.length + 1;
 const B = { AIR: 0 };
 const B_KEY = ['AIR'], B_EN = ['Air'], B_RU = ['Воздух'];
 const SHAPE = new Uint8Array(NB), OPAQUE = new Uint8Array(NB), RLAYER = new Uint8Array(NB);
-const LCOST = new Uint8Array(NB), EMIT = new Uint8Array(NB), SOLID = new Uint8Array(NB);
+const LCOST = new Uint8Array(NB), VDIM = new Uint8Array(NB), EMIT = new Uint8Array(NB), SOLID = new Uint8Array(NB);
 const FLAGS = new Uint16Array(NB), BASE = new Uint16Array(NB), TAB = new Uint8Array(NB);
 const HARD = new Float32Array(NB), TOOL = new Uint8Array(NB);
 // face textures (layer index): 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z ; FRONT = facing face texture
@@ -70,7 +70,9 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     RLAYER[id] = (f & BF_TRANS) || sh === SH.WATER ? RL_TRANS :
       (isCube && !clear && sh !== SH.CACTUS) ? RL_SOLID : RL_CUTOUT;
     if (sh === SH.LAVA) RLAYER[id] = RL_SOLID;
-    LCOST[id] = OPAQUE[id] ? 15 : (f & BF_LEAVES) || sh === SH.WATER || (f & BF_AQUATIC) || key === 'ICE' ? 2 : 1;
+    // light: cost per step (15 = blocks light); VDIM = sky light is dimmed while passing down (MC opacity 1)
+    LCOST[id] = OPAQUE[id] ? 15 : 1;
+    VDIM[id] = (f & BF_LEAVES) || sh === SH.WATER || (f & BF_AQUATIC) || key === 'ICE' || key === 'COBWEB' ? 1 : 0;
     if (key === 'TINTED_GLASS' || sh === SH.LAVA) LCOST[id] = 15;
     if (sh === SH.SLAB || sh === SH.STAIRS || sh === SH.FARMLAND || sh === SH.CHEST) LCOST[id] = 1;
     SOLID[id] = (sh === SH.CROSS || sh === SH.TALL || sh === SH.WATER || sh === SH.LAVA || sh === SH.TORCH ||

@@ -71,7 +71,8 @@ class Game {
     const nw = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 4) - 1));
     const w = new World(meta.seed, this.workerSrc, this.assets.layers, { workers: nw });
     w.savedEdits = edits;
-    w.onMeshResult = (c, sy, d) => this.r.uploadSection(c, sy, d);
+    this.meshQueue = [];
+    w.onMeshResult = (c, sy, d) => this.meshQueue.push(c, sy, d);
     w.onColumnUnload = (c) => { this.r.freeColumn(c); if (c.edits && c.edits.size) this.pendingSave.set(c.key, c.edits); };
     w.onBreak = (x, y, z, id, m, byUpdate) => this.onBlockBroken(x, y, z, id, m, byUpdate);
     this.world = w;
@@ -167,7 +168,7 @@ class Game {
     if (!w || !w.ready) return;
     const p = this.player.pos;
     const pcx = Math.floor(p[0]) >> 4, pcz = Math.floor(p[2]) >> 4;
-    const R = Math.min(Settings.renderDist, 28), L = R + 2;
+    const R = Math.min(Settings.renderDist, 27), L = R + 3; // +3: lit needs sky-init neighbours, meshing needs lit neighbours
     const maxGen = w.pool.workers.length * 3;
     // request columns
     for (const [dx, dz, d] of this.spiral) {
@@ -226,6 +227,20 @@ class Game {
     }
   }
 
+  // upload finished section meshes to the GPU, nearest first, within a time budget
+  uploadMeshes(budgetMs) {
+    const q = this.meshQueue;
+    if (!q || !q.length) return;
+    const t0 = performance.now();
+    let i = 0;
+    for (; i < q.length; i += 3) {
+      const c = q[i];
+      if (c.state >= 0) this.r.uploadSection(c, q[i + 1], q[i + 2]);
+      if (performance.now() - t0 > budgetMs) { i += 3; break; }
+    }
+    q.splice(0, i);
+  }
+
   // ------------------------------------------------------------------ environment
   environment() {
     const e = this.envObj;
@@ -247,9 +262,10 @@ class Game {
     e.stars = Math.max(0, 1 - day * 1.6);
     e.moonPhase = Math.floor(this.days || 0) % 8;
     e.cloudColor = [0.25 + 0.75 * day, 0.25 + 0.75 * day, 0.3 + 0.7 * day];
-    const R = Math.min(Settings.renderDist, 28);
+    const R = Math.min(Settings.renderDist, 27);
     e.renderDist = R;
-    e.fogEnd = R * 16 - 2; e.fogStart = R * 16 - 28;
+    // the rendered area is a circle of whole chunks: fog must be complete before the nearest missing chunk
+    e.fogEnd = Math.max(24, (R - 1) * 16); e.fogStart = Math.max(e.fogEnd * 0.55, e.fogEnd - 40);
     e.far = Math.max(420, R * 16 * 1.5);
     e.fov = Settings.fov + (this.player.sprinting ? 8 : 0) + (this.player.flying && this.player.sprinting ? 4 : 0);
     this.fovCur = (this.fovCur || e.fov) + (e.fov - (this.fovCur || e.fov)) * 0.2;
@@ -283,6 +299,7 @@ class Game {
     this.resize();
     const w = this.world;
     this.stream();
+    this.uploadMeshes(this.loadingWorld ? 50 : 3);
     if (this.loadingWorld) {
       const p = this.player;
       const pcx = Math.floor(p.pos[0]) >> 4, pcz = Math.floor(p.pos[2]) >> 4;
@@ -1076,20 +1093,26 @@ class Game {
   updateHotbar() { UI.updateHotbar(); }
   updateSurvivalHud() { UI.updateSurvival(); }
   updateDebug() {
-    const el = $('debug');
-    if (!this.debug && !Settings.fps) { if (!el.classList.contains('hidden')) el.classList.add('hidden'); return; }
+    const el = $('debug'), bi = $('biomeInfo');
+    if ((this.frameN & 7) === 0 && this.world) {
+      const p = this.player;
+      const b = this.world.biomeAt(Math.floor(p.pos[0]), Math.floor(p.pos[2]));
+      const name = BIOME_LIST[b] ? (CUR_LANG === 'ru' ? BIOME_LIST[b][2] : BIOME_LIST[b][1]) : '?';
+      bi.textContent = (Settings.fps ? this.fps + ' FPS\n' : '') + T('biome') + ': ' + name + (this.player.flying ? '\n' + T('flying') : '');
+    }
+    bi.classList.toggle('hidden', this.debug);
+    if (!this.debug) { el.classList.add('hidden'); return; }
     el.classList.remove('hidden');
     if ((this.frameN & 7) !== 0) return;
-    if (!this.debug) { el.textContent = this.fps + ' FPS'; return; }
     const p = this.player, w = this.world, r = this.r;
     const x = Math.floor(p.pos[0]), y = Math.floor(p.pos[1]), z = Math.floor(p.pos[2]);
     const lt = w.getLight(x, y, z);
-    const bi = w.biomeAt(x, z);
+    const bid = w.biomeAt(x, z);
     const dirs = ['S (+Z)', 'W (-X)', 'N (-Z)', 'E (+X)'];
     let t = `Maincraft WebGL2  ${this.fps} fps\n`;
     t += `XYZ: ${p.pos[0].toFixed(2)} / ${p.pos[1].toFixed(2)} / ${p.pos[2].toFixed(2)}\n`;
     t += `Chunk: ${x >> 4} ${z >> 4}  Facing: ${dirs[p.facingDir()]}\n`;
-    t += `Biome: ${BIOME_LIST[bi] ? (CUR_LANG === 'ru' ? BIOME_LIST[bi][2] : BIOME_LIST[bi][1]) : '?'}\n`;
+    t += `Biome: ${BIOME_LIST[bid] ? (CUR_LANG === "ru" ? BIOME_LIST[bid][2] : BIOME_LIST[bid][1]) : '?'}\n`;
     t += `Light: sky ${lt >> 4}  block ${lt & 15}\n`;
     t += `Columns: ${w.cols.size}  gen ${w.genInFlight}  mesh ${w.meshInFlight}  lit-wait ${w.pendingLit.size}\n`;
     t += `Sections: ${r.stats.sections}  draws ${r.stats.draws}  quads ${r.stats.quads}\n`;
@@ -1143,6 +1166,7 @@ class Game {
       }
       if (e.code === 'KeyW') { const now = performance.now(); if (now - this.lastW < 280) this.player.sprintLatch = true; this.lastW = now; }
       if (e.code === 'F3') this.debug = !this.debug;
+      if (e.code === 'KeyF' && this.mode === 'creative') { this.player.flying = !this.player.flying; this.player.vel[1] = 0; }
       if (e.code === 'F5') this.camMode = (this.camMode + 1) % 3;
       if (e.code === 'F1') { this.hideHud = !this.hideHud; document.body.classList.toggle('nohud', this.hideHud); }
       if (e.code === 'KeyQ') this.dropHeld();

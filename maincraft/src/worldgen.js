@@ -3,40 +3,54 @@
 // weirdness drive a height field, a 3D density adds overhangs, then surface rules per biome,
 // noise caves, ores, trees and vegetation. Everything is deterministic per seed and chunk.
 
+// Biomes: the Minecraft overworld set. Variants point at a "base" biome whose surface / tree /
+// vegetation rules they share (e.g. deep_cold_ocean -> cold_ocean).
 const BIOME_LIST = [
   ['OCEAN', 'Ocean', 'Океан'], ['DEEP_OCEAN', 'Deep Ocean', 'Глубокий океан'],
-  ['FROZEN_OCEAN', 'Frozen Ocean', 'Замёрзший океан'], ['COLD_OCEAN', 'Cold Ocean', 'Холодный океан'],
-  ['LUKEWARM_OCEAN', 'Lukewarm Ocean', 'Тёплый океан'], ['WARM_OCEAN', 'Warm Ocean', 'Тропический океан'],
+  ['FROZEN_OCEAN', 'Frozen Ocean', 'Замёрзший океан'], ['DEEP_FROZEN_OCEAN', 'Deep Frozen Ocean', 'Глубокий замёрзший океан'],
+  ['COLD_OCEAN', 'Cold Ocean', 'Холодный океан'], ['DEEP_COLD_OCEAN', 'Deep Cold Ocean', 'Глубокий холодный океан'],
+  ['LUKEWARM_OCEAN', 'Lukewarm Ocean', 'Тёплый океан'], ['DEEP_LUKEWARM_OCEAN', 'Deep Lukewarm Ocean', 'Глубокий тёплый океан'],
+  ['WARM_OCEAN', 'Warm Ocean', 'Тропический океан'],
   ['RIVER', 'River', 'Река'], ['FROZEN_RIVER', 'Frozen River', 'Замёрзшая река'],
   ['BEACH', 'Beach', 'Пляж'], ['SNOWY_BEACH', 'Snowy Beach', 'Заснеженный пляж'],
   ['STONY_SHORE', 'Stony Shore', 'Каменистый берег'], ['PLAINS', 'Plains', 'Равнина'],
   ['SUNFLOWER_PLAINS', 'Sunflower Plains', 'Подсолнечная равнина'], ['SNOWY_PLAINS', 'Snowy Plains', 'Заснеженная равнина'],
   ['ICE_SPIKES', 'Ice Spikes', 'Ледяные пики'], ['DESERT', 'Desert', 'Пустыня'], ['SAVANNA', 'Savanna', 'Саванна'],
+  ['SAVANNA_PLATEAU', 'Savanna Plateau', 'Плато саванны'], ['WINDSWEPT_SAVANNA', 'Windswept Savanna', 'Выветренная саванна'],
   ['FOREST', 'Forest', 'Лес'], ['FLOWER_FOREST', 'Flower Forest', 'Цветочный лес'],
-  ['BIRCH_FOREST', 'Birch Forest', 'Березняк'], ['DARK_FOREST', 'Dark Forest', 'Тёмный лес'],
-  ['TAIGA', 'Taiga', 'Тайга'], ['OLD_GROWTH_TAIGA', 'Old Growth Taiga', 'Старовозрастная тайга'],
+  ['BIRCH_FOREST', 'Birch Forest', 'Березняк'], ['OLD_GROWTH_BIRCH_FOREST', 'Old Growth Birch Forest', 'Старовозрастный березняк'],
+  ['DARK_FOREST', 'Dark Forest', 'Тёмный лес'], ['TAIGA', 'Taiga', 'Тайга'],
+  ['OLD_GROWTH_PINE_TAIGA', 'Old Growth Pine Taiga', 'Старовозрастная сосновая тайга'],
+  ['OLD_GROWTH_SPRUCE_TAIGA', 'Old Growth Spruce Taiga', 'Старовозрастная еловая тайга'],
   ['SNOWY_TAIGA', 'Snowy Taiga', 'Заснеженная тайга'], ['JUNGLE', 'Jungle', 'Джунгли'],
   ['SPARSE_JUNGLE', 'Sparse Jungle', 'Редкие джунгли'], ['BAMBOO_JUNGLE', 'Bamboo Jungle', 'Бамбуковые джунгли'],
   ['SWAMP', 'Swamp', 'Болото'], ['MANGROVE_SWAMP', 'Mangrove Swamp', 'Мангровое болото'],
-  ['BADLANDS', 'Badlands', 'Пустоши'], ['WOODED_BADLANDS', 'Wooded Badlands', 'Лесистые пустоши'],
+  ['BADLANDS', 'Badlands', 'Пустоши'], ['ERODED_BADLANDS', 'Eroded Badlands', 'Выветренные пустоши'],
+  ['WOODED_BADLANDS', 'Wooded Badlands', 'Лесистые пустоши'],
   ['MEADOW', 'Meadow', 'Луг'], ['CHERRY_GROVE', 'Cherry Grove', 'Вишнёвая роща'], ['GROVE', 'Grove', 'Роща'],
   ['SNOWY_SLOPES', 'Snowy Slopes', 'Заснеженные склоны'], ['JAGGED_PEAKS', 'Jagged Peaks', 'Зубчатые пики'],
   ['FROZEN_PEAKS', 'Frozen Peaks', 'Заледеневшие пики'], ['STONY_PEAKS', 'Stony Peaks', 'Скалистые пики'],
-  ['WINDSWEPT_HILLS', 'Windswept Hills', 'Холмы'], ['MUSHROOM_FIELDS', 'Mushroom Fields', 'Грибные поля'],
+  ['WINDSWEPT_HILLS', 'Windswept Hills', 'Выветренные холмы'], ['WINDSWEPT_GRAVELLY_HILLS', 'Windswept Gravelly Hills', 'Выветренные гравийные холмы'],
+  ['WINDSWEPT_FOREST', 'Windswept Forest', 'Выветренный лес'], ['MUSHROOM_FIELDS', 'Mushroom Fields', 'Грибные поля'],
 ];
 const BI = {};
 BIOME_LIST.forEach((b, i) => { BI[b[0]] = i; });
+// back-compat alias used by feature code
+BI.OLD_GROWTH_TAIGA = BI.OLD_GROWTH_SPRUCE_TAIGA;
 
 // per-biome properties: surface top/filler, trees (jittered grid cell + weighted types)
 const BPROP = [];
 (function () {
   const G = B.GRASS, D = B.DIRT, S = B.SAND;
-  const def = (k, o) => { BPROP[BI[k]] = Object.assign({ top: G, fill: D, sub: 0, floor: D, snow: 0, cell: 0, trees: null, cold: 0 }, o); };
-  def('OCEAN', { top: S, fill: S, floor: -1 }); def('DEEP_OCEAN', { top: B.GRAVEL, fill: B.GRAVEL, floor: B.GRAVEL });
-  def('FROZEN_OCEAN', { top: B.GRAVEL, fill: B.GRAVEL, floor: B.GRAVEL, cold: 2 });
-  def('COLD_OCEAN', { top: B.GRAVEL, fill: B.GRAVEL, floor: B.GRAVEL, cold: 1 });
-  def('LUKEWARM_OCEAN', { top: S, fill: S, floor: S }); def('WARM_OCEAN', { top: S, fill: S, floor: S });
-  def('RIVER', { top: S, fill: S, floor: -2 }); def('FROZEN_RIVER', { top: S, fill: S, floor: -2, cold: 2 });
+  const def = (k, o) => { BPROP[BI[k]] = Object.assign({ top: G, fill: D, sub: 0, floor: D, snow: 0, cell: 0, trees: null, cold: 0, base: BI[k] }, o); };
+  const like = (k, src, o) => { BPROP[BI[k]] = Object.assign({}, BPROP[BI[src]], { base: BI[src] }, o || {}); };
+  def('OCEAN', { top: S, fill: S, floor: -1, ocean: 1 });
+  def('FROZEN_OCEAN', { top: B.GRAVEL, fill: B.GRAVEL, floor: B.GRAVEL, cold: 2, ocean: 1 });
+  def('COLD_OCEAN', { top: B.GRAVEL, fill: B.GRAVEL, floor: B.GRAVEL, cold: 1, ocean: 1 });
+  def('LUKEWARM_OCEAN', { top: S, fill: S, floor: S, ocean: 1 }); def('WARM_OCEAN', { top: S, fill: S, floor: S, ocean: 1 });
+  like('DEEP_OCEAN', 'OCEAN', { floor: B.GRAVEL }); like('DEEP_FROZEN_OCEAN', 'FROZEN_OCEAN'); like('DEEP_COLD_OCEAN', 'COLD_OCEAN');
+  like('DEEP_LUKEWARM_OCEAN', 'LUKEWARM_OCEAN');
+  def('RIVER', { top: S, fill: S, floor: -2, ocean: 1 }); def('FROZEN_RIVER', { top: S, fill: S, floor: -2, cold: 2, ocean: 1 });
   def('BEACH', { top: S, fill: S, sub: B.SANDSTONE, floor: S }); def('SNOWY_BEACH', { top: S, fill: S, sub: B.SANDSTONE, floor: S, snow: 1, cold: 2 });
   def('STONY_SHORE', { top: B.STONE, fill: B.STONE, floor: B.GRAVEL });
   def('PLAINS', { cell: 18, trees: [[0.3, 'oak'], [0.42, 'fancy_oak']] });
@@ -45,12 +59,15 @@ const BPROP = [];
   def('ICE_SPIKES', { top: B.SNOW, fill: B.SNOW, snow: 1, cold: 2 });
   def('DESERT', { top: S, fill: S, sub: B.SANDSTONE, floor: S });
   def('SAVANNA', { cell: 13, trees: [[0.55, 'acacia'], [0.62, 'oak']] });
+  like('SAVANNA_PLATEAU', 'SAVANNA', { cell: 11 }); like('WINDSWEPT_SAVANNA', 'SAVANNA', { cell: 16, mountain: 1 });
   def('FOREST', { cell: 6, trees: [[0.5, 'oak'], [0.75, 'birch'], [0.87, 'fancy_oak']] });
   def('FLOWER_FOREST', { cell: 9, trees: [[0.45, 'oak'], [0.7, 'birch'], [0.8, 'fancy_oak']] });
   def('BIRCH_FOREST', { cell: 6, trees: [[0.78, 'birch'], [0.9, 'oak']] });
+  like('OLD_GROWTH_BIRCH_FOREST', 'BIRCH_FOREST', { cell: 5, trees: [[0.88, 'tall_birch'], [0.95, 'birch']] });
   def('DARK_FOREST', { cell: 6, trees: [[0.62, 'dark_oak'], [0.82, 'oak'], [0.9, 'birch'], [0.93, 'huge_mushroom']] });
   def('TAIGA', { cell: 6, trees: [[0.85, 'spruce']], top: G });
-  def('OLD_GROWTH_TAIGA', { cell: 6, top: B.PODZOL, trees: [[0.5, 'mega_spruce'], [0.85, 'spruce']] });
+  def('OLD_GROWTH_SPRUCE_TAIGA', { cell: 6, top: B.PODZOL, trees: [[0.5, 'mega_spruce'], [0.85, 'spruce']] });
+  like('OLD_GROWTH_PINE_TAIGA', 'OLD_GROWTH_SPRUCE_TAIGA', { trees: [[0.45, 'mega_spruce'], [0.85, 'spruce']] });
   def('SNOWY_TAIGA', { cell: 8, snow: 1, cold: 2, trees: [[0.7, 'spruce']] });
   def('JUNGLE', { cell: 5, trees: [[0.25, 'mega_jungle'], [0.72, 'jungle'], [0.9, 'jungle_bush']] });
   def('SPARSE_JUNGLE', { cell: 11, trees: [[0.5, 'jungle'], [0.65, 'oak'], [0.8, 'jungle_bush']] });
@@ -58,6 +75,7 @@ const BPROP = [];
   def('SWAMP', { cell: 9, floor: -3, trees: [[0.55, 'swamp_oak']] });
   def('MANGROVE_SWAMP', { top: B.MUD, fill: B.MUD, floor: B.MUD, cell: 7, trees: [[0.45, 'swamp_oak'], [0.65, 'dark_oak']] });
   def('BADLANDS', { top: B.RED_SAND, fill: B.TERRACOTTA, floor: B.RED_SAND, badlands: 1 });
+  like('ERODED_BADLANDS', 'BADLANDS');
   def('WOODED_BADLANDS', { top: B.RED_SAND, fill: B.TERRACOTTA, floor: B.RED_SAND, badlands: 1, cell: 10, trees: [[0.35, 'oak']] });
   def('MEADOW', { cell: 26, trees: [[0.25, 'oak'], [0.35, 'birch']] });
   def('CHERRY_GROVE', { cell: 9, trees: [[0.45, 'cherry']] });
@@ -67,8 +85,88 @@ const BPROP = [];
   def('FROZEN_PEAKS', { top: B.SNOW, fill: B.PACKED_ICE, snow: 1, cold: 2, mountain: 1 });
   def('STONY_PEAKS', { top: B.STONE, fill: B.STONE, mountain: 1 });
   def('WINDSWEPT_HILLS', { cell: 15, trees: [[0.25, 'oak'], [0.45, 'spruce']], mountain: 1 });
+  like('WINDSWEPT_GRAVELLY_HILLS', 'WINDSWEPT_HILLS', { top: B.GRAVEL, fill: B.GRAVEL, cell: 22 });
+  like('WINDSWEPT_FOREST', 'WINDSWEPT_HILLS', { cell: 7, trees: [[0.35, 'oak'], [0.85, 'spruce']] });
   def('MUSHROOM_FIELDS', { top: B.MYCELIUM, fill: D, cell: 11, trees: [[0.3, 'huge_mushroom']] });
 })();
+
+// ---------------------------------------------------------------- multi-noise biome lookup
+// Nearest parameter point (sum of squared distances to each parameter interval), searched with a
+// small bounding-box tree like Minecraft's Climate.RTree.
+const MC_TO_BIOME = {};
+const BIOME_TREE = (function () {
+  if (typeof MC_BIOME_POINTS === 'undefined') return null;
+  const bin = atob(MC_BIOME_POINTS), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  const a = new Int16Array(u8.buffer);
+  const N = a.length / 11, D = 5;
+  const leaves = [];
+  for (let i = 0; i < N; i++) {
+    const box = new Float64Array(D * 2);
+    for (let d = 0; d < D * 2; d++) box[d] = a[i * 11 + 1 + d] / 10000;
+    const name = MC_BIOME_NAMES[a[i * 11]].toUpperCase();
+    leaves.push({ box, biome: BI[name] !== undefined ? BI[name] : BI.PLAINS, kids: null });
+  }
+  const center = (n, d) => (n.box[d * 2] + n.box[d * 2 + 1]) / 2;
+  const bound = (kids) => {
+    const box = new Float64Array(D * 2);
+    for (let d = 0; d < D; d++) { box[d * 2] = Infinity; box[d * 2 + 1] = -Infinity; }
+    for (const k of kids) for (let d = 0; d < D; d++) { if (k.box[d * 2] < box[d * 2]) box[d * 2] = k.box[d * 2]; if (k.box[d * 2 + 1] > box[d * 2 + 1]) box[d * 2 + 1] = k.box[d * 2 + 1]; }
+    return { box, biome: -1, kids };
+  };
+  const cost = (b) => { let s = 0; for (let d = 0; d < D; d++) s += b[d * 2 + 1] - b[d * 2]; return s; };
+  const bucket = (nodes) => {
+    const size = Math.pow(10, Math.floor(Math.log(nodes.length - 0.01) / Math.LN10));
+    const out = [];
+    for (let i = 0; i < nodes.length; i += size) out.push(bound(nodes.slice(i, i + size)));
+    return out;
+  };
+  const build = (nodes) => {
+    if (nodes.length === 1) return nodes[0];
+    if (nodes.length <= 10) return bound(nodes.slice().sort((p, q) => {
+      let sp = 0, sq = 0; for (let d = 0; d < D; d++) { sp += Math.abs(center(p, d)); sq += Math.abs(center(q, d)); } return sp - sq;
+    }));
+    let best = Infinity, bestD = 0;
+    for (let d = 0; d < D; d++) {
+      const sorted = nodes.slice().sort((p, q) => center(p, d) - center(q, d));
+      let c = 0; for (const b of bucket(sorted)) c += cost(b.box);
+      if (c < best) { best = c; bestD = d; }
+    }
+    const sorted = nodes.slice().sort((p, q) => center(p, bestD) - center(q, bestD));
+    const groups = bucket(sorted).sort((p, q) => Math.abs(center(p, bestD)) - Math.abs(center(q, bestD)));
+    return bound(groups.map(g => build(g.kids)));
+  };
+  return build(leaves);
+})();
+function biomeDist(box, q) {
+  let s = 0;
+  for (let d = 0; d < 5; d++) {
+    const v = q[d], lo = box[d * 2], hi = box[d * 2 + 1];
+    const e = v < lo ? lo - v : v > hi ? v - hi : 0;
+    s += e * e;
+  }
+  return s;
+}
+let _biomeLast = null;
+function biomeSearch(node, q, best, bestD) {
+  if (!node.kids) return node;
+  for (const k of node.kids) {
+    const dk = biomeDist(k.box, q);
+    if (dk >= bestD) continue;
+    const r = k.kids ? biomeSearch(k, q, best, bestD) : k;
+    const dr = r === k && !k.kids ? dk : biomeDist(r.box, q);
+    if (dr < bestD) { bestD = dr; best = r; if (dr === 0) return best; }
+  }
+  return best;
+}
+function lookupBiome(q) {
+  if (!BIOME_TREE) return BI.PLAINS;
+  let best = _biomeLast, bestD = best ? biomeDist(best.box, q) : Infinity;
+  if (bestD === 0) return best.biome;
+  best = biomeSearch(BIOME_TREE, q, best, bestD);
+  _biomeLast = best;
+  return best.biome;
+}
 
 const TERRA_BANDS = (function () {
   const k = ['TERRACOTTA', 'ORANGE_TERRACOTTA', 'TERRACOTTA', 'YELLOW_TERRACOTTA', 'BROWN_TERRACOTTA', 'TERRACOTTA',
@@ -87,8 +185,13 @@ function spline(pts, x) {
   }
   return pts[pts.length - 1];
 }
-const SPL_BASE = [-1, 24, -0.62, 30, -0.45, 38, -0.3, 47, -0.2, 55, -0.155, 61, -0.115, 64, -0.05, 66, 0.1, 69, 0.3, 74, 0.55, 82, 1, 96];
-const SPL_ERO = [-1, 1, -0.6, 0.82, -0.38, 0.58, -0.18, 0.34, 0.08, 0.16, 0.35, 0.07, 1, 0.02];
+// terrain splines (continentalness -> base height, erosion -> mountain amplitude / density slope)
+const SPL_BASE = [-1, 5, -0.6, 12, -0.42, 20, -0.3, 30, -0.2, 40, -0.1, 48, 0, 55, 0.12, 61, 0.24, 64, 0.4, 71, 0.6, 84, 1, 104];
+const SPL_MOUNT = [-1, 1, -0.58, 0.88, -0.35, 0.62, -0.18, 0.36, 0.05, 0.16, 0.4, 0.06, 1, 0];
+const SPL_FACTOR = [-1, 1.3, -0.5, 2.2, -0.2, 3.6, 0.05, 5, 0.45, 6.5, 1, 7.5];
+const SPL_CONT_PARAM = [-1, -1, -0.325, -0.8, -0.11, -0.19, -0.077, -0.13, -0.04, -0.06, 0.05, 0.05, 0.37, 0.25, 0.8, 0.7, 1.2, 1];
+const clamp1 = v => v < -1 ? -1 : v > 1 ? 1 : v;
+const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
 
 const CI = (x, y, z) => ((y - WORLD_MIN_Y) << 8) | (z << 4) | x;
 const COL_N = WORLD_H * 256;
@@ -108,113 +211,113 @@ class WorldGen {
     this.BIO = new Uint8Array(256);
     this.TOP = new Int16Array(256);            // top solid after surface
     this.dcache = new Map();
+    this.bioCache = new Map();
     this.colCache = new Map();
   }
 
   // ------------------------------------------------------------ climate / height
-  climate(x, z, o) {
-    const wx = x + this.nWarp.n2(x / 180, z / 180) * 22, wz = z + this.nWarp.n2(x / 180 + 91, z / 180 - 37) * 22;
-    let c = this.nCont.f2(wx / 2300, wz / 2300, 6) * 1.9 + 0.1;
-    let e = this.nEro.f2(wx / 900, wz / 900, 4) * 1.65;
-    let w = this.nWeird.f2(wx / 520, wz / 520, 3) * 1.6;
-    c = c < -1 ? -1 : c > 1 ? 1 : c; e = e < -1 ? -1 : e > 1 ? 1 : e; w = w < -1 ? -1 : w > 1 ? 1 : w;
+  // fractal noise with Perlin-like amplitude (simplex output is scaled down to match)
+  fbm(n, x, z, scale, oct) { return n.f2(x * scale, z * scale, oct) * 0.72; }
+  // terrain part of the climate: height + density parameters for column x,z
+  terrain(x, z, o) {
+    const c = this.fbm(this.nCont, x, z, 1 / 2200, 4) * 2.3 + 0.24;
+    const e = this.fbm(this.nEro, x, z, 1 / 1300, 4) * 2.1;
+    const w = this.fbm(this.nWeird, x, z, 1 / 850, 5) * 2.2;
     const pv = 1 - Math.abs(3 * Math.abs(w) - 2);
-    const base = spline(SPL_BASE, c);
-    const inland = sstep(-0.13, 0.28, c);
-    const ef = spline(SPL_ERO, e);
-    const pk = smooth01((pv + 1) * 0.5);
-    const mount = inland * ef * (0.18 + 0.82 * Math.pow(pk, 1.6)) * 178;
-    const hillAmp = 2 + 9 * sstep(-0.16, 0.05, c) * (1 - ef * 0.4);
-    let h = base + mount + this.nHill.f2(x / 95, z / 95, 3) * hillAmp;
-    // rivers
-    const rw = Math.abs(this.nRiver.f2(wx / 520, wz / 520, 3));
-    let river = 0;
+    let h = spline(SPL_BASE, c);
+    const s = spline(SPL_MOUNT, e) * clamp01((c + 0.25) / 0.4);
+    const wk = Math.pow(clamp01(pv * 0.5 + 0.5), 1.4);
+    h += Math.pow(s, 1.15) * wk * 235;
+    if (h > SEA - 3) h += this.fbm(this.nHill, x, z, 1 / 22, 3) * (9 + s * 15) * clamp01((h - (SEA - 2)) / 11);
+    else if (h < SEA - 4) h += this.fbm(this.nMisc, x, z, 0.018, 2) * 2.2 * (2.5 + clamp01((SEA - 4 - h) / 22) * 8);
+    // valleys and rivers where weirdness crosses zero (peaks-and-valleys < -0.35)
     if (c > -0.2) {
-      const land = sstep(-0.2, -0.1, c);
-      river = (1 - sstep(0.012, 0.05, rw)) * land;
-      const bank = (1 - sstep(0.012, 0.13, rw)) * land;
-      if (h > SEA + 1) {
-        const low = Math.min(h, SEA + 3 + (h - SEA) * 0.25);
-        h += (low - h) * bank * 0.85;
+      const bank = smooth01((-0.05 - pv) / 0.3);
+      if (bank > 0 && h > SEA + 4) h += (SEA + 4 - h) * bank * 0.85;
+      if (pv < -0.35 && h > SEA) {
+        const t = smooth01((-0.35 - pv) / 0.35);
+        if (h > SEA + 3) h += (SEA + 3 - h) * t * 0.9;
+        const r = smooth01((-0.83 - pv) / 0.17);
+        if (r > 0 && h > SEA - 2) h += (SEA - 2 - h) * r;
       }
-      if (river > 0 && h > SEA - 5) h += (SEA - 5 - h) * river;
     }
-    // mushroom islands in deep ocean
+    // mushroom islands far out in the ocean
     let mush = 0;
-    if (c < -0.55) {
-      const mn = this.nMush.n2(x / 700, z / 700);
-      if (mn > 0.55) { mush = sstep(0.55, 0.75, mn) * sstep(-0.55, -0.7, c); const ih = SEA + 2 + mush * 7 + this.nHill.n2(x / 40, z / 40) * 3; if (ih > h) h += (ih - h) * mush; }
+    if (c < -0.85) {
+      const m = this.nMush.n2(x * 0.0011, z * 0.0011) * 0.5 + 0.5;
+      if (m > 0.8) { mush = smooth01((m - 0.8) / 0.12) * smooth01((-0.85 - c) / 0.12); const k = SEA - 14 + mush * 26 + this.fbm(this.nHill, x, z, 0.02, 2) * 3; if (k > h) h = k; }
     }
-    const t = this.nTemp.f2(x / 2600, z / 2600, 3) * 1.8;
-    const hu = this.nHum.f2(x / 2100 + 50, z / 2100 - 70, 3) * 1.8;
-    o.h = h; o.c = c; o.e = e; o.w = w; o.pv = pv; o.t = t; o.hu = hu; o.river = river; o.mush = mush;
-    o.m = Math.min(1, mount / 70);
-    o.ti = t < -0.45 ? 0 : t < -0.15 ? 1 : t < 0.2 ? 2 : t < 0.55 ? 3 : 4;
-    o.hi = hu < -0.35 ? 0 : hu < -0.1 ? 1 : hu < 0.1 ? 2 : hu < 0.32 ? 3 : 4;
-    o.mount = mount;
+    if (h < WORLD_MIN_Y + 4) h = WORLD_MIN_Y + 4; if (h > WORLD_MAX_Y - 4) h = WORLD_MAX_Y - 4;
+    o.h = h; o.c = c; o.e = e; o.w = w; o.pv = pv; o.s = s; o.mush = mush;
+    o.factor = spline(SPL_FACTOR, e);
+    return o;
+  }
+  // full climate incl. temperature / humidity (domain warped) for biome selection
+  climate(x, z, o) {
+    this.terrain(x, z, o);
+    const wx = x + (this.nWarp.n2(x * 0.008, z * 0.008) * 0.5) * 16, wz = z + (this.nWarp.n2(x * 0.008 + 300, z * 0.008 - 300) * 0.5) * 16;
+    o.t = clamp1(this.fbm(this.nTemp, wx, wz, 1 / 1600, 3) * 2.4);
+    o.hu = clamp1(this.fbm(this.nHum, wx, wz, 1 / 1500, 3) * 2.1);
+    o.ti = o.t < -0.45 ? 0 : o.t < -0.15 ? 1 : o.t < 0.2 ? 2 : o.t < 0.55 ? 3 : 4;
     return o;
   }
 
-  biomeOf(o) {
-    const h = o.h, ti = o.ti, hi = o.hi, w = o.w;
-    if (o.mush > 0.3 && h > SEA) return BI.MUSHROOM_FIELDS;
-    if (o.river > 0.45 && h < SEA + 1.5 && o.c > -0.2) return ti === 0 ? BI.FROZEN_RIVER : BI.RIVER;
-    if (h < SEA - 0.5) {
-      if (ti === 0) return BI.FROZEN_OCEAN;
-      if (ti === 1) return BI.COLD_OCEAN;
-      if (ti === 3) return BI.LUKEWARM_OCEAN;
-      if (ti === 4) return BI.WARM_OCEAN;
-      return o.c < -0.45 ? BI.DEEP_OCEAN : BI.OCEAN;
+  biomeOf(o, x, z) {
+    const h = Math.round(o.h), ti = o.ti;
+    if (o.mush > 0.25 && h > SEA) return BI.MUSHROOM_FIELDS;
+    if (h <= SEA) {
+      if (o.c > -0.11 && h > SEA - 5 && Math.abs(o.w) < 0.065) return ti === 0 ? BI.FROZEN_RIVER : BI.RIVER;
+      const deep = o.c < -0.455;
+      return [deep ? BI.DEEP_FROZEN_OCEAN : BI.FROZEN_OCEAN, deep ? BI.DEEP_COLD_OCEAN : BI.COLD_OCEAN,
+        deep ? BI.DEEP_OCEAN : BI.OCEAN, deep ? BI.DEEP_LUKEWARM_OCEAN : BI.LUKEWARM_OCEAN, BI.WARM_OCEAN][ti];
     }
-    if (h < SEA + 2.5 && o.c < -0.08) {
+    if (h <= SEA + 2 && o.pv > -0.35) {
       if (ti === 0) return BI.SNOWY_BEACH;
-      if (o.e < -0.35) return BI.STONY_SHORE;
       if (ti === 4) return BI.DESERT;
-      return BI.BEACH;
+      if (o.e < -0.18) return BI.STONY_SHORE;
+      if (this.nMisc.n2(x * 0.011 + 401.7, z * 0.011 - 233.1) * 0.5 + 0.5 > 0.35) return BI.BEACH;
     }
-    if (o.e > 0.35 && h < SEA + 5 && hi >= 3 && ti >= 1 && ti <= 4) return ti >= 3 ? BI.MANGROVE_SWAMP : BI.SWAMP;
-    if (h > 175 || (o.mount > 70 && o.pv > 0.5)) {
-      if (ti <= 1) return w < 0 ? BI.JAGGED_PEAKS : BI.FROZEN_PEAKS;
-      if (ti === 2) return h > 190 ? (w < 0 ? BI.JAGGED_PEAKS : BI.FROZEN_PEAKS) : BI.STONY_PEAKS;
-      if (ti === 3) return BI.STONY_PEAKS;
-      return BI.BADLANDS;
+    let sw = clamp1(o.w * 3.5);
+    if (sw > -0.12 && sw < 0.12) sw = sw < 0 ? -0.12 : 0.12;
+    const q = this._q || (this._q = new Float64Array(5));
+    q[0] = o.t; q[1] = clamp1(o.hu * 0.82); q[2] = spline(SPL_CONT_PARAM, o.c < 0.05 ? 0.05 : o.c);
+    q[3] = clamp1(o.e * 1.5 + (o.t > 0.5 ? 0.42 : 0)); q[4] = sw;
+    return lookupBiome(q);
+  }
+  // biome at quart resolution (4x4 columns, like Minecraft's biome storage)
+  biomeAt(x, z) {
+    const qx = x >> 2, qz = z >> 2, k = qx * 131072 + qz;
+    let b = this.bioCache.get(k);
+    if (b === undefined) {
+      const o = this.climate(qx * 4 + 2, qz * 4 + 2, this._bo || (this._bo = {}));
+      b = this.biomeOf(o, qx * 4 + 2, qz * 4 + 2);
+      if (this.bioCache.size > 80000) this.bioCache.clear();
+      this.bioCache.set(k, b);
     }
-    if (h > 118 || o.mount > 38) {
-      if (ti <= 1) return hi >= 2 ? BI.GROVE : BI.SNOWY_SLOPES;
-      if (ti === 2) return w > 0.1 && hi >= 1 ? BI.CHERRY_GROVE : BI.MEADOW;
-      if (ti === 3) return hi >= 3 ? BI.MEADOW : BI.SAVANNA;
-      return hi >= 2 ? BI.WOODED_BADLANDS : BI.BADLANDS;
-    }
-    if (o.mount > 18 && o.pv > 0.2 && h > 88) return ti === 4 ? BI.BADLANDS : BI.WINDSWEPT_HILLS;
-    switch (ti) {
-      case 0: return hi === 0 && w > 0.3 ? BI.ICE_SPIKES : hi >= 3 ? BI.SNOWY_TAIGA : BI.SNOWY_PLAINS;
-      case 1: return hi <= 1 ? BI.PLAINS : hi === 2 ? BI.FOREST : hi === 3 ? BI.TAIGA : BI.OLD_GROWTH_TAIGA;
-      case 2: return hi === 0 ? (w > 0.25 ? BI.FLOWER_FOREST : w < -0.4 ? BI.SUNFLOWER_PLAINS : BI.PLAINS) :
-        hi === 1 ? BI.PLAINS : hi === 2 ? BI.FOREST : hi === 3 ? BI.BIRCH_FOREST : BI.DARK_FOREST;
-      case 3: return hi <= 1 ? BI.SAVANNA : hi === 2 ? BI.FOREST : hi === 3 ? BI.SPARSE_JUNGLE : (w > 0.3 ? BI.BAMBOO_JUNGLE : BI.JUNGLE);
-      default: return hi >= 3 && o.c > 0.3 ? (hi === 3 ? BI.WOODED_BADLANDS : BI.BADLANDS) : BI.DESERT;
-    }
+    return b;
   }
 
-  // cached climate for grid corners & tree candidates (keyed by x,z)
+  // cached terrain for grid corners & tree candidates (keyed by x,z)
   colInfo(x, z) {
-    const k = x * 65536 + z;
+    const k = x * 131072 + z;
     let v = this.colCache.get(k);
     if (v) return v;
-    const o = this.climate(x, z, {});
-    v = { h: o.h, m: o.m, biome: this.biomeOf(o), sq: 0, amp: 0 };
+    const o = this.terrain(x, z, {});
     const near = Math.abs(o.h - SEA);
-    v.sq = 9 + 16 * o.m;
-    v.amp = (0.14 + 1.05 * o.m) * (near < 9 ? 0.35 + 0.65 * near / 9 : 1);
+    v = { h: o.h, factor: o.factor, amp: (0.3 + o.s * 0.9) * (near < 9 ? 0.35 + 0.65 * near / 9 : 1), biome: 0 };
+    v.biome = this.biomeAt(x, z);
     if (this.colCache.size > 60000) this.colCache.clear();
     this.colCache.set(k, v);
     return v;
   }
 
+  // density > 0 is solid. The 3D noise fades out above the surface so nothing floats in the air.
   density(x, y, z, ci) {
-    const t = (ci.h - y) / ci.sq;
-    if (t > ci.amp || t < -ci.amp) return t;
-    return t + ci.amp * this.nDen.f3(x / 62, y / 46, z / 62, 3);
+    const t = (ci.h - y) / 24 * ci.factor;
+    let amp = ci.amp;
+    if (y > ci.h - 4) amp *= clamp01((ci.h + 6 - y) / 10);
+    if (t > amp || t < -amp) return t;
+    return t + amp * this.nDen.f3(x * 0.016, y * 0.011, z * 0.016, 3) * 0.9;
   }
 
   // surface height (top solid) computed purely from density, identical to what chunk fill produces
@@ -222,7 +325,7 @@ class WorldGen {
     const gx = Math.floor(x / 4) * 4, gz = Math.floor(z / 4) * 4;
     const fx = (x - gx) / 4, fz = (z - gz) / 4;
     const c00 = this.colInfo(gx, gz), c10 = this.colInfo(gx + 4, gz), c01 = this.colInfo(gx, gz + 4), c11 = this.colInfo(gx + 4, gz + 4);
-    const top = Math.max(c00.h + c00.amp * c00.sq, c10.h + c10.amp * c10.sq, c01.h + c01.amp * c01.sq, c11.h + c11.amp * c11.sq) + 2;
+    const top = Math.max(c00.h, c10.h, c01.h, c11.h) + 8;
     let j = Math.min(47, Math.floor((top - WORLD_MIN_Y) / 8));
     const dAt = (jj) => {
       const y = WORLD_MIN_Y + jj * 8;
@@ -254,10 +357,10 @@ class WorldGen {
     const o = this.clim, H = this.H, BIO = this.BIO;
     // heights with margin and biomes
     for (let dz = -1; dz <= 16; dz++) for (let dx = -1; dx <= 16; dx++) {
-      this.climate(x0 + dx, z0 + dz, o);
+      this.terrain(x0 + dx, z0 + dz, o);
       H[(dz + 1) * 18 + dx + 1] = o.h;
-      if (dx >= 0 && dx < 16 && dz >= 0 && dz < 16) BIO[dz * 16 + dx] = this.biomeOf(o);
     }
+    for (let dz = 0; dz < 16; dz++) for (let dx = 0; dx < 16; dx++) BIO[dz * 16 + dx] = this.biomeAt(x0 + dx, z0 + dz);
     this.fillTerrain();
     this.surface();
     this.caves();
@@ -291,16 +394,17 @@ class WorldGen {
     for (let k = 0; k < 5; k++) for (let i = 0; i < 5; i++) {
       const ci = this.colInfo(x0 + i * 4, z0 + k * 4);
       cinfo[k * 5 + i] = ci;
-      const t = ci.h + ci.amp * ci.sq + 2;
+      const t = ci.h + 8;
       if (t > hmax) hmax = t;
     }
-    const rows = Math.min(48, Math.floor((hmax - WORLD_MIN_Y) / 8) + 1);
+    // rows to evaluate: up to the terrain top, but always to sea level so oceans are filled with water
+    const rows = Math.min(47, Math.max(Math.floor((hmax - WORLD_MIN_Y) / 8) + 1, Math.ceil((SEA + 1 - WORLD_MIN_Y) / 8)));
     const D = new Float32Array(25 * 49);
     for (let k = 0; k < 5; k++) for (let i = 0; i < 5; i++) {
       const ci = cinfo[k * 5 + i], gx = x0 + i * 4, gz = z0 + k * 4;
       for (let j = 0; j <= 48; j++) {
         const y = WORLD_MIN_Y + j * 8;
-        D[(k * 5 + i) * 49 + j] = j > rows ? -10 : this.density(gx, y, gz, ci);
+        D[(k * 5 + i) * 49 + j] = j > rows + 1 ? -10 : this.density(gx, y, gz, ci);
       }
     }
     const seed = this.seed;
@@ -344,7 +448,7 @@ class WorldGen {
   surface() {
     const ids = this.ids, meta = this.meta, H = this.H, x0 = this.x0, z0 = this.z0, seed = this.seed;
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
-      const b = this.BIO[z * 16 + x], P = BPROP[b];
+      const P = BPROP[this.BIO[z * 16 + x]], b = P.base;
       let y = WORLD_MAX_Y - 1;
       while (y > WORLD_MIN_Y && !this.isStoneLike(ids[CI(x, y, z)])) y--;
       this.TOP[z * 16 + x] = y;
@@ -407,15 +511,10 @@ class WorldGen {
         for (let yy = SEA; yy >= SEA - 1; yy--) {
           const i = CI(x, yy, z);
           if (ids[i] === B.WATER && ids[CI(x, yy + 1, z)] === 0) {
-            if (b !== BI.FROZEN_OCEAN || hash2(seed + 5, wx, wz) < 0.9) ids[i] = B.ICE;
+            if (b !== BI.FROZEN_OCEAN || this.nMisc.n2(wx / 24, wz / 24) > -0.45) ids[i] = B.ICE;
             break;
           }
         }
-      }
-      if (b === BI.FROZEN_OCEAN && underwater && this.nMisc.n2(wx / 30, wz / 30) > 0.55) {
-        // icebergs
-        const hgt = Math.floor((this.nMisc.n2(wx / 30, wz / 30) - 0.55) * 30);
-        for (let k = 0; k <= hgt; k++) { const i = CI(x, SEA + k, z); if (ids[i] === 0 || ids[i] === B.ICE) ids[i] = k > hgt - 2 ? B.SNOW : B.PACKED_ICE; }
       }
     }
   }
@@ -511,7 +610,7 @@ class WorldGen {
     for (let i = 0; i < 5; i++) blob(B.GRAVEL, B.GRAVEL, 26, uni(-64, 120));
     for (let i = 0; i < 4; i++) blob(B.DIRT, 0, 26, uni(0, 150));
     // ores
-    const b = this.BIO[8 * 16 + 8];
+    const b = BPROP[this.BIO[8 * 16 + 8]].base;
     const mountain = BPROP[b].mountain || b === BI.WINDSWEPT_HILLS || b === BI.MEADOW || b === BI.GROVE || b === BI.CHERRY_GROVE;
     for (let i = 0; i < 20; i++) vein(B.COAL, B.DEEPSLATE_COAL_ORE, 14, tri(0, 192), false);
     for (let i = 0; i < 12; i++) vein(B.COAL, 0, 14, uni(136, 300), false);
@@ -558,10 +657,10 @@ class WorldGen {
 
   treeAt(x, z) {
     const ci = this.colInfo(x, z);
-    const P = BPROP[ci.biome];
-    if (ci.biome === BI.DESERT) return hash2(this.seed + 11, x, z) < 0.006 ? 'cactus' : 0;
-    if (ci.biome === BI.ICE_SPIKES) return hash2(this.seed + 11, x, z) < 0.012 ? 'ice_spike' : 0;
-    if (ci.biome === BI.BADLANDS) return hash2(this.seed + 11, x, z) < 0.004 ? 'cactus' : 0;
+    const P = BPROP[ci.biome], base = P.base;
+    if (base === BI.DESERT) return hash2(this.seed + 11, x, z) < 0.006 ? 'cactus' : 0;
+    if (base === BI.ICE_SPIKES) return hash2(this.seed + 11, x, z) < 0.012 ? 'ice_spike' : 0;
+    if (base === BI.BADLANDS) return hash2(this.seed + 11, x, z) < 0.004 ? 'cactus' : 0;
     if (!P.trees) return 0;
     const cell = P.cell, gx = Math.floor(x / cell), gz = Math.floor(z / cell);
     const px = gx * cell + ((hash2(this.seed + 21, gx, gz) * cell) | 0);
@@ -572,26 +671,32 @@ class WorldGen {
     return 0;
   }
 
+  // Whether a tree grows at x,z. Uses only seed-derived data (never the blocks of the chunk being
+  // generated), so every chunk a tree overlaps reaches the same decision and trees are never cut.
+  treeSpot(x, z) {
+    const t = this.treeAt(x, z);
+    if (!t) return null;
+    const sy = this.surfaceAt(x, z);
+    if (sy < SEA || sy > 165 || sy > WORLD_MAX_Y - 40) return null;
+    const ci = this.colInfo(x, z), P = BPROP[ci.biome];
+    if (t !== 'cactus' && (P.top === B.SAND || P.top === B.RED_SAND || P.top === B.STONE || P.top === B.GRAVEL)) return null;
+    if (P.mountain || P.base === BI.MEADOW || P.base === BI.GROVE || P.base === BI.CHERRY_GROVE) {
+      const s = Math.max(Math.abs(this.colInfo(x + 1, z).h - this.colInfo(x - 1, z).h), Math.abs(this.colInfo(x, z + 1).h - this.colInfo(x, z - 1).h));
+      if (s > 3.2) return null;
+    }
+    return { t, sy };
+  }
+
   features() {
     const x0 = this.x0, z0 = this.z0, M = 9;
     for (let z = z0 - M; z < z0 + 16 + M; z++) for (let x = x0 - M; x < x0 + 16 + M; x++) {
-      const t = this.treeAt(x, z);
-      if (!t) continue;
-      const sy = this.surfaceAt(x, z);
-      if (sy < SEA || sy > WORLD_MAX_Y - 40) continue;
-      // if this column is inside the chunk make sure the ground is soil
+      const spot = this.treeSpot(x, z);
+      if (!spot) continue;
+      const { t, sy } = spot;
+      // make sure the trunk stands on soil inside this chunk
       const g = this.getB(x, sy, z);
-      if (g >= 0) {
-        if (t === 'cactus') { if (g !== B.SAND && g !== B.RED_SAND) continue; }
-        else if (t === 'ice_spike') { if (g !== B.SNOW) continue; }
-        else if (g !== B.GRASS && g !== B.DIRT && g !== B.PODZOL && g !== B.MYCELIUM && g !== B.COARSE_DIRT && g !== B.SNOW && g !== B.MUD) continue;
-        if (this.getB(x, sy + 1, z) === B.WATER) continue;
-      } else {
-        const bi = this.colInfo(x, z).biome;
-        const top = BPROP[bi].top;
-        if (t === 'cactus') { if (top !== B.SAND && top !== B.RED_SAND) continue; }
-        else if (top === B.SAND || top === B.RED_SAND || top === B.STONE) continue;
-      }
+      if (g >= 0 && t !== 'cactus' && t !== 'ice_spike' && g !== B.GRASS && g !== B.PODZOL && g !== B.MYCELIUM && g !== B.COARSE_DIRT && g !== B.MUD) this.setB(x, sy, z, t === 'huge_mushroom' ? B.MYCELIUM : B.DIRT, 0, 2);
+      if (g >= 0 && t === 'cactus' && g !== B.SAND && g !== B.RED_SAND) this.setB(x, sy, z, B.SAND, 0, 2);
       this.growTree(t, x, sy, z);
     }
     this.vegetation();
@@ -617,10 +722,11 @@ class WorldGen {
     const rnd = mulberry(hash2i(this.seed + 99, x, z));
     const y = sy + 1;
     switch (type) {
-      case 'oak': case 'birch': case 'swamp_oak': case 'jungle': {
+      case 'oak': case 'birch': case 'tall_birch': case 'swamp_oak': case 'jungle': {
+        if (type === 'tall_birch') { type = 'birch'; this._tall = 4 + ((rnd() * 4) | 0); } else this._tall = 0;
         const logId = type === 'birch' ? B.BIRCH_LOG : type === 'jungle' ? B.JUNGLE_LOG : B.LOG;
         const leafId = type === 'birch' ? B.BIRCH_LEAVES : type === 'jungle' ? B.JUNGLE_LEAVES : B.LEAVES;
-        const h = (type === 'birch' ? 5 : type === 'jungle' ? 5 : 4) + ((rnd() * 3) | 0) + (type === 'jungle' ? (rnd() * 4) | 0 : 0);
+        const h = (type === 'birch' ? 5 : type === 'jungle' ? 5 : 4) + ((rnd() * 3) | 0) + (type === 'jungle' ? (rnd() * 4) | 0 : 0) + this._tall;
         const top = y + h - 1;
         for (let dy = -3; dy <= 0; dy++) this.leafLayer(x, top + dy + 1, z, dy >= -1 ? 1 : 2, leafId, rnd, true);
         if (type === 'swamp_oak') { this.leafLayer(x, top - 2, z, 3, leafId, rnd, false); }
@@ -821,7 +927,7 @@ class WorldGen {
     const pick = (arr, r) => arr[Math.floor(r * arr.length) % arr.length];
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
       const wx = x0 + x, wz = z0 + z;
-      const b = this.BIO[z * 16 + x];
+      const b = BPROP[this.BIO[z * 16 + x]].base;
       let y = WORLD_MAX_Y - 2;
       while (y > WORLD_MIN_Y && ids[CI(x, y, z)] === 0) y--;
       const g = ids[CI(x, y, z)];
@@ -832,7 +938,7 @@ class WorldGen {
         const floor = ids[CI(x, fy, z)], depth = y - fy;
         if (b === BI.SWAMP || b === BI.MANGROVE_SWAMP) { if (depth === 1 && r < 0.08 && y === SEA) ids[CI(x, y + 1, z)] = B.LILY_PAD, meta[CI(x, y + 1, z)] = (r2 * 4) | 0; }
         if (floor === 0 || floor === B.ICE || depth < 2) continue;
-        const oceanish = b <= BI.WARM_OCEAN || b === BI.RIVER;
+        const oceanish = !!BPROP[b].ocean;
         if (b === BI.WARM_OCEAN && depth >= 3 && this.nMisc.n2(wx / 12, wz / 12) > 0.15) {
           const coral = [B.TUBE_CORAL_BLOCK, B.BRAIN_CORAL_BLOCK, B.BUBBLE_CORAL_BLOCK, B.FIRE_CORAL_BLOCK, B.HORN_CORAL_BLOCK];
           const fans = [B.TUBE_CORAL_FAN, B.BRAIN_CORAL_FAN, B.BUBBLE_CORAL_FAN, B.FIRE_CORAL_FAN, B.HORN_CORAL_FAN];

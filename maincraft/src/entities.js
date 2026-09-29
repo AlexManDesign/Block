@@ -189,6 +189,18 @@ class Entities {
       else e.vel[1] -= (e.type === 'chicken' && !e.onGround ? 8 : 28) * dt;
       if (e.type === 'chicken' && e.vel[1] < -2.5) e.vel[1] = -2.5;
       if (e.vel[1] < -50) e.vel[1] = -50;
+      // soft collision with other mobs and the player
+      for (let j = 0; j < this.mobs.length; j++) {
+        const o = this.mobs[j];
+        if (o === e || o.deathT > 0) continue;
+        const sx = e.pos[0] - o.pos[0], sz = e.pos[2] - o.pos[2], r = (e.w + o.w) * 0.5;
+        if (Math.abs(sx) < r && Math.abs(sz) < r && Math.abs(e.pos[1] - o.pos[1]) < 1.5) {
+          const l = Math.hypot(sx, sz) || 0.01, push = (r - l) * 4;
+          e.vel[0] += sx / l * push; e.vel[2] += sz / l * push;
+        }
+      }
+      { const r = (e.w + PLAYER_W) * 0.5, l = Math.hypot(dx, dz) || 0.01;
+        if (l < r && Math.abs(p.pos[1] - e.pos[1]) < 1.8) { e.vel[0] -= dx / l * (r - l) * 6; e.vel[2] -= dz / l * (r - l) * 6; } }
       const fallStart = e.onGround ? e.pos[1] : e.fallY ?? e.pos[1];
       e.fallY = Math.max(fallStart, e.pos[1]);
       entMove(w, e, dt);
@@ -296,14 +308,15 @@ class Entities {
       e.ai -= dt;
       if (e.ai <= 0) {
         e.ai = 2 + Math.random() * 6;
-        if (Math.random() < 0.55) { const a = Math.random() * 6.28, r = 3 + Math.random() * 7; e.target = [e.pos[0] + Math.cos(a) * r, e.pos[2] + Math.sin(a) * r]; }
+        if (Math.random() < 0.7) { const a = Math.random() * 6.28, r = 3 + Math.random() * 7; e.target = [e.pos[0] + Math.cos(a) * r, e.pos[2] + Math.sin(a) * r]; }
         else e.target = null;
         e.lookT = Math.random() * 6.28;
       }
-      speed *= 0.6;
+      speed *= 0.85;
       // look at the player sometimes
       if (dist < 8) e.headYaw = Math.atan2(dx, -dz); else e.headYaw = e.bodyYaw;
     }
+    if (chase && !d.ranged && dist < 0.55 + e.w * 0.5) e.target = null; // stay in front of the player, not inside
     if (e.target) {
       tx = e.target[0] - e.pos[0]; tz = e.target[1] - e.pos[2];
       const l = Math.hypot(tx, tz);

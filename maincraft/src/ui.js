@@ -14,8 +14,8 @@ const STR = {
     tab_b: 'Building Blocks', tab_c: 'Colored Blocks', tab_n: 'Natural Blocks', tab_f: 'Functional Blocks',
     tab_t: 'Tools & Items', tab_s: 'Search', confirmDel: 'Delete this world forever?', died: 'You Died!', respawn: 'Respawn',
     crafting: 'Crafting', chest: 'Chest', furnace: 'Furnace', clickToPlay: 'Click to play', sound: 'Sound',
-    hintDesktop: 'WASD - move, Space - jump (double: fly), Shift - sneak, Ctrl - sprint, LMB - break, RMB - place/use, MMB - pick, E - inventory, F3 - debug, F5 - camera',
-    lastPlayed: 'Last played', gamemodeChanged: 'Game mode changed', mouse: 'Mouse',
+    hintDesktop: 'WASD - move, Space - jump, F or double Space - fly, Shift - sneak, Ctrl - sprint, LMB - break, RMB - place/use, MMB - pick, E - inventory, F3 - debug, F5 - camera',
+    biome: 'Biome', flying: 'Flying (F)', lastPlayed: 'Last played', gamemodeChanged: 'Game mode changed', mouse: 'Mouse',
   },
   ru: {
     singleplayer: 'Одиночная игра', settings: 'Настройки', play: 'Играть в выбранном мире', create: 'Создать новый мир',
@@ -28,8 +28,8 @@ const STR = {
     tab_b: 'Строительные блоки', tab_c: 'Цветные блоки', tab_n: 'Природные блоки', tab_f: 'Функциональные блоки',
     tab_t: 'Инструменты и предметы', tab_s: 'Поиск', confirmDel: 'Удалить этот мир навсегда?', died: 'Вы погибли!', respawn: 'Возродиться',
     crafting: 'Крафт', chest: 'Сундук', furnace: 'Печь', clickToPlay: 'Нажмите, чтобы играть', sound: 'Звук',
-    hintDesktop: 'WASD — ходьба, Пробел — прыжок (двойной: полёт), Shift — присесть, Ctrl — бег, ЛКМ — сломать, ПКМ — поставить/использовать, СКМ — взять блок, E — инвентарь, F3 — отладка, F5 — камера',
-    lastPlayed: 'Последняя игра', gamemodeChanged: 'Режим игры изменён', mouse: 'Мышь',
+    hintDesktop: 'WASD — ходьба, Пробел — прыжок, F или двойной Пробел — полёт, Shift — присесть, Ctrl — бег, ЛКМ — сломать, ПКМ — поставить/использовать, СКМ — взять блок, E — инвентарь, F3 — отладка, F5 — камера',
+    biome: 'Биом', flying: 'Полёт (F)', lastPlayed: 'Последняя игра', gamemodeChanged: 'Режим игры изменён', mouse: 'Мышь',
   },
 };
 let CUR_LANG = LANG;
