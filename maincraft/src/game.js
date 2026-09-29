@@ -190,7 +190,7 @@ class Game {
       const arr = Array.from(w.pendingLit);
       arr.sort((a, b) => ((a.cx - pcx) ** 2 + (a.cz - pcz) ** 2) - ((b.cx - pcx) ** 2 + (b.cz - pcz) ** 2));
       for (const c of arr) {
-        if (performance.now() - t0 > 6) break;
+        if (performance.now() - t0 > 3.5) break;
         if (c.state !== 1) { w.pendingLit.delete(c); continue; }
         if (w.litPass(c)) {
           w.pendingLit.delete(c);

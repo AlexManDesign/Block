@@ -6572,27 +6572,31 @@ class World {
     if (!arr) arr = { ids: new Uint16Array(5832), meta: new Uint8Array(5832), light: new Uint8Array(5832) };
     const ids = arr.ids, meta = arr.meta, light = arr.light;
     const cx = c.cx, cz = c.cz;
-    // neighbour columns 3x3
-    const cols = [];
-    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) cols.push(this.col(cx + dx, cz + dz));
+    const cols = this._jobCols || (this._jobCols = new Array(9));
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) cols[(dz + 1) * 3 + dx + 1] = this.col(cx + dx, cz + dz);
     for (let y = -1; y <= 16; y++) {
-      const wy = sy * 16 + y; // section-relative y from world bottom
-      const s = wy >> 4, ly = wy & 15;
+      const wy = sy * 16 + y, s = wy >> 4, ly = wy & 15;
       const inRange = wy >= 0 && wy < WORLD_H;
       for (let z = -1; z <= 16; z++) {
         const cz3 = z < 0 ? 0 : z > 15 ? 2 : 1, lz = z & 15;
-        let o = ((y + 1) * 18 + (z + 1)) * 18;
-        for (let x = -1; x <= 16; x++, o++) {
-          const cx3 = x < 0 ? 0 : x > 15 ? 2 : 1;
-          const col = cols[cz3 * 3 + cx3];
-          if (!inRange || !col) {
-            ids[o] = wy < 0 ? B.BEDROCK : 0; meta[o] = 0; light[o] = wy < 0 ? 0 : 0xF0;
+        const o = ((y + 1) * 18 + (z + 1)) * 18;
+        const row = (ly << 8) | (lz << 4);
+        for (let k = 0; k < 3; k++) {
+          // k=0: x=-1 (west column), k=1: x=0..15, k=2: x=16 (east column)
+          const col = cols[cz3 * 3 + k];
+          const sec = inRange && col ? col.secs[s] : null;
+          const dst = k === 0 ? o : k === 1 ? o + 1 : o + 17, n = k === 1 ? 16 : 1;
+          if (!sec) {
+            const fid = inRange ? 0 : (wy < 0 ? B.BEDROCK : 0), fl = inRange && col ? 0xF0 : (wy < 0 ? 0 : 0xF0);
+            ids.fill(fid, dst, dst + n); meta.fill(0, dst, dst + n); light.fill(fl, dst, dst + n);
             continue;
           }
-          const sec = col.secs[s];
-          if (!sec) { ids[o] = 0; meta[o] = 0; light[o] = 0xF0; continue; }
-          const li = (ly << 8) | (lz << 4) | (x & 15);
-          ids[o] = sec.ids[li]; meta[o] = sec.meta[li]; light[o] = sec.light[li];
+          if (k === 1) {
+            ids.set(sec.ids.subarray(row, row + 16), dst); meta.set(sec.meta.subarray(row, row + 16), dst); light.set(sec.light.subarray(row, row + 16), dst);
+          } else {
+            const li = row | (k === 0 ? 15 : 0);
+            ids[dst] = sec.ids[li]; meta[dst] = sec.meta[li]; light[dst] = sec.light[li];
+          }
         }
       }
     }
@@ -8991,7 +8995,7 @@ class Game {
       const arr = Array.from(w.pendingLit);
       arr.sort((a, b) => ((a.cx - pcx) ** 2 + (a.cz - pcz) ** 2) - ((b.cx - pcx) ** 2 + (b.cz - pcz) ** 2));
       for (const c of arr) {
-        if (performance.now() - t0 > 6) break;
+        if (performance.now() - t0 > 3.5) break;
         if (c.state !== 1) { w.pendingLit.delete(c); continue; }
         if (w.litPass(c)) {
           w.pendingLit.delete(c);
