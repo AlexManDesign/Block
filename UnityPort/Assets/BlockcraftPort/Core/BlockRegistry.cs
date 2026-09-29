@@ -9,12 +9,17 @@ namespace BlockcraftPort
         public readonly byte Emission;
         public readonly AtlasRect Side, Top, Bottom;
 
+        /// <summary>meshWorker LE[]: faces of this block light at least 0.85 regardless of neighbours.</summary>
+        public readonly bool Glow;
+
         public BlockDef(RenderLayer layer, bool solid, bool ao, AtlasRect side, AtlasRect top, AtlasRect bottom,
-            byte emission = 0, BlockShape shape = BlockShape.Cube)
+            byte emission = 0, BlockShape shape = BlockShape.Cube, bool glow = false)
         {
             Layer=layer; Shape=shape; Solid=solid; OccludesAO=ao;
-            Side=side; Top=top; Bottom=bottom; Emission=emission;
+            Side=side; Top=top; Bottom=bottom; Emission=emission; Glow=glow;
         }
+        internal BlockDef WithSourceFaces(AtlasRect side, AtlasRect top, AtlasRect bottom, bool glow)
+            => new BlockDef(Layer, Solid, OccludesAO, side, top, bottom, Emission, Shape, glow);
         public AtlasRect Face(FaceDir f)=>f==FaceDir.PosY?Top:f==FaceDir.NegY?Bottom:Side;
     }
 
@@ -26,7 +31,8 @@ namespace BlockcraftPort
         // Hot-path classification tables. Lighting, meshing and generation query these per voxel, so the
         // compound predicates below are evaluated once per id at startup instead of on every call.
         static readonly bool[] TFullOpaque=new bool[Capacity],TWater=new bool[Capacity],TLava=new bool[Capacity],
-            TAquatic=new bool[Capacity],TClassicLeaf=new bool[Capacity],TGlassy=new bool[Capacity],TXray=new bool[Capacity];
+            TAquatic=new bool[Capacity],TClassicLeaf=new bool[Capacity],TGlassy=new bool[Capacity],TXray=new bool[Capacity],
+            TNeedsWater=new bool[Capacity],TAxis=new bool[Capacity],TLeafSupport=new bool[Capacity];
         static readonly byte[] TLightCost=new byte[Capacity];
         static BlockRegistry()
         {
@@ -149,21 +155,106 @@ namespace BlockcraftPort
             SetCross(BlockId.JungleSapling,AtlasLayout.JungleSapling);
             SetCross(BlockId.AcaciaSapling,AtlasLayout.AcaciaSapling);
             SetCross(BlockId.DarkOakSapling,AtlasLayout.DarkOakSapling);
+            FillFromSource();
+            ApplySourceFaces();
             BuildTables();
         }
+
+        // Face textures and the LE[] glow flag of every block come from the reference tables (main.js M,
+        // meshWorker q4()/LE), including the hand-tuned definitions: tile-exact parity is verified by the
+        // tools/parity synthetic all-blocks mesher test.
+        static void ApplySourceFaces()
+        {
+            for(int i=1;i<SourceBlockData.Count;i++)
+            {
+                if(D[i].Layer==RenderLayer.None)continue;
+                D[i]=D[i].WithSourceFaces(AtlasLayout.Tile(SourceBlockData.TileSide[i]),AtlasLayout.Tile(SourceBlockData.TileTop[i]),
+                    AtlasLayout.Tile(SourceBlockData.TileBottom[i]),(SourceBlockData.Flags[i]&SourceBlockData.FEmissiveBoost)!=0);
+            }
+        }
+
+        // Every block the hand-tuned definitions above do not cover (the 493 reference blocks appended to
+        // BlockId by tools/codegen) is built from SourceBlockData, i.e. from the reference tables.
+        static void FillFromSource()
+        {
+            for(int i=1;i<SourceBlockData.Count;i++)
+            {
+                if(D[i].Layer!=RenderLayer.None)continue;
+                D[i]=SourceDef(i);
+            }
+        }
+
+        static BlockDef SourceDef(int i)
+        {
+            uint f=SourceBlockData.Flags[i];
+            var shape=(BlockShape)SourceBlockData.Shape[i];
+            bool water=(f&SourceBlockData.FWater)!=0,lava=(f&SourceBlockData.FLava)!=0;
+            RenderLayer layer=water?RenderLayer.Water:
+                (f&SourceBlockData.FTransparentLayer)!=0?RenderLayer.Transparent:
+                lava||(shape==BlockShape.Cube&&(f&(SourceBlockData.FClassicLeaf|SourceBlockData.FGlass))==0)?RenderLayer.Opaque:
+                RenderLayer.Cutout;
+            bool solid=!water&&!lava&&shape!=BlockShape.Cross&&shape!=BlockShape.TallPlant&&shape!=BlockShape.Bamboo&&
+                       shape!=BlockShape.SeaPickle&&shape!=BlockShape.LilyPad&&shape!=BlockShape.Torch&&shape!=BlockShape.Rail&&
+                       shape!=BlockShape.FlatFaces&&shape!=BlockShape.Ladder&&shape!=BlockShape.Pot&&shape!=BlockShape.Carpet;
+            AtlasRect side=AtlasLayout.Tile(SourceBlockData.TileSide[i]);
+            AtlasRect top=AtlasLayout.Tile(SourceBlockData.TileTop[i]);
+            AtlasRect bottom=AtlasLayout.Tile(SourceBlockData.TileBottom[i]);
+            return new BlockDef(layer,solid,(f&SourceBlockData.FFullOpaque)!=0,side,top,bottom,SourceBlockData.Light[i],shape);
+        }
+
+        static readonly System.Text.RegularExpressions.Regex FireFuelKey=new System.Text.RegularExpressions.Regex("(^|_)LOG$|PLANKS$|LEAVES$|^WOOL_|^BOOKSHELF$|^CRAFTING_TABLE$|FENCE|SAPLING$");
+        static readonly bool[] TFireFuel=new bool[Capacity],TSolidRender=new bool[Capacity];
+        /// <summary>meshWorker WA(): blocks next to which fire draws a leaning plane (wood, leaves, wool, cross plants).</summary>
+        public static bool FeedsFire(BlockId id)=>TFireFuel[(int)id];
+        /// <summary>meshWorker TC(): a non-fluid, non-cross, plain (unshaped) block.</summary>
+        public static bool IsSolidRender(BlockId id)=>TSolidRender[(int)id];
+
+        static readonly bool[] TConnectPlain=new bool[Capacity];
+        /// <summary>
+        /// meshWorker B2()/a2()/i2() common part: fences, walls and panes attach to any block that is not
+        /// air, water, a cross plant or a special-shaped block (h[] entry). Lava, glass, leaves, chests count.
+        /// </summary>
+        public static bool ConnectsPlain(BlockId id)=>TConnectPlain[(int)id];
+
+        static bool IsSourceBlock(BlockId id)=>(int)id>(int)BlockId.LavaFlow1&&(int)id<SourceBlockData.Count;
+        static readonly System.Text.RegularExpressions.Regex LeafSupportKey=new System.Text.RegularExpressions.Regex("(^|_)LOG$|_WOOD$|^MUSHROOM_STEM$"); // main.js PT
 
         static void BuildTables()
         {
             for(int i=0;i<Capacity;i++)
             {
                 var id=(BlockId)i;
+                if(IsSourceBlock(id))
+                {
+                    uint f=SourceBlockData.Flags[i];string key=SourceBlockData.Key[i];
+                    TWater[i]=(f&SourceBlockData.FWater)!=0;TLava[i]=(f&SourceBlockData.FLava)!=0;
+                    TAquatic[i]=(f&SourceBlockData.FAquatic)!=0;TClassicLeaf[i]=(f&SourceBlockData.FClassicLeaf)!=0;
+                    // Port "glassy" means the non-occluding leaf family (azalea/cherry), not stained glass.
+                    TGlassy[i]=(f&SourceBlockData.FGlass)!=0&&key.Contains("LEAVES");
+                    TXray[i]=(f&SourceBlockData.FXrayClass)!=0;
+                    TNeedsWater[i]=(f&SourceBlockData.FNeedsWater)!=0;
+                    TAxis[i]=(f&SourceBlockData.FAxis)!=0;
+                    TLeafSupport[i]=LeafSupportKey.IsMatch(key);
+                    continue;
+                }
                 TWater[i]=ComputeIsWater(id);TLava[i]=ComputeIsLava(id);TAquatic[i]=ComputeIsAquatic(id);
-                TClassicLeaf[i]=ComputeIsClassicLeaf(id);TGlassy[i]=ComputeIsGlassy(id);TXray[i]=ComputeXrayClassified(id);
+                TClassicLeaf[i]=ComputeIsClassicLeaf(id);TGlassy[i]=ComputeIsGlassy(id);
+                // meshWorker V1[]: only LAVA (not its flow levels), RAIL, COBWEB, CHEST, PLANKS, OAK_FENCE and ores.
+                TXray[i]=i<SourceBlockData.Count&&(SourceBlockData.Flags[i]&SourceBlockData.FXrayClass)!=0;
+                TNeedsWater[i]=ComputeNeedsWater(id);TAxis[i]=ComputeIsAxisBlock(id);TLeafSupport[i]=ComputeIsLeafDecaySupport(id);
+            }
+            for(int i=1;i<SourceBlockData.Count;i++)
+            {
+                uint f=SourceBlockData.Flags[i];
+                TSolidRender[i]=(f&SourceBlockData.FSolidRender)!=0;
+                TConnectPlain[i]=(f&(SourceBlockData.FWater|SourceBlockData.FCross|SourceBlockData.FShaped))==0;
+                TFireFuel[i]=i!=(int)BlockId.Fire&&(FireFuelKey.IsMatch(SourceBlockData.Key[i])||(f&SourceBlockData.FCross)!=0);
             }
             for(int i=0;i<Capacity;i++)
             {
                 var id=(BlockId)i;
-                TFullOpaque[i]=ComputeIsFullOpaque(id);
+                // meshWorker FA() for every id (the old hand predicate treated CHEST as non-occluding).
+                TFullOpaque[i]=i<SourceBlockData.Count?(SourceBlockData.Flags[i]&SourceBlockData.FFullOpaque)!=0:ComputeIsFullOpaque(id);
                 TLightCost[i]=(byte)((TWater[i]||TAquatic[i]||TClassicLeaf[i])?2:1);
             }
         }
@@ -200,17 +291,21 @@ namespace BlockcraftPort
         static bool ComputeIsGlassy(BlockId id)=>id==BlockId.CherryLeaves||id==BlockId.AzaleaLeaves||id==BlockId.FloweringAzaleaLeaves;
         // main BT/PT tables are derived from source enum names /LEAVES/ and /(^|_)LOG$|_WOOD$|^MUSHROOM_STEM$/.
         public static bool IsLeaf(BlockId id)=>IsClassicLeaf(id)||IsGlassy(id);
-        public static bool IsLeafDecaySupport(BlockId id)=>id==BlockId.OakLog||id==BlockId.BirchLog||id==BlockId.SpruceLog||id==BlockId.JungleLog||id==BlockId.AcaciaLog||id==BlockId.DarkOakLog||id==BlockId.CherryWood||id==BlockId.MushroomStem;
+        public static bool IsLeafDecaySupport(BlockId id)=>TLeafSupport[(int)id];
+        static bool ComputeIsLeafDecaySupport(BlockId id)=>id==BlockId.OakLog||id==BlockId.BirchLog||id==BlockId.SpruceLog||id==BlockId.JungleLog||id==BlockId.AcaciaLog||id==BlockId.DarkOakLog||id==BlockId.CherryWood||id==BlockId.MushroomStem;
         public static bool IsAquatic(BlockId id)=>TAquatic[(int)id];
         static bool ComputeIsAquatic(BlockId id)=>id==BlockId.Kelp||id==BlockId.Seagrass||id==BlockId.TubeCoralFan||id==BlockId.BrainCoralFan||id==BlockId.BubbleCoralFan||id==BlockId.FireCoralFan||id==BlockId.HornCoralFan||id==BlockId.SeaPickle;
-        public static bool NeedsWater(BlockId id)=>id==BlockId.Kelp||id==BlockId.Seagrass;
+        public static bool NeedsWater(BlockId id)=>TNeedsWater[(int)id];
+        static bool ComputeNeedsWater(BlockId id)=>id==BlockId.Kelp||id==BlockId.Seagrass;
         // meshWorker b1: pillar/log UV axis comes from meta&3 (0=Y, 1=X, 2=Z).
-        public static bool IsAxisBlock(BlockId id)=>id==BlockId.OakLog||id==BlockId.BirchLog||id==BlockId.SpruceLog||id==BlockId.JungleLog||id==BlockId.AcaciaLog||id==BlockId.DarkOakLog||id==BlockId.MushroomStem;
-        public static bool IsStairs(BlockId id)=>id==BlockId.OakStairs||id==BlockId.SpruceStairs||id==BlockId.CobblestoneStairs||id==BlockId.SandstoneStairs||id==BlockId.DarkOakStairs;
-        public static bool IsFence(BlockId id)=>id==BlockId.OakFence||id==BlockId.SpruceFence||id==BlockId.DarkOakFence;
-        public static bool IsGate(BlockId id)=>id==BlockId.OakFenceGate;
-        public static bool IsWall(BlockId id)=>id==BlockId.CobblestoneWall;
-        public static bool IsPane(BlockId id)=>id==BlockId.GlassPane||id==BlockId.IronBars;
+        public static bool IsAxisBlock(BlockId id)=>TAxis[(int)id];
+        static bool ComputeIsAxisBlock(BlockId id)=>id==BlockId.OakLog||id==BlockId.BirchLog||id==BlockId.SpruceLog||id==BlockId.JungleLog||id==BlockId.AcaciaLog||id==BlockId.DarkOakLog||id==BlockId.MushroomStem;
+        // Shape families are defined by the block's shape (meshWorker h[]), so every material variant counts.
+        public static bool IsStairs(BlockId id)=>D[(int)id].Shape==BlockShape.Stairs;
+        public static bool IsFence(BlockId id)=>D[(int)id].Shape==BlockShape.Fence;
+        public static bool IsGate(BlockId id)=>D[(int)id].Shape==BlockShape.Gate;
+        public static bool IsWall(BlockId id)=>D[(int)id].Shape==BlockShape.Wall;
+        public static bool IsPane(BlockId id)=>D[(int)id].Shape==BlockShape.Pane;
         // main.js meshWorker V1[] class marker used by the X-Ray two-pass renderer.
         // This is the exact subset currently represented by BlockId in the Unity port.
         public static bool XrayClassified(BlockId id)=>TXray[(int)id];

@@ -1,0 +1,5 @@
+node_modules/
+site/main.js
+site/genWorker.js
+site/meshWorker.js
+site/assets/

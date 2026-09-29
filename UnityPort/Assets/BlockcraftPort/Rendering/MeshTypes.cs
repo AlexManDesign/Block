@@ -60,9 +60,14 @@ namespace BlockcraftPort
             ArrayPool<byte>.Shared.Return(Meta,false);
             ArrayPool<byte>.Shared.Return(Lights,false);
         }
-        int Index(int x,int y,int z)=>(x*18+z)*strideY+yOffset+y;
+        // The mesher is a 1:1 port of meshWorker and therefore works in the reference (source)
+        // coordinate frame. Chunks are stored in Unity space (Z reflected, directional metadata
+        // mirrored), so this view reflects Z back and un-mirrors metadata on read. ChunkMesher
+        // reflects only the final vertex positions; texture coordinates, face order and every
+        // metadata-driven shape then match meshWorker exactly (tools/parity synthetic test).
+        int Index(int x,int y,int z)=>(x*18+(17-z))*strideY+yOffset+y;
         public BlockId Get(int x,int y,int z)=>(BlockId)Voxels[Index(x,y,z)];
-        public byte GetMeta(int x,int y,int z)=>Meta[Index(x,y,z)];
+        public byte GetMeta(int x,int y,int z){int i=Index(x,y,z);return SourceCoords.UnityMetaToSource((BlockId)Voxels[i],Meta[i]);}
         public byte GetLight(int x,int y,int z)=>Lights[Index(x,y,z)];
     }
 

@@ -24,16 +24,9 @@ static class SourceIds
 
     public static void Load(string jsonPath)
     {
-        var src = new Dictionary<string, int>();
         foreach (Match m in Regex.Matches(File.ReadAllText(jsonPath), "\"([A-Z0-9_]+)\":(\\d+)"))
-        { src[m.Groups[1].Value] = int.Parse(m.Groups[2].Value); SourceNames[int.Parse(m.Groups[2].Value)] = m.Groups[1].Value; }
+            SourceNames[int.Parse(m.Groups[2].Value)] = m.Groups[1].Value;
         PortToSource = new ushort[65536];
-        foreach (BlockId id in Enum.GetValues(typeof(BlockId)))
-        {
-            string n = id.ToString();
-            string key = Alias.TryGetValue(n, out var a) ? a : Regex.Replace(Regex.Replace(n, "(?<!^)(?=[A-Z])", "_"), "(?<=[a-z])(?=[0-9])", "_").ToUpperInvariant();
-            if (!src.TryGetValue(key, out int sid)) throw new Exception("no source id for " + n + " (" + key + ")");
-            PortToSource[(int)id] = (ushort)sid;
-        }
+        for (int i = 0; i < SourceBlockData.Count; i++) PortToSource[i] = (ushort)SourceBlockData.SourceId[i];
     }
 }

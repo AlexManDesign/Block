@@ -12,16 +12,8 @@ static class MeshParity
 
     static ushort ToPort(ushort src)
     {
-        if (sourceToPort == null)
-        {
-            sourceToPort = new ushort[65536];
-            for (int i = 0; i < sourceToPort.Length; i++) sourceToPort[i] = 0xFFFF;
-            foreach (BlockId id in Enum.GetValues(typeof(BlockId)))
-            { int s = SourceIds.PortToSource[(int)id]; if (sourceToPort[s] == 0xFFFF) sourceToPort[s] = (ushort)id; }
-        }
-        ushort p = sourceToPort[src];
-        if (p == 0xFFFF) throw new Exception("source block not in port: " + SourceIds.SourceNames[src]);
-        return p;
+        if (src >= SourceBlockData.FromSource.Length) throw new Exception("unknown source block " + src);
+        return SourceBlockData.FromSource[src];
     }
 
     public static ChunkColumn LoadJsChunk(string dir, int cx, int cz)
@@ -30,31 +22,16 @@ static class MeshParity
         if (!File.Exists(p)) return null;
         byte[] b = File.ReadAllBytes(p); int n = 16 * 16 * H;
         var col = new ChunkColumn(SourceCoords.SourceChunkToUnity(new ChunkCoord(cx, cz)));
-        for (int x = 0; x < 16; x++) for (int sz = 0; sz < 16; sz++)
-        {
-            int uz = 15 - sz;
-            for (int s = 0; s < 24; s++)
-            {
-                bool any = false;
-                for (int y = 0; y < 16; y++) { int o = (x * 16 + sz) * H + s * 16 + y; if (b[2 * o] != 0 || b[2 * o + 1] != 0) { any = true; break; } }
-                if (!any && col.Sections[s] == null) continue;
-                var sec = col.EnsureSection(s);
-                for (int y = 0; y < 16; y++)
-                {
-                    int o = (x * 16 + sz) * H + s * 16 + y;
-                    ushort src = (ushort)(b[2 * o] | (b[2 * o + 1] << 8));
-                    var id = (BlockId)ToPort(src);
-                    sec.Set(x, y, uz, id, SourceCoords.SourceMetaToUnity(id, b[2 * n + o]));
-                    sec.SetLight(x, y, uz, b[3 * n + o]);
-                }
-            }
-        }
-        // Sections created for one column must still carry the reference light for all-air columns.
         for (int s = 0; s < 24; s++)
         {
-            var sec = col.Sections[s]; if (sec == null) continue;
+            var sec = col.EnsureSection(s);
             for (int x = 0; x < 16; x++) for (int sz = 0; sz < 16; sz++) for (int y = 0; y < 16; y++)
-            { int o = (x * 16 + sz) * H + s * 16 + y; sec.SetLight(x, y, 15 - sz, b[3 * n + o]); }
+            {
+                int o = (x * 16 + sz) * H + s * 16 + y, uz = 15 - sz;
+                var id = (BlockId)ToPort((ushort)(b[2 * o] | (b[2 * o + 1] << 8)));
+                if (id != BlockId.Air) sec.Set(x, y, uz, id, SourceCoords.SourceMetaToUnity(id, b[2 * n + o]));
+                sec.SetLight(x, y, uz, b[3 * n + o]);
+            }
         }
         return col;
     }
@@ -101,7 +78,7 @@ static class MeshParity
                 ni = (uint)(vs.Count / 8); remap[vi] = ni;
                 var v = r.Vertices[vi];
                 vs.Add(v.Position.x); vs.Add(v.Position.y); vs.Add(-v.Position.z);
-                vs.Add(v.UV.x); vs.Add(v.UV.y); vs.Add(v.ShadeSkyBlock.x); vs.Add(v.ShadeSkyBlock.y); vs.Add(v.ShadeSkyBlock.z);
+                vs.Add(v.UV.x); vs.Add(1f - v.UV.y); /* atlas image space like meshWorker */ vs.Add(v.ShadeSkyBlock.x); vs.Add(v.ShadeSkyBlock.y); vs.Add(v.ShadeSkyBlock.z);
             }
             outIdx.Add(ni);
         }

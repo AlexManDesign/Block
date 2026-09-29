@@ -27,3 +27,10 @@ $bin meshparity "$out/mesh" -67,-178 0,0
 python3 "$here/compare_mesh.py" "$out/mesh" 0
 echo "== pipeline timing (.NET 8)"
 $bin pipeline 56 3
+echo "== mesher parity: every block x valid metadata (isolated) and 3 dense random worlds"
+for mode in "2" "1 1" "1 2" "1 3"; do
+  d="$out/synth_${mode// /_}"; rm -rf "$d"
+  node "$here/jssynth.mjs" "$d" $mode >/dev/null
+  $bin meshparity "$d" 0,0
+  python3 "$here/compare_mesh.py" "$d" 0 | tail -1
+done

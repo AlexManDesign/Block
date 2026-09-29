@@ -69,6 +69,7 @@ namespace BlockcraftPort
                 if(BlockRegistry.IsAquatic(id)&&(BlockRegistry.NeedsWater(id)||(meta&4)!=0||HasWaterAround(s,x+1,y+1,z+1)))
                     AddWaterShell(v,uv,sl,water,s,x,y+sy,z,y);
 
+                if(id==BlockId.Fire){AddFire(v,uv,sl,dst,s,def.Side,x,y+sy,z,y);continue;}
                 switch(def.Shape)
                 {
                     case BlockShape.Cross: AddCross(v,uv,sl,dst,s,def.Side,x,y+sy,z,y,.95f,false,BlockRegistry.XrayClassified(id)?4f:0f); continue;
@@ -89,7 +90,8 @@ namespace BlockcraftPort
                     case BlockShape.Trapdoor: AddTrapdoor(v,uv,sl,dst,s,def,x,y+sy,z,y,meta); continue;
                     case BlockShape.Ladder: AddLadder(v,uv,sl,dst,s,def,x,y+sy,z,y,meta); continue;
                     case BlockShape.Torch: AddTorch(v,uv,sl,dst,s,def,x,y+sy,z,y,meta); continue;
-                    case BlockShape.Rail: AddRail(v,uv,sl,dst,s,def,x,y+sy,z,y,meta,BlockRegistry.XrayClassified(id)?4f:0f); continue;
+                    // meshWorker F2() writes a fixed 0.96 shade without the V1[] class offset.
+                    case BlockShape.Rail: AddRail(v,uv,sl,dst,s,def,x,y+sy,z,y,meta,0f); continue;
                     case BlockShape.FlatFaces: AddFlatFaces(v,uv,sl,dst,s,def,x,y+sy,z,y,meta); continue;
                     case BlockShape.Pot: AddPot(v,uv,sl,dst,s,def,x,y+sy,z,y,meta); continue;
                     case BlockShape.ShipWheel: AddShipWheel(v,uv,sl,dst,s,x,y+sy,z,y,meta); continue;
@@ -123,7 +125,8 @@ namespace BlockcraftPort
                 };
 
             VoxelVertex[] packed=ArrayPool<VoxelVertex>.Shared.Rent(vertexCount);
-            for(int i=0;i<vertexCount;i++)packed[i]=new VoxelVertex(v[i]+worldOffset,uv[i],sl[i]);
+            // Vertices were built in the source frame (local z in [0,16]); reflect Z into Unity space.
+            for(int i=0;i<vertexCount;i++){Vector3 p=v[i];packed[i]=new VoxelVertex(new Vector3(p.x+worldOffset.x,p.y+worldOffset.y,16f-p.z+worldOffset.z),uv[i],sl[i]);}
             int[] opaque=RentCopy(terrain),waterIndices=RentCopy(water),transparentIndices=RentCopy(transparent);
             return new MeshBuildResult
             {
@@ -157,6 +160,42 @@ namespace BlockcraftPort
         {byte p=neighborLight?MaxLight6(s,x+1,ly+1,z+1):s.GetLight(x+1,ly+1,z+1);AddCrossQuad(v,uv,sl,ind,new Vector3(x+.15f,my,z+.15f),new Vector3(x+.85f,my,z+.85f),tex,LightVec(p,shade+classAdd));AddCrossQuad(v,uv,sl,ind,new Vector3(x+.85f,my,z+.15f),new Vector3(x+.15f,my,z+.85f),tex,LightVec(p,shade+classAdd));}
         static void AddCrossQuad(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,Vector3 a,Vector3 b,AtlasRect r,Vector3 l){int n=v.Count;v.Add(a);v.Add(b);v.Add(a+Vector3.up);v.Add(b+Vector3.up);uv.Add(MainUV(r,0,1));uv.Add(MainUV(r,1,1));uv.Add(MainUV(r,0,0));uv.Add(MainUV(r,1,0));for(int i=0;i<4;i++)sl.Add(l);AddQuad(ind,n);}
         static void AddLilyPad(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,AtlasRect r,int x,int my,int z,int ly){byte p=MaxLight6(s,x+1,ly+1,z+1);Vector3 q=LightVec(p,.96f);float yy=my+.0625f;int n=v.Count;v.Add(new Vector3(x,yy,z));v.Add(new Vector3(x+1,yy,z));v.Add(new Vector3(x,yy,z+1));v.Add(new Vector3(x+1,yy,z+1));uv.Add(MainUV(r,0,0));uv.Add(MainUV(r,1,0));uv.Add(MainUV(r,0,1));uv.Add(MainUV(r,1,1));for(int i=0;i<4;i++)sl.Add(q);AddQuad(ind,n);}
+        // meshWorker g2(): fire. Crossed planes only when isolated; otherwise leaning planes toward
+        // flammable neighbours (or all four when standing on a solid/flammable block), full block light.
+        static void AddFire(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,AtlasRect tex,int x,int my,int z,int ly)
+        {
+            float sky=(s.GetLight(x+1,ly+1,z+1)>>4)/15f;
+            BlockId below=s.Get(x+1,ly,z+1);
+            bool sup=BlockRegistry.IsSolidRender(below)||BlockRegistry.FeedsFire(below);
+            bool c=BlockRegistry.FeedsFire(s.Get(x+1,ly+1,z)),i=BlockRegistry.FeedsFire(s.Get(x+1,ly+1,z+2));
+            bool g=BlockRegistry.FeedsFire(s.Get(x,ly+1,z+1)),dd=BlockRegistry.FeedsFire(s.Get(x+2,ly+1,z+1)),f=BlockRegistry.FeedsFire(s.Get(x+1,ly+2,z+1));
+            Vector3 l=new Vector3(1f,sky,1f);
+            void V(float g0,float z0,float g1,float z1,float jx,float jz)
+            {
+                int n=v.Count;
+                v.Add(new Vector3(x+g0,my,z+z0));v.Add(new Vector3(x+g1,my,z+z1));
+                v.Add(new Vector3(x+g0+jx,my+1,z+z0+jz));v.Add(new Vector3(x+g1+jx,my+1,z+z1+jz));
+                uv.Add(MainUV(tex,0,1));uv.Add(MainUV(tex,1,1));uv.Add(MainUV(tex,0,0));uv.Add(MainUV(tex,1,0));
+                sl.Add(l);sl.Add(l);sl.Add(l);sl.Add(l);AddQuad(ind,n);
+            }
+            const float T=.32f;
+            if(sup){V(.15f,.15f,.85f,.85f,0,0);V(.85f,.15f,.15f,.85f,0,0);}
+            if(sup||c)V(.02f,.02f,.98f,.02f,0,T);
+            if(sup||i)V(.98f,.98f,.02f,.98f,0,-T);
+            if(sup||g)V(.02f,.98f,.02f,.02f,T,0);
+            if(sup||dd)V(.98f,.02f,.98f,.98f,-T,0);
+            if(!sup&&f&&!c&&!i&&!g&&!dd)
+            {
+                int n=v.Count;
+                v.Add(new Vector3(x+.02f,my+.98f,z+.02f));v.Add(new Vector3(x+.98f,my+.98f,z+.02f));v.Add(new Vector3(x+.02f,my+.98f,z+.98f));v.Add(new Vector3(x+.98f,my+.98f,z+.98f));
+                uv.Add(MainUV(tex,0,1));uv.Add(MainUV(tex,1,1));uv.Add(MainUV(tex,0,0));uv.Add(MainUV(tex,1,0));sl.Add(l);sl.Add(l);sl.Add(l);sl.Add(l);AddQuad(ind,n);
+                n=v.Count;
+                v.Add(new Vector3(x+.98f,my+.88f,z+.02f));v.Add(new Vector3(x+.02f,my+.88f,z+.02f));v.Add(new Vector3(x+.98f,my+.88f,z+.98f));v.Add(new Vector3(x+.02f,my+.88f,z+.98f));
+                uv.Add(MainUV(tex,0,1));uv.Add(MainUV(tex,1,1));uv.Add(MainUV(tex,0,0));uv.Add(MainUV(tex,1,0));sl.Add(l);sl.Add(l);sl.Add(l);sl.Add(l);AddQuad(ind,n);
+            }
+            if(!sup&&!f&&!c&&!i&&!g&&!dd){V(.15f,.15f,.85f,.85f,0,0);V(.85f,.15f,.15f,.85f,0,0);}
+        }
+
         static void AddQuad(List<int> ind,int n){ind.Add(n);ind.Add(n+1);ind.Add(n+2);ind.Add(n+2);ind.Add(n+1);ind.Add(n+3);}
 
         // meshWorker HC(): special boxes use neighbour-max light and cropped UVs, without corner AO.
@@ -176,7 +215,7 @@ namespace BlockcraftPort
                     if(fullUV){Vector2 q=FUV[f,i];u=q.x;t=q.y;}
                     else if(f==0){u=pz;t=1-py;}else if(f==1){u=1-pz;t=1-py;}else if(f==2){u=px;t=pz;}else if(f==3){u=px;t=1-pz;}else if(f==4){u=px;t=1-py;}else{u=1-px;t=1-py;}
                     if(f==2)for(int rr=0;rr<rotTop;rr++){float old=u;u=1-t;t=old;}
-                    uv.Add(MainUV(r,u,t));float block=(packed&15)/15f;if(d.Emission>0)block=Mathf.Max(block,.85f);sl.Add(new Vector3(Shade[f]+classAdd,(packed>>4)/15f,block));
+                    uv.Add(MainUV(r,u,t));float block=(packed&15)/15f;if(d.Glow)block=Mathf.Max(block,.85f);sl.Add(new Vector3(Shade[f]+classAdd,(packed>>4)/15f,block));
                 }
                 AddQuad(ind,b);
             }
@@ -217,8 +256,9 @@ namespace BlockcraftPort
         }
 
         static bool IsCrossLike(BlockId id){var q=BlockRegistry.Get(id).Shape;return q==BlockShape.Cross||q==BlockShape.TallPlant||q==BlockShape.Bamboo||q==BlockShape.LilyPad||q==BlockShape.SeaPickle||q==BlockShape.Rail;}
+        // meshWorker B2(): plain blocks, fences, and gates whose axis faces this arm.
         static bool FenceConnects(SectionSnapshot s,int x,int y,int z,int dir)
-        {BlockId id=B(s,x,y,z);if(id==BlockId.Air||BlockRegistry.IsFluid(id)||IsCrossLike(id))return false;var sh=BlockRegistry.Get(id).Shape;if(sh==BlockShape.Cube||sh==BlockShape.Fence)return true;if(sh==BlockShape.Gate){byte m=M(s,x,y,z);return(m&1)==0?(dir==0||dir==2):(dir==1||dir==3);}return false;}
+        {BlockId id=B(s,x,y,z);if(BlockRegistry.ConnectsPlain(id)||BlockRegistry.IsFence(id))return true;if(BlockRegistry.IsGate(id)){byte m=M(s,x,y,z);return(m&1)==0?(dir==0||dir==2):(dir==1||dir==3);}return false;}
         static void AddFenceArm(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,BlockDef d,int x,int my,int z,int ly,int dir,float y0,float y1,float classAdd)
         {var q=HDir[dir];Vector3 lo,hi;if(q.x>0){lo=new Vector3(.625f,y0,.4375f);hi=new Vector3(1,y1,.5625f);}else if(q.x<0){lo=new Vector3(0,y0,.4375f);hi=new Vector3(.375f,y1,.5625f);}else if(q.z>0){lo=new Vector3(.4375f,y0,.625f);hi=new Vector3(.5625f,y1,1);}else{lo=new Vector3(.4375f,y0,0);hi=new Vector3(.5625f,y1,.375f);}AddBox(v,uv,sl,ind,s,d,x,my,z,ly,lo,hi,false,false,0,classAdd);}
         static void AddFence(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,BlockDef d,int x,int my,int z,int ly,float classAdd)
@@ -226,10 +266,8 @@ namespace BlockcraftPort
 
         static void AddGate(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,BlockDef d,int x,int my,int z,int ly,byte meta)
         {
-            // Source n2() uses quarter-turn 1 for the alternate gate axis. After the
-            // source-Z reflection, an oriented/open gate needs the conjugate turn 3
-            // (closed geometry is symmetric, but the opened leaves are not).
-            int rot=(meta&1)!=0?3:0;bool open=((meta>>3)&1)!=0;
+            // Source n2(): quarter-turn 1 for the alternate gate axis (the mesher works in the source frame).
+            int rot=(meta&1)!=0?1:0;bool open=((meta>>3)&1)!=0;
             AddRotatedBox(v,uv,sl,ind,s,d,x,my,z,ly,new Vector3(.4375f,.3125f,0),new Vector3(.5625f,1,.125f),rot);
             AddRotatedBox(v,uv,sl,ind,s,d,x,my,z,ly,new Vector3(.4375f,.3125f,.875f),new Vector3(.5625f,1,1),rot);
             if(open)
@@ -249,11 +287,13 @@ namespace BlockcraftPort
             }
         }
 
-        static bool WallConnects(BlockId id){if(id==BlockId.Air||BlockRegistry.IsFluid(id)||IsCrossLike(id))return false;var sh=BlockRegistry.Get(id).Shape;return sh==BlockShape.Cube||sh==BlockShape.Wall;}
+        // meshWorker a2().
+        static bool WallConnects(BlockId id)=>BlockRegistry.ConnectsPlain(id)||BlockRegistry.IsWall(id);
         static void AddWall(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,BlockDef d,int x,int my,int z,int ly)
         {AddBox(v,uv,sl,ind,s,d,x,my,z,ly,new Vector3(.25f,0,.25f),new Vector3(.75f,1,.75f));for(int dir=0;dir<4;dir++){var q=HDir[dir];if(!WallConnects(B(s,x+q.x,ly,z+q.z)))continue;Vector3 lo,hi;if(q.x>0){lo=new Vector3(.6875f,0,.3125f);hi=new Vector3(1,1,.6875f);}else if(q.x<0){lo=new Vector3(0,0,.3125f);hi=new Vector3(.3125f,1,.6875f);}else if(q.z>0){lo=new Vector3(.3125f,0,.6875f);hi=new Vector3(.6875f,1,1);}else{lo=new Vector3(.3125f,0,0);hi=new Vector3(.6875f,1,.3125f);}AddBox(v,uv,sl,ind,s,d,x,my,z,ly,lo,hi);}}
 
-        static bool PaneConnects(BlockId id){if(id==BlockId.Air||BlockRegistry.IsFluid(id)||IsCrossLike(id))return false;var sh=BlockRegistry.Get(id).Shape;return sh==BlockShape.Cube||sh==BlockShape.Pane;}
+        // meshWorker i2().
+        static bool PaneConnects(BlockId id)=>BlockRegistry.ConnectsPlain(id)||BlockRegistry.IsPane(id);
         static void AddPane(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,BlockDef d,int x,int my,int z,int ly)
         {AddBox(v,uv,sl,ind,s,d,x,my,z,ly,new Vector3(.4375f,0,.4375f),new Vector3(.5625f,1,.5625f));for(int dir=0;dir<4;dir++){var q=HDir[dir];if(!PaneConnects(B(s,x+q.x,ly,z+q.z)))continue;Vector3 lo,hi;if(q.x>0){lo=new Vector3(.5f,0,.4375f);hi=new Vector3(1,1,.5625f);}else if(q.x<0){lo=new Vector3(0,0,.4375f);hi=new Vector3(.5f,1,.5625f);}else if(q.z>0){lo=new Vector3(.4375f,0,.5f);hi=new Vector3(.5625f,1,1);}else{lo=new Vector3(.4375f,0,0);hi=new Vector3(.5625f,1,.5f);}AddBox(v,uv,sl,ind,s,d,x,my,z,ly,lo,hi);}}
 
@@ -329,16 +369,16 @@ namespace BlockcraftPort
             sl.Add(light);sl.Add(light);sl.Add(light);sl.Add(light);AddQuad(ind,n);
         }
 
+        // meshWorker SC / pC(): (meta&255)-1 indexes this list of potted plants.
+        static readonly BlockId[] PotPlants={BlockId.Dandelion,BlockId.Poppy,BlockId.Fern,BlockId.DeadBush,BlockId.Allium,BlockId.AzureBluet,
+            BlockId.BlueOrchid,BlockId.Cornflower,BlockId.LilyOfTheValley,BlockId.OxeyeDaisy,BlockId.OrangeTulip,BlockId.PinkTulip,
+            BlockId.RedTulip,BlockId.WhiteTulip,BlockId.WitherRose,BlockId.BrownMushroom,BlockId.RedMushroom,BlockId.CrimsonRoots,
+            BlockId.WarpedRoots,BlockId.CrimsonFungus,BlockId.WarpedFungus,BlockId.OakSapling,BlockId.SpruceSapling,BlockId.BirchSapling,
+            BlockId.JungleSapling,BlockId.AcaciaSapling,BlockId.DarkOakSapling};
         static BlockId PotPlant(byte meta)
         {
-            switch(meta&255)
-            {
-                case 1:return BlockId.Dandelion;case 2:return BlockId.Poppy;case 3:return BlockId.Fern;case 4:return BlockId.DeadBush;
-                case 5:return BlockId.Allium;case 6:return BlockId.AzureBluet;case 7:return BlockId.BlueOrchid;case 8:return BlockId.Cornflower;
-                case 9:return BlockId.LilyOfTheValley;case 10:return BlockId.OxeyeDaisy;case 11:return BlockId.OrangeTulip;case 12:return BlockId.PinkTulip;
-                case 13:return BlockId.RedTulip;case 14:return BlockId.WhiteTulip;case 16:return BlockId.BrownMushroom;case 17:return BlockId.RedMushroom;
-                default:return BlockId.Air;
-            }
+            int i=(meta&255)-1;
+            return (uint)i<(uint)PotPlants.Length?PotPlants[i]:BlockId.Air;
         }
         // meshWorker pot branch: 3/8-high pot box plus a compact crossed plant when metadata contains one.
         static void AddPot(List<Vector3> v,List<Vector2> uv,List<Vector3> sl,List<int> ind,SectionSnapshot s,BlockDef d,int x,int my,int z,int ly,byte meta)
@@ -539,7 +579,7 @@ namespace BlockcraftPort
                 else if(fluid&&p.y>.5f)p.y=top;
                 float push=(fluid&&faceNeighbor!=BlockId.Air&&!BlockRegistry.IsFluid(faceNeighbor))?.004f:0f;
                 v.Add(new Vector3(x,my,z)+p-new Vector3(fn.x,fn.y,fn.z)*push);Vector2 q=FUV[(int)face,i];for(int rr=0;rr<uvRot;rr++){float old=q.x;q.x=1-q.y;q.y=old;}uv.Add(MainUV(r,q.x,q.y));
-                float shade=Shade[(int)face],sky,blk;if(waterBlock){byte l=s.GetLight(x+1+fn.x,ly+1+fn.y,z+1+fn.z);sky=(l>>4)/15f;blk=(l&15)/15f;}else{SampleCorner(s,face,i,x,ly,z,out int ao,out sky,out blk);if(i==0)level0=ao;else if(i==1)level1=ao;else if(i==2)level2=ao;else level3=ao;shade*=.62f+ao*.1267f;}if(d.Emission>0)blk=Mathf.Max(blk,.85f);if(BlockRegistry.XrayClassified(id))shade+=4f;sl.Add(new Vector3(shade,sky,blk));
+                float shade=Shade[(int)face],sky,blk;if(waterBlock){byte l=s.GetLight(x+1+fn.x,ly+1+fn.y,z+1+fn.z);sky=(l>>4)/15f;blk=(l&15)/15f;}else{SampleCorner(s,face,i,x,ly,z,out int ao,out sky,out blk);if(i==0)level0=ao;else if(i==1)level1=ao;else if(i==2)level2=ao;else level3=ao;shade*=.62f+ao*.1267f;}if(d.Glow)blk=Mathf.Max(blk,.85f);if(BlockRegistry.XrayClassified(id))shade+=4f;sl.Add(new Vector3(shade,sky,blk));
             }
             if(!waterBlock&&level0+level3>level1+level2){ind.Add(b);ind.Add(b+1);ind.Add(b+3);ind.Add(b);ind.Add(b+3);ind.Add(b+2);}else AddQuad(ind,b);
         }

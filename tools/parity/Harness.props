@@ -12,7 +12,7 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="$(PortDir)Core/BiomeId.cs;$(PortDir)Core/BlockId.cs;$(PortDir)Core/BlockRegistry.cs;$(PortDir)Core/ChunkColumn.cs;$(PortDir)Core/ChunkCoord.cs;$(PortDir)Core/SourceCoords.cs;$(PortDir)Core/SourceMath.cs;$(PortDir)Core/VoxelConstants.cs;$(PortDir)Core/VoxelShapes.cs" />
+    <Compile Include="$(PortDir)Core/BiomeId.cs;$(PortDir)Core/BlockId.cs;$(PortDir)Core/BlockRegistry.cs;$(PortDir)Core/ChunkColumn.cs;$(PortDir)Core/ChunkCoord.cs;$(PortDir)Core/SourceCoords.cs;$(PortDir)Core/SourceMath.cs;$(PortDir)Core/VoxelConstants.cs;$(PortDir)Core/VoxelShapes.cs;$(PortDir)Core/SourceBlockData.g.cs" />
     <Compile Include="$(PortDir)Generation/*.cs" />
     <Compile Include="$(PortDir)Rendering/ChunkMesher.cs;$(PortDir)Rendering/MeshTypes.cs;$(PortDir)Rendering/AtlasLayout.cs;$(PortDir)Rendering/VoxelLighting.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)shim/*.cs" />

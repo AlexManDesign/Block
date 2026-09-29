@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>ref</title>
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}canvas#gl{width:100%;height:100%;display:block}</style>
+<script>
+// main.js expects ~140 DOM ids from its original index.html; create any missing one on demand.
+(function(){
+  var orig=Document.prototype.getElementById;
+  Document.prototype.getElementById=function(id){
+    var el=orig.call(this,id);
+    if(!el){
+      el=document.createElement(/input|Input|name|Name|seed|Seed/.test(id)?'input':(/select|Select/.test(id)?'select':'canvas'));
+      el.id=id; el.className='hidden';
+      (document.getElementById('stubs')||document.body||document.documentElement).appendChild(el);
+    }
+    return el;
+  };
+})();
+</script>
+</head><body>
+<canvas id="gl" width="1280" height="720"></canvas>
+<div id="stubs" style="display:none"></div>
+<script type="module" src="main.js"></script>
+</body></html>

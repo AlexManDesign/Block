@@ -253,14 +253,12 @@ namespace BlockcraftPort
                 : InRotY(x,y,z,0,0,0,.1875f,1,1,meta&3);
         }
 
+        // Same connection rules as the mesher (meshWorker B2()/a2()/i2()), so collision matches what is drawn.
         static bool FenceConnects(VoxelWorld world,int x,int y,int z,int dir)
         {
             Vector3Int q=Dir[dir]; BlockId n=world.GetBlock(x+q.x,y,z+q.z);
-            if(n==BlockId.Air||n==BlockId.Water)return false;
-            BlockShape s=BlockRegistry.Get(n).Shape;
-            if(s==BlockShape.Cross)return false;
-            if(s==BlockShape.Fence||s==BlockShape.Cube)return true;
-            if(s==BlockShape.Gate)
+            if(BlockRegistry.ConnectsPlain(n)||BlockRegistry.IsFence(n))return true;
+            if(BlockRegistry.IsGate(n))
             {
                 byte m=world.GetMeta(x+q.x,y,z+q.z);
                 return (m&1)==0 ? dir==0||dir==2 : dir==1||dir==3;
@@ -270,16 +268,12 @@ namespace BlockcraftPort
 
         static bool WallConnects(VoxelWorld world,int x,int y,int z)
         {
-            BlockId n=world.GetBlock(x,y,z);if(n==BlockId.Air||n==BlockId.Water)return false;
-            BlockShape s=BlockRegistry.Get(n).Shape;if(s==BlockShape.Cross)return false;
-            return s==BlockShape.Cube||s==BlockShape.Wall;
+            BlockId n=world.GetBlock(x,y,z);return BlockRegistry.ConnectsPlain(n)||BlockRegistry.IsWall(n);
         }
 
         static bool PaneConnects(VoxelWorld world,int x,int y,int z)
         {
-            BlockId n=world.GetBlock(x,y,z);if(n==BlockId.Air||n==BlockId.Water)return false;
-            BlockShape s=BlockRegistry.Get(n).Shape;if(s==BlockShape.Cross)return false;
-            return s==BlockShape.Cube||s==BlockShape.Pane;
+            BlockId n=world.GetBlock(x,y,z);return BlockRegistry.ConnectsPlain(n)||BlockRegistry.IsPane(n);
         }
 
         static bool InFenceArm(float x,float y,float z,int d)
