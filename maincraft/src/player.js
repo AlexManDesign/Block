@@ -1,7 +1,7 @@
 'use strict';
 // Player physics (main thread). Units: blocks, seconds.
 
-const PLAYER_W = 0.6, PLAYER_H = 1.8, PLAYER_SNEAK_H = 1.5, EYE = 1.62;
+const PLAYER_W = 0.6, PLAYER_H = 1.8, PLAYER_SNEAK_H = 1.5, SWIM_H = 0.85, EYE = 1.62;
 
 class Player {
   constructor() {
@@ -73,15 +73,9 @@ class Player {
 
   update(world, dt, input, mode) {
     const p = this.pos, v = this.vel;
-    // environment probes
+    // stand back up (from sneak / swim pose) when there is room
+    if (this.h < PLAYER_H && !this.collides(world, p[0], p[1], p[2], PLAYER_H)) this.h = PLAYER_H;
     const bAt = (x, y, z) => world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z));
-    const head = bAt(p[0], p[1] + this.h - 0.2, p[2]), mid = bAt(p[0], p[1] + 0.5, p[2]), feet = bAt(p[0], p[1] + 0.05, p[2]);
-    const isW = id => isWaterId(id), isL = id => id === B.LAVA;
-    this.headInWater = isW(bAt(p[0], p[1] + this.eyeOffset, p[2]));
-    this.inWater = isW(head) || isW(mid) || isW(feet);
-    this.inLava = isL(head) || isL(mid) || isL(feet);
-    this.onLadder = !this.flying && ((FLAGS[feet] & BF_CLIMB) || SHAPE[feet] === SH.LADDER || SHAPE[feet] === SH.VINE || SHAPE[mid] === SH.LADDER || SHAPE[mid] === SH.VINE || (FLAGS[mid] & BF_CLIMB));
-    this.inWeb = !this.flying && (feet === B.COBWEB || mid === B.COBWEB);
     const k = input.keys;
     let fx = 0, fz = 0;
     if (k.forward) fz -= 1; if (k.back) fz += 1; if (k.left) fx -= 1; if (k.right) fx += 1;
@@ -90,124 +84,123 @@ class Player {
     if (len > 1) { fx /= len; fz /= len; }
     const moving = len > 0.01;
     const sneakKey = !!k.sneak;
-    const sneaking = sneakKey && this.onGround && !this.flying;
-    let sprint = moving && (k.sprint || this.sprintLatch) && fz < 0 && !sneaking;
+    const sneakPose = sneakKey && this.onGround && !this.flying;
+    let sprint = moving && !!(k.sprint || this.sprintLatch) && !sneakPose;
     if (mode === 'survival' && input.hunger !== undefined && input.hunger <= 6) sprint = false;
     this.sprinting = sprint;
-    let speed = this.flying ? (sprint ? 16 : 10) : sprint ? 5.6 : 4.3;
-    if (sneaking) speed = 1.3;
-    const ground = this.onGround && !this.flying ? world.getBlock(Math.floor(p[0]), Math.floor(p[1] - 0.05), Math.floor(p[2])) : 0;
+    let speed = this.flying ? (sprint ? 16 : 10) : sprint ? 7.2 : 4.4;
+    if (sneakPose) speed = 1.3;
+    const ground = this.onGround && !this.flying ? bAt(p[0], p[1] - 0.01, p[2]) : 0;
     if (ground === B.SOUL_SAND) speed *= 0.4;
+    const feetB = bAt(p[0], p[1] + 0.2, p[2]), midB = bAt(p[0], p[1] + 1.1, p[2]);
+    this.inWeb = !this.flying && (feetB === B.COBWEB || midB === B.COBWEB);
     if (this.inWeb) speed *= 0.22;
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const wx = -fz * sy + fx * cy, wz = fz * cy + fx * sy;
     let accel = 12;
     if (ground === B.ICE || ground === B.PACKED_ICE) accel = 2.2; else if (ground === B.BLUE_ICE) accel = 1.3;
-    const a = Math.min(1, dt * (this.onGround || this.flying ? (this.flying ? 10 : accel) : 4.5));
-    const jump = !!k.jump, down = !!k.sneak;
+    const a = Math.min(1, dt * (this.onGround || this.flying ? (this.flying ? 12 : accel) : 5));
+    v[0] += (wx * speed - v[0]) * a; v[2] += (wz * speed - v[2]) * a;
+    // fluids: head probe (top - 0.4) and body probe (+0.5)
+    const head = bAt(p[0], p[1] + this.h - 0.4, p[2]), body = bAt(p[0], p[1] + 0.5, p[2]), foot = bAt(p[0], p[1], p[2]);
+    const isL = id => id === B.LAVA;
+    const fl = id => isWaterId(id) || isL(id);
+    const headIn = fl(head);
+    this.inWater = headIn || fl(body);
+    this.headInWater = isWaterId(bAt(p[0], p[1] + this.eyeOffset, p[2]));
+    this.inLava = isL(head) || isL(body) || isL(foot);
+    let ladder = false;
+    if (!this.flying) {
+      const y0 = Math.floor(p[1]), hw = PLAYER_W / 2;
+      for (let x = Math.floor(p[0] - hw); x <= Math.floor(p[0] + hw) && !ladder; x++)
+        for (let z = Math.floor(p[2] - hw); z <= Math.floor(p[2] + hw); z++) {
+          const id = world.getBlock(x, y0, z);
+          if ((FLAGS[id] & BF_CLIMB) || SHAPE[id] === SH.LADDER || SHAPE[id] === SH.VINE) { ladder = true; break; }
+        }
+    }
+    this.onLadder = ladder;
+    const jump = !!k.jump, down = sneakKey;
     this.swimming = false;
     if (this.flying) {
-      v[0] += (wx * speed - v[0]) * a; v[2] += (wz * speed - v[2]) * a;
       let vy = 0; if (jump) vy += 1; if (down) vy -= 1;
       v[1] += (vy * 8 - v[1]) * Math.min(1, dt * 10);
-    } else if (this.inWater || this.inLava) {
-      const lava = this.inLava && !this.inWater;
-      const sw = sprint && this.headInWater && !lava;
+    } else if (this.inWater) {
+      const sw = sprint && headIn;
       this.swimming = sw;
-      const sp = lava ? 1.4 : sw ? 5.2 : 2.2;
       if (sw) {
-        const cp = Math.cos(this.pitch), sp2 = Math.sin(this.pitch);
-        const tx = (-fz * sy * cp + fx * cy) * sp, tz = (fz * cy * cp + fx * sy) * sp, ty = -fz * sp2 * sp;
+        if (this.h > SWIM_H) this.h = SWIM_H;
+        const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+        const tx = (-fz * sy * cp + fx * cy) * speed, tz = (fz * cy * cp + fx * sy) * speed, ty = -fz * sp * speed;
         const aa = Math.min(1, dt * 5);
         v[0] += (tx - v[0]) * aa; v[2] += (tz - v[2]) * aa; v[1] += (ty - v[1]) * aa;
         if (jump) v[1] += 10 * dt; if (down) v[1] -= 14 * dt;
+        if (v[1] > speed) v[1] = speed; if (v[1] < -speed) v[1] = -speed;
       } else {
-        const aa = Math.min(1, dt * 6);
-        v[0] += (wx * sp - v[0]) * aa; v[2] += (wz * sp - v[2]) * aa;
-        v[1] -= (lava ? 4 : 5.5) * dt;
-        if (jump) v[1] += (lava ? 11 : 16) * dt;
-        if (down) v[1] -= 22 * dt;
-        const minV = down ? -5 : lava ? -2 : -3.2;
+        v[1] -= 5.5 * dt; if (jump) v[1] += 16 * dt; if (down) v[1] -= 22 * dt;
+        const minV = down ? -5 : -3.2;
         if (v[1] < minV) v[1] = minV;
         if (v[1] > 3.4 && performance.now() > (this.boostUntil || 0)) v[1] = 3.4;
+        const damp = Math.min(1, dt * (sprint ? 0.8 : 2));
+        v[0] *= 1 - damp; v[2] *= 1 - damp;
       }
+    } else if (ladder) {
+      v[1] = jump ? 4 : (down || k.back) ? -4 : moving ? 2.6 : -1.4;
     } else {
-      v[0] += (wx * speed - v[0]) * a; v[2] += (wz * speed - v[2]) * a;
-      if (this.onLadder) {
-        v[0] *= 0.85; v[2] *= 0.85;
-        v[1] = jump ? 3.4 : down ? (sneakKey ? 0 : -3) : (moving && this.hitWall ? 3.4 : Math.max(v[1] - 23 * dt, -2.4));
-        if (sneakKey && !jump) v[1] = 0;
-      } else {
-        v[1] -= 32 * dt;
-        if (this.inWeb && v[1] < -1.2) v[1] = -1.2;
-        if (v[1] < -78) v[1] = -78;
-        if (jump && this.onGround) {
-          v[1] = 9.2;
-          this.onGround = false;
-          if (sprint) { v[0] += sy * 2.0 * 0; v[2] += 0; }
-        }
-      }
+      v[1] -= 23 * dt;
+      if (this.inWeb && v[1] < -1.2) v[1] = -1.2;
+      if (v[1] < -42) v[1] = -42;
+      if (jump && this.onGround) { v[1] = 7.6; this.onGround = false; }
     }
-    // sneaking: stay on edges
+    const sneaking = sneakKey && this.onGround && !this.flying && !this.inWater && !ladder;
+    this.sneaking = sneaking;
+    // ground contact is only established by an actual collision below during this frame's movement
+    this.onGround = false; this.hitWall = false;
     let dx = v[0] * dt, dz = v[2] * dt;
-    const wasGround = this.onGround;
-    if (sneaking && wasGround) {
-      const test = (ox, oz) => this.collides(world, p[0] + ox, p[1] - 0.6, p[2] + oz, 0.55);
-      if (dx && !test(dx, 0)) { dx = 0; v[0] = 0; }
-      if (dz && !test(0, dz)) { dz = 0; v[2] = 0; }
-      if (dx && dz && !test(dx, dz)) { dx = 0; dz = 0; v[0] = v[2] = 0; }
+    if (sneaking) {
+      // don't walk off edges: shrink the step until there's support 0.6 below
+      const st = 0.05, sup = (ox, oz) => this.collides(world, p[0] + ox, p[1] - 0.6, p[2] + oz, this.h);
+      const dec = d => Math.abs(d) <= st ? 0 : d - Math.sign(d) * st;
+      while (dx !== 0 && !sup(dx, 0)) dx = dec(dx);
+      while (dz !== 0 && !sup(0, dz)) dz = dec(dz);
+      while (dx !== 0 && dz !== 0 && !sup(dx, dz)) { dx = dec(dx); dz = dec(dz); }
+      if (dx === 0) v[0] = 0; if (dz === 0) v[2] = 0;
     }
-    this.hitWall = false;
-    const oldY = p[1];
-    // horizontal with step-up
     for (const [ax, d] of [[0, dx], [2, dz]]) {
       if (!d) continue;
       const rest = this.moveAxis(world, ax, d);
-      if (rest !== 0) {
-        let stepped = false;
-        if ((wasGround || this.inWater) && !this.flying) {
-          const save = p[1];
-          if (!this.collides(world, p[0], p[1] + 0.6, p[2], this.h)) {
-            p[1] += 0.6;
-            const r2 = this.moveAxis(world, ax, rest);
-            if (Math.abs(r2) < Math.abs(rest) - 1e-4) {
-              // settle down
-              this.moveAxis(world, 1, -0.6);
-              stepped = true;
-            } else p[1] = save;
-          }
+      if (rest === 0) continue;
+      let stepped = false;
+      if (!this.flying && v[1] <= 0.08) {
+        const tp = [p[0], p[1] + 0.6, p[2]]; tp[ax] -= rest;
+        if (!this.collides(world, tp[0], tp[1], tp[2], this.h)) {
+          let y = tp[1];
+          while (y - 0.05 > p[1] && !this.collides(world, tp[0], y - 0.05, tp[2], this.h)) y -= 0.05;
+          p[ax] = tp[ax]; p[1] = y; this.moveAxis(world, 1, -0.06); this.onGround = true; stepped = true;
         }
-        if (!stepped) { v[ax] = 0; this.hitWall = true; }
+      }
+      if (!stepped) { v[ax] = 0; this.hitWall = true; }
+    }
+    const vd = v[1] * dt;
+    if (this.moveAxis(world, 1, vd) !== 0) { if (vd < 0) this.onGround = true; v[1] = 0; }
+    if (sneaking && this.h > PLAYER_SNEAK_H && !this.collides(world, p[0], p[1], p[2], PLAYER_SNEAK_H)) this.h = PLAYER_SNEAK_H;
+    // climb out of water onto a ledge
+    if (this.inWater && this.hitWall && moving && !this.flying && !down) {
+      const hl = Math.hypot(wx, wz) || 1, qx = p[0] + wx / hl * 0.4, qz = p[2] + wz / hl * 0.4;
+      for (let y = 0.6; y <= 1.5 + 1e-6; y += 0.45) {
+        if (!this.collides(world, qx, p[1] + y, qz, this.h)) { v[1] = Math.max(v[1], headIn ? 4.5 : 7); this.boostUntil = performance.now() + 350; break; }
       }
     }
-    const rest = this.moveAxis(world, 1, v[1] * dt);
-    if (rest !== 0) {
-      if (v[1] < 0) this.onGround = true;
-      v[1] = 0;
-    } else {
-      this.onGround = this.collides(world, p[0], p[1] - 0.02, p[2], this.h) && v[1] <= 0;
-    }
-    if (this.onGround && this.flying) this.flying = false;
-    // water exit boost (climb out of water onto a ledge)
-    if (this.inWater && this.hitWall && moving && !this.flying && !down) {
-      if (!this.collides(world, p[0] + wx * 0.4, p[1] + 1.1, p[2] + wz * 0.4, this.h)) { v[1] = Math.max(v[1], 5.5); this.boostUntil = performance.now() + 350; }
-    }
-    // sneak height
-    const wantH = sneaking || (sneakKey && this.onGround) ? PLAYER_SNEAK_H : PLAYER_H;
-    if (wantH > this.h) { if (!this.collides(world, p[0], p[1], p[2], wantH)) this.h = wantH; } else this.h = wantH;
-    this.sneaking = sneaking;
-    const targetEye = this.h === PLAYER_SNEAK_H ? 1.27 : EYE;
-    this.eyeOffset += (targetEye - this.eyeOffset) * Math.min(1, dt * 14);
+    if (this.flying && this.onGround) this.flying = false;
+    this.eyeOffset += (this.h - 0.18 - this.eyeOffset) * Math.min(1, dt * 14);
     // fall tracking
     this.fallDamage = 0;
-    if (this.flying || this.inWater || this.onLadder || this.inWeb) this.fallStart = null;
-    else if (!this.onGround) { if (this.fallStart === null || p[1] > this.fallStart) this.fallStart = Math.max(this.fallStart ?? p[1], p[1]); }
+    if (this.flying || this.inWater || ladder || this.inWeb) this.fallStart = null;
+    else if (!this.onGround) { if (this.fallStart === null || p[1] > this.fallStart) this.fallStart = p[1]; }
     else if (this.fallStart !== null) { const d = this.fallStart - p[1]; if (d > 3.5) this.fallDamage = Math.floor(d - 3); this.fallStart = null; }
     // view bobbing
     const hs = Math.hypot(v[0], v[2]);
     if (this.onGround && !this.flying && hs > 0.1) { this.bob += dt * hs * 1.9; this.bobAmt += (Math.min(1, hs / 5) - this.bobAmt) * Math.min(1, dt * 8); }
     else this.bobAmt += (0 - this.bobAmt) * Math.min(1, dt * 6);
-    void oldY;
     if (p[1] < WORLD_MIN_Y - 64) { p[1] = WORLD_MIN_Y - 64; v[1] = 0; }
   }
 }

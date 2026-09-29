@@ -368,8 +368,10 @@ class Game {
     // only simulate when the column under the player is present
     if (!w.isLoaded(Math.floor(p.pos[0]), Math.floor(p.pos[2]))) return;
     const wasWater = p.inWater;
-    let t = dt;
-    while (t > 0) { const s = Math.min(t, 1 / 60); p.update(w, s, inp, this.mode); t -= s; }
+    // equal substeps (<= 1/60 s); a tiny leftover step would lose ground contact and swallow jumps
+    if (dt < 1e-4) return;
+    const n = Math.max(1, Math.ceil(dt * 60 - 1e-3)), s = dt / n;
+    for (let i = 0; i < n; i++) p.update(w, s, inp, this.mode);
     if (!wasWater && p.inWater && p.vel[1] < -4) Sfx.splash();
     // footsteps
     const hs = Math.hypot(p.vel[0], p.vel[2]);
