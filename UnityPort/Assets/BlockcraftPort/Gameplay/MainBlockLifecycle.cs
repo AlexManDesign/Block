@@ -110,13 +110,67 @@ namespace BlockcraftPort
             grassSpread.Add(p,60f+UnityEngine.Random.value*120f);
         }
 
-        public bool PlantWheat(int x,int y,int z)
+        public bool PlantWheat(int x,int y,int z)=>PlantCrop(x,y,z,BlockId.Wheat0);
+
+        /// <summary>main y4(): plant stage 0 of a crop on farmland with air above and start its timer.</summary>
+        public bool PlantCrop(int x,int y,int z,BlockId stage0)
         {
             if(World==null||World.GetBlock(x,y,z)!=BlockId.Air)return false;
             BlockId soil=World.GetBlock(x,y-1,z);if(soil!=BlockId.Farmland&&soil!=BlockId.FarmlandMoist)return false;
-            if(!World.SetBlock(x,y,z,BlockId.Wheat0,0,true))return false;
+            if(!World.SetBlock(x,y,z,stage0,0,true))return false;
             crops[new Vector3Int(x,y,z)]=new CropEntry();
             return true;
+        }
+
+        /// <summary>
+        /// main ML() bone meal on the aimed block: crops advance 1-2 stages (rB), saplings grow with
+        /// 45% chance (ah/nh), grass sprouts tall grass and flowers around (24 tries in 7x7).
+        /// Returns true when the bone meal is used up.
+        /// </summary>
+        public bool BoneMeal(Vector3Int p)
+        {
+            if(World==null)return false;
+            BlockId id=World.GetBlock(p.x,p.y,p.z);
+            if(CropStage(id)>=0)
+            {
+                BlockId[] stages=CropStages(id);int idx=CropStage(id);
+                if(idx>=stages.Length-1)return false;
+                int a=Mathf.Min(stages.Length-1,idx+1+UnityEngine.Random.Range(0,2));
+                World.SetBlock(p.x,p.y,p.z,stages[a],0,true);
+                if((a<stages.Length-1||CropFruit(id)!=BlockId.Air)&&!crops.ContainsKey(p))crops[p]=new CropEntry();
+                return true;
+            }
+            if(IsSapling(id)){if(UnityEngine.Random.value<.45f)TryGrowSapling(p);return true;}
+            if(id==BlockId.Grass)
+            {
+                bool any=false;
+                for(int r=0;r<24;r++)
+                {
+                    int t=p.x+Mathf.FloorToInt(UnityEngine.Random.value*7)-3,n=p.z+Mathf.FloorToInt(UnityEngine.Random.value*7)-3;
+                    for(int a=p.y+1;a>=p.y-1;a--)
+                    {
+                        if(World.GetBlock(t,a,n)!=BlockId.Grass||World.GetBlock(t,a+1,n)!=BlockId.Air)continue;
+                        float i=UnityEngine.Random.value;
+                        World.SetBlock(t,a+1,n,i<.875f?BlockId.TallGrass:i<.9375f?BlockId.Dandelion:BlockId.Poppy,0,true);any=true;break;
+                    }
+                }
+                return any;
+            }
+            return false;
+        }
+
+        /// <summary>main ID(): a ripe stem places its fruit on a free neighbour cell with soil below.</summary>
+        void GrowFruit(Vector3Int p,BlockId fruit)
+        {
+            for(int n=0;n<4;n++){Vector3Int q=p+FruitDirs[n];if(World.GetBlock(q.x,q.y,q.z)==fruit)return;}
+            int start=UnityEngine.Random.Range(0,4);
+            for(int n=0;n<4;n++)
+            {
+                Vector3Int q=p+FruitDirs[(start+n)&3];
+                BlockId below=World.GetBlock(q.x,q.y-1,q.z);
+                if(World.GetBlock(q.x,q.y,q.z)==BlockId.Air&&(below==BlockId.Grass||below==BlockId.Dirt||below==BlockId.Podzol||below==BlockId.CoarseDirt||below==BlockId.Farmland||below==BlockId.FarmlandMoist))
+                {World.SetBlockDeferredPersistent(q.x,q.y,q.z,fruit,0);return;}
+            }
         }
 
         void Update()
@@ -159,11 +213,17 @@ namespace BlockcraftPort
                 {
                     World.SetBlockDeferredPersistent(p.x,p.y,p.z,BlockId.Air,0);crops.Remove(p);continue;
                 }
-                if(stage>=3){crops.Remove(p);continue;} // source wheat has no adjacent fruit phase.
+                // main tB(): ripe wheat/carrots/potatoes stop; ripe stems keep a timer to grow fruit (ID()).
+                BlockId[] stages=CropStages(id);BlockId fruit=CropFruit(id);
+                if(stage>=stages.Length-1&&fruit==BlockId.Air){crops.Remove(p);continue;}
                 e.T+=soil==BlockId.FarmlandMoist?elapsed:elapsed*.5f;
-                if(e.T>=CropStageSeconds)
+                if(stage>=stages.Length-1)
                 {
-                    e.T=0f;World.SetBlockDeferredPersistent(p.x,p.y,p.z,WheatForStage(stage+1),0);
+                    if(e.T>=FruitSeconds){e.T=0f;GrowFruit(p,fruit);}
+                }
+                else if(e.T>=CropStageSeconds)
+                {
+                    e.T=0f;World.SetBlockDeferredPersistent(p.x,p.y,p.z,stages[stage+1],0);
                 }
             }
         }
@@ -374,9 +434,20 @@ namespace BlockcraftPort
             }
         }
 
-        static bool IsCrop(BlockId id)=>id==BlockId.Wheat0||id==BlockId.Wheat1||id==BlockId.Wheat2||id==BlockId.Wheat3;
-        static int CropStage(BlockId id)=>id==BlockId.Wheat0?0:id==BlockId.Wheat1?1:id==BlockId.Wheat2?2:id==BlockId.Wheat3?3:-1;
-        static BlockId WheatForStage(int s)=>s<=0?BlockId.Wheat0:s==1?BlockId.Wheat1:s==2?BlockId.Wheat2:BlockId.Wheat3;
+        // main eB(): crop families and their stages; M4: stems that grow a fruit block.
+        static readonly BlockId[] WheatStages={BlockId.Wheat0,BlockId.Wheat1,BlockId.Wheat2,BlockId.Wheat3};
+        static readonly BlockId[] CarrotStages={BlockId.Carrots0,BlockId.Carrots1,BlockId.Carrots2,BlockId.Carrots3};
+        static readonly BlockId[] PotatoStages={BlockId.Potatoes0,BlockId.Potatoes1,BlockId.Potatoes2,BlockId.Potatoes3};
+        static readonly BlockId[] PumpkinStages={BlockId.PumpkinStem0,BlockId.PumpkinStem1,BlockId.PumpkinStem2,BlockId.PumpkinStem3};
+        static readonly BlockId[] MelonStages={BlockId.MelonStem0,BlockId.MelonStem1,BlockId.MelonStem2,BlockId.MelonStem3};
+        static readonly BlockId[][] CropFamilies={WheatStages,CarrotStages,PotatoStages,PumpkinStages,MelonStages};
+        // main AB in source z; Unity z is mirrored.
+        static readonly Vector3Int[] FruitDirs={new Vector3Int(1,0,0),new Vector3Int(-1,0,0),new Vector3Int(0,0,-1),new Vector3Int(0,0,1)};
+        const float FruitSeconds=45f; // main dD
+        static BlockId[] CropStages(BlockId id){foreach(var f in CropFamilies)if(Array.IndexOf(f,id)>=0)return f;return null;}
+        static BlockId CropFruit(BlockId id)=>Array.IndexOf(PumpkinStages,id)>=0?BlockId.Pumpkin:Array.IndexOf(MelonStages,id)>=0?BlockId.Melon:BlockId.Air;
+        static bool IsCrop(BlockId id)=>CropStage(id)>=0;
+        static int CropStage(BlockId id){foreach(var f in CropFamilies){int i=Array.IndexOf(f,id);if(i>=0)return i;}return -1;}
         static bool IsSapling(BlockId id)=>id==BlockId.OakSapling||id==BlockId.BirchSapling||id==BlockId.SpruceSapling||id==BlockId.JungleSapling||id==BlockId.AcaciaSapling||id==BlockId.DarkOakSapling;
 
         public MainTimedCellSaveData[] CaptureCropsSource(){return CaptureFloatMap(crops,kv=>kv.Value.T);}

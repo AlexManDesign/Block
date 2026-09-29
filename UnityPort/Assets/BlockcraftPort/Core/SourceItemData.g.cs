@@ -32,15 +32,15 @@ namespace BlockcraftPort
             "ENDER_PEARL","SLIME_BALL","SPAWN_EGG_SPIDER","SPAWN_EGG_ENDERMAN","SPAWN_EGG_SALMON","SPAWN_EGG_SLIME",
             "SPAWN_EGG_SHARK","EGG","PUMPKIN_PIE","SHIP_SPAWNER",
         };
-        /// <summary>Port inventory item key (main.js tex).</summary>
+        /// <summary>Port inventory item key (main.js tex; spawn eggs get item_spawn_egg_<mob>).</summary>
         public static readonly string[] Tex = new string[]
         {
             "item_stick","item_coal","item_iron_ingot","item_gold_ingot","item_diamond","item_emerald",
             "item_flint","item_sugar","item_apple","item_sweet_berries","item_melon_slice","item_porkchop",
             "item_cooked_porkchop","item_beef","item_cooked_beef","item_mutton","item_cooked_mutton","item_chicken",
             "item_cooked_chicken","item_rotten_flesh","item_feather","item_leather","item_bone","item_gunpowder",
-            "item_arrow","item_spawn_egg","item_spawn_egg","item_spawn_egg","item_spawn_egg","item_spawn_egg",
-            "item_spawn_egg","item_spawn_egg","item_wooden_pickaxe","item_wooden_axe","item_wooden_shovel","item_wooden_sword",
+            "item_arrow","item_spawn_egg_pig","item_spawn_egg_cow","item_spawn_egg_sheep","item_spawn_egg_chicken","item_spawn_egg_zombie",
+            "item_spawn_egg_skeleton","item_spawn_egg_creeper","item_wooden_pickaxe","item_wooden_axe","item_wooden_shovel","item_wooden_sword",
             "item_stone_pickaxe","item_stone_axe","item_stone_shovel","item_stone_sword","item_iron_pickaxe","item_iron_axe",
             "item_iron_shovel","item_iron_sword","item_golden_pickaxe","item_golden_axe","item_golden_shovel","item_golden_sword",
             "item_diamond_pickaxe","item_diamond_axe","item_diamond_shovel","item_diamond_sword","item_bow","item_wheat",
@@ -55,8 +55,34 @@ namespace BlockcraftPort
             "item_cyan_dye","item_purple_dye","item_blue_dye","item_brown_dye","item_green_dye","item_red_dye",
             "item_black_dye","item_clay_ball","item_brick","item_minecart","item_boat","item_string",
             "item_fishing_rod","item_raw_cod","item_cooked_cod","item_raw_salmon","item_cooked_salmon","item_spider_eye",
-            "item_ender_pearl","item_slime_ball","item_spawn_egg","item_spawn_egg","item_spawn_egg","item_spawn_egg",
-            "item_spawn_egg","item_egg","item_pumpkin_pie","item_ship",
+            "item_ender_pearl","item_slime_ball","item_spawn_egg_spider","item_spawn_egg_enderman","item_spawn_egg_salmon","item_spawn_egg_slime_big",
+            "item_spawn_egg_shark","item_egg","item_pumpkin_pie","item_ship",
+        };
+        /// <summary>main M1[id].spawnEgg: mob type a spawn egg creates (empty for other items).</summary>
+        public static readonly string[] SpawnEgg = new string[]
+        {
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","pig","cow","sheep","chicken","zombie",
+            "skeleton","creeper","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","","","","",
+            "","","spider","enderman","salmon","slime_big",
+            "shark","","","",
         };
         public static readonly string[] NameEn = new string[]
         {

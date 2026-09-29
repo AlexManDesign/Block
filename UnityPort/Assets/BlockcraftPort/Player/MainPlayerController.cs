@@ -903,6 +903,41 @@ namespace BlockcraftPort
         {
             string item=SelectedInventoryItemKey;if(string.IsNullOrEmpty(item))item=FirstPersonPrimaryItemTexture;if(string.IsNullOrEmpty(item))return false;
 
+            // main kT(): spawn egg -> persistent mob in the cell in front of the aimed face.
+            int itemIndex=SourceItemData.IndexOfTex(item);
+            if(itemIndex>=0&&SourceItemData.SpawnEgg[itemIndex].Length>0)
+            {
+                VoxelHit h;if(!VoxelRaycast.Cast(world,AimOrigin,AimDirection,6f,out h))return true;
+                Vector3Int c=h.Block+h.Normal;
+                bool ok=MobSpawner.SpawnFromEgg(SourceItemData.SpawnEgg[itemIndex],new Vector3(c.x+.5f,c.y,c.z+.5f));
+                if(ok&&!IsCreative)ConsumeSelectedInventory(1);
+                return true;
+            }
+            // main ML(): bone meal on crops, saplings and grass.
+            if(item=="item_bone_meal")
+            {
+                VoxelHit h;if(!VoxelRaycast.Cast(world,AimOrigin,AimDirection,6f,out h))return false;
+                MainBlockLifecycle life=MainBlockLifecycle.Instance;
+                bool used=life!=null&&life.BoneMeal(h.Block);
+                if(used){if(!IsCreative)ConsumeSelectedInventory(1);MainTransientRenderer.SpawnBreakParticles(h.Block.x,h.Block.y+1,h.Block.z,BlockId.OakLeaves,8);}
+                return used;
+            }
+            // main kT(): seeds / carrot / potato on farmland with air above plant a crop (before eating).
+            BlockId cropStage0=item=="item_wheat_seeds"?BlockId.Wheat0:item=="item_pumpkin_seeds"?BlockId.PumpkinStem0:item=="item_melon_seeds"?BlockId.MelonStem0:
+                item=="item_carrot"?BlockId.Carrots0:item=="item_potato"?BlockId.Potatoes0:BlockId.Air;
+            if(cropStage0!=BlockId.Air)
+            {
+                VoxelHit h;
+                if(VoxelRaycast.Cast(world,AimOrigin,AimDirection,6f,out h)&&(h.Id==BlockId.Farmland||h.Id==BlockId.FarmlandMoist)&&world.GetBlock(h.Block.x,h.Block.y+1,h.Block.z)==BlockId.Air)
+                {
+                    MainBlockLifecycle life=MainBlockLifecycle.Instance;
+                    bool ok=life!=null&&life.PlantCrop(h.Block.x,h.Block.y+1,h.Block.z,cropStage0);
+                    if(ok&&!IsCreative)ConsumeSelectedInventory(1);
+                    return ok;
+                }
+                if(item!="item_carrot"&&item!="item_potato")return false;
+            }
+
             int food=MainInventoryCatalog.FoodPoints(item);
             if(!IsCreative&&food>0&&Time.unscaledTime>=nextFoodUseAt)
             {
@@ -955,20 +990,6 @@ namespace BlockcraftPort
                     {
                         bool ok=world.SetBlock(h.Block.x,h.Block.y,h.Block.z,BlockId.Farmland,0,true);
                         if(ok&&!IsCreative)DamageSelectedInventoryItem(1);
-                        return ok;
-                    }
-                }
-                return false;
-            }
-            if(item=="item_wheat_seeds")
-            {
-                VoxelHit h;if(VoxelRaycast.Cast(world,AimOrigin,AimDirection,6f,out h))
-                {
-                    if((h.Id==BlockId.Farmland||h.Id==BlockId.FarmlandMoist)&&world.GetBlock(h.Block.x,h.Block.y+1,h.Block.z)==BlockId.Air)
-                    {
-                        MainBlockLifecycle life=MainBlockLifecycle.Instance;
-                        bool ok=life!=null&&life.PlantWheat(h.Block.x,h.Block.y+1,h.Block.z);
-                        if(ok&&!IsCreative)ConsumeSelectedInventory(1);
                         return ok;
                     }
                 }

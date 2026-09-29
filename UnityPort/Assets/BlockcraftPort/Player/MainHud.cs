@@ -19,7 +19,7 @@ namespace BlockcraftPort
             ArmorStroke = new Color32(0x10, 0x14, 0x18, 255), BubbleStroke = new Color32(0x0a, 0x2a, 0x3a, 255);
         readonly System.Collections.Generic.Dictionary<long, Texture2D> iconCache = new System.Collections.Generic.Dictionary<long, Texture2D>();
 
-        int lastSel = -1; float nameShownAt = -10f; string shownName = "";
+        int lastSel = -1; float nameShownAt = -10f; string shownName = ""; GUIStyle nameStyle;
 
         void OnGUI()
         {
@@ -67,7 +67,8 @@ namespace BlockcraftPort
             float age = Time.unscaledTime - nameShownAt;
             if (string.IsNullOrEmpty(shownName) || age > 2f) return;
             float a = age < 1.5f ? 1f : 1f - (age - 1.5f) / .5f;
-            var style = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(15 * s), fontStyle = FontStyle.Bold };
+            if (nameStyle == null) nameStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
+            var style = nameStyle; style.fontSize = Mathf.RoundToInt(15 * s);
             float rows = Player.IsCreative ? 0f : 26f * s * (Player.SourceArmorPoints > 0 ? 2 : 1) + 8f * s;
             Rect r = new Rect(bar.x, bar.y - 30f * s - rows, bar.width, 24f * s);
             style.normal.textColor = new Color(0, 0, 0, .7f * a); GUI.Label(new Rect(r.x + 1, r.y + 1, r.width, r.height), shownName, style);

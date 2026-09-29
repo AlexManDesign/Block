@@ -289,6 +289,21 @@ namespace BlockcraftPort
             var go=new GameObject();go.transform.SetParent(transform,false);go.transform.position=pos;var m=go.AddComponent<MobAI>();m.Init(kind,World,Player,World.Seed+(++seq)*7919);mobs.Add(m);return m;
         }
         void SpawnStored(MobStoredState state){MobAI m=Spawn(state.Kind,state.Position);m.RestoreState(state);}
+        /// <summary>main gC()/fa(): a spawn egg creates a persistent mob at the target cell.</summary>
+        public static bool SpawnFromEgg(string sourceType,Vector3 pos)
+        {
+            var sp=Instance;if(sp==null||sp.World==null)return false;
+            MobKind kind;
+            switch(sourceType)
+            {
+                case "pig":kind=MobKind.Pig;break;case "cow":kind=MobKind.Cow;break;case "sheep":kind=MobKind.Sheep;break;
+                case "chicken":kind=MobKind.Chicken;break;case "zombie":kind=MobKind.Zombie;break;case "skeleton":kind=MobKind.Skeleton;break;
+                case "creeper":kind=MobKind.Creeper;break;case "spider":kind=MobKind.Spider;break;case "enderman":kind=MobKind.Enderman;break;
+                case "salmon":kind=MobKind.Salmon;break;case "shark":kind=MobKind.Shark;break;case "slime_big":kind=MobKind.SlimeBig;break;
+                default:return false;
+            }
+            MobAI m=sp.Spawn(kind,pos);m.MarkPersistent();return true;
+        }
         public void SpawnSplit(MobKind kind,Vector3 pos,Vector3 velocity,float anger){MobAI m=Spawn(kind,pos);m.SetSplitLaunch(velocity,anger);}
         public void SpawnBaby(MobKind kind,Vector3 pos,MobSheepColor parentA,MobSheepColor parentB)
         {

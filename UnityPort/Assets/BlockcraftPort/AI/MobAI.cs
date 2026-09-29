@@ -82,6 +82,8 @@ namespace BlockcraftPort
         public bool IsBaby => baby;
         public bool IsSheared => sheared;
         public bool Persist => persist;
+        /// <summary>main fa(...).persist = true (spawn eggs): never despawned by distance.</summary>
+        public void MarkPersistent(){persist=true;}
         public MobSheepColor SheepColor => sheepColor;
         public float BodyWidth => Def.Width*(baby?.5f:1f);
         public float BodyHeight => Def.Height*(baby?.5f:1f);
