@@ -219,6 +219,24 @@ namespace BlockcraftPort
         /// <summary>meshWorker V1[]==2 (ores): every face is emitted for the X-Ray pass.</summary>
         public static bool IsXrayOre(BlockId id)=>TXrayOre[(int)id];
 
+        static System.Collections.Generic.Dictionary<string,BlockId> byKey;
+        /// <summary>BlockId of a reference key (main.js o[KEY]), or Air.</summary>
+        public static BlockId FromKey(string key)
+        {
+            if(byKey==null)
+            {
+                var d=new System.Collections.Generic.Dictionary<string,BlockId>(SourceBlockData.Count);
+                for(int i=0;i<SourceBlockData.Count;i++)
+                {
+                    var bid=(BlockId)SourceBlockData.FromSource[SourceBlockData.SourceId[i]];
+                    d[SourceBlockData.Key[i]]=bid;
+                }
+                byKey=d;
+            }
+            return byKey.TryGetValue(key,out var id)?id:BlockId.Air;
+        }
+        public static string Key(BlockId id)=>(uint)id<(uint)SourceBlockData.Count?SourceBlockData.Key[(int)id]:"AIR";
+
         static bool IsSourceBlock(BlockId id)=>(int)id>(int)BlockId.LavaFlow1&&(int)id<SourceBlockData.Count;
         static readonly System.Text.RegularExpressions.Regex LeafSupportKey=new System.Text.RegularExpressions.Regex("(^|_)LOG$|_WOOD$|^MUSHROOM_STEM$"); // main.js PT
 
