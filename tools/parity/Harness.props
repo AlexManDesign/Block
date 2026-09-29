@@ -1,0 +1,21 @@
+<Project>
+  <!-- Pure-logic port sources compiled with the UnityEngine math shim (no Unity DLLs). -->
+  <PropertyGroup>
+    <PortDir>$(MSBuildThisFileDirectory)../../UnityPort/Assets/BlockcraftPort/</PortDir>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0414;CS0649;CS0169;CS0219;CS0162;CS0168;CS0067;CS1701;CS1702;MSB3277;CS0660;CS0661</NoWarn>
+    <DefineConstants>UNITY_STANDALONE;PARITY_HARNESS</DefineConstants>
+    <Optimize>true</Optimize>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(PortDir)Core/BiomeId.cs;$(PortDir)Core/BlockId.cs;$(PortDir)Core/BlockRegistry.cs;$(PortDir)Core/ChunkColumn.cs;$(PortDir)Core/ChunkCoord.cs;$(PortDir)Core/SourceCoords.cs;$(PortDir)Core/SourceMath.cs;$(PortDir)Core/VoxelConstants.cs;$(PortDir)Core/VoxelShapes.cs" />
+    <Compile Include="$(PortDir)Generation/*.cs" />
+    <Compile Include="$(PortDir)Rendering/ChunkMesher.cs;$(PortDir)Rendering/MeshTypes.cs;$(PortDir)Rendering/AtlasLayout.cs;$(PortDir)Rendering/VoxelLighting.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)shim/*.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)cs/*.cs" />
+  </ItemGroup>
+</Project>

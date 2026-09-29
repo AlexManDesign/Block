@@ -72,6 +72,8 @@ namespace BlockcraftPort
         {
             if(job==null||job.Done)return true;
             int clockCheck=0;
+            // The loaded-chunk set may change between cooperative steps, so the 3x3 cache is rebuilt per call.
+            var cache=new StitchCache(world,job.Chunk);
             if(job.SeedMaxY==int.MinValue)job.SeedMaxY=SourceLoadedStitchMaxY(world,job.Chunk);
             if(job.Phase==0)
             {
@@ -85,18 +87,19 @@ namespace BlockcraftPort
                         job.SeedPos++;job.SeedY=VoxelConstants.MinY;continue;
                     }
                     int wx=job.X0+ix,wz=job.Z0+iz;
-                    ChunkCoord cc=ChunkCoord.FromWorld(wx,wz);
-                    if(!world.ContainsKey(cc))
+                    ChunkColumn seedCol=cache.Column(wx,wz);
+                    if(seedCol==null)
                     {
                         job.SeedPos++;job.SeedY=VoxelConstants.MinY;continue;
                     }
+                    int slx=wx&15,slz=wz&15;
                     while(job.SeedY<=job.SeedMaxY)
                     {
                         int y=job.SeedY++;
-                        byte packed=GetWorldLight(world,wx,y,wz);
+                        byte packed=seedCol.GetLightLocal(slx,y,slz);
                         if((packed>>4)>1)job.Sky.Enqueue(new LightNode(wx,y,wz));
                         if((packed&15)>1)job.Block.Enqueue(new LightNode(wx,y,wz));
-                        if((++clockCheck&31)==0&&Time.realtimeSinceStartupAsDouble*1000.0>=deadlineMs)return false;
+                        if((++clockCheck&31)==0&&Time.realtimeSinceStartupAsDouble*1000.0>=deadlineMs){cache.FlushDirty(job.DirtyChunks);return false;}
                     }
                     job.SeedPos++;job.SeedY=VoxelConstants.MinY;
                 }
@@ -107,8 +110,8 @@ namespace BlockcraftPort
             {
                 while(job.Sky.Count>0)
                 {
-                    PropagateWorldNode(world,job.Sky,true,job.DirtyChunks);
-                    if((++clockCheck&31)==0&&Time.realtimeSinceStartupAsDouble*1000.0>=deadlineMs)return false;
+                    PropagateWorldNode(ref cache,job.Sky,true);
+                    if((++clockCheck&31)==0&&Time.realtimeSinceStartupAsDouble*1000.0>=deadlineMs){cache.FlushDirty(job.DirtyChunks);return false;}
                 }
                 job.Phase=2;
             }
@@ -116,11 +119,12 @@ namespace BlockcraftPort
             {
                 while(job.Block.Count>0)
                 {
-                    PropagateWorldNode(world,job.Block,false,job.DirtyChunks);
-                    if((++clockCheck&31)==0&&Time.realtimeSinceStartupAsDouble*1000.0>=deadlineMs)return false;
+                    PropagateWorldNode(ref cache,job.Block,false);
+                    if((++clockCheck&31)==0&&Time.realtimeSinceStartupAsDouble*1000.0>=deadlineMs){cache.FlushDirty(job.DirtyChunks);return false;}
                 }
                 job.Phase=3;
             }
+            cache.FlushDirty(job.DirtyChunks);
             return true;
         }
 
@@ -294,33 +298,83 @@ namespace BlockcraftPort
             var sky=stitchSkyScratch??(stitchSkyScratch=new Queue<LightNode>(2048));sky.Clear();
             var block=stitchBlockScratch??(stitchBlockScratch=new Queue<LightNode>(512));block.Clear();
             int x0=chunk.X*16, z0=chunk.Z*16;
+            var cache=new StitchCache(world,chunk);
 
             for (int wx=x0-1;wx<=x0+16;wx++) for (int wz=z0-1;wz<=z0+16;wz++)
             {
                 if (wx>=x0 && wx<x0+16 && wz>=z0 && wz<z0+16) continue;
-                var cc=ChunkCoord.FromWorld(wx,wz);
-                if (!world.ContainsKey(cc)) continue;
+                ChunkColumn col=cache.Column(wx,wz);
+                if (col==null) continue;
+                int lx=wx&15,lz=wz&15;
                 for (int y=VoxelConstants.MinY;y<=VoxelConstants.MaxY;y++)
                 {
-                    byte p=GetWorldLight(world,wx,y,wz);
+                    byte p=col.GetLightLocal(lx,y,lz);
                     if ((p>>4)>1) sky.Enqueue(new LightNode(wx,y,wz));
                     if ((p&15)>1) block.Enqueue(new LightNode(wx,y,wz));
                 }
             }
 
-            PropagateWorld(world,sky,true,dirty);
-            PropagateWorld(world,block,false,dirty);
+            while(sky.Count>0)PropagateWorldNode(ref cache,sky,true);
+            while(block.Count>0)PropagateWorldNode(ref cache,block,false);
+            cache.FlushDirty(dirty);
         }
 
-        static void PropagateWorld(Dictionary<ChunkCoord,ChunkColumn> world,Queue<LightNode> q,bool skyMode,HashSet<ChunkCoord> dirty)
+        /// <summary>
+        /// Yu() propagation touches only the new chunk and its 8 neighbours (light <= 15 cannot travel
+        /// further from the one-block seed ring). Resolving those columns through a 3x3 array instead of a
+        /// Dictionary lookup per voxel access is the dominant cost saving; anything outside falls back to
+        /// the dictionary so results stay identical.
+        /// </summary>
+        internal struct StitchCache
         {
-            while(q.Count>0)PropagateWorldNode(world,q,skyMode,dirty);
+            readonly Dictionary<ChunkCoord,ChunkColumn> world;
+            readonly ChunkColumn[] cols;
+            readonly int cx,cz;
+            int dirtyMask;
+            HashSet<ChunkCoord> farDirty;
+            [ThreadStatic] static ChunkColumn[] scratchCols;
+
+            public StitchCache(Dictionary<ChunkCoord,ChunkColumn> world,ChunkCoord center)
+            {
+                this.world=world;cx=center.X;cz=center.Z;dirtyMask=0;farDirty=null;
+                cols=scratchCols??(scratchCols=new ChunkColumn[9]);
+                for(int dz=-1;dz<=1;dz++)for(int dx=-1;dx<=1;dx++)
+                {
+                    world.TryGetValue(new ChunkCoord(cx+dx,cz+dz),out var c);
+                    cols[(dx+1)+(dz+1)*3]=c;
+                }
+            }
+
+            public ChunkColumn Column(int wx,int wz)
+            {
+                int ccx=wx>>4,ccz=wz>>4,ix=ccx-cx+1,iz=ccz-cz+1;
+                if((uint)ix<3u&&(uint)iz<3u)return cols[ix+iz*3];
+                world.TryGetValue(new ChunkCoord(ccx,ccz),out var c);
+                return c;
+            }
+
+            public void MarkDirty(int wx,int wz)
+            {
+                int ccx=wx>>4,ccz=wz>>4,ix=ccx-cx+1,iz=ccz-cz+1;
+                if((uint)ix<3u&&(uint)iz<3u){dirtyMask|=1<<(ix+iz*3);return;}
+                (farDirty??(farDirty=new HashSet<ChunkCoord>())).Add(new ChunkCoord(ccx,ccz));
+            }
+
+            public void FlushDirty(HashSet<ChunkCoord> dirty)
+            {
+                for(int i=0;i<9;i++)if((dirtyMask&(1<<i))!=0)dirty.Add(new ChunkCoord(cx+(i%3)-1,cz+(i/3)-1));
+                if(farDirty!=null)dirty.UnionWith(farDirty);
+                dirtyMask=0;farDirty=null;
+            }
         }
 
-        static void PropagateWorldNode(Dictionary<ChunkCoord,ChunkColumn> world,Queue<LightNode> q,bool skyMode,HashSet<ChunkCoord> dirty)
+        static void PropagateWorldNode(ref StitchCache cache,Queue<LightNode> q,bool skyMode)
         {
             LightNode p=q.Dequeue();
-            byte packed=GetWorldLight(world,p.X,p.Y,p.Z);
+            byte packed;
+            if(p.Y>VoxelConstants.MaxY)packed=0xF0;
+            else if(p.Y<VoxelConstants.MinY)packed=0;
+            else{var pc=cache.Column(p.X,p.Z);packed=pc==null?(byte)0xF0:pc.GetLightLocal(p.X&15,p.Y,p.Z&15);}
             int current=skyMode?packed>>4:packed&15;
             if(current<=1)return;
 
@@ -328,9 +382,9 @@ namespace BlockcraftPort
             {
                 int nx=p.X+DX[d],ny=p.Y+DY[d],nz=p.Z+DZ[d];
                 if(ny<VoxelConstants.MinY||ny>VoxelConstants.MaxY)continue;
-                var ncc=ChunkCoord.FromWorld(nx,nz);
-                if(!world.TryGetValue(ncc,out var nc))continue; // main only writes loaded chunks.
-                int lx=VoxelConstants.FloorMod(nx,16),lz=VoxelConstants.FloorMod(nz,16);
+                var nc=cache.Column(nx,nz);
+                if(nc==null)continue; // main only writes loaded chunks.
+                int lx=nx&15,lz=nz&15;
                 BlockId target=nc.GetLocal(lx,ny,lz);
                 if(!BlockRegistry.LightPasses(target))continue;
                 int next=current-BlockRegistry.LightCost(target);
@@ -339,7 +393,7 @@ namespace BlockcraftPort
                 int existing=skyMode?old>>4:old&15;
                 if(next<=existing)continue;
                 nc.SetLightLocal(lx,ny,lz,skyMode?(byte)((old&15)|(next<<4)):(byte)((old&0xF0)|next));
-                dirty.Add(ncc);
+                cache.MarkDirty(nx,nz);
                 if(next>1)q.Enqueue(new LightNode(nx,ny,nz));
             }
         }

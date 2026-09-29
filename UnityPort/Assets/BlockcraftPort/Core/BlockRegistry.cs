@@ -20,7 +20,14 @@ namespace BlockcraftPort
 
     public static class BlockRegistry
     {
-        static readonly BlockDef[] D=new BlockDef[256];
+        // Sized for the full source id space (main.js has 674 block ids) so lookups never go out of range.
+        public const int Capacity=1024;
+        static readonly BlockDef[] D=new BlockDef[Capacity];
+        // Hot-path classification tables. Lighting, meshing and generation query these per voxel, so the
+        // compound predicates below are evaluated once per id at startup instead of on every call.
+        static readonly bool[] TFullOpaque=new bool[Capacity],TWater=new bool[Capacity],TLava=new bool[Capacity],
+            TAquatic=new bool[Capacity],TClassicLeaf=new bool[Capacity],TGlassy=new bool[Capacity],TXray=new bool[Capacity];
+        static readonly byte[] TLightCost=new byte[Capacity];
         static BlockRegistry()
         {
             var air=new BlockDef(RenderLayer.None,false,false,AtlasLayout.Stone,AtlasLayout.Stone,AtlasLayout.Stone);
@@ -142,6 +149,23 @@ namespace BlockcraftPort
             SetCross(BlockId.JungleSapling,AtlasLayout.JungleSapling);
             SetCross(BlockId.AcaciaSapling,AtlasLayout.AcaciaSapling);
             SetCross(BlockId.DarkOakSapling,AtlasLayout.DarkOakSapling);
+            BuildTables();
+        }
+
+        static void BuildTables()
+        {
+            for(int i=0;i<Capacity;i++)
+            {
+                var id=(BlockId)i;
+                TWater[i]=ComputeIsWater(id);TLava[i]=ComputeIsLava(id);TAquatic[i]=ComputeIsAquatic(id);
+                TClassicLeaf[i]=ComputeIsClassicLeaf(id);TGlassy[i]=ComputeIsGlassy(id);TXray[i]=ComputeXrayClassified(id);
+            }
+            for(int i=0;i<Capacity;i++)
+            {
+                var id=(BlockId)i;
+                TFullOpaque[i]=ComputeIsFullOpaque(id);
+                TLightCost[i]=(byte)((TWater[i]||TAquatic[i]||TClassicLeaf[i])?2:1);
+            }
         }
 
         static BlockDef O(AtlasRect r)=>new BlockDef(RenderLayer.Opaque,true,true,r,r,r);
@@ -159,21 +183,26 @@ namespace BlockcraftPort
 
         public static BlockDef Get(BlockId id)=>D[(int)id];
         public static bool IsSolid(BlockId id)=>D[(int)id].Solid;
-        public static bool IsWater(BlockId id)=>id==BlockId.Water||id==BlockId.Flow3||id==BlockId.Flow2||id==BlockId.Flow1;
+        public static bool IsWater(BlockId id)=>TWater[(int)id];
+        static bool ComputeIsWater(BlockId id)=>id==BlockId.Water||id==BlockId.Flow3||id==BlockId.Flow2||id==BlockId.Flow1;
         public static int WaterLevel(BlockId id)=>id==BlockId.Water?4:id==BlockId.Flow3?3:id==BlockId.Flow2?2:id==BlockId.Flow1?1:0;
         public static BlockId WaterForLevel(int level)=>level>=4?BlockId.Water:level>=3?BlockId.Flow3:level==2?BlockId.Flow2:level==1?BlockId.Flow1:BlockId.Air;
         public static float WaterSurfaceHeight(BlockId id)=>id==BlockId.Water?.875f:id==BlockId.Flow3?.65f:id==BlockId.Flow2?.45f:id==BlockId.Flow1?.25f:0f;
-        public static bool IsLava(BlockId id)=>id==BlockId.Lava||id==BlockId.LavaFlow2||id==BlockId.LavaFlow1;
+        public static bool IsLava(BlockId id)=>TLava[(int)id];
+        static bool ComputeIsLava(BlockId id)=>id==BlockId.Lava||id==BlockId.LavaFlow2||id==BlockId.LavaFlow1;
         public static int LavaLevel(BlockId id)=>id==BlockId.Lava?3:id==BlockId.LavaFlow2?2:id==BlockId.LavaFlow1?1:0;
         public static BlockId LavaForLevel(int level)=>level>=3?BlockId.Lava:level==2?BlockId.LavaFlow2:level==1?BlockId.LavaFlow1:BlockId.Air;
         public static float LavaSurfaceHeight(BlockId id)=>id==BlockId.Lava?.875f:id==BlockId.LavaFlow2?.55f:id==BlockId.LavaFlow1?.30f:0f;
-        public static bool IsFluid(BlockId id)=>IsWater(id)||IsLava(id);
-        public static bool IsClassicLeaf(BlockId id)=>id==BlockId.OakLeaves||id==BlockId.BirchLeaves||id==BlockId.SpruceLeaves||id==BlockId.DarkOakLeaves||id==BlockId.JungleLeaves||id==BlockId.AcaciaLeaves;
-        public static bool IsGlassy(BlockId id)=>id==BlockId.CherryLeaves||id==BlockId.AzaleaLeaves||id==BlockId.FloweringAzaleaLeaves;
+        public static bool IsFluid(BlockId id)=>TWater[(int)id]||TLava[(int)id];
+        public static bool IsClassicLeaf(BlockId id)=>TClassicLeaf[(int)id];
+        static bool ComputeIsClassicLeaf(BlockId id)=>id==BlockId.OakLeaves||id==BlockId.BirchLeaves||id==BlockId.SpruceLeaves||id==BlockId.DarkOakLeaves||id==BlockId.JungleLeaves||id==BlockId.AcaciaLeaves;
+        public static bool IsGlassy(BlockId id)=>TGlassy[(int)id];
+        static bool ComputeIsGlassy(BlockId id)=>id==BlockId.CherryLeaves||id==BlockId.AzaleaLeaves||id==BlockId.FloweringAzaleaLeaves;
         // main BT/PT tables are derived from source enum names /LEAVES/ and /(^|_)LOG$|_WOOD$|^MUSHROOM_STEM$/.
         public static bool IsLeaf(BlockId id)=>IsClassicLeaf(id)||IsGlassy(id);
         public static bool IsLeafDecaySupport(BlockId id)=>id==BlockId.OakLog||id==BlockId.BirchLog||id==BlockId.SpruceLog||id==BlockId.JungleLog||id==BlockId.AcaciaLog||id==BlockId.DarkOakLog||id==BlockId.CherryWood||id==BlockId.MushroomStem;
-        public static bool IsAquatic(BlockId id)=>id==BlockId.Kelp||id==BlockId.Seagrass||id==BlockId.TubeCoralFan||id==BlockId.BrainCoralFan||id==BlockId.BubbleCoralFan||id==BlockId.FireCoralFan||id==BlockId.HornCoralFan||id==BlockId.SeaPickle;
+        public static bool IsAquatic(BlockId id)=>TAquatic[(int)id];
+        static bool ComputeIsAquatic(BlockId id)=>id==BlockId.Kelp||id==BlockId.Seagrass||id==BlockId.TubeCoralFan||id==BlockId.BrainCoralFan||id==BlockId.BubbleCoralFan||id==BlockId.FireCoralFan||id==BlockId.HornCoralFan||id==BlockId.SeaPickle;
         public static bool NeedsWater(BlockId id)=>id==BlockId.Kelp||id==BlockId.Seagrass;
         // meshWorker b1: pillar/log UV axis comes from meta&3 (0=Y, 1=X, 2=Z).
         public static bool IsAxisBlock(BlockId id)=>id==BlockId.OakLog||id==BlockId.BirchLog||id==BlockId.SpruceLog||id==BlockId.JungleLog||id==BlockId.AcaciaLog||id==BlockId.DarkOakLog||id==BlockId.MushroomStem;
@@ -184,7 +213,8 @@ namespace BlockcraftPort
         public static bool IsPane(BlockId id)=>id==BlockId.GlassPane||id==BlockId.IronBars;
         // main.js meshWorker V1[] class marker used by the X-Ray two-pass renderer.
         // This is the exact subset currently represented by BlockId in the Unity port.
-        public static bool XrayClassified(BlockId id)
+        public static bool XrayClassified(BlockId id)=>TXray[(int)id];
+        static bool ComputeXrayClassified(BlockId id)
         {
             switch(id)
             {
@@ -213,11 +243,12 @@ namespace BlockcraftPort
             return id!=BlockId.Air&&!IsWater(id)&&!IsLava(id)&&!IsSourceFluidReplaceableCross(id)&&D[(int)id].Shape==BlockShape.Cube;
         }
         // meshWorker FA(): full-face occluder. Glass, classic leaves, cactus, fluids, cross/special and glassy blocks are excluded.
-        public static bool IsFullOpaque(BlockId id)=>id!=BlockId.Air&&!IsGlassy(id)&&!IsClassicLeaf(id)&&id!=BlockId.Cactus&&!IsFluid(id)&&D[(int)id].Shape==BlockShape.Cube&&D[(int)id].Layer!=RenderLayer.Transparent;
-        public static bool Occludes(BlockId id)=>IsFullOpaque(id);
-        public static bool OccludesAO(BlockId id)=>IsFullOpaque(id);
-        public static bool LightPasses(BlockId id)=>!IsFullOpaque(id);
-        public static int LightCost(BlockId id)=>(IsWater(id)||IsAquatic(id)||IsClassicLeaf(id))?2:1;
+        public static bool IsFullOpaque(BlockId id)=>TFullOpaque[(int)id];
+        static bool ComputeIsFullOpaque(BlockId id)=>id!=BlockId.Air&&!TGlassy[(int)id]&&!TClassicLeaf[(int)id]&&id!=BlockId.Cactus&&!TWater[(int)id]&&!TLava[(int)id]&&D[(int)id].Shape==BlockShape.Cube&&D[(int)id].Layer!=RenderLayer.Transparent;
+        public static bool Occludes(BlockId id)=>TFullOpaque[(int)id];
+        public static bool OccludesAO(BlockId id)=>TFullOpaque[(int)id];
+        public static bool LightPasses(BlockId id)=>!TFullOpaque[(int)id];
+        public static int LightCost(BlockId id)=>TLightCost[(int)id];
         public static byte Emission(BlockId id,byte meta=0)
         {
             if(id==BlockId.Lava||id==BlockId.Torch)return 14;
@@ -230,9 +261,10 @@ namespace BlockcraftPort
         public static bool FaceVisible(BlockId self,BlockId neighbor)
         {
             // meshWorker bC().
-            if(IsWater(self))return neighbor==BlockId.Air||(!IsFullOpaque(neighbor)&&!IsWater(neighbor)&&!IsAquatic(neighbor));
-            if(IsFullOpaque(self))return !IsFullOpaque(neighbor);
-            return !IsFullOpaque(neighbor)&&neighbor!=self;
+            int n=(int)neighbor;
+            if(TWater[(int)self])return neighbor==BlockId.Air||(!TFullOpaque[n]&&!TWater[n]&&!TAquatic[n]);
+            if(TFullOpaque[(int)self])return !TFullOpaque[n];
+            return !TFullOpaque[n]&&neighbor!=self;
         }
     }
 }

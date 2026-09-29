@@ -12,6 +12,7 @@ namespace BlockcraftPort
     {
         readonly MainTerrainNoise noise;
         readonly ConcurrentDictionary<long, BiomeSample> cache = new ConcurrentDictionary<long, BiomeSample>();
+        int cacheInserts;
 
         // Source iA() is called repeatedly for the same X/Z while T1() walks the vertical
         // density lattice. ConcurrentDictionary is useful as the long-lived shared cache, but
@@ -124,8 +125,15 @@ namespace BlockcraftPort
                 return cached;
             }
             BiomeSample s=Compute(x,z);
-            if(cache.Count>400000) cache.Clear(); // same order-of-magnitude cap as genWorker UE.
-            cache.TryAdd(key,s);
+            // Same order-of-magnitude cap as genWorker UE. ConcurrentDictionary.Count takes every
+            // stripe lock, which serialised all generation threads on each cache miss; an atomic
+            // insertion counter gives the same bounded-size behaviour without the global lock.
+            if(Volatile.Read(ref cacheInserts)>400000)
+            {
+                cache.Clear();
+                Interlocked.Exchange(ref cacheInserts,0);
+            }
+            if(cache.TryAdd(key,s))Interlocked.Increment(ref cacheInserts);
             StoreHot(key,s);
             return s;
         }
