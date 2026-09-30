@@ -1232,6 +1232,23 @@ BIOME_LIST.forEach((b, i) => { BI[b[0]] = i; });
 // back-compat alias used by feature code
 BI.OLD_GROWTH_TAIGA = BI.OLD_GROWTH_SPRUCE_TAIGA;
 
+// Minecraft (Java) biome temperatures. Above y 80 the temperature drops by 0.00125 per block (with
+// a little noise); below 0.15 water freezes and snow settles, so taiga gets snowy tops on high
+// ground while a forest or meadow never does.
+const BIOME_TEMP = new Float32Array(BIOME_LIST.length);
+(function () {
+  const T = {
+    PLAINS: 0.8, SUNFLOWER_PLAINS: 0.8, BEACH: 0.8, SWAMP: 0.8, MANGROVE_SWAMP: 0.8, FOREST: 0.7, FLOWER_FOREST: 0.7,
+    DARK_FOREST: 0.7, BIRCH_FOREST: 0.6, OLD_GROWTH_BIRCH_FOREST: 0.6, TAIGA: 0.25, OLD_GROWTH_PINE_TAIGA: 0.3,
+    OLD_GROWTH_SPRUCE_TAIGA: 0.25, MEADOW: 0.5, CHERRY_GROVE: 0.5, WINDSWEPT_HILLS: 0.2, WINDSWEPT_GRAVELLY_HILLS: 0.2,
+    WINDSWEPT_FOREST: 0.2, STONY_SHORE: 0.2, STONY_PEAKS: 1.0, JUNGLE: 0.95, SPARSE_JUNGLE: 0.95, BAMBOO_JUNGLE: 0.95,
+    DESERT: 2, SAVANNA: 2, SAVANNA_PLATEAU: 2, WINDSWEPT_SAVANNA: 2, BADLANDS: 2, ERODED_BADLANDS: 2, WOODED_BADLANDS: 2,
+    MUSHROOM_FIELDS: 0.9, RIVER: 0.5, OCEAN: 0.5, DEEP_OCEAN: 0.5, LUKEWARM_OCEAN: 0.5, DEEP_LUKEWARM_OCEAN: 0.5,
+    WARM_OCEAN: 0.5, COLD_OCEAN: 0.5, DEEP_COLD_OCEAN: 0.5, DEEP_FROZEN_OCEAN: 0.5,
+  };
+  BIOME_LIST.forEach((b, i) => { BIOME_TEMP[i] = T[b[0]] ?? -0.5; });   // the rest are the snowy biomes
+})();
+
 // Biome colours as Minecraft (Java) gives them: grass and foliage from the colormaps at the biome's
 // temperature / downfall (plus the dark forest, swamp and badlands overrides), and the water colour.
 // BIOME_TINT[b * 3 + k]: k = 0 grass, 1 foliage, 2 water (0xRRGGBB).
@@ -1504,8 +1521,12 @@ class WorldGen {
     const pv = 1 - Math.abs(3 * Math.abs(w) - 2);
     let h = spline(SPL_BASE, c);
     const s = spline(SPL_MOUNT, e) * clamp01((c + 0.25) / 0.4);
-    const wk = Math.pow(clamp01(pv * 0.5 + 0.5), 1.4);
-    h += Math.pow(s, 1.15) * wk * 235;
+    // mountains: low erosion raises the land, the peaks-and-valleys ridge decides how much (peaks
+    // on ridges, gentler slopes elsewhere); the top is eased off so peaks stay below ~y 260 as in
+    // Minecraft
+    const wk = Math.pow(clamp01(pv * 0.5 + 0.5), 2);
+    h += Math.pow(s, 1.15) * wk * 205;
+    if (h > 190) h = 190 + (h - 190) * 0.55;
     if (h > SEA - 3) h += this.fbm(this.nHill, x, z, 1 / 22, 3) * (9 + s * 15) * clamp01((h - (SEA - 2)) / 11);
     else if (h < SEA - 4) h += this.fbm(this.nMisc, x, z, 0.018, 2) * 2.2 * (2.5 + clamp01((SEA - 4 - h) / 22) * 8);
     // Minecraft's highest erosion zone (6) inland is where swamps and mangrove swamps (snowy plains
@@ -1858,8 +1879,6 @@ class WorldGen {
         const sn = this.nSurf.n2(wx / 16, wz / 16);
         if (this.bareSlope(bio, wx, wz, y)) top = fill = B.STONE;
         if (ob === BI.STONY_PEAKS && sn > 0.45) top = fill = B.CALCITE;
-        // high non-snowy mountains get a snow cap
-        if (!P.snow && y > 168 + sn * 12 && h > 150 && !P.badlands && ob !== BI.STONY_PEAKS) top = fill = B.SNOW;
       }
       // Minecraft's swamp surface rule: ground at the water line becomes water where the swamp
       // noise is positive (pools); in mangrove swamps from two blocks lower
@@ -2498,16 +2517,26 @@ class WorldGen {
   }
   // Cold biomes (Minecraft's freeze-top-layer): open water at sea level freezes, and every top block
   // that can hold snow (ground, leaves, logs) under open sky gets a snow layer.
+  // Minecraft's freeze-top-layer step: in cold biomes, and wherever the height-adjusted temperature
+  // is below 0.15, the top water freezes and snow settles on the ground and on leaves
+  frozenAt(bio, x, y, z) {
+    if (BPROP[bio].cold === 2) return true;
+    if (y <= 80) return BIOME_TEMP[bio] < 0.15;
+    return BIOME_TEMP[bio] - ((this.vn.f2(x / 8, z / 8) - 0.5) * 16 + y - 80) * 0.00125 < 0.15;
+  }
   snowCover() {
     const ids = this.ids, TOP = this.TOP;
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
-      if (BPROP[this.BIO[z * 16 + x]].cold !== 2) continue;
+      const bio = this.BIO[z * 16 + x], cold = BPROP[bio].cold === 2;
+      if (!cold && BIOME_TEMP[bio] - (TOP[z * 16 + x] + 48 - 80) * 0.00125 >= 0.15) continue;   // cannot freeze here
       const s = CI(x, SEA, z);
-      if (ids[s] === B.WATER && ids[s + 256] === 0) ids[s] = B.ICE;
+      if (cold && ids[s] === B.WATER && ids[s + 256] === 0) ids[s] = B.ICE;
       let y = Math.min(WORLD_MAX_Y - 2, TOP[z * 16 + x] + 40);
       while (y > WORLD_MIN_Y && ids[CI(x, y, z)] === 0) y--;
+      if (!cold && !this.frozenAt(bio, this.x0 + x, y + 1, this.z0 + z)) continue;
       const t = ids[CI(x, y, z)];
       if (y >= WORLD_MAX_Y - 2 || ids[CI(x, y + 1, z)] !== 0) continue;
+      if (t === B.WATER) { ids[CI(x, y, z)] = B.ICE; continue; }           // a frozen lake or pool
       if (t === B.ICE || t === B.PACKED_ICE || t === B.SNOW || isWaterId(t)) continue;
       if (OPAQUE[t] || (FLAGS[t] & BF_LEAVES)) ids[CI(x, y + 1, z)] = B.SNOW_LAYER;
     }
@@ -4619,6 +4648,23 @@ BIOME_LIST.forEach((b, i) => { BI[b[0]] = i; });
 // back-compat alias used by feature code
 BI.OLD_GROWTH_TAIGA = BI.OLD_GROWTH_SPRUCE_TAIGA;
 
+// Minecraft (Java) biome temperatures. Above y 80 the temperature drops by 0.00125 per block (with
+// a little noise); below 0.15 water freezes and snow settles, so taiga gets snowy tops on high
+// ground while a forest or meadow never does.
+const BIOME_TEMP = new Float32Array(BIOME_LIST.length);
+(function () {
+  const T = {
+    PLAINS: 0.8, SUNFLOWER_PLAINS: 0.8, BEACH: 0.8, SWAMP: 0.8, MANGROVE_SWAMP: 0.8, FOREST: 0.7, FLOWER_FOREST: 0.7,
+    DARK_FOREST: 0.7, BIRCH_FOREST: 0.6, OLD_GROWTH_BIRCH_FOREST: 0.6, TAIGA: 0.25, OLD_GROWTH_PINE_TAIGA: 0.3,
+    OLD_GROWTH_SPRUCE_TAIGA: 0.25, MEADOW: 0.5, CHERRY_GROVE: 0.5, WINDSWEPT_HILLS: 0.2, WINDSWEPT_GRAVELLY_HILLS: 0.2,
+    WINDSWEPT_FOREST: 0.2, STONY_SHORE: 0.2, STONY_PEAKS: 1.0, JUNGLE: 0.95, SPARSE_JUNGLE: 0.95, BAMBOO_JUNGLE: 0.95,
+    DESERT: 2, SAVANNA: 2, SAVANNA_PLATEAU: 2, WINDSWEPT_SAVANNA: 2, BADLANDS: 2, ERODED_BADLANDS: 2, WOODED_BADLANDS: 2,
+    MUSHROOM_FIELDS: 0.9, RIVER: 0.5, OCEAN: 0.5, DEEP_OCEAN: 0.5, LUKEWARM_OCEAN: 0.5, DEEP_LUKEWARM_OCEAN: 0.5,
+    WARM_OCEAN: 0.5, COLD_OCEAN: 0.5, DEEP_COLD_OCEAN: 0.5, DEEP_FROZEN_OCEAN: 0.5,
+  };
+  BIOME_LIST.forEach((b, i) => { BIOME_TEMP[i] = T[b[0]] ?? -0.5; });   // the rest are the snowy biomes
+})();
+
 // Biome colours as Minecraft (Java) gives them: grass and foliage from the colormaps at the biome's
 // temperature / downfall (plus the dark forest, swamp and badlands overrides), and the water colour.
 // BIOME_TINT[b * 3 + k]: k = 0 grass, 1 foliage, 2 water (0xRRGGBB).
@@ -4891,8 +4937,12 @@ class WorldGen {
     const pv = 1 - Math.abs(3 * Math.abs(w) - 2);
     let h = spline(SPL_BASE, c);
     const s = spline(SPL_MOUNT, e) * clamp01((c + 0.25) / 0.4);
-    const wk = Math.pow(clamp01(pv * 0.5 + 0.5), 1.4);
-    h += Math.pow(s, 1.15) * wk * 235;
+    // mountains: low erosion raises the land, the peaks-and-valleys ridge decides how much (peaks
+    // on ridges, gentler slopes elsewhere); the top is eased off so peaks stay below ~y 260 as in
+    // Minecraft
+    const wk = Math.pow(clamp01(pv * 0.5 + 0.5), 2);
+    h += Math.pow(s, 1.15) * wk * 205;
+    if (h > 190) h = 190 + (h - 190) * 0.55;
     if (h > SEA - 3) h += this.fbm(this.nHill, x, z, 1 / 22, 3) * (9 + s * 15) * clamp01((h - (SEA - 2)) / 11);
     else if (h < SEA - 4) h += this.fbm(this.nMisc, x, z, 0.018, 2) * 2.2 * (2.5 + clamp01((SEA - 4 - h) / 22) * 8);
     // Minecraft's highest erosion zone (6) inland is where swamps and mangrove swamps (snowy plains
@@ -5245,8 +5295,6 @@ class WorldGen {
         const sn = this.nSurf.n2(wx / 16, wz / 16);
         if (this.bareSlope(bio, wx, wz, y)) top = fill = B.STONE;
         if (ob === BI.STONY_PEAKS && sn > 0.45) top = fill = B.CALCITE;
-        // high non-snowy mountains get a snow cap
-        if (!P.snow && y > 168 + sn * 12 && h > 150 && !P.badlands && ob !== BI.STONY_PEAKS) top = fill = B.SNOW;
       }
       // Minecraft's swamp surface rule: ground at the water line becomes water where the swamp
       // noise is positive (pools); in mangrove swamps from two blocks lower
@@ -5885,16 +5933,26 @@ class WorldGen {
   }
   // Cold biomes (Minecraft's freeze-top-layer): open water at sea level freezes, and every top block
   // that can hold snow (ground, leaves, logs) under open sky gets a snow layer.
+  // Minecraft's freeze-top-layer step: in cold biomes, and wherever the height-adjusted temperature
+  // is below 0.15, the top water freezes and snow settles on the ground and on leaves
+  frozenAt(bio, x, y, z) {
+    if (BPROP[bio].cold === 2) return true;
+    if (y <= 80) return BIOME_TEMP[bio] < 0.15;
+    return BIOME_TEMP[bio] - ((this.vn.f2(x / 8, z / 8) - 0.5) * 16 + y - 80) * 0.00125 < 0.15;
+  }
   snowCover() {
     const ids = this.ids, TOP = this.TOP;
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
-      if (BPROP[this.BIO[z * 16 + x]].cold !== 2) continue;
+      const bio = this.BIO[z * 16 + x], cold = BPROP[bio].cold === 2;
+      if (!cold && BIOME_TEMP[bio] - (TOP[z * 16 + x] + 48 - 80) * 0.00125 >= 0.15) continue;   // cannot freeze here
       const s = CI(x, SEA, z);
-      if (ids[s] === B.WATER && ids[s + 256] === 0) ids[s] = B.ICE;
+      if (cold && ids[s] === B.WATER && ids[s + 256] === 0) ids[s] = B.ICE;
       let y = Math.min(WORLD_MAX_Y - 2, TOP[z * 16 + x] + 40);
       while (y > WORLD_MIN_Y && ids[CI(x, y, z)] === 0) y--;
+      if (!cold && !this.frozenAt(bio, this.x0 + x, y + 1, this.z0 + z)) continue;
       const t = ids[CI(x, y, z)];
       if (y >= WORLD_MAX_Y - 2 || ids[CI(x, y + 1, z)] !== 0) continue;
+      if (t === B.WATER) { ids[CI(x, y, z)] = B.ICE; continue; }           // a frozen lake or pool
       if (t === B.ICE || t === B.PACKED_ICE || t === B.SNOW || isWaterId(t)) continue;
       if (OPAQUE[t] || (FLAGS[t] & BF_LEAVES)) ids[CI(x, y + 1, z)] = B.SNOW_LAYER;
     }
