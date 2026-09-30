@@ -106,7 +106,7 @@ let GAME_MODE=null,CURRENT_WORLD_ID='',SAVE_NAMESPACE='',SAVE_KEYS={};
 })();
 const GENERATOR_VERSION='deepslate-384-main-cave-fluid-34';
 const GENERATOR_COMPAT=new Set([GENERATOR_VERSION,'deepslate-384-aquifer-pressure-heightmap-33']);
-const ENGINE_BUILD='0.93.62-render-biomes';
+const ENGINE_BUILD='0.93.63-support';
 const MODS_KEY='vf_engine_mods_v1',XRAY_STATE_KEY='vf_engine_xray_active_v1';
 const RENDER_SETTINGS_KEY='vf_render_settings_v1',GAME_SETTINGS_KEY='vf_settings_main_v1';
 const MAIN_RD_VALUES=[4,6,8,12,16,20,25,30,40,50],MAIN_SIM_VALUES=[4,6,8,12,16,20];
@@ -1208,7 +1208,7 @@ function setBlock(x,y,z,id,meta=null,persistEdit=true){
  }
  const newMeta=meta&&typeof meta==='object'?meta:null,newLightSig=lightSignatureState(id,newMeta),newTreeLog=isTreeLogState(id,newMeta);
  if(oldLightSig!==newLightSig){queueLightUpdate(x,y,z);notePlayerEditLight(x,y,z)}
- if(oldId!==id||oldMeta?.v!==newMeta?.v){releaseStuckProjectilesAt(x,y,z);queueAroundSimulation(x,y,z);validateAttachmentsAround(x,y,z);queueFalling?.(x,y+1,z);queueFalling?.(x,y,z);if((oldTreeLog&&!newTreeLog)||id===B.AIR)for(const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]])queueLeaf(x+dx,y+dy,z+dz);if(!fluidMixGuard&&(fluidMutationDepth>0||isPlayerEditActive()||isFluidWater(oldId)||isFluidWater(id)||isLava(oldId)||isLava(id)))resolveFluidMixAround(x,y,z)}
+ if(oldId!==id||oldMeta?.v!==newMeta?.v){releaseStuckProjectilesAt(x,y,z);queueAroundSimulation(x,y,z);validateAttachmentsAround(x,y,z);queueFalling?.(x,y+1,z);queueFalling?.(x,y,z);queueFalling?.(x+1,y,z);queueFalling?.(x-1,y,z);queueFalling?.(x,y,z+1);queueFalling?.(x,y,z-1);if((oldTreeLog&&!newTreeLog)||id===B.AIR)for(const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]])queueLeaf(x+dx,y+dy,z+dz);if(!fluidMixGuard&&(fluidMutationDepth>0||isPlayerEditActive()||isFluidWater(oldId)||isFluidWater(id)||isLava(oldId)||isLava(id)))resolveFluidMixAround(x,y,z)}
 }
 const dirtyEditChunks=new Set(),dirtyEditSections=new Map();
 function markDirtyEdit(cx,cz){const c=chunkFastGet(cx,cz);if(c)dirtyEditChunks.add(ckey(cx,cz))}

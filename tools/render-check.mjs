@@ -140,6 +140,19 @@ try {
     check('culling-image-identical', worst <= 800 * 450 * 0.0005, `max differing pixels ${worst} (triangles ${cut.join(', ')})`);
   }
 
+  // 5b. Sand left hanging by generation must fall when a neighbour changes (Minecraft neighbour update).
+  const grav = await ev(async () => {
+    const X = Math.floor(player.x) + 20, Z = Math.floor(player.z), Y = 180, c = chunkFastGet(Math.floor((X + 1) / 16), Math.floor(Z / 16));
+    setBlock(X, Y, Z, B.STONE);
+    chunkSet(c, (X + 1) - c.cx * 16, Y, Z - c.cz * 16, B.SAND);                       // generation-style: no update queued
+    const was = getBlock(X + 1, Y, Z); pauseOpen = false;
+    withPlayerEdit(() => setBlock(X, Y, Z, B.AIR));                                  // break the neighbour
+    await new Promise(r => setTimeout(r, 1500));
+    return { placed: was === B.SAND, fell: getBlock(X + 1, Y, Z) !== B.SAND };
+  });
+  check('gravity-neighbour-update', grav.placed && grav.fell, `sand beside a broken block: ${grav.placed ? 'placed' : 'not placed'}, after 1.5 s ${grav.fell ? 'fell' : 'still hanging'}`);
+  await ev(() => { pauseOpen = false; });
+
   // 6. Streaming on a 144 Hz display (short frame budget) while flying: the world must keep loading.
   await ev(() => {
     const ob = window.frameBackgroundBudget;

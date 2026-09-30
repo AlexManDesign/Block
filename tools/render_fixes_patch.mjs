@@ -14,13 +14,14 @@
 //   W water+glass far-to-near interleave
 //   X dead code removal
 //   T foliage tint of grey atlas tiles   U lit underwater tint
+//   Y gravity blocks wake on any neighbour change
 //   V build label
 import fs from 'node:fs';
 const [inPath, outPath, ...rest] = process.argv.slice(2);
 if (!inPath || !outPath) { console.error('usage: node tools/render_fixes_patch.mjs <in.html> <out.html> [--only=A,B,...]'); process.exit(2); }
 let src = fs.readFileSync(inPath, 'utf8');
 const onlyArg = rest.find(a => a.startsWith('--only='));
-const only = (onlyArg ? onlyArg.slice(7) : 'A,B,C,D,E,F,G,H,J,K,M,N,W,X,T,U,V').split(',');
+const only = (onlyArg ? onlyArg.slice(7) : 'A,B,C,D,E,F,G,H,J,K,M,N,W,X,T,U,Y,V').split(',');
 function rep(group, from, to, n = 1) {
   if (!only.includes(group)) return;
   const cnt = src.split(from).length - 1;
@@ -149,7 +150,7 @@ rep('L', "function setChunkOpaqueCPU(c,verts,inds){const v=verts instanceof Floa
 rep('L', "function clearChunkOpaqueCPU(c){", "function reverseQuadOrder(src){const n=src.length/6|0;if(n*6!==src.length||n<2)return src;const r=new Uint32Array(src.length);for(let q=0;q<n;q++){const s=(n-1-q)*6,d=q*6;r[d]=src[s];r[d+1]=src[s+1];r[d+2]=src[s+2];r[d+3]=src[s+3];r[d+4]=src[s+4];r[d+5]=src[s+5]}return r}\nfunction clearChunkOpaqueCPU(c){");
 
 // V. Build label shown in the HUD.
-rep('V', "ENGINE_BUILD='0.93.59-water67-complete-mesh-guards'", "ENGINE_BUILD='0.93.62-render-biomes'");
+rep('V', "ENGINE_BUILD='0.93.59-water67-complete-mesh-guards'", "ENGINE_BUILD='0.93.63-support'");
 
 // M. Mesher: ore faces buried between two solid blocks (only needed for X-Ray) get +2048 in aShadeAlpha;
 //    each section reports which of its faces see each other through non-opaque cells (c.secConn).
@@ -247,6 +248,11 @@ rep('X', "if(m.sharedAlphaArena){releaseAlphaSlot(m.alphaSlot);return}", '');
 rep('T', "atlasImg.onload=()=>{",
          "// Grayscale foliage tiles in the atlas (grass plants, ferns, vines, lily pad, acacia/dark oak/jungle leaves)\n// are meant to be multiplied by a biome colour; the engine has no biome tint, so they rendered grey.\n// Tint their grey pixels once with Minecraft's default grass/foliage colours before the atlas is uploaded.\nconst FOLIAGE_TINT={short_grass:[145,189,89],tall_grass_bottom:[145,189,89],tall_grass_top:[145,189,89],fern:[145,189,89],large_fern_bottom:[145,189,89],large_fern_top:[145,189,89],vine:[119,171,47],lily_pad:[32,128,48],acacia_leaves:[174,164,42],dark_oak_leaves:[89,174,48],jungle_leaves:[48,187,11]};\nlet atlasFoliageTinted=false;\nfunction tintAtlasFoliage(img){const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(img,0,0);const per=Math.max(1,Math.floor(c.width/16));let n=0;for(let ti=0;ti<TILE_NAMES.length;ti++){const t=FOLIAGE_TINT[TILE_NAMES[ti]];if(!t)continue;const x=(ti%per)*16,y=Math.floor(ti/per)*16;if(y+16>c.height)continue;const d=g.getImageData(x,y,16,16),a=d.data;for(let i=0;i<a.length;i+=4){if(!a[i+3])continue;const mx=Math.max(a[i],a[i+1],a[i+2]),mn=Math.min(a[i],a[i+1],a[i+2]);if(mx-mn>16)continue;a[i]=a[i]*t[0]/255;a[i+1]=a[i+1]*t[1]/255;a[i+2]=a[i+2]*t[2]/255}g.putImageData(d,x,y);n++}return n?c.toDataURL('image/png'):null}\natlasImg.onload=()=>{if(!atlasFoliageTinted){atlasFoliageTinted=true;let u=null;try{u=tintAtlasFoliage(atlasImg)}catch(e){u=null}if(u){atlasImg.src=u;return}}");
 rep('U', "col=mix(col,vec3(0.07,0.24,0.45),wf);", "col=mix(col,vec3(0.07,0.24,0.45)*min(1.0,max(lm.r,max(lm.g,lm.b))),wf);", 2);
+
+// Y. Gravity blocks: a block change used to wake only the changed cell and the one above it, so sand/gravel
+//    left hanging by world generation (cave ceilings, sand over aquifers) never fell when a neighbour was
+//    broken. Like Minecraft's neighbour updates, all six neighbours are now checked.
+rep('Y', "queueFalling?.(x,y+1,z);queueFalling?.(x,y,z);", "queueFalling?.(x,y+1,z);queueFalling?.(x,y,z);queueFalling?.(x+1,y,z);queueFalling?.(x-1,y,z);queueFalling?.(x,y,z+1);queueFalling?.(x,y,z-1);");
 
 fs.writeFileSync(outPath, src);
 console.log('wrote', outPath, 'groups', only.join(','));
