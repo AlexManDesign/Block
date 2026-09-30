@@ -7494,7 +7494,7 @@ class Renderer {
     let m = c.meshes[sy];
     const total = d.counts[0] + d.counts[1] + d.counts[2];
     if (!total) {
-      if (m) { if (m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); } }
+      if (m) { if (m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); } this.freeTrans(m); }
       c.meshes[sy] = { vbo: null, vao: null, counts: [0, 0, 0], vis: d.vis, cap: 0 };
       return;
     }
@@ -7514,12 +7514,75 @@ class Renderer {
       m.cap = d.data.byteLength;
     } else gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.data);
     m.counts = d.counts; m.gc = d.gc || null; m.vis = d.vis;
+    this.prepareTrans(m, d);
+  }
+  // Translucent quads are drawn back to front through a per-section index buffer that is re-sorted
+  // when the camera moves to another block (like Minecraft's translucency sorting). Here: quad
+  // centres (section-local, in blocks) and facing groups for the sort.
+  prepareTrans(m, d) {
+    const gl = this.gl, n = d.counts[2];
+    if (!n) { this.freeTrans(m); return; }
+    const first = d.counts[0] + d.counts[1], w = d.data;
+    const tc = new Float32Array(n * 3), tg = new Uint8Array(n);
+    for (let q = 0; q < n; q++) {
+      let sx = 0, sy = 0, sz = 0;
+      for (let v = 0, o = (first + q) * 12; v < 4; v++, o += 3) {
+        const w0 = w[o];
+        sx += w0 & 1023; sy += (w0 >>> 10) & 1023; sz += (w0 >>> 20) & 1023;
+      }
+      tc[q * 3] = sx * 0.0078125; tc[q * 3 + 1] = sy * 0.0078125; tc[q * 3 + 2] = sz * 0.0078125;
+    }
+    if (d.gc) { let q = 0; for (let g = 0; g < 7; g++) for (let k = d.gc[14 + g]; k > 0; k--) tg[q++] = g; }
+    else tg.fill(6);
+    if (!m.tvao) {
+      m.tvao = gl.createVertexArray(); m.tibo = gl.createBuffer();
+      gl.bindVertexArray(m.tvao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, m.vbo);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribIPointer(0, 3, gl.UNSIGNED_INT, 12, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.tibo);
+      gl.bindVertexArray(null);
+      m.tcap = 0;
+    }
+    m.tc = tc; m.tg = tg; m.tfirst = first; m.tn = 0; m.tkey = -1;
+  }
+  freeTrans(m) {
+    if (!m.tvao) return;
+    this.gl.deleteVertexArray(m.tvao); this.gl.deleteBuffer(m.tibo);
+    m.tvao = m.tibo = null; m.tc = m.tg = null; m.tn = 0;
+  }
+  // camera at (px,py,pz) in section-local blocks; vis: facing groups that can face the camera
+  sortTrans(m, px, py, pz, vis) {
+    const gl = this.gl, n = m.tg.length, tc = m.tc, tg = m.tg;
+    const S = this.tsort || (this.tsort = { key: new Float64Array(4096), e: new Uint32Array(4096 * 6) });
+    if (S.key.length < n) { S.key = new Float64Array(n * 2); S.e = new Uint32Array(n * 12); }
+    const key = S.key, el = S.e;
+    // key = squared distance (1/256 steps) * 65536 + quad: a native numeric sort, no comparator
+    let k = 0;
+    for (let q = 0; q < n; q++) {
+      if (!(vis & (1 << tg[q]))) continue;
+      const dx = tc[q * 3] - px, dy = tc[q * 3 + 1] - py, dz = tc[q * 3 + 2] - pz;
+      key[k++] = Math.floor((dx * dx + dy * dy + dz * dz) * 256) * 65536 + q;
+    }
+    const o = key.subarray(0, k);
+    o.sort();
+    for (let j = k - 1, e = 0; j >= 0; j--) {
+      const v = (m.tfirst + o[j] % 65536) * 4;
+      el[e++] = v; el[e++] = v + 1; el[e++] = v + 2; el[e++] = v; el[e++] = v + 2; el[e++] = v + 3;
+    }
+    gl.bindVertexArray(m.tvao);
+    const bytes = k * 24;
+    if (bytes > m.tcap) { gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, Math.max(bytes, 1536), gl.DYNAMIC_DRAW); m.tcap = Math.max(bytes, 1536); }
+    if (k) gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, el, 0, k * 6);
+    gl.bindVertexArray(null);
+    m.tn = k * 6;
   }
   freeColumn(c) {
     const gl = this.gl;
     for (let s = 0; s < SECTIONS; s++) {
       const m = c.meshes[s];
       if (m && m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); }
+      if (m) this.freeTrans(m);
       c.meshes[s] = null;
     }
   }
@@ -7670,6 +7733,14 @@ class Renderer {
       const m = list[back ? n - 1 - k : k];
       const cnt = m.counts[pass];
       if (!cnt) continue;
+      if (back && m.tvao && m.tkey !== -1) {
+        if (!m.tn) continue;
+        gl.uniform3f(u, m.cx * 16 - cam[0], WORLD_MIN_Y + m.sy * 16 - cam[1], m.cz * 16 - cam[2]);
+        gl.bindVertexArray(m.tvao);
+        gl.drawElements(gl.TRIANGLES, m.tn, gl.UNSIGNED_INT, 0);
+        draws++; quads += m.tn / 6;
+        continue;
+      }
       const first = pass === 0 ? 0 : pass === 1 ? m.counts[0] : m.counts[0] + m.counts[1];
       const ox = m.cx * 16 - cam[0], oy = WORLD_MIN_Y + m.sy * 16 - cam[1], oz = m.cz * 16 - cam[2];
       gl.uniform3f(u, ox, oy, oz);
@@ -7725,8 +7796,30 @@ class Renderer {
     // sky after the opaque terrain: it only shades pixels the terrain left empty
     if (!env.underwater) this.drawSky(env);
   }
+  // Re-sorts translucent quads of sections whose camera block changed, nearest sections first,
+  // within a time budget; the rest keep their previous order until a later frame.
+  sortTranslucent(cam) {
+    const list = this.visList, n = this.visCount, t0 = performance.now();
+    const csx = Math.floor(cam[0]) >> 4, csy = (Math.floor(cam[1]) - WORLD_MIN_Y) >> 4, csz = Math.floor(cam[2]) >> 4;
+    for (let k = 0; k < n; k++) {
+      const m = list[k];
+      if (!m.tvao) continue;
+      const px = cam[0] - m.cx * 16, py = cam[1] - WORLD_MIN_Y - m.sy * 16, pz = cam[2] - m.cz * 16;
+      const vis = !this.dirCull ? 127 : (px < 0 ? 1 : px > 16 ? 2 : 3) | (py < 0 ? 4 : py > 16 ? 8 : 12) | (pz < 0 ? 16 : pz > 16 ? 32 : 48) | 64;
+      // re-sort once the camera moved a step: one block near the section, coarser further away
+      // (there the order of neighbouring quads barely depends on small camera moves)
+      const sd = Math.max(Math.abs(m.cx - csx), Math.abs(m.sy - csy), Math.abs(m.cz - csz));
+      const st = sd <= 1 ? 1 : sd <= 3 ? 2 : sd <= 7 ? 4 : 8;
+      const key = (((Math.floor(px / st) + 512) * 1024 + Math.floor(py / st) + 512) * 1024 + Math.floor(pz / st) + 512) * 128 + vis;
+      if (key === m.tkey) continue;
+      if (m.tkey !== -1 && performance.now() - t0 > 1.5) continue;
+      this.sortTrans(m, px, py, pz, vis);
+      m.tkey = key;
+    }
+  }
   renderTranslucent(cam, env, time, tick) {
     const gl = this.gl;
+    this.sortTranslucent(cam);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
     this.bindTerrain(this.progTrans, cam, env, time, tick);
