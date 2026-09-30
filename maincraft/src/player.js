@@ -14,7 +14,8 @@ class Player {
     this.swimming = false;
     this.fallStart = null;
     this.stepAcc = 0;
-    this.bob = 0; this.bobAmt = 0;
+    this.bob = 0; this.bobAmt = 0;          // limb swing of the player model
+    this.walkDist = 0; this.bobA = 0;       // Minecraft view bobbing: distance walked x0.6, amplitude
     this.hitWall = false;
     this.fallDamage = 0;
     this.eyeOffset = EYE;
@@ -72,7 +73,7 @@ class Player {
   }
 
   update(world, dt, input, mode) {
-    const p = this.pos, v = this.vel;
+    const p = this.pos, v = this.vel, px0 = p[0], pz0 = p[2];
     // stand back up (from sneak / swim pose) when there is room
     if (this.h < PLAYER_H && !this.collides(world, p[0], p[1], p[2], PLAYER_H)) this.h = PLAYER_H;
     const bAt = (x, y, z) => world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z));
@@ -85,10 +86,11 @@ class Player {
     const moving = len > 0.01;
     const sneakKey = !!k.sneak;
     const sneakPose = sneakKey && this.onGround && !this.flying;
-    let sprint = moving && !!(k.sprint || this.sprintLatch) && !sneakPose;
+    let sprint = moving && fz < -0.3 && !!(k.sprint || this.sprintLatch) && !sneakPose;   // Minecraft: sprint only forward
     if (mode === 'survival' && input.hunger !== undefined && input.hunger <= 6) sprint = false;
     this.sprinting = sprint;
-    let speed = this.flying ? (sprint ? 16 : 10) : sprint ? 7.2 : 4.4;
+    // Minecraft speeds (blocks/s): walk 4.317, sprint 5.612, sneak 1.295, creative flight 10.92 / 21.6
+    let speed = this.flying ? (sprint ? 21.6 : 10.92) : sprint ? 5.612 : 4.317;
     if (sneakPose) speed = 1.3;
     const ground = this.onGround && !this.flying ? bAt(p[0], p[1] - 0.01, p[2]) : 0;
     if (ground === B.SOUL_SAND) speed *= 0.4;
@@ -99,7 +101,9 @@ class Player {
     const wx = -fz * sy + fx * cy, wz = fz * cy + fx * sy;
     let accel = 12;
     if (ground === B.ICE || ground === B.PACKED_ICE) accel = 2.2; else if (ground === B.BLUE_ICE) accel = 1.3;
-    const a = Math.min(1, dt * (this.onGround || this.flying ? (this.flying ? 12 : accel) : 5));
+    // velocity follows the input at Minecraft's rates: ground friction 0.546/tick (~12/s),
+    // air drag 0.91/tick (~1.9/s, momentum is kept in jumps), creative flight ~12/s
+    const a = Math.min(1, dt * (this.onGround || this.flying ? (this.flying ? 12 : accel) : 1.9));
     v[0] += (wx * speed - v[0]) * a; v[2] += (wz * speed - v[2]) * a;
     // fluids: head probe (top - 0.4) and body probe (+0.5)
     const head = bAt(p[0], p[1] + this.h - 0.4, p[2]), body = bAt(p[0], p[1] + 0.5, p[2]), foot = bAt(p[0], p[1], p[2]);
@@ -148,8 +152,14 @@ class Player {
     } else {
       v[1] -= 23 * dt;
       if (this.inWeb && v[1] < -1.2) v[1] = -1.2;
-      if (v[1] < -42) v[1] = -42;
-      if (jump && this.onGround) { v[1] = 7.6; this.onGround = false; }
+      if (v[1] < -78.4) v[1] = -78.4;   // Minecraft terminal velocity
+      if (jump && this.onGround) {
+        v[1] = 7.6; this.onGround = false;
+        // sprint jump boost. Minecraft adds 0.2 blocks/tick, part of which its landing tick's friction
+        // takes back; with this continuous model 1.9 blocks/s gives Minecraft's ~7.1 blocks/s average
+        // for sprint jumping (steady state: 5.612 + 0.8 * boost)
+        if (sprint) { v[0] += Math.sin(this.yaw) * 1.9; v[2] -= Math.cos(this.yaw) * 1.9; }
+      }
     }
     const sneaking = sneakKey && this.onGround && !this.flying && !this.inWater && !ladder;
     this.sneaking = sneaking;
@@ -197,7 +207,13 @@ class Player {
     if (this.flying || this.inWater || ladder || this.inWeb) this.fallStart = null;
     else if (!this.onGround) { if (this.fallStart === null || p[1] > this.fallStart) this.fallStart = p[1]; }
     else if (this.fallStart !== null) { const d = this.fallStart - p[1]; if (d > 3.5) this.fallDamage = Math.floor(d - 3); this.fallStart = null; }
-    // view bobbing
+    // view bobbing as in Minecraft: amplitude eases (0.4 per tick) toward min(0.1, blocks moved per
+    // tick) while on the ground, walk distance grows by 0.6 per block
+    const moved = Math.hypot(p[0] - px0, p[2] - pz0);
+    this.walkDist += moved * 0.6;
+    const bobT = this.onGround && !this.flying && dt > 0 ? Math.min(0.1, moved / dt / 20) : 0;
+    this.bobA += (bobT - this.bobA) * (1 - Math.pow(0.6, dt * 20));
+    // limb swing for the third-person model
     const hs = Math.hypot(v[0], v[2]);
     if (this.onGround && !this.flying && hs > 0.1) { this.bob += dt * hs * 1.9; this.bobAmt += (Math.min(1, hs / 5) - this.bobAmt) * Math.min(1, dt * 8); }
     else this.bobAmt += (0 - this.bobAmt) * Math.min(1, dt * 6);

@@ -410,8 +410,12 @@ class Game {
   updateCamera() {
     const p = this.player;
     const e = p.eye();
-    const bob = p.bobAmt * 0.06;
-    e[1] += Math.abs(Math.cos(p.bob * Math.PI)) * bob - bob * 0.5;
+    // Minecraft bobView: view-space offset (sin(pi f) a / 2, -|cos(pi f) a|), roll sin(pi f) a 3 deg,
+    // nod |cos(pi f - 0.2) a| 5 deg, with f = -walkDist and a = bob amplitude
+    const f = -p.walkDist, a = p.bobA, B = this.bobView || (this.bobView = new Float32Array(4));
+    B[0] = Math.sin(f * Math.PI) * a * 0.5; B[1] = -Math.abs(Math.cos(f * Math.PI) * a);
+    B[2] = Math.sin(f * Math.PI) * a * 3 * Math.PI / 180; B[3] = Math.abs(Math.cos(f * Math.PI - 0.2) * a) * 5 * Math.PI / 180;
+    this.r.bob = B;
     if (this.camMode) {
       const l = p.look(), s = this.camMode === 1 ? -1 : 1;
       let d = 4;
@@ -1009,8 +1013,8 @@ class Game {
     const proj = new Float32Array(16);
     M4.persp(proj, 70 * Math.PI / 180, r.canvas.width / r.canvas.height, 0.05, 10);
     const sw = this.swingT || 0, swingA = Math.sin((1 - sw) * Math.PI) * (sw > 0 ? 1 : 0);
-    const bob = p.bobAmt;
-    const bx = Math.sin(p.bob * Math.PI) * 0.035 * bob, by = -Math.abs(Math.cos(p.bob * Math.PI)) * 0.04 * bob;
+    // the hand follows the same view bobbing
+    const BV = this.bobView || [0, 0, 0, 0], bx = BV[0], by = BV[1];
     const v = [];
     gl.clear(gl.DEPTH_BUFFER_BIT);
     if (!held) {

@@ -428,6 +428,17 @@ class Renderer {
     const gl = this.gl, cv = this.canvas;
     M4.persp(this.proj, fovDeg * Math.PI / 180, cv.width / cv.height, 0.05, far);
     M4.view(this.view, yaw, pitch);
+    const b = this.bob;
+    if (b && (b[0] || b[1] || b[2] || b[3])) {
+      // view bobbing in view space: translate, then roll (z) and nod (x)
+      const cz = Math.cos(b[2]), sz = Math.sin(b[2]), cx = Math.cos(b[3]), sx = Math.sin(b[3]), B = this.bobM || (this.bobM = new Float32Array(16));
+      B[0] = cz; B[1] = sz; B[2] = 0; B[3] = 0;
+      B[4] = -sz * cx; B[5] = cz * cx; B[6] = sx; B[7] = 0;
+      B[8] = sz * sx; B[9] = -cz * sx; B[10] = cx; B[11] = 0;
+      B[12] = b[0]; B[13] = b[1]; B[14] = 0; B[15] = 1;
+      const t = this.tmpM || (this.tmpM = new Float32Array(16));
+      M4.mul(t, B, this.view); this.view.set(t);
+    }
     M4.mul(this.vp, this.proj, this.view);
     M4.invert(this.invVP, this.vp);
     // frustum planes from vp (camera relative)
