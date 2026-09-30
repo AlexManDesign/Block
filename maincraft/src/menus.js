@@ -136,7 +136,10 @@ const UI = {
     slider(T('bright'), 'bright', 0, 1, 0.05, v => Math.round(v * 100) + '%');
     slider(T('scale'), 'scale', 0.4, 1, 0.05, v => Math.round(v * 100) + '%', () => this.game.resize());
     toggle(T('clouds'), 'clouds');
-    toggle(T('leaves'), 'fancyLeaves', remesh);
+    const leafNames = [T('leavesFast'), T('leavesOpt'), T('leavesFancy')];
+    const lv = el('button', { class: 'tog' }, T('leaves') + ': ' + leafNames[Settings.leaves]);
+    lv.onclick = () => { Settings.leaves = (Settings.leaves + 2) % 3; lv.textContent = T('leaves') + ': ' + leafNames[Settings.leaves]; remesh(); };
+    box.append(lv);
     toggle(T('sway'), 'sway', remesh);
     toggle(T('bobView'), 'bobView');
     toggle(T('fps'), 'fps');

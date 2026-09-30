@@ -4,9 +4,14 @@
 const SETTINGS_KEY = 'maincraft.settings.v1';
 const IS_TOUCH = (() => { try { return 'ontouchstart' in window || matchMedia('(pointer: coarse)').matches; } catch (e) { return false; } })();
 const Settings = {
-  renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, fancyLeaves: true, sway: true, bobView: true,
+  renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, leaves: 2, sway: true, bobView: true,
   scale: IS_TOUCH ? 0.75 : 1, fps: false, sound: true, lang: '',
-  load() { try { Object.assign(this, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { } if (this.lang) CUR_LANG = this.lang; },
+  load() {
+    try { Object.assign(this, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { }
+    // older saves kept an on/off "fancyLeaves" switch
+    if (this.fancyLeaves !== undefined) { if (this.fancyLeaves === false) this.leaves = 0; delete this.fancyLeaves; }
+    if (this.lang) CUR_LANG = this.lang;
+  },
   save() { try { const o = {}; for (const k in this) if (typeof this[k] !== 'function') o[k] = this[k]; localStorage.setItem(SETTINGS_KEY, JSON.stringify(o)); } catch (e) { } },
 };
 
@@ -242,7 +247,7 @@ class Game {
           c.meshes[s] = null; c.meshed |= 1 << s;
           continue;
         }
-        w.submitMesh(c, s, Settings.fancyLeaves, Settings.sway);
+        w.submitMesh(c, s, Settings.leaves, Settings.sway);
       }
     }
   }

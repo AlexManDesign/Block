@@ -67,7 +67,7 @@ class Mesher {
     this.bufs = [new QBuf(8192), new QBuf(4096), new QBuf(2048)];
     this.vis = new Uint8Array(4096);
     this.stack = new Int32Array(4096);
-    this.fancyLeaves = true;
+    this.fancyLeaves = true; this.leafCull = false;
     this.sway = true;
   }
 
@@ -104,7 +104,10 @@ class Mesher {
   mesh(job) {
     const ids = job.ids, meta = job.meta, light = job.light;
     this.ids = ids; this.metaArr = meta; this.light = light;
-    this.fancyLeaves = job.fancyLeaves !== false;
+    // leaves: 2 fancy (every face, like Minecraft), 1 optimized (faces buried two leaves deep are
+    // skipped: they only show through two aligned holes), 0 fast (no faces between leaves)
+    this.fancyLeaves = job.leaves !== 0;
+    this.leafCull = job.leaves === 1;
     for (const b of this.bufs) b.n = 0;
     const tpx = new Float32Array(4), tpy = new Float32Array(4), tpz = new Float32Array(4);
     const tu = new Float32Array(4), tv = new Float32Array(4);
@@ -156,6 +159,14 @@ class Mesher {
       const n = ids[np];
       if (OPAQUE[n]) continue;
       if (n === id && (clear || (leaves && !this.fancyLeaves))) continue;
+      // buried leaf face: the neighbour leaf is itself covered by leaves or a solid block behind it
+      if (this.leafCull && leaves && (FLAGS[n] & BF_LEAVES)) {
+        const d = FN[f], x2 = x + 2 * d[0], y2 = y + 2 * d[1], z2 = z + 2 * d[2];
+        if (x2 >= -1 && x2 <= 16 && y2 >= -1 && y2 <= 16 && z2 >= -1 && z2 <= 16) {
+          const n2 = ids[np + FACE_DELTA[f]];
+          if (OPAQUE[n2] || (FLAGS[n2] & BF_LEAVES)) continue;
+        }
+      }
       if (clear && n !== 0 && (FLAGS[n] & (BF_GLASS | BF_TRANS)) && SHAPE[n] === SH.CUBE && RLAYER[n] === RLAYER[id] && (fl & BF_GLASS)) continue;
       // texture + uv rotation
       let layer = FTEX[id * 6 + f], rot = 0;

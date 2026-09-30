@@ -703,12 +703,12 @@ class World {
     return true;
   }
 
-  submitMesh(c, sy, fancyLeaves, sway) {
+  submitMesh(c, sy, leaves, sway) {
     const arr = this.buildMeshJob(c, sy);
     c.meshBusy |= 1 << sy;
     c.dirty &= ~(1 << sy);
     this.meshInFlight++;
-    this.pool.post({ t: 'mesh', cx: c.cx, cz: c.cz, sy, ver: c.meshVer[sy], ids: arr.ids, meta: arr.meta, light: arr.light, fancyLeaves, sway },
+    this.pool.post({ t: 'mesh', cx: c.cx, cz: c.cz, sy, ver: c.meshVer[sy], ids: arr.ids, meta: arr.meta, light: arr.light, leaves, sway },
       [arr.ids.buffer, arr.meta.buffer, arr.light.buffer]);
   }
 }
