@@ -6,12 +6,14 @@ namespace BlockcraftPort
         public readonly byte[] Meta=new byte[4096];
         public readonly byte[] Light=new byte[4096];
         public int NonAir;
+        /// <summary>Water/lava cells in this section (lets fluid seeding skip dry sections).</summary>
+        public int Fluid;
         static int Index(int x,int y,int z)=>((x*16)+z)*16+y;
         public BlockId Get(int x,int y,int z)=>(BlockId)Blocks[Index(x,y,z)];
         public byte GetMeta(int x,int y,int z)=>Meta[Index(x,y,z)];
         public byte GetLight(int x,int y,int z)=>Light[Index(x,y,z)];
         public void SetLight(int x,int y,int z,byte v)=>Light[Index(x,y,z)]=v;
-        public void Set(int x,int y,int z,BlockId id,byte meta=0){int i=Index(x,y,z);ushort old=Blocks[i];if(old==0&&id!=BlockId.Air)NonAir++;else if(old!=0&&id==BlockId.Air)NonAir--;Blocks[i]=(ushort)id;Meta[i]=meta;}
+        public void Set(int x,int y,int z,BlockId id,byte meta=0){int i=Index(x,y,z);ushort old=Blocks[i];if(old==0&&id!=BlockId.Air)NonAir++;else if(old!=0&&id==BlockId.Air)NonAir--;if(BlockRegistry.IsFluid((BlockId)old))Fluid--;if(BlockRegistry.IsFluid(id))Fluid++;Blocks[i]=(ushort)id;Meta[i]=meta;}
     }
     public sealed class ChunkColumn
     {

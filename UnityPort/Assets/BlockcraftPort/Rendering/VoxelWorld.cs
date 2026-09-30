@@ -58,7 +58,7 @@ namespace BlockcraftPort
         public int PendingMeshes => pendingMeshTotal;
         public int ActiveGenerationJobs => Volatile.Read(ref activeGen);
         public int ActiveMeshJobs => Volatile.Read(ref activeMesh);
-        public int PendingUploads => uploadQueue.Count;
+        public int PendingUploads => uploadQueue.Count + firstUploadQueue.Count;
         public int PendingLightEdits => lightEditQueue.Count + (deferredLightActive ? 1 : 0);
         public int PendingUnloads => unloadQueue.Count;
         public int PendingCpuTrims => cpuTrimQueue.Count + gpuDropQueue.Count;
@@ -188,6 +188,8 @@ namespace BlockcraftPort
         int publishedRenderRadius;
         bool publishedRenderRadiusDirty=true;
         readonly Queue<ChunkCoord> uploadQueue = new Queue<ChunkCoord>();
+        // Chunks with no GPU mesh yet (a visible hole) upload before refreshes of chunks already on screen.
+        readonly Queue<ChunkCoord> firstUploadQueue = new Queue<ChunkCoord>();
         readonly HashSet<ChunkCoord> uploadQueued = new HashSet<ChunkCoord>();
         readonly List<ChunkCoord> unloadScratch = new List<ChunkCoord>(64);
         readonly List<Vector2Int> generationOffsets = new List<Vector2Int>(4096);
@@ -227,6 +229,29 @@ namespace BlockcraftPort
             }
         }
         readonly Queue<LightEdit> lightEditQueue = new Queue<LightEdit>(128);
+        // Chunk -> number of queued/active deferred light edits centred in it. Relight reaches at most
+        // 15 blocks (one neighbouring chunk) and a mesh snapshot reads a one-block halo, so only mesh
+        // candidates within Chebyshev distance 2 of a pending edit have to wait for it.
+        readonly Dictionary<ChunkCoord,int> lightEditChunks = new Dictionary<ChunkCoord,int>(64);
+        void EnqueueLightEdit(LightEdit e){lightEditQueue.Enqueue(e);AddLightEditChunk(ChunkCoord.FromWorld(e.X,e.Z),1);}
+        void AddLightEditChunk(ChunkCoord c,int delta)
+        {
+            lightEditChunks.TryGetValue(c,out int n);n+=delta;
+            if(n<=0)lightEditChunks.Remove(c);else lightEditChunks[c]=n;
+        }
+        bool LightEditsNear(ChunkCoord c)
+        {
+            if(lightEditChunks.Count==0)return false;
+            if(lightEditChunks.Count<=12)
+            {
+                foreach(var kv in lightEditChunks)
+                    if(Math.Abs(kv.Key.X-c.X)<=2&&Math.Abs(kv.Key.Z-c.Z)<=2)return true;
+                return false;
+            }
+            for(int dz=-2;dz<=2;dz++)for(int dx=-2;dx<=2;dx++)
+                if(lightEditChunks.ContainsKey(new ChunkCoord(c.X+dx,c.Z+dz)))return true;
+            return false;
+        }
         // Deferred simulation lighting is a resumable transaction, not a per-frame quota.
         // The job owns every frontier/cursor needed to resume exact aD()/rD()/nD() propagation.
         VoxelLighting.DeferredRelightJob deferredLightJob;
@@ -1202,7 +1227,8 @@ namespace BlockcraftPort
             for(int sectionIndex=0;sectionIndex<column.Sections.Length;sectionIndex++)
             {
                 ChunkSection section=column.Sections[sectionIndex];
-                if(section==null)continue;
+                // Only fluid cells are ever seeded: dry sections (most of the column) are skipped.
+                if(section==null||section.Fluid<=0)continue;
                 ushort[] blocks=section.Blocks;
                 ushort[] below=sectionIndex>0&&column.Sections[sectionIndex-1]!=null?column.Sections[sectionIndex-1].Blocks:null;
                 for(int index=0;index<4096;index++)
@@ -1256,6 +1282,8 @@ namespace BlockcraftPort
                 ChunkSection aSection=column.Sections[sectionIndex];
                 ChunkSection bSection=neighbour.Sections[sectionIndex];
                 if(aSection==null&&bSection==null)continue;
+                // A seam cell is seeded only if it is fluid: skip section pairs without any fluid.
+                if((aSection==null||aSection.Fluid<=0)&&(bSection==null||bSection.Fluid<=0))continue;
                 ushort[] a=aSection!=null?aSection.Blocks:null;
                 ushort[] b=bSection!=null?bSection.Blocks:null;
                 int yBase=VoxelConstants.MinY+(sectionIndex<<4);
@@ -1438,7 +1466,7 @@ namespace BlockcraftPort
             {
                 ChunkCoord c=kv.Key;uint mask=kv.Value;
                 if(!chunks.ContainsKey(c)){meshMaskScratch.Add(c);continue;}
-                if(!InRenderRadius(c)||!NeighborhoodReady(c))continue;
+                if(!InRenderRadius(c)||!NeighborhoodReady(c)||LightEditsNear(c))continue;
                 bool schedulable=false;
                 for(int sec=0;sec<VoxelConstants.SectionCount;sec++)
                     if((mask&(1u<<sec))!=0&&!meshInFlight.Contains(new SectionKey(c,sec))){schedulable=true;break;}
@@ -1619,17 +1647,22 @@ namespace BlockcraftPort
 
         void ScheduleMeshes(double deadlineMs)
         {
-            // Deferred simulation lighting is an explicit stage barrier. Do not snapshot a mesh while
-            // older water/block mutations are still waiting for their exact light propagation pass.
-            if (meshQueuedMasks.Count == 0 || PendingLightEdits>0 || NowMs()>deadlineMs-2.0) return;
+            // Deferred simulation lighting is a stage barrier, but only locally: TryFindBestMeshChunk
+            // skips chunks within reach of a pending light edit (LightEditsNear). A world-wide barrier
+            // stalled ALL meshing while any water flowed anywhere, leaving visible chunks unpublished.
+            // Scheduling copies no voxel data (workers capture snapshots), so it is not gated by the
+            // frame deadline: idle mesh workers are the main cause of late-filling holes.
+            if (meshQueuedMasks.Count == 0) return;
             int starts=0;
             // main.js ol(): at most three new mesh-worker chunk jobs are submitted per scheduler pass.
-            while (meshQueuedMasks.Count>0 && Volatile.Read(ref activeMesh)<MaxMeshJobs && starts<3)
+            // Keep up to two jobs per worker in flight so a worker that finishes mid-frame does not
+            // idle until the next frame's scheduling pass.
+            int maxInFlight=Math.Max(1,MaxMeshJobs)*2;
+            while (meshQueuedMasks.Count>0 && Volatile.Read(ref activeMesh)<maxInFlight && starts<3)
             {
                 // Scheduling is intentionally lightweight: no voxel/light arrays are copied here.
                 // Main publishes object references + version stamps; dedicated mesh threads perform
                 // snapshot capture, meshing and whole-chunk merge before immutable results come back.
-                if(NowMs()>deadlineMs-1.0)break;
                 if(!TryFindBestMeshChunk(out ChunkCoord chunk))break;
                 int capacity=Mathf.Max(1,Mathf.Min(MaxSectionsPerMeshJob,VoxelConstants.SectionCount));
                 var inputs=ArrayPool<MeshWorkInput>.Shared.Rent(capacity);int inputCount=0;uint selectedMask=0;
@@ -1845,7 +1878,9 @@ namespace BlockcraftPort
             // Integrate one worker batch atomically so a full chunk can become upload-ready this frame.
             int integratedBatches=0;
             double meshIntegrateStart=NowMs();
-            while (NowMs()<=deadlineMs-2.0 && meshed.TryDequeue(out batch))
+            // Integration only attaches worker results (no native calls); always take at least one
+            // batch per frame so a busy frame cannot leave finished meshes waiting indefinitely.
+            while ((integratedBatches==0||NowMs()<=deadlineMs-2.0) && meshed.TryDequeue(out batch))
             {
                 integratedBatches++;
                 bool chunkExists=chunks.ContainsKey(batch.Chunk);
@@ -1908,28 +1943,34 @@ namespace BlockcraftPort
             // Then perform coalesced Unity Mesh uploads through the shared frame scheduler. Native
             // uploads must execute on Unity's main thread; R54 uses measured EWMA cost + frame headroom
             // instead of an arbitrary byte-per-frame throttle. Worker stages already own all CPU copies.
-            int safety = uploadQueue.Count,uploads=0;
+            int safety = uploadQueue.Count+firstUploadQueue.Count,uploads=0;
             int uploadedBytesThisFrame=0;
-            while (safety-- > 0 && uploadQueue.Count > 0 && NowMs()<=deadlineMs-2.0)
+            while (safety-- > 0 && (firstUploadQueue.Count>0||uploadQueue.Count > 0))
             {
+                // A chunk that has never been published is a visible hole: the first such upload of a
+                // frame is always made (main.js publishes up to six worker meshes per frame without a
+                // time check). Everything else respects the shared deadline.
+                bool first=firstUploadQueue.Count>0;
+                if(!(first&&uploads==0)&&NowMs()>deadlineMs-2.0)break;
                 // Unity Mesh uploads can synchronize with native/GPU memory and are less predictable
                 // than WebGL bufferData. After one upload, use an EWMA to avoid knowingly crossing
                 // the same shared deadline with a second large chunk.
                 if(uploads>0&&NowMs()+estimatedMeshUploadMs>deadlineMs)break;
                 // Peek first so an oversized next upload stays at the front instead of being moved to
                 // the back every frame (which could starve a dense cave chunk during continuous streaming).
-                ChunkCoord c = uploadQueue.Peek();
+                var queue=first?firstUploadQueue:uploadQueue;
+                ChunkCoord c = queue.Peek();
                 if (!renders.TryGetValue(c, out var cr)||!cr.NeedsUpload||!InRenderRadius(c))
                 {
-                    uploadQueue.Dequeue();uploadQueued.Remove(c);continue;
+                    queue.Dequeue();uploadQueued.Remove(c);continue;
                 }
                 if (HasPendingMesh(c))
                 {
-                    uploadQueue.Dequeue();uploadQueued.Remove(c);
+                    queue.Dequeue();uploadQueued.Remove(c);
                     if(InRenderRadius(c))QueueUpload(c);
                     continue;
                 }
-                uploadQueue.Dequeue();uploadQueued.Remove(c);
+                queue.Dequeue();uploadQueued.Remove(c);
                 if (cr.FullCpuRebuildPending) cr.CompleteFullCpuRebuild();
                 double uploadStart=NowMs();
                 bool structureChanged;
@@ -1959,7 +2000,9 @@ namespace BlockcraftPort
 
         void QueueUpload(ChunkCoord c)
         {
-            if (uploadQueued.Add(c)) uploadQueue.Enqueue(c);
+            if (!uploadQueued.Add(c)) return;
+            if (renders.TryGetValue(c, out var cr) && cr.Drawable) uploadQueue.Enqueue(c);
+            else firstUploadQueue.Enqueue(c);
         }
 
         bool HasPendingMesh(ChunkCoord c)
@@ -2062,7 +2105,7 @@ namespace BlockcraftPort
                         }
                     }
                 }
-                else if(turn==2&&cpuTrimQueue.Count>0&&uploadQueue.Count==0&&meshed.IsEmpty&&generated.IsEmpty&&NowMs()+estimatedCpuTrimMs<=deadlineMs)
+                else if(turn==2&&cpuTrimQueue.Count>0&&uploadQueue.Count==0&&firstUploadQueue.Count==0&&meshed.IsEmpty&&generated.IsEmpty&&NowMs()+estimatedCpuTrimMs<=deadlineMs)
                 {
                     var c=cpuTrimQueue.Dequeue();cpuTrimQueued.Remove(c);did=true;
                     if(renders.TryGetValue(c,out var cr))
@@ -2087,6 +2130,7 @@ namespace BlockcraftPort
             {
                 VoxelLighting.CancelDeferredRelight(deferredLightJob);
                 deferredLightActive=false;
+                AddLightEditChunk(c,-1);
             }
             if(MobSpawner.Instance!=null)MobSpawner.Instance.OnChunkUnloading(c);
             if(chunks.Remove(c))unchecked{worldQueryRevision++;}
@@ -2710,7 +2754,7 @@ namespace BlockcraftPort
                 MainSourceObjectRenderer.NotifyBlockChanged(m.X,m.Y,m.Z);
                 MainBlockUpdates.Enqueue(m.X,m.Y,m.Z,m.Id);
                 if(!(BlockRegistry.IsWater(old)&&BlockRegistry.IsWater(m.Id)))
-                    lightEditQueue.Enqueue(new LightEdit(m.X,m.Y,m.Z,old,oldMeta,m.Id,0));
+                    EnqueueLightEdit(new LightEdit(m.X,m.Y,m.Z,old,oldMeta,m.Id,0));
                 CollectSimulationDirtySections(cc,lx,m.Y,lz,waterDirtySectionsScratch);
             }
             if(!any)return;
@@ -2885,7 +2929,7 @@ namespace BlockcraftPort
                 MainBlockLifecycle.NotifyBlockChanged(m.X,m.Y,m.Z);
                 MainSourceObjectRenderer.NotifyBlockChanged(m.X,m.Y,m.Z);
                 MainBlockUpdates.Enqueue(m.X,m.Y,m.Z,m.Id);
-                lightEditQueue.Enqueue(new LightEdit(m.X,m.Y,m.Z,old,oldMeta,m.Id,0));
+                EnqueueLightEdit(new LightEdit(m.X,m.Y,m.Z,old,oldMeta,m.Id,0));
                 CollectSimulationDirtySections(cc,lx,m.Y,lz,lavaDirtySectionsScratch);
             }
             if(!any)return;
@@ -3109,7 +3153,7 @@ namespace BlockcraftPort
             if (needsLightEdit)
             {
                 if(playerEdit) VoxelLighting.RelightEditIncremental(chunks,wx,y,wz,lightDirtySectionsScratch);
-                else lightEditQueue.Enqueue(new LightEdit(wx,y,wz,old,oldMeta,id,meta));
+                else EnqueueLightEdit(new LightEdit(wx,y,wz,old,oldMeta,id,meta));
             }
 
             playerEditSectionsScratch.Clear();
@@ -3232,7 +3276,7 @@ namespace BlockcraftPort
                     LightEdit e=lightEditQueue.Dequeue();
                     // The source only propagates through loaded chunks. If the edited center was
                     // unloaded before its deferred turn, there is no loaded light state left to fix.
-                    if(!chunks.ContainsKey(ChunkCoord.FromWorld(e.X,e.Z)))continue;
+                    if(!chunks.ContainsKey(ChunkCoord.FromWorld(e.X,e.Z))){AddLightEditChunk(ChunkCoord.FromWorld(e.X,e.Z),-1);continue;}
                     deferredLightEdit=e;
                     deferredLightJob=VoxelLighting.BeginDeferredRelight(deferredLightJob,e.X,e.Y,e.Z,e.NeedsSkyRelight,e.NeedsSkyFrontierShell);
                     deferredLightActive=true;
@@ -3242,6 +3286,7 @@ namespace BlockcraftPort
 
                 foreach(var sk in deferredLightJob.DirtySections)DirtySingle(sk);
                 deferredLightActive=false;
+                AddLightEditChunk(ChunkCoord.FromWorld(deferredLightEdit.X,deferredLightEdit.Z),-1);
                 if(NowMs()>=deadlineMs)return;
             }
         }

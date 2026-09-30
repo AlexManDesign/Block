@@ -194,7 +194,7 @@ namespace BlockcraftPort
                 int y0=MinY+sy*16;bool any=false;
                 for(int lx=0;lx<16&&!any;lx++)for(int sz=0;sz<16&&!any;sz++)for(int ly=0;ly<16;ly++){int si=Idx(lx,y0+ly,sz);if(blocks[si]!=0||meta[si]!=0){any=true;break;}}
                 if(!any)continue;var d=dst.EnsureSection(sy);
-                for(int lx=0;lx<16;lx++)for(int uz=0;uz<16;uz++){int sz=15-uz;for(int ly=0;ly<16;ly++){int si=Idx(lx,y0+ly,sz),di=((lx*16)+uz)*16+ly;ushort b=blocks[si];d.Blocks[di]=b;byte sm=meta[si];d.Meta[di]=sm!=0||SourceCoords.HasDirectionalMeta((BlockId)b)?SourceCoords.SourceMetaToUnity((BlockId)b,sm):(byte)0;if(b!=0)d.NonAir++;}}
+                for(int lx=0;lx<16;lx++)for(int uz=0;uz<16;uz++){int sz=15-uz;for(int ly=0;ly<16;ly++){int si=Idx(lx,y0+ly,sz),di=((lx*16)+uz)*16+ly;ushort b=blocks[si];d.Blocks[di]=b;byte sm=meta[si];d.Meta[di]=sm!=0||SourceCoords.HasDirectionalMeta((BlockId)b)?SourceCoords.SourceMetaToUnity((BlockId)b,sm):(byte)0;if(b!=0){d.NonAir++;if(BlockRegistry.IsFluid((BlockId)b))d.Fluid++;}}}
             }
 #if PARITY_HARNESS
             StageMark(12);

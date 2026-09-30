@@ -97,8 +97,8 @@ namespace BlockcraftPort
                     {
                         int y=job.SeedY++;
                         byte packed=seedCol.GetLightLocal(slx,y,slz);
-                        if((packed>>4)>1)job.Sky.Enqueue(new LightNode(wx,y,wz));
-                        if((packed&15)>1)job.Block.Enqueue(new LightNode(wx,y,wz));
+                        if((packed>>4)>1&&SeedCanRaise(ref cache,seedCol,wx,y,wz,packed>>4,true))job.Sky.Enqueue(new LightNode(wx,y,wz));
+                        if((packed&15)>1&&SeedCanRaise(ref cache,seedCol,wx,y,wz,packed&15,false))job.Block.Enqueue(new LightNode(wx,y,wz));
                         if((++clockCheck&31)==0&&Time.realtimeSinceStartupAsDouble*1000.0>=deadlineMs){cache.FlushDirty(job.DirtyChunks);return false;}
                     }
                     job.SeedPos++;job.SeedY=VoxelConstants.MinY;
@@ -309,8 +309,8 @@ namespace BlockcraftPort
                 for (int y=VoxelConstants.MinY;y<=VoxelConstants.MaxY;y++)
                 {
                     byte p=col.GetLightLocal(lx,y,lz);
-                    if ((p>>4)>1) sky.Enqueue(new LightNode(wx,y,wz));
-                    if ((p&15)>1) block.Enqueue(new LightNode(wx,y,wz));
+                    if ((p>>4)>1&&SeedCanRaise(ref cache,col,wx,y,wz,p>>4,true)) sky.Enqueue(new LightNode(wx,y,wz));
+                    if ((p&15)>1&&SeedCanRaise(ref cache,col,wx,y,wz,p&15,false)) block.Enqueue(new LightNode(wx,y,wz));
                 }
             }
 
@@ -366,6 +366,32 @@ namespace BlockcraftPort
                 if(farDirty!=null)dirty.UnionWith(farDirty);
                 dirtyMask=0;farDirty=null;
             }
+        }
+
+        /// <summary>
+        /// True when propagating from (x,y,z) with its current light could raise a neighbour. Seeds that
+        /// cannot are skipped: stitching only ever raises light, so a seed that is a no-op now stays a
+        /// no-op (if its own level rises later, that raise enqueues it anyway). Monotone max-propagation
+        /// has a unique fixed point, so the result is identical; the open-air sky ring above the terrain
+        /// (the bulk of all seeds) no longer goes through the queue.
+        /// </summary>
+        static bool SeedCanRaise(ref StitchCache cache,ChunkColumn col,int x,int y,int z,int current,bool skyMode)
+        {
+            for(int d=0;d<6;d++)
+            {
+                int nx=x+DX[d],ny=y+DY[d],nz=z+DZ[d];
+                if(ny<VoxelConstants.MinY||ny>VoxelConstants.MaxY)continue;
+                var nc=((nx^x)|(nz^z))>>4==0?col:cache.Column(nx,nz);
+                if(nc==null)continue;
+                int lx=nx&15,lz=nz&15;
+                BlockId target=nc.GetLocal(lx,ny,lz);
+                if(!BlockRegistry.LightPasses(target))continue;
+                int next=current-BlockRegistry.LightCost(target);
+                if(next<=0)continue;
+                byte old=nc.GetLightLocal(lx,ny,lz);
+                if(next>(skyMode?old>>4:old&15))return true;
+            }
+            return false;
         }
 
         static void PropagateWorldNode(ref StitchCache cache,Queue<LightNode> q,bool skyMode)
