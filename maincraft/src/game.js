@@ -497,7 +497,7 @@ class Game {
     }
     if (hid === IT.SHEARS && this.ents) {
       const h = this.ents.raycastMob(p.eye(), p.look(), 3.5);
-      if (h && h.e.type === 'sheep' && !h.e.sheared) { h.e.sheared = true; this.ents.dropItem(B.WOOL_WHITE, 1 + (Math.random() * 3 | 0), h.e.pos[0], h.e.pos[1] + 1, h.e.pos[2]); this.swing(); this.damageTool(); return; }
+      if (h && h.e.type === 'sheep' && !h.e.sheared) { h.e.sheared = true; h.e.woolT = 90 + Math.random() * 60; this.ents.dropItem(sheepWool(h.e), 1 + (Math.random() * 3 | 0), h.e.pos[0], h.e.pos[1] + 1, h.e.pos[2]); this.swing(); this.damageTool(); return; }
     }
     if (!tg) return;
     const id = tg.id, m = tg.meta;

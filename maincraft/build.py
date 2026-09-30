@@ -67,6 +67,50 @@ def framed_planks(planks, holes_from=None, bottom=False):
     return img
 
 
+# spawn egg colours (base, spots) as in Minecraft
+SPAWN_EGGS = [('pig', (240, 160, 156), (219, 99, 94)), ('cow', (68, 54, 37), (161, 161, 161)),
+              ('sheep', (231, 231, 231), (255, 181, 181)), ('chicken', (161, 161, 161), (255, 0, 0)),
+              ('zombie', (0, 175, 175), (121, 153, 80)), ('skeleton', (193, 193, 193), (73, 73, 73)),
+              ('creeper', (13, 168, 12), (0, 0, 0)), ('spider', (52, 45, 39), (163, 0, 0)),
+              ('enderman', (22, 22, 22), (0, 0, 0)), ('salmon', (160, 20, 20), (14, 143, 104)),
+              ('slime', (81, 160, 62), (126, 190, 110)), ('shark', (74, 86, 97), (200, 200, 200))]
+
+
+def spawn_egg(egg, c1, c2):
+    """Grey spawn egg -> base colour with spots of the second colour (shading kept)."""
+    out = egg.copy()
+    px = out.load()
+    spots = {(5, 4), (6, 4), (9, 6), (10, 6), (10, 7), (4, 8), (5, 8), (7, 10), (8, 10), (8, 11), (11, 10), (6, 6)}
+    for y in range(16):
+        for x in range(16):
+            r, g, b, a = px[x, y]
+            if a == 0:
+                continue
+            k = r / 255.0
+            c = c2 if (x, y) in spots else c1
+            px[x, y] = (int(c[0] * k), int(c[1] * k), int(c[2] * k), a)
+    return out
+
+
+def orb(dark, mid, light, rad):
+    """Small shaded ball item (ender pearl, slimeball)."""
+    im = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+    px = im.load()
+    cx = cy = 7.5
+    for y in range(16):
+        for x in range(16):
+            dx, dy = x - cx, y - cy
+            d = (dx * dx + dy * dy) ** 0.5
+            if d > rad + 0.3:
+                continue
+            l = max(0.0, 1 - (((x - (cx - 2)) ** 2 + (y - (cy - 2)) ** 2) ** 0.5) / (rad * 1.6))
+            c = light if l > 0.72 else mid if l > 0.3 else dark
+            if d > rad - 0.7:
+                c = dark
+            px[x, y] = c + (255,)
+    return im
+
+
 def crack_stage(stage):
     rnd = random.Random(1234)
     img = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
@@ -123,6 +167,11 @@ def collect():
         extra['spruce_door_top'] = framed_planks(spruce, load('oak_door_top'), False)
     if 'spruce_door_bottom' not in names:
         extra['spruce_door_bottom'] = framed_planks(spruce, None, True)
+    extra['item_ender_pearl'] = orb((12, 59, 55), (46, 143, 134), (160, 230, 220), 6)
+    extra['item_slime_ball'] = orb((74, 140, 58), (127, 196, 106), (210, 245, 200), 5)
+    egg = load('item_spawn_egg')
+    for mob, c1, c2 in SPAWN_EGGS:
+        extra['item_spawn_egg_' + mob] = spawn_egg(egg, c1, c2)
     for k, v in extra.items():
         tiles.append((k, [v], 0))
     for s in range(10):

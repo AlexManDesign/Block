@@ -167,7 +167,7 @@ void main(){
   vec4 c = texture(uTex, vUV.xy);
   if (c.a < 0.1) discard;
   c.rgb *= vCol.rgb;
-  o = vec4(mix(c.rgb, uFogColor, vFog), 1.0);
+  o = vec4(mix(c.rgb, uFogColor, vFog), c.a);
 }`;
 const LINE_VS = `#version 300 es
 precision highp float;
@@ -321,7 +321,13 @@ class Renderer {
   entityTexture(name) {
     let t = this.entTex.get(name);
     if (t === undefined) {
-      const img = this.assets.entityImages[name];
+      let img = this.assets.entityImages[name];
+      const eyes = this.assets.entityImages[name + '_eyes'];
+      if (img && eyes) {
+        // spider / enderman: eyes drawn over the skin, as in the original
+        const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+        const x = c.getContext('2d'); x.drawImage(img, 0, 0); x.drawImage(eyes, 0, 0); img = c;
+      }
       t = img ? this.tex2D(img, this.gl.NEAREST) : null;
       this.entTex.set(name, t);
     }
