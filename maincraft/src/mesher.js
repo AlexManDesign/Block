@@ -87,6 +87,14 @@ class Mesher {
     else if (ny !== 0 && nx === 0 && nz === 0 && flat(py)) g = ny > 0 ? 3 : 2;
     else if (nz !== 0 && nx === 0 && ny === 0 && flat(pz)) g = nz > 0 ? 5 : 4;
     buf.g[buf.n] = g;
+    // biome colour of the block's column; the grass side also flags the overlay pass in the shader
+    let tint = 0xFFFF, ovl = 0;
+    const tk = TINT_KIND[layer];
+    if (tk) {
+      tint = this.tints[(tk === 4 ? 0 : tk - 1) * 256 + this.tcol];
+      layer = TINT_LAYER[layer];
+      if (tk === 4) ovl = 1 << 29;
+    }
     for (let k = 0; k < 4; k++) {
       const v = flip ? (k + 1) & 3 : k;
       let x = Math.round(px[v] * 2), y = Math.round(py[v] * 2), z = Math.round(pz[v] * 2);
@@ -95,8 +103,8 @@ class Mesher {
       d[o++] = x | (y << 10) | (z << 20) | (fl << 30);
       let u = us[v], vv = vs[v];
       u = u < 0 ? 0 : u > 16 ? 16 : u; vv = vv < 0 ? 0 : vv > 16 ? 16 : vv;
-      d[o++] = layer | (Math.round(u) << 11) | (Math.round(vv) << 16) | (shades[v] << 21);
-      d[o++] = skys[v] | (blks[v] << 8);
+      d[o++] = layer | (Math.round(u) << 11) | (Math.round(vv) << 16) | (shades[v] << 21) | ovl;
+      d[o++] = skys[v] | (blks[v] << 8) | (tint << 16);
     }
     buf.n++;
   }
@@ -113,11 +121,13 @@ class Mesher {
     const tu = new Float32Array(4), tv = new Float32Array(4);
     const sh = new Int32Array(4), sk = new Int32Array(4), bl = new Int32Array(4), bright = new Float32Array(4);
     this.t = { tpx, tpy, tpz, tu, tv, sh, sk, bl };
+    this.tints = job.tints || DEFAULT_TINTS;
     for (let y = 0; y < 16; y++) for (let z = 0; z < 16; z++) {
       let p = pidx(0, y, z);
       for (let x = 0; x < 16; x++, p++) {
         const id = ids[p];
         if (id === 0) continue;
+        this.tcol = z * 16 + x;
         const shape = SHAPE[id];
         if (shape === SH.CUBE) { this.cube(ids, meta, light, p, id, x, y, z, bright); continue; }
         this.special(ids, meta, light, p, id, shape, x, y, z);
@@ -724,7 +734,27 @@ function rotBox(b, turns) {
 }
 
 let LAYER_BED_HEAD = {}, BED_LEG = 0;
+// Biome-tinted textures: TINT_KIND[layer] = 1 grass, 2 foliage, 3 water, 4 grass side (dirt base +
+// tinted overlay); TINT_LAYER[layer] = the untinted layer the terrain draws instead.
+const TINT_KIND = new Uint8Array(4096), TINT_LAYER = new Uint16Array(4096);
+const TINT_NAMES = [
+  [1, 'grass_block_top'], [1, 'short_grass'], [1, 'fern'], [1, 'tall_grass_top'], [1, 'tall_grass_bottom'],
+  [1, 'large_fern_top'], [1, 'large_fern_bottom'], [2, 'oak_leaves'], [2, 'vine'], [2, 'dark_oak_leaves'],
+  [2, 'jungle_leaves'], [2, 'acacia_leaves'], [3, 'water_still'], [4, 'grass_block_side'],
+];
+// default colours (plains grass / foliage, default water) when a job carries no biome tints
+const DEFAULT_TINTS = (() => {
+  const t = new Uint16Array(768), c565 = v => ((v >> 19) << 11) | (((v >> 10) & 63) << 5) | ((v >> 3) & 31);
+  t.fill(c565(0x91BD59), 0, 256); t.fill(c565(0x77AB2F), 256, 512); t.fill(c565(0x3F76E4), 512, 768);
+  return t;
+})();
 function initMesherTextures(layers) {
+  TINT_KIND.fill(0);
+  for (const [k, n] of TINT_NAMES) {
+    const l = layers[n], u = layers[n + '_bt'];
+    if (l === undefined || u === undefined) continue;
+    TINT_KIND[l] = k; TINT_LAYER[l] = u;
+  }
   LAYER_BED_HEAD = {};
   for (let id = 1; id < NB; id++) {
     if (SHAPE[id] !== SH.BED) continue;

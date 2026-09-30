@@ -21,6 +21,11 @@ TINT = {
     'jungle_leaves': (72, 180, 56), 'acacia_leaves': (174, 164, 60), 'lily_pad': (32, 128, 48),
     'water_still': (63, 118, 228), 'melon_stem_stage0': None,
 }
+# Textures the terrain tints per biome (grass / foliage / water colour, like Minecraft's colormaps).
+# The tinted copy above stays for items, particles and the hand; terrain uses the untinted '<name>_bt'.
+BIOME_TINTED = {'grass_block_top', 'short_grass', 'fern', 'tall_grass_top', 'tall_grass_bottom',
+                'large_fern_top', 'large_fern_bottom', 'oak_leaves', 'vine', 'dark_oak_leaves',
+                'jungle_leaves', 'acacia_leaves', 'water_still'}
 SKIP_PREFIX = ('entity_', 'ui_')
 SKIP = {'sun', 'moon_phases', 'bobber'}
 FIRST_FRAME_ONLY = {'short_grass', 'seagrass', 'tall_seagrass_top', 'tall_seagrass_bottom', 'kelp', 'kelp_plant'}
@@ -90,6 +95,25 @@ def spawn_egg(egg, c1, c2):
             c = c2 if (x, y) in spots else c1
             px[x, y] = (int(c[0] * k), int(c[1] * k), int(c[2] * k), a)
     return out
+
+
+def grass_side_split(side, dirt):
+    """Minecraft draws the grass block side as dirt plus a biome-tinted overlay. The pack has the
+    pre-coloured composite, so split it: green-dominant pixels are grass. Returns the base (dirt
+    under the grass fringe) and a greyscale overlay whose alpha marks the grass pixels."""
+    base, over = side.copy().convert('RGBA'), Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+    sp, dp, bp, op = side.convert('RGBA').load(), dirt.convert('RGBA').load(), base.load(), over.load()
+    lum = lambda c: 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]
+    ref = lum(GRASS)
+    for y in range(16):
+        for x in range(16):
+            s = sp[x, y]
+            if not (s[1] > s[0] + 8 and s[1] > s[2]):
+                continue
+            g = min(255, int(round(lum(s) / ref * 255)))
+            op[x, y] = (g, g, g, 255)
+            bp[x, y] = dp[x, y]
+    return base, over
 
 
 def snowy_side(dirt, snow):
@@ -166,6 +190,8 @@ def collect():
         if name == 'water_still':
             frames = frames[::3]
         rgb = TINT.get(name)
+        if name in BIOME_TINTED:
+            tiles.append((name + '_bt', [f.copy() for f in frames], ANIM_TICKS.get(name, 4) if len(frames) > 1 else 0))
         frames = [tint(f, rgb) for f in frames]
         tiles.append((name, frames, ANIM_TICKS.get(name, 4) if len(frames) > 1 else 0))
     names = {t[0] for t in tiles}
@@ -178,6 +204,7 @@ def collect():
         extra['spruce_door_top'] = framed_planks(spruce, load('oak_door_top'), False)
     if 'spruce_door_bottom' not in names:
         extra['spruce_door_bottom'] = framed_planks(spruce, None, True)
+    extra['grass_block_side_bt'], extra['grass_block_side_overlay'] = grass_side_split(load('grass_block_side'), load('dirt'))
     if 'grass_block_snow' not in names:
         extra['grass_block_snow'] = snowy_side(load('dirt'), load('snow'))
     extra['item_ender_pearl'] = orb((12, 59, 55), (46, 143, 134), (160, 230, 220), 6)

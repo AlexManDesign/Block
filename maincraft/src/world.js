@@ -708,8 +708,47 @@ class World {
     c.meshBusy |= 1 << sy;
     c.dirty &= ~(1 << sy);
     this.meshInFlight++;
-    this.pool.post({ t: 'mesh', cx: c.cx, cz: c.cz, sy, ver: c.meshVer[sy], ids: arr.ids, meta: arr.meta, light: arr.light, leaves, sway },
-      [arr.ids.buffer, arr.meta.buffer, arr.light.buffer]);
+    this.pool.post({ t: 'mesh', cx: c.cx, cz: c.cz, sy, ver: c.meshVer[sy], ids: arr.ids, meta: arr.meta, light: arr.light, leaves, sway,
+      tints: this.columnTints(c) }, [arr.ids.buffer, arr.meta.buffer, arr.light.buffer]);
+  }
+
+  // Grass / foliage / water colour of every column (3 x 256, RGB565), averaged over the 5x5 columns
+  // around it like Minecraft's biome blend, so colours fade across biome borders. Cached once all
+  // neighbour biomes are known (biomes never change afterwards).
+  columnTints(c) {
+    if (c.tints) return c.tints;
+    const R = 2, N = 16 + 2 * R;
+    const bio = new Uint8Array(N * N);
+    let complete = true;
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const n = dx || dz ? this.col(c.cx + dx, c.cz + dz) : c;
+      const nb = n && n.biomes;
+      if (!nb) complete = false;
+      for (let z = 0; z < 16; z++) {
+        const gz = dz * 16 + z + R;
+        if (gz < 0 || gz >= N) continue;
+        for (let x = 0; x < 16; x++) {
+          const gx = dx * 16 + x + R;
+          if (gx < 0 || gx >= N) continue;
+          // unknown neighbour: repeat this column's edge biome
+          bio[gz * N + gx] = nb ? nb[z * 16 + x] : c.biomes[Math.min(15, Math.max(0, gz - R)) * 16 + Math.min(15, Math.max(0, gx - R))];
+        }
+      }
+    }
+    const out = new Uint16Array(768), T = BIOME_TINT, D = 2 * R + 1, cnt = D * D;
+    for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
+      for (let k = 0; k < 3; k++) {
+        let r = 0, g = 0, b = 0;
+        for (let j = 0; j < D; j++) for (let i = 0; i < D; i++) {
+          const v = T[bio[(z + j) * N + x + i] * 3 + k];
+          r += v >> 16; g += (v >> 8) & 255; b += v & 255;
+        }
+        r /= cnt; g /= cnt; b /= cnt;
+        out[k * 256 + z * 16 + x] = (Math.round(r * 31 / 255) << 11) | (Math.round(g * 63 / 255) << 5) | Math.round(b * 31 / 255);
+      }
+    }
+    if (complete) c.tints = out;
+    return out;
   }
 }
 

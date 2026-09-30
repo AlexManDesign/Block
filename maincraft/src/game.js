@@ -43,6 +43,7 @@ class Game {
     this.canvas = $('gl');
     this.r = new Renderer(this.canvas, assets);
     this.r.whiteLayer = assets.layers.white;
+    this.r.overlayLayer = assets.layers.grass_block_side_overlay | 0;
     this.world = null;
     this.player = new Player();
     this.keys = {};

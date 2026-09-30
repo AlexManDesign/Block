@@ -52,6 +52,7 @@ layout(location=0) in uvec3 aV;
 uniform mat4 uVP; uniform vec3 uOrigin; uniform vec3 uCam; uniform float uTime; uniform uint uTick;
 uniform highp usampler2D uAnim; uniform vec2 uFog; uniform float uSway;
 out vec3 vUV; out float vShade; out vec2 vLight; out float vFog;
+flat out vec3 vTint; flat out float vOvl;
 void main(){
   uint w0 = aV.x, w1 = aV.y, w2 = aV.z;
   vec3 p = vec3(float(w0 & 1023u), float((w0 >> 10) & 1023u), float((w0 >> 20) & 1023u)) * 0.03125;
@@ -70,16 +71,23 @@ void main(){
   vUV = vec3(float((w1 >> 11) & 31u) * 0.0625, float((w1 >> 16) & 31u) * 0.0625, float(layer));
   vShade = float((w1 >> 21) & 255u) / 255.0;
   vLight = vec2(float(w2 & 255u), float((w2 >> 8) & 255u)) / 240.0;
+  uint t = w2 >> 16;
+  vTint = vec3(float(t >> 11), float((t >> 5) & 63u), float(t & 31u)) * vec3(1.0 / 31.0, 1.0 / 63.0, 1.0 / 31.0);
+  vOvl = float((w1 >> 29) & 1u);
   float d = max(length(wp.xz), abs(wp.y) * 0.5);
   vFog = clamp((d - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0);
 }`;
 const TERRAIN_FS = `#version 300 es
 precision mediump float; precision mediump sampler2DArray;
-uniform sampler2DArray uTex; uniform sampler2D uLM; uniform vec3 uFogColor; uniform float uAlphaMul;
+uniform sampler2DArray uTex; uniform sampler2D uLM; uniform vec3 uFogColor; uniform float uAlphaMul; uniform float uOverlay;
 in vec3 vUV; in float vShade; in vec2 vLight; in float vFog;
+flat in vec3 vTint; flat in float vOvl;
 out vec4 o;
 void main(){
   vec4 c = texture(uTex, vUV);
+  // biome colour; the grass block side lays its tinted grass overlay over the dirt base
+  if (vOvl > 0.5) { vec4 ov = texture(uTex, vec3(vUV.xy, uOverlay)); c.rgb = mix(c.rgb, ov.rgb * vTint, ov.a); }
+  else c.rgb *= vTint;
 #ifdef CUTOUT
   if (c.a < 0.5) discard;
 #endif
@@ -583,6 +591,7 @@ class Renderer {
     gl.uniform3fv(p.u.uFogColor, env.fogColor);
     gl.uniform1f(p.u.uSway, env.sway);
     if (p.u.uAlphaMul) gl.uniform1f(p.u.uAlphaMul, 1);
+    if (p.u.uOverlay) gl.uniform1f(p.u.uOverlay, this.overlayLayer);
     gl.uniform1i(p.u.uTex, 0); gl.uniform1i(p.u.uLM, 1); gl.uniform1i(p.u.uAnim, 2);
   }
   // Draws one pass of every visible section. Quads are grouped by facing (-X,+X,-Y,+Y,-Z,+Z,other);
