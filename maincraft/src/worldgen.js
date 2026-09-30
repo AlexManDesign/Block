@@ -66,12 +66,12 @@ const BPROP = [];
   like('OLD_GROWTH_BIRCH_FOREST', 'BIRCH_FOREST', { cell: 5, trees: [[0.88, 'tall_birch'], [0.95, 'birch']] });
   def('DARK_FOREST', { cell: 6, trees: [[0.62, 'dark_oak'], [0.82, 'oak'], [0.9, 'birch'], [0.93, 'huge_mushroom']] });
   def('TAIGA', { cell: 6, trees: [[0.85, 'spruce']], top: G });
-  def('OLD_GROWTH_SPRUCE_TAIGA', { cell: 6, top: B.PODZOL, trees: [[0.5, 'mega_spruce'], [0.85, 'spruce']] });
+  def('OLD_GROWTH_SPRUCE_TAIGA', { cell: 6, trees: [[0.5, 'mega_spruce'], [0.85, 'spruce']] });
   like('OLD_GROWTH_PINE_TAIGA', 'OLD_GROWTH_SPRUCE_TAIGA', { trees: [[0.45, 'mega_spruce'], [0.85, 'spruce']] });
   def('SNOWY_TAIGA', { cell: 8, snow: 1, cold: 2, trees: [[0.7, 'spruce']] });
   def('JUNGLE', { cell: 5, trees: [[0.25, 'mega_jungle'], [0.72, 'jungle'], [0.9, 'jungle_bush']] });
   def('SPARSE_JUNGLE', { cell: 11, trees: [[0.5, 'jungle'], [0.65, 'oak'], [0.8, 'jungle_bush']] });
-  def('BAMBOO_JUNGLE', { cell: 7, top: B.PODZOL, trees: [[0.4, 'jungle'], [0.55, 'jungle_bush'], [0.65, 'mega_jungle']] });
+  def('BAMBOO_JUNGLE', { cell: 7, trees: [[0.4, 'jungle'], [0.55, 'jungle_bush'], [0.65, 'mega_jungle']] });
   def('SWAMP', { cell: 9, floor: -3, trees: [[0.55, 'swamp_oak']] });
   def('MANGROVE_SWAMP', { top: B.MUD, fill: B.MUD, floor: B.MUD, cell: 7, trees: [[0.45, 'swamp_oak'], [0.65, 'dark_oak']] });
   def('BADLANDS', { top: B.RED_SAND, fill: B.TERRACOTTA, floor: B.RED_SAND, badlands: 1 });
@@ -477,7 +477,11 @@ class WorldGen {
         if (!P.snow && y > 168 + sn * 12 && this.clim && hc > 150 && b !== BI.BADLANDS && b !== BI.STONY_PEAKS) { top = B.SNOW; fill = B.SNOW; }
         if (b === BI.SAVANNA && slope > 3 && sn > 0.2) { top = B.COARSE_DIRT || B.DIRT; }
         if ((b === BI.TAIGA || b === BI.DARK_FOREST) && sn > 0.55) top = B.PODZOL;
-        if (b === BI.OLD_GROWTH_TAIGA && sn < -0.3) top = B.COARSE_DIRT || B.GRASS;
+        // podzol / packed-ice patches like the original surface rules
+        const n01 = (f, ox, oz) => this.nMisc.n2(wx * f + ox, wz * f + oz) * 0.5 + 0.5;
+        if (b === BI.OLD_GROWTH_SPRUCE_TAIGA && top === B.GRASS) top = n01(0.09, -13, 13) < 0.58 ? B.PODZOL : sn < -0.55 ? B.COARSE_DIRT : B.GRASS;
+        if (b === BI.BAMBOO_JUNGLE && top === B.GRASS && n01(0.12, -3, 7) < 0.4) top = B.PODZOL;
+        if (b === BI.FROZEN_PEAKS && n01(0.1, 3, -3) < 0.46) { top = B.PACKED_ICE; fill = B.PACKED_ICE; }
         if (y >= SEA - 1 && y <= SEA + 1 && (top === B.GRASS) && sn > 0.6 && b !== BI.SWAMP) top = B.SAND;
       }
       // walk down replacing
@@ -486,7 +490,7 @@ class WorldGen {
         const i = CI(x, yy, z);
         if (!this.isStoneLike(ids[i])) break;
         if (P.badlands && !underwater) {
-          if (depth === 0) ids[i] = (b === BI.WOODED_BADLANDS && yy > 95) ? (sn > 0 ? B.GRASS : B.COARSE_DIRT || B.DIRT) : B.RED_SAND;
+          if (depth === 0) ids[i] = (b === BI.WOODED_BADLANDS && yy >= SEA + 10) ? (sn > 0 ? B.GRASS : B.COARSE_DIRT || B.DIRT) : B.RED_SAND;
           else if (depth <= 1 && b !== BI.WOODED_BADLANDS) ids[i] = B.RED_SAND;
           else ids[i] = TERRA_BANDS[((yy + Math.floor(this.nMisc.n2(wx / 60, wz / 60) * 3)) % TERRA_BANDS.length + TERRA_BANDS.length) % TERRA_BANDS.length];
           depth++;
@@ -679,10 +683,13 @@ class WorldGen {
     const sy = this.surfaceAt(x, z);
     if (sy < SEA || sy > 165 || sy > WORLD_MAX_Y - 40) return null;
     const ci = this.colInfo(x, z), P = BPROP[ci.biome];
-    if (t !== 'cactus' && (P.top === B.SAND || P.top === B.RED_SAND || P.top === B.STONE || P.top === B.GRAVEL)) return null;
+    if (P.base === BI.WOODED_BADLANDS) { if (sy < SEA + 10) return null; }
+    else if (t !== 'cactus' && (P.top === B.SAND || P.top === B.RED_SAND || P.top === B.STONE || P.top === B.GRAVEL)) return null;
     if (P.mountain || P.base === BI.MEADOW || P.base === BI.GROVE || P.base === BI.CHERRY_GROVE) {
       const s = Math.max(Math.abs(this.colInfo(x + 1, z).h - this.colInfo(x - 1, z).h), Math.abs(this.colInfo(x, z + 1).h - this.colInfo(x, z - 1).h));
       if (s > 3.2) return null;
+      // windswept stone / gravel patches stay bare
+      if (P.base === BI.WINDSWEPT_HILLS && this.nSurf.n2(x / 16, z / 16) > 0.3) return null;
     }
     return { t, sy };
   }
