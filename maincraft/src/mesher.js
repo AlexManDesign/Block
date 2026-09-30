@@ -164,6 +164,8 @@ class Mesher {
     const m = meta[p];
     const { tpx, tpy, tpz, tu, tv, sh, sk, bl } = this.t;
     const flagV = leaves && this.sway ? 2 : 0;
+    // waterlogged cube (mangrove roots in water): the water of the cell is drawn with it
+    if (fl & BF_AQUATIC) this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
     for (let f = 0; f < 6; f++) {
       const np = p + FACE_DELTA[f];
       const n = ids[np];
@@ -740,7 +742,7 @@ const TINT_KIND = new Uint8Array(4096), TINT_LAYER = new Uint16Array(4096);
 const TINT_NAMES = [
   [1, 'grass_block_top'], [1, 'short_grass'], [1, 'fern'], [1, 'tall_grass_top'], [1, 'tall_grass_bottom'],
   [1, 'large_fern_top'], [1, 'large_fern_bottom'], [2, 'oak_leaves'], [2, 'vine'], [2, 'dark_oak_leaves'],
-  [2, 'jungle_leaves'], [2, 'acacia_leaves'], [3, 'water_still'], [4, 'grass_block_side'],
+  [2, 'jungle_leaves'], [2, 'acacia_leaves'], [2, 'mangrove_leaves'], [3, 'water_still'], [4, 'grass_block_side'],
 ];
 // default colours (plains grass / foliage, default water) when a job carries no biome tints
 const DEFAULT_TINTS = (() => {

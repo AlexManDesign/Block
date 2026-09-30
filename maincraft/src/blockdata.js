@@ -655,4 +655,10 @@ const BLOCK_TABLE = [
   ["COBWEB", "Cobweb", "Паутина", "cobweb", "x", "", 0, "", "n"],
   ["SNOW_LAYER", "Snow", "Слой снега", "snow", "snowlayer", "", 0, "", "n"],
   ["SNOWY_GRASS", "Snowy Grass Block", "Заснеженный дёрн", "snow,grass_block_snow,dirt", "", "", 0, "", "n"],
+  ["MANGROVE_LOG", "Mangrove Log", "Мангровое бревно", "mangrove_log_top,mangrove_log", "", "Y", 0, "", "n"],
+  ["MANGROVE_LEAVES", "Mangrove Leaves", "Мангровая листва", "mangrove_leaves", "", "L", 0, "", "n"],
+  ["MANGROVE_ROOTS", "Mangrove Roots", "Мангровые корни", "mangrove_roots_top,mangrove_roots", "", "G", 0, "", "n"],
+  ["MANGROVE_ROOTS_WET", "Mangrove Roots", "Мангровые корни", "mangrove_roots_top,mangrove_roots", "", "GA", 0, "MANGROVE_ROOTS", "n"],
+  ["MUDDY_MANGROVE_ROOTS", "Muddy Mangrove Roots", "Грязные мангровые корни", "muddy_mangrove_roots_top,muddy_mangrove_roots_side", "", "Y", 0, "", "n"],
+  ["MANGROVE_PROPAGULE", "Mangrove Propagule", "Мангровая пропагула", "mangrove_propagule_hanging", "x", "h", 0, "", "n"],
 ];

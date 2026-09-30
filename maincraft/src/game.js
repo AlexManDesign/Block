@@ -743,6 +743,8 @@ class Game {
     if (!tg) return;
     let id = tg.id;
     if (id === B.FARMLAND_MOIST) id = B.FARMLAND;
+    if (id === B.MANGROVE_ROOTS_WET) id = B.MANGROVE_ROOTS;
+    if (id === B.SNOWY_GRASS) id = B.GRASS;
     const inHot = this.inv.slice(0, 9).findIndex(s => s && s.id === id);
     if (inHot >= 0) { this.sel = inHot; this.updateHotbar(); return; }
     if (this.mode === 'creative') {

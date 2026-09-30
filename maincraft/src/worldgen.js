@@ -131,7 +131,9 @@ const BPROP = [];
 const TREE_TABLE = {};
 const ORIG_BIOME = [];   // biome of the original's set that a biome follows (variants -> base)
 // room a tree needs from a higher-priority neighbour (Chebyshev distance between trunks)
-const TREE_ROOM = { cactus: 2, ice_spike: 2, giant_red_mushroom: 3, dark_oak: 5 };
+const TREE_ROOM = { cactus: 2, ice_spike: 2, giant_red_mushroom: 3, dark_oak: 5, swamp_oak: 5 };
+// deepest water (blocks above the ground) a tree may stand in, as Minecraft's surface water depth filter
+const TREE_WATER = { mangrove: 5, tall_mangrove: 5, swamp_oak: 2 };
 const FACE6 = [1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1], FACE4 = [1, 0, -1, 0, 0, 1, 0, -1];
 (function () {
   const T = (k, cell, types) => { TREE_TABLE[BI[k]] = [cell, types]; };
@@ -149,12 +151,12 @@ const FACE6 = [1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1], FACE4 =
   T('SAVANNA', 13, [[0.55, 'acacia']]);
   T('MEADOW', 26, [[0.25, 'oak']]);
   T('GROVE', 7, [[0.75, 'spruce']]);
-  T('SWAMP', 9, [[0.55, 'oak']]);
+  T('SWAMP', 9, [[0.55, 'swamp_oak']]);
   T('WINDSWEPT_HILLS', 15, [[0.25, 'oak'], [0.4, 'spruce']]);
   T('CHERRY_GROVE', 9, [[0.4, 'cherry']]);
   T('BAMBOO_JUNGLE', 6, [[0.5, 'jungle'], [0.65, 'oak']]);
   T('WOODED_BADLANDS', 10, [[0.35, 'oak']]);
-  T('MANGROVE_SWAMP', 7, [[0.45, 'oak'], [0.65, 'dark_oak']]);
+  T('MANGROVE_SWAMP', 5, [[0.85, 'mangrove'], [1, 'tall_mangrove']]);
   const alias = { SUNFLOWER_PLAINS: 'PLAINS', OLD_GROWTH_BIRCH_FOREST: 'BIRCH_FOREST', OLD_GROWTH_PINE_TAIGA: 'OLD_GROWTH_SPRUCE_TAIGA',
     SAVANNA_PLATEAU: 'SAVANNA', WINDSWEPT_SAVANNA: 'SAVANNA', WINDSWEPT_GRAVELLY_HILLS: 'WINDSWEPT_HILLS', WINDSWEPT_FOREST: 'WINDSWEPT_HILLS',
     ERODED_BADLANDS: 'BADLANDS' };
@@ -289,6 +291,10 @@ class WorldGen {
     this.qgrid = { x0: 1e9, z0: 1e9, n: 12, j: new Float32Array(288), b: new Int16Array(144) };
     this.vn = new ValueNoise(this.seed);
     this.gCache = new Map();
+    this.candCache = new Map();
+    this.treeCache = new Map();
+    this.deco = [];                              // tree decorations of the chunk being generated
+    this.treeWrites = null;                      // queued tree blocks while features() runs
     this.tb = { n: 0, map: new Map(), x: new Int32Array(4096), y: new Int32Array(4096), z: new Int32Array(4096), id: new Uint16Array(4096),
       kind: new Uint8Array(4096), dist: new Uint8Array(4096), q: new Int32Array(4096) };
   }
@@ -602,6 +608,11 @@ class WorldGen {
     if (y < SEA && (r === B.GRASS || r === B.PODZOL || r === B.MYCELIUM)) r = this.floorMix(x, z, y);
     return r;
   }
+  // Minecraft's swamp surface rule (see surface()): the top block at the water line is water
+  poolAt(ob, x, z, y) {
+    return ((ob === BI.SWAMP && y === SEA) || (ob === BI.MANGROVE_SWAMP && y >= SEA - 2 && y <= SEA)) &&
+      this.nSurf.n2(x / 11 + 71.3, z / 11 - 19.7) > 0;
+  }
   floorMix(x, z, y) {
     const V = this.vn;
     if (V.f2(x * 0.11 + 311.2, z * 0.11 - 177.6) > 0.7) return B.CLAY;
@@ -658,8 +669,7 @@ class WorldGen {
       }
       // Minecraft's swamp surface rule: ground at the water line becomes water where the swamp
       // noise is positive (pools); in mangrove swamps from two blocks lower
-      if (((ob === BI.SWAMP && y === SEA) || (ob === BI.MANGROVE_SWAMP && y >= SEA - 2 && y <= SEA)) &&
-          this.nSurf.n2(wx / 11 + 71.3, wz / 11 - 19.7) > 0) {
+      if (this.poolAt(ob, wx, wz, y)) {
         ids[CI(x, y, z)] = B.WATER;
         y--; this.TOP[z * 16 + x] = y;
         top = ob === BI.SWAMP ? B.DIRT : B.MUD;
@@ -826,7 +836,14 @@ class WorldGen {
   // ---------------------------------------------------------------- trees
   // Tree candidate at column x,z from the original's per-biome table (jittered grid cell + weighted
   // types). Only seed-derived data is used, so every chunk a tree overlaps makes the same decision.
+  // The spacing check asks every column for its neighbours' candidates, so results are cached.
   treeCandidate(x, z) {
+    const k = x * 131072 + z, C = this.candCache;
+    let v = C.get(k);
+    if (v === undefined) { v = this.treeCandidate0(x, z); if (C.size > 200000) C.clear(); C.set(k, v); }
+    return v;
+  }
+  treeCandidate0(x, z) {
     const ci = this.colInfo(x, z), ob = ORIG_BIOME[ci.biome];
     const r0 = hash2(this.seed + 11, x * 3 + 11, z * 3 - 7);
     if (ob === BI.DESERT) return r0 < 0.006 ? 'cactus' : 0;
@@ -867,14 +884,20 @@ class WorldGen {
   treeSpot(x, z) {
     const t = this.treeAt(x, z);
     if (!t) return null;
-    const sy = this.groundAt(x, z);
-    if (sy <= SEA || sy >= WORLD_MAX_Y - 16) return null;
-    const ci = this.colInfo(x, z), bio = ci.biome;
+    let sy = this.groundAt(x, z);
+    if (sy >= WORLD_MAX_Y - 16) return null;
+    const ci = this.colInfo(x, z), bio = ci.biome, ob = ORIG_BIOME[bio];
     // the block under the trunk, exactly as the surface rules will make it
-    const top = this.bareSlope(bio, x, z, sy) ? B.STONE : this.surfTop(ORIG_BIOME[bio], x, z, sy, ci.h);
+    let top;
+    if (this.poolAt(ob, x, z, sy)) { sy--; top = ob === BI.SWAMP ? B.DIRT : B.MUD; }
+    else top = this.bareSlope(bio, x, z, sy) ? B.STONE : this.surfTop(ob, x, z, sy, ci.h);
+    // most trees need dry land; swamp oaks and mangroves also grow in shallow water
+    if (sy <= SEA && SEA - sy > (TREE_WATER[t] ?? -1)) return null;
+    if (sy <= SEA && t === 'swamp_oak' && top !== B.DIRT && top !== B.SAND && top !== B.CLAY) return null;
     if (t === 'cactus') { if (top !== B.SAND && top !== B.RED_SAND) return null; }
     else if (t === 'ice_spike') { if (top !== B.SNOW) return null; }
-    else if (top !== B.GRASS && top !== B.PODZOL && top !== B.SNOW && top !== B.MYCELIUM && top !== B.MUD && top !== B.DIRT) return null;
+    else if (t === 'mangrove' || t === 'tall_mangrove') { if (top !== B.MUD) return null; }
+    else if (sy > SEA && top !== B.GRASS && top !== B.PODZOL && top !== B.SNOW && top !== B.MYCELIUM && top !== B.MUD && top !== B.DIRT) return null;
     if (t === 'dark_oak') {
       // 2x2 trunk: every column needs ground no more than 3 blocks below the origin
       for (const [dx, dz] of [[1, 0], [0, 1], [1, 1]]) { const g = this.groundAt(x + dx, z + dz); if (g < sy - 3 || g > sy + 3) return null; }
@@ -884,10 +907,20 @@ class WorldGen {
 
   features() {
     const x0 = this.x0, z0 = this.z0, M = 6;
+    this.deco.length = 0; this.treeWrites = [];
     for (let z = z0 - M; z < z0 + 16 + M; z++) for (let x = x0 - M; x < x0 + 16 + M; x++) {
-      const spot = this.treeSpot(x, z);
-      if (spot) this.growTree(spot.t, x, spot.sy, z);
+      // a tree reaches several chunks: build it once, then every chunk takes its part
+      const k = x * 131072 + z, TC = this.treeCache;
+      let r = TC.get(k);
+      if (r === undefined) {
+        const spot = this.treeSpot(x, z);
+        r = spot ? this.buildTree(spot.t, x, spot.sy, z) : null;
+        if (TC.size > 60000) TC.clear();
+        TC.set(k, r);
+      }
+      this.placeTree(r);
     }
+    this.flushTrees();
     this.vegetation();
     this.snowCover();
   }
@@ -896,18 +929,23 @@ class WorldGen {
   // blocks that the terrain cuts off from the trunk (face path through the crown longer than 6,
   // Minecraft's leaf distance) are dropped, so nothing hangs in the air. Terrain is taken from the
   // density surface, which every chunk computes identically.
-  growTree(type, x, sy, z) {
+  growTree(type, x, sy, z) { this.placeTree(this.buildTree(type, x, sy, z)); }
+  // Builds the whole tree independent of the chunk: {w: [x,y,z,id,kind]..., d: decorations} or
+  // null when it cannot grow (mangrove roots finding no ground). Deterministic per seed and spot.
+  buildTree(type, x, sy, z) {
     const TB = this.tb;
     TB.n = 0; TB.map.clear();
     const key = (xx, yy, zz) => ((yy - WORLD_MIN_Y) * 64 + (xx - x + 32)) * 64 + (zz - z + 32);
     const put = (xx, yy, zz, id, kind) => {
       if (yy <= WORLD_MIN_Y || yy >= WORLD_MAX_Y) return;
       const k = key(xx, yy, zz), j = TB.map.get(k);
-      if (j !== undefined) { if (kind === 0 && TB.kind[j] !== 0) { TB.id[j] = id; TB.kind[j] = 0; } return; }
+      // forced blocks (0 trunk, 3 roots) win over crown and soil
+      if (j !== undefined) { if ((kind === 0 || kind === 3) && TB.kind[j] !== 0 && TB.kind[j] !== 3) { TB.id[j] = id; TB.kind[j] = kind; } return; }
       const n = TB.n++;
       TB.x[n] = xx; TB.y[n] = yy; TB.z[n] = zz; TB.id[n] = id; TB.kind[n] = kind; TB.map.set(k, n);
     };
     const log = (xx, yy, zz, id) => put(xx, yy, zz, id, 0);          // 0: trunk (forced)
+    const root = (xx, yy, zz, id) => put(xx, yy, zz, id, 3);         // 3: roots (forced, but leaves do not count them as logs)
     const soil = (xx, yy, zz) => put(xx, yy, zz, B.DIRT, 2);         // 2: soil under a trunk
     const layer = (cx, yy, cz, r, id, ragged) => {                    // 1: crown
       for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
@@ -918,6 +956,12 @@ class WorldGen {
       }
     };
     const g = (k) => hash2(this.seed + 97, x * 31 + k, z * 17 - k);
+    // sequential random numbers for the ported Minecraft placers (seeded by the tree position, so
+    // every chunk the tree reaches builds it identically)
+    let rs = (hash2(this.seed + 131, x, z) * 4294967296) >>> 0;
+    const rnd = () => { rs = (rs + 0x6D2B79F5) | 0; let t = Math.imul(rs ^ (rs >>> 15), 1 | rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const nextInt = (n) => (rnd() * n) | 0;
+    let vineChance = 0, propagules = false, mossOnRoots = false;
     switch (type) {
       case 'cactus': {
         const n = 2 + ((g(1) * 2) | 0);
@@ -1015,6 +1059,89 @@ class WorldGen {
         }
         break;
       }
+      case 'swamp_oak': {
+        // Minecraft: straight trunk 5 + 0..3, blob foliage radius 3 / height 3, vines on the leaves
+        const top = sy + 5 + nextInt(4);
+        for (let y = sy + 1; y <= top; y++) log(x, y, z, B.LOG);
+        for (let i = 0; i >= -3; i--) {
+          const r = Math.max(2 - Math.trunc(i / 2), 0), yy = top + 1 + i;
+          for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+            if (Math.abs(dx) === r && Math.abs(dz) === r && (i === 0 || nextInt(2) === 0)) continue;
+            put(x + dx, yy, z + dz, B.LEAVES, 1);
+          }
+        }
+        soil(x, sy, z);
+        vineChance = 0.25;
+        break;
+      }
+      case 'mangrove': case 'tall_mangrove': {
+        // Minecraft's mangrove: MangroveRootPlacer + UpwardsBranchingTrunkPlacer +
+        // RandomSpreadFoliagePlacer(3, 0, 2, 70), vines and hanging propagules
+        const tall = type === 'tall_mangrove';
+        const oy = sy + 1 + 1 + nextInt(3);                     // trunk origin 1..3 above the sapling spot
+        // terrain the roots may grow into: air, water and the mud layers of a mangrove swamp
+        const rootCell = (xx, yy, zz) => {
+          const gy = this.groundAt(xx, zz);
+          if (yy > gy) return 1;
+          return ORIG_BIOME[this.colInfo(xx, zz).biome] === BI.MANGROVE_SWAMP && yy > gy - 4 ? 1 : 0;
+        };
+        for (let y = sy + 1; y < oy; y++) if (!rootCell(x, y, z)) return null;
+        const roots = [[x, oy - 1, z]];
+        const simulate = (px, py, pz, dx, dz, list, depth) => {
+          if (depth === 15 || list.length > 15) return false;
+          const dist = Math.abs(px - x) + Math.abs(py - oy) + Math.abs(pz - z);
+          let next;
+          if (dist > 5 && dist <= 8) next = rnd() < 0.2 ? [[px, py - 1, pz], [px + dx, py - 1, pz + dz]] : [[px, py - 1, pz]];
+          else if (dist > 8) next = [[px, py - 1, pz]];
+          else if (rnd() < 0.2) next = [[px, py - 1, pz]];
+          else next = rnd() < 0.5 ? [[px + dx, py, pz + dz]] : [[px, py - 1, pz]];
+          for (const p of next) {
+            if (!rootCell(p[0], p[1], p[2])) continue;
+            list.push(p);
+            if (!simulate(p[0], p[1], p[2], dx, dz, list, depth + 1)) return false;
+          }
+          return true;
+        };
+        for (const [dx, dz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+          const list = [];
+          if (!simulate(x + dx, oy, z + dz, dx, dz, list, 0)) return null;
+          roots.push(...list, [x + dx, oy, z + dz]);
+        }
+        for (const [rx, ry, rz] of roots) {
+          const gy = this.groundAt(rx, rz), ob = ORIG_BIOME[this.colInfo(rx, rz).biome];
+          const wet = ry <= SEA && (ry > gy || (ry === gy && this.poolAt(ob, rx, rz, gy)));
+          root(rx, ry, rz, ry <= gy && !wet ? B.MUDDY_MANGROVE_ROOTS : wet ? B.MANGROVE_ROOTS_WET : B.MANGROVE_ROOTS);
+        }
+        mossOnRoots = true;
+        // trunk with upward branches; every branch log and the trunk top carry foliage
+        const height = tall ? 4 + nextInt(2) + nextInt(10) : 2 + nextInt(2) + nextInt(5);
+        const attach = [];
+        for (let i = 0; i < height; i++) {
+          const y = oy + i;
+          log(x, y, z, B.MANGROVE_LOG);
+          if (i < height - 1 && rnd() < 0.5) {
+            const d = nextInt(4), bx = [0, 0, -1, 1][d], bz = [-1, 1, 0, 0][d];
+            const k = nextInt(2), off = Math.max(0, k - nextInt(2) - 1), steps0 = 1 + nextInt(4);
+            let cx = x, cz = z, top = y + off;
+            for (let l = off, steps = steps0; l < height && steps > 0; l++, steps--) {
+              if (l >= 1) {
+                cx += bx; cz += bz;
+                log(cx, y + l, cz, B.MANGROVE_LOG);
+                top = y + l + 1;
+                attach.push([cx, y + l, cz]);
+              }
+            }
+            if (top - y > 1) attach.push([cx, top, cz], [cx, top - 2, cz]);
+          }
+        }
+        attach.push([x, oy + height, z]);
+        for (const [ax, ay, az] of attach) put(ax, ay, az, B.MANGROVE_LEAVES, 1);   // no bare trunk / branch tips
+        for (const [ax, ay, az] of attach) for (let n = 0; n < 70; n++) {
+          put(ax + nextInt(3) - nextInt(3), ay + nextInt(2) - nextInt(2), az + nextInt(3) - nextInt(3), B.MANGROVE_LEAVES, 1);
+        }
+        vineChance = 0.125; propagules = true;
+        break;
+      }
       default: { // oak / birch
         const birch = type === 'birch';
         const logId = birch ? B.BIRCH_LOG : B.LOG, leafId = birch ? B.BIRCH_LEAVES : B.LEAVES;
@@ -1037,17 +1164,101 @@ class WorldGen {
       for (let f = 0; f < 6; f++) {
         const xx = TB.x[j] + FACE6[f * 3], yy = TB.y[j] + FACE6[f * 3 + 1], zz = TB.z[j] + FACE6[f * 3 + 2];
         const m = TB.map.get(key(xx, yy, zz));
-        if (m === undefined || TB.kind[m] !== 1 || dist[m] !== 255) continue;
+        if (m === undefined || TB.kind[m] !== 1 || dist[m] !== 255 || !(FLAGS[TB.id[m]] & BF_LEAVES)) continue;
         if (this.solidTerrain(xx, yy, zz)) { dist[m] = 254; continue; }
         dist[m] = dj + 1; q[qt++] = m;
       }
     }
-    // write the part inside this chunk
+    // decorations on the surviving leaves: Minecraft's leave vine decorator (vines hanging down
+    // up to five blocks) and hanging propagules under mangrove leaves (two free blocks below)
+    const deco = [];
+    if (vineChance || propagules || mossOnRoots) {
+      const taken = new Set(), props = new Set();
+      const free = (xx, yy, zz) => {
+        const k = key(xx, yy, zz);
+        // air only: below sea level every non-terrain cell is water
+        return yy > SEA && !TB.map.has(k) && !taken.has(k) && !this.solidTerrain(xx, yy, zz);
+      };
+      const hang = [[-1, 0, 8], [1, 0, 2], [0, -1, 1], [0, 1, 4]];     // neighbour offset, vine side bit facing the leaf
+      // Minecraft's above-root placement: moss carpet on half of the roots that reach the open air
+      if (mossOnRoots) for (let j = 0; j < n; j++) {
+        if (TB.kind[j] !== 3) continue;
+        const rx = TB.x[j], ry = TB.y[j] + 1, rz = TB.z[j];
+        if (hash3(this.seed + 133, rx, ry, rz) < 0.5 && free(rx, ry, rz)) { deco.push(rx, ry, rz, B.MOSS_CARPET, 0, rx, ry - 1, rz); taken.add(key(rx, ry, rz)); }
+      }
+      for (let j = 0; j < n; j++) {
+        if (TB.kind[j] !== 1 || dist[j] > 6 || !(FLAGS[TB.id[j]] & BF_LEAVES)) continue;
+        const lx = TB.x[j], ly = TB.y[j], lz = TB.z[j];
+        if (vineChance) for (let s = 0; s < 4; s++) {
+          if (hash3(this.seed + 134 + s, lx, ly, lz) >= vineChance) continue;
+          const vx = lx + hang[s][0], vz = lz + hang[s][1];
+          for (let yy = ly; yy > ly - 5 && free(vx, yy, vz); yy--) {
+            if (yy === ly) deco.push(vx, yy, vz, B.VINE, hang[s][2], lx, ly, lz);   // held by the leaf
+            else deco.push(vx, yy, vz, B.VINE, hang[s][2], vx, yy + 1, vz);        // by the vine above
+            taken.add(key(vx, yy, vz));
+          }
+        }
+        if (propagules && hash3(this.seed + 139, lx, ly, lz) < 0.14 && free(lx, ly - 1, lz) && free(lx, ly - 2, lz)) {
+          // no other propagule in the 3x3 around it at the same height
+          let near = false;
+          for (let dx = -1; dx <= 1 && !near; dx++) for (let dz = -1; dz <= 1; dz++) if (props.has(key(lx + dx, ly - 1, lz + dz))) { near = true; break; }
+          if (!near) { deco.push(lx, ly - 1, lz, B.MANGROVE_PROPAGULE, 0, lx, ly, lz); taken.add(key(lx, ly - 1, lz)); props.add(key(lx, ly - 1, lz)); }
+        }
+      }
+    }
+    const out = [];
     for (let j = 0; j < n; j++) {
-      const kind = TB.kind[j], xx = TB.x[j], yy = TB.y[j], zz = TB.z[j];
-      if (kind === 0) this.setB(xx, yy, zz, TB.id[j], 0, 2);
-      else if (kind === 1) { if (dist[j] <= 6) this.setB(xx, yy, zz, TB.id[j], 0, 0); }
-      else { const cur = this.getB(xx, yy, zz); if (cur >= 0 && cur !== B.GRASS && cur !== B.DIRT && cur !== B.PODZOL && cur !== B.COARSE_DIRT && cur !== B.MUD && cur !== B.SNOW) this.setB(xx, yy, zz, B.DIRT, 0, 2); }
+      const kind = TB.kind[j];
+      if (kind === 1 && dist[j] > 6) continue;
+      out.push(TB.x[j], TB.y[j], TB.z[j], TB.id[j], kind);
+    }
+    return { w: Int32Array.from(out), d: Int32Array.from(deco) };
+  }
+  // The part of a built tree inside this chunk: queued while features() runs, so all trees of the
+  // chunk are written phase by phase; written at once otherwise.
+  placeTree(r) {
+    if (!r) return;
+    const W = this.treeWrites, w = r.w, x0 = this.x0, z0 = this.z0;
+    for (let i = 0; i < w.length; i += 5) {
+      const xx = w[i], zz = w[i + 2];
+      if (xx < x0 || xx > x0 + 15 || zz < z0 || zz > z0 + 15) continue;
+      if (W) W.push(xx, w[i + 1], zz, w[i + 3], w[i + 4]); else this.writeTreeBlock(xx, w[i + 1], zz, w[i + 3], w[i + 4]);
+    }
+    for (let i = 0; i < r.d.length; i++) this.deco.push(r.d[i]);
+    if (!W) { this.treeDecorations(); this.deco.length = 0; }
+  }
+  // phase order: 0 trunks (forced), 1 crowns (free cells only; a leaf next to any tree's log is
+  // held), 2 soil under trunks, 3 roots (never over a tree's logs or leaves)
+  writeTreeBlock(xx, yy, zz, id, kind) {
+    if (kind === 0) this.setB(xx, yy, zz, id, 0, 2);
+    else if (kind === 1) this.setB(xx, yy, zz, id, 0, 0);
+    else if (kind === 3) {
+      const cur = this.getB(xx, yy, zz);
+      if (cur >= 0 && !(FLAGS[cur] & BF_LEAVES) && !/_LOG$|^LOG$|ROOTS/.test(B_KEY[cur] || '')) this.setB(xx, yy, zz, id, 0, 2);
+    } else {
+      const cur = this.getB(xx, yy, zz);
+      if (cur >= 0 && cur !== B.GRASS && cur !== B.DIRT && cur !== B.PODZOL && cur !== B.COARSE_DIRT && cur !== B.MUD && cur !== B.SNOW) this.setB(xx, yy, zz, B.DIRT, 0, 2);
+    }
+  }
+  flushTrees() {
+    const W = this.treeWrites;
+    for (const phase of [0, 1, 2, 3]) for (let i = 0; i < W.length; i += 5) if (W[i + 4] === phase) this.writeTreeBlock(W[i], W[i + 1], W[i + 2], W[i + 3], phase);
+    this.treeWrites = null;
+    this.treeDecorations();
+    this.deco.length = 0;
+  }
+  // Tree decorations (vines, propagules, moss on roots) go in after every tree of the chunk, so one
+  // tree's decoration never takes a cell another tree's crown needs; each only where its support
+  // really ended up (a support in a neighbour chunk was decided from the same tree data there).
+  treeDecorations() {
+    const deco = this.deco;
+    for (let i = 0; i < deco.length; i += 8) {
+      const sup = this.getB(deco[i + 5], deco[i + 6], deco[i + 7]), id = deco[i + 3];
+      if (sup >= 0) {
+        const ok = id === B.MOSS_CARPET ? /ROOTS/.test(B_KEY[sup] || '') : id === B.VINE && deco[i + 6] > deco[i + 1] ? sup === B.VINE : (FLAGS[sup] & BF_LEAVES) !== 0;
+        if (!ok) continue;
+      }
+      this.setB(deco[i], deco[i + 1], deco[i + 2], id, deco[i + 4], 0);
     }
   }
   // terrain occupancy used for crown connectivity (density surface; air well above the height)

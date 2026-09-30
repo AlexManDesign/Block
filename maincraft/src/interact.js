@@ -35,6 +35,8 @@ function placementFor(world, heldId, hit, fd, player) {
   if (cur && !(FLAGS[cur] & BF_REPLACE)) return null;
   // what water or lava would wash away cannot be placed into it (torches, flowers, saplings...)
   if ((isWaterId(cur) || cur === B.LAVA) && fluidBreaks(heldId)) return null;
+  // mangrove roots placed into water stay waterlogged
+  if (heldId === B.MANGROVE_ROOTS && isWaterId(cur)) return [{ x, y, z, id: B.MANGROVE_ROOTS_WET, m: 0 }];
   const below = world.getBlock(x, y - 1, z);
   let m = 0;
   const fl = FLAGS[heldId];
@@ -173,7 +175,7 @@ function dropsFor(id, m, item) {
     CLAY: [IT.CLAY_BALL, 4, 4], GLOWSTONE: [B.GLOW], MELON: [IT.MELON_SLICE, 3, 7], BOOKSHELF: [B.PLANKS, 3, 3],
     FURNACE_LIT: [B.FURNACE], BUDDING_AMETHYST: [], ICE: [], GLASS: [], GLASS_PANE: [], FIRE: [],
     SNOW: [B.SNOW], TALL_GRASS: [], FERN: [], DEAD_BUSH: [IT.STICK, 0, 2], SEAGRASS: [], TALL_GRASS_PLANT: [], LARGE_FERN: [],
-    SWEET_BERRY_BUSH: [IT.SWEET_BERRIES, 1, 3], CAVE_VINES: [], KELP: [B.KELP], COBWEB: [IT.STRING],
+    SWEET_BERRY_BUSH: [IT.SWEET_BERRIES, 1, 3], MANGROVE_ROOTS_WET: [B.MANGROVE_ROOTS], CAVE_VINES: [], KELP: [B.KELP], COBWEB: [IT.STRING],
     WHEAT_0: [IT.WHEAT_SEEDS], WHEAT_1: [IT.WHEAT_SEEDS], WHEAT_2: [IT.WHEAT_SEEDS], WHEAT_3: [IT.WHEAT],
     CARROTS_0: [IT.CARROT], CARROTS_1: [IT.CARROT], CARROTS_2: [IT.CARROT], CARROTS_3: [IT.CARROT, 2, 4],
     POTATOES_0: [IT.POTATO], POTATOES_1: [IT.POTATO], POTATOES_2: [IT.POTATO], POTATOES_3: [IT.POTATO, 2, 4],

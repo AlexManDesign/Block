@@ -25,7 +25,7 @@ TINT = {
 # The tinted copy above stays for items, particles and the hand; terrain uses the untinted '<name>_bt'.
 BIOME_TINTED = {'grass_block_top', 'short_grass', 'fern', 'tall_grass_top', 'tall_grass_bottom',
                 'large_fern_top', 'large_fern_bottom', 'oak_leaves', 'vine', 'dark_oak_leaves',
-                'jungle_leaves', 'acacia_leaves', 'water_still'}
+                'jungle_leaves', 'acacia_leaves', 'water_still'}   # + mangrove_leaves (synthesised)
 SKIP_PREFIX = ('entity_', 'ui_')
 SKIP = {'sun', 'moon_phases', 'bobber'}
 FIRST_FRAME_ONLY = {'short_grass', 'seagrass', 'tall_seagrass_top', 'tall_seagrass_bottom', 'kelp', 'kelp_plant'}
@@ -114,6 +114,79 @@ def grass_side_split(side, dirt):
             op[x, y] = (g, g, g, 255)
             bp[x, y] = dp[x, y]
     return base, over
+
+
+def avg_rgb(img):
+    im = img.convert('RGBA')
+    ld = im.load()
+    px = [ld[x, y] for y in range(im.height) for x in range(im.width) if ld[x, y][3] > 0]
+    return tuple(sum(p[i] for p in px) / len(px) for i in range(3))
+
+
+def recolor(img, src_avg, dst_avg, mask=None):
+    """Moves pixels from one palette to another keeping their relative brightness."""
+    out = img.copy().convert('RGBA')
+    px = out.load()
+    sl = 0.3 * src_avg[0] + 0.59 * src_avg[1] + 0.11 * src_avg[2]
+    for y in range(out.height):
+        for x in range(out.width):
+            if mask and not mask(x, y):
+                continue
+            r, g, b, a = px[x, y]
+            k = (0.3 * r + 0.59 * g + 0.11 * b) / sl
+            px[x, y] = tuple(min(255, int(round(c * k))) for c in dst_avg) + (a,)
+    return out
+
+
+MANGROVE_BARK = (84, 66, 56)
+
+
+def mangrove_log(oak_log, oak_top, planks):
+    """Mangrove log from the oak log: dark red-brown bark, reddish wood inside the rings."""
+    side = recolor(oak_log, avg_rgb(oak_log), MANGROVE_BARK)
+    ring = lambda x, y: x in (0, 15) or y in (0, 15)
+    top = recolor(oak_top, avg_rgb(oak_log), MANGROVE_BARK, ring)
+    inner = [(x, y) for y in range(1, 15) for x in range(1, 15)]
+    ia = tuple(sum(oak_top.getpixel(p)[i] for p in inner) / len(inner) for i in range(3))
+    top = recolor(top, ia, avg_rgb(planks), lambda x, y: not ring(x, y))
+    return side, top
+
+
+def root_strands(seed, count, light, dark):
+    """Tileable tangle of thin roots on a transparent tile (Minecraft's mangrove roots look)."""
+    rnd = random.Random(seed)
+    im = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+    px = im.load()
+    for s in range(count):
+        vertical = s % 2 == 0
+        a = rnd.randrange(16)
+        drift = rnd.choice((-1, 1))
+        for t in range(16):
+            if rnd.random() < 0.35:
+                a = (a + drift) % 16
+            if rnd.random() < 0.12:
+                drift = -drift
+            x, y = (a, t) if vertical else (t, a)
+            px[x, y] = light + (255,)
+            x2, y2 = ((a + 1) % 16, t) if vertical else (t, (a + 1) % 16)
+            px[x2, y2] = dark + (255,)
+    return im
+
+
+def mangrove_propagule():
+    """Hanging propagule: a small leaf tuft with a long green pod turning brown at the tip."""
+    im = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+    px = im.load()
+    leaf, leaf_d = (104, 150, 46), (70, 110, 34)
+    for x, y in [(6, 0), (7, 0), (8, 0), (9, 0), (5, 1), (6, 1), (7, 1), (8, 1), (9, 1), (10, 1), (6, 2), (9, 2), (7, 2), (8, 2)]:
+        px[x, y] = (leaf if (x + y) % 3 else leaf_d) + (255,)
+    for y in range(3, 15):
+        t = (y - 3) / 11
+        c = tuple(int(a + (b - a) * t) for a, b in zip((112, 146, 52), (92, 70, 40)))
+        px[7, y] = c + (255,)
+        px[8, y] = tuple(int(v * 0.78) for v in c) + (255,)
+    px[7, 15] = (70, 52, 30, 255)
+    return im
 
 
 def snowy_side(dirt, snow):
@@ -205,6 +278,19 @@ def collect():
     if 'spruce_door_bottom' not in names:
         extra['spruce_door_bottom'] = framed_planks(spruce, None, True)
     extra['grass_block_side_bt'], extra['grass_block_side_overlay'] = grass_side_split(load('grass_block_side'), load('dirt'))
+    # mangrove: the pack has planks, door and trapdoor only
+    mplanks = load('mangrove_planks')
+    extra['mangrove_log'], extra['mangrove_log_top'] = mangrove_log(load('oak_log'), load('oak_log_top'), mplanks)
+    ml = load('oak_leaves').transpose(Image.FLIP_LEFT_RIGHT)
+    extra['mangrove_leaves_bt'] = ml.copy()
+    extra['mangrove_leaves'] = tint(ml, (146, 198, 72))
+    extra['mangrove_roots'] = root_strands(7, 6, (106, 82, 64), (62, 46, 38))
+    extra['mangrove_roots_top'] = root_strands(11, 6, (106, 82, 64), (62, 46, 38))
+    for side, seed in (('muddy_mangrove_roots_side', 13), ('muddy_mangrove_roots_top', 17)):
+        m = load('mud').copy()
+        m.alpha_composite(root_strands(seed, 5, (112, 88, 68), (66, 50, 40)))
+        extra[side] = m
+    extra['mangrove_propagule_hanging'] = mangrove_propagule()
     if 'grass_block_snow' not in names:
         extra['grass_block_snow'] = snowy_side(load('dirt'), load('snow'))
     extra['item_ender_pearl'] = orb((12, 59, 55), (46, 143, 134), (160, 230, 220), 6)
