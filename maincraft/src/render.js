@@ -50,8 +50,8 @@ const TERRAIN_VS = `#version 300 es
 precision highp float; precision highp int;
 layout(location=0) in uvec3 aV;
 uniform mat4 uVP; uniform vec3 uOrigin; uniform vec3 uCam; uniform float uTime; uniform uint uTick;
-uniform highp usampler2D uAnim; uniform vec2 uFog; uniform float uSway;
-out vec3 vUV; out float vShade; out vec2 vLight; out float vFog;
+uniform highp usampler2D uAnim; uniform sampler2D uLM; uniform vec2 uFog; uniform float uSway;
+out vec3 vUV; out vec3 vLit; out float vFog;
 flat out vec3 vTint; flat out float vOvl;
 void main(){
   uint w0 = aV.x, w1 = aV.y, w2 = aV.z;
@@ -69,8 +69,9 @@ void main(){
   uvec4 an = texelFetch(uAnim, ivec2(int(layer & 255u), int(layer >> 8)), 0);
   if (an.r > 1u) layer += (uTick / max(an.g, 1u)) % an.r;
   vUV = vec3(float((w1 >> 11) & 31u) * 0.0625, float((w1 >> 16) & 31u) * 0.0625, float(layer));
-  vShade = float((w1 >> 21) & 255u) / 255.0;
-  vLight = vec2(float(w2 & 255u), float((w2 >> 8) & 255u)) / 240.0;
+  // light colour per vertex like Minecraft's terrain shaders: lightmap(sky, block) * face shade / AO
+  vec2 li = vec2(float(w2 & 255u), float((w2 >> 8) & 255u)) / 240.0;
+  vLit = textureLod(uLM, vec2(li.y * 0.9375 + 0.03125, li.x * 0.9375 + 0.03125), 0.0).rgb * (float((w1 >> 21) & 255u) / 255.0);
   uint t = w2 >> 16;
   vTint = vec3(float(t >> 11), float((t >> 5) & 63u), float(t & 31u)) * vec3(1.0 / 31.0, 1.0 / 63.0, 1.0 / 31.0);
   vOvl = float((w1 >> 29) & 1u);
@@ -79,20 +80,19 @@ void main(){
 }`;
 const TERRAIN_FS = `#version 300 es
 precision mediump float; precision mediump sampler2DArray;
-uniform sampler2DArray uTex; uniform sampler2D uLM; uniform vec3 uFogColor; uniform float uAlphaMul; uniform float uOverlay;
-in vec3 vUV; in float vShade; in vec2 vLight; in float vFog;
+uniform sampler2DArray uTex; uniform vec3 uFogColor; uniform float uAlphaMul; uniform float uOverlay;
+in vec3 vUV; in vec3 vLit; in float vFog;
 flat in vec3 vTint; flat in float vOvl;
 out vec4 o;
 void main(){
   vec4 c = texture(uTex, vUV);
-  // biome colour; the grass block side lays its tinted grass overlay over the dirt base
-  if (vOvl > 0.5) { vec4 ov = texture(uTex, vec3(vUV.xy, uOverlay)); c.rgb = mix(c.rgb, ov.rgb * vTint, ov.a); }
-  else c.rgb *= vTint;
 #ifdef CUTOUT
   if (c.a < 0.5) discard;
 #endif
-  vec3 lm = texture(uLM, vec2(vLight.y * 0.9375 + 0.03125, vLight.x * 0.9375 + 0.03125)).rgb;
-  vec3 rgb = c.rgb * vShade * lm;
+  // biome colour; the grass block side lays its tinted grass overlay over the dirt base
+  if (vOvl > 0.5) { vec4 ov = texture(uTex, vec3(vUV.xy, uOverlay)); c.rgb = mix(c.rgb, ov.rgb * vTint, ov.a); }
+  else c.rgb *= vTint;
+  vec3 rgb = c.rgb * vLit;
   rgb = mix(rgb, uFogColor, vFog);
 #ifdef TRANS
   o = vec4(rgb, c.a * uAlphaMul);
