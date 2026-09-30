@@ -9823,7 +9823,7 @@ const STR = {
     mode: 'Game Mode', creative: 'Creative', survival: 'Survival', createBtn: 'Create', noWorlds: 'No worlds yet - create your first one!',
     loading: 'Generating world...', resume: 'Back to Game', saveQuit: 'Save & Quit to Title', paused: 'Game Menu',
     renderDist: 'Render Distance', fov: 'FOV', sens: 'Sensitivity', bright: 'Brightness', clouds: 'Clouds',
-    leaves: 'Fancy Leaves', sway: 'Waving Plants', on: 'ON', off: 'OFF', chunks: 'chunks', done: 'Done',
+    leaves: 'Fancy Leaves', sway: 'Waving Plants', bobView: 'View Bobbing', on: 'ON', off: 'OFF', chunks: 'chunks', done: 'Done',
     scale: 'Render Scale', fps: 'Show FPS', lang: 'Language', inventory: 'Inventory', search: 'Search...',
     tab_b: 'Building Blocks', tab_c: 'Colored Blocks', tab_n: 'Natural Blocks', tab_f: 'Functional Blocks',
     tab_t: 'Tools & Items', tab_s: 'Search', confirmDel: 'Delete this world forever?', died: 'You Died!', respawn: 'Respawn',
@@ -9837,7 +9837,7 @@ const STR = {
     mode: 'Режим игры', creative: 'Творческий', survival: 'Выживание', createBtn: 'Создать', noWorlds: 'Миров пока нет — создай первый!',
     loading: 'Генерация мира...', resume: 'Вернуться к игре', saveQuit: 'Сохранить и выйти в меню', paused: 'Меню игры',
     renderDist: 'Дальность прорисовки', fov: 'Поле зрения', sens: 'Чувствительность', bright: 'Яркость', clouds: 'Облака',
-    leaves: 'Красивая листва', sway: 'Колыхание растений', on: 'ВКЛ', off: 'ВЫКЛ', chunks: 'чанков', done: 'Готово',
+    leaves: 'Красивая листва', sway: 'Колыхание растений', bobView: 'Покачивание камеры', on: 'ВКЛ', off: 'ВЫКЛ', chunks: 'чанков', done: 'Готово',
     scale: 'Масштаб рендера', fps: 'Показывать FPS', lang: 'Язык', inventory: 'Инвентарь', search: 'Поиск...',
     tab_b: 'Строительные блоки', tab_c: 'Цветные блоки', tab_n: 'Природные блоки', tab_f: 'Функциональные блоки',
     tab_t: 'Инструменты и предметы', tab_s: 'Поиск', confirmDel: 'Удалить этот мир навсегда?', died: 'Вы погибли!', respawn: 'Возродиться',
@@ -10001,7 +10001,7 @@ function creativeCatalog() {
 const SETTINGS_KEY = 'maincraft.settings.v1';
 const IS_TOUCH = (() => { try { return 'ontouchstart' in window || matchMedia('(pointer: coarse)').matches; } catch (e) { return false; } })();
 const Settings = {
-  renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, fancyLeaves: true, sway: true,
+  renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, fancyLeaves: true, sway: true, bobView: true,
   scale: IS_TOUCH ? 0.75 : 1, fps: false, sound: true, lang: '',
   load() { try { Object.assign(this, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { } if (this.lang) CUR_LANG = this.lang; },
   save() { try { const o = {}; for (const k in this) if (typeof this[k] !== 'function') o[k] = this[k]; localStorage.setItem(SETTINGS_KEY, JSON.stringify(o)); } catch (e) { } },
@@ -10409,7 +10409,7 @@ class Game {
     const e = p.eye();
     // Minecraft bobView: view-space offset (sin(pi f) a / 2, -|cos(pi f) a|), roll sin(pi f) a 3 deg,
     // nod |cos(pi f - 0.2) a| 5 deg, with f = -walkDist and a = bob amplitude
-    const f = -p.walkDist, a = p.bobA, B = this.bobView || (this.bobView = new Float32Array(4));
+    const f = -p.walkDist, a = Settings.bobView ? p.bobA : 0, B = this.bobView || (this.bobView = new Float32Array(4));
     B[0] = Math.sin(f * Math.PI) * a * 0.5; B[1] = -Math.abs(Math.cos(f * Math.PI) * a);
     B[2] = Math.sin(f * Math.PI) * a * 3 * Math.PI / 180; B[3] = Math.abs(Math.cos(f * Math.PI - 0.2) * a) * 5 * Math.PI / 180;
     this.r.bob = B;
@@ -11360,6 +11360,7 @@ const UI = {
     toggle(T('clouds'), 'clouds');
     toggle(T('leaves'), 'fancyLeaves', remesh);
     toggle(T('sway'), 'sway', remesh);
+    toggle(T('bobView'), 'bobView');
     toggle(T('fps'), 'fps');
     toggle(T('sound'), 'sound', () => { Sfx.enabled = Settings.sound; });
     const lb = el('button', { class: 'tog' }, T('lang') + ': ' + (CUR_LANG === 'ru' ? 'Русский' : 'English'));

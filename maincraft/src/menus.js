@@ -138,6 +138,7 @@ const UI = {
     toggle(T('clouds'), 'clouds');
     toggle(T('leaves'), 'fancyLeaves', remesh);
     toggle(T('sway'), 'sway', remesh);
+    toggle(T('bobView'), 'bobView');
     toggle(T('fps'), 'fps');
     toggle(T('sound'), 'sound', () => { Sfx.enabled = Settings.sound; });
     const lb = el('button', { class: 'tog' }, T('lang') + ': ' + (CUR_LANG === 'ru' ? 'Русский' : 'English'));

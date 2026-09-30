@@ -4,7 +4,7 @@
 const SETTINGS_KEY = 'maincraft.settings.v1';
 const IS_TOUCH = (() => { try { return 'ontouchstart' in window || matchMedia('(pointer: coarse)').matches; } catch (e) { return false; } })();
 const Settings = {
-  renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, fancyLeaves: true, sway: true,
+  renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, fancyLeaves: true, sway: true, bobView: true,
   scale: IS_TOUCH ? 0.75 : 1, fps: false, sound: true, lang: '',
   load() { try { Object.assign(this, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { } if (this.lang) CUR_LANG = this.lang; },
   save() { try { const o = {}; for (const k in this) if (typeof this[k] !== 'function') o[k] = this[k]; localStorage.setItem(SETTINGS_KEY, JSON.stringify(o)); } catch (e) { } },
@@ -412,7 +412,7 @@ class Game {
     const e = p.eye();
     // Minecraft bobView: view-space offset (sin(pi f) a / 2, -|cos(pi f) a|), roll sin(pi f) a 3 deg,
     // nod |cos(pi f - 0.2) a| 5 deg, with f = -walkDist and a = bob amplitude
-    const f = -p.walkDist, a = p.bobA, B = this.bobView || (this.bobView = new Float32Array(4));
+    const f = -p.walkDist, a = Settings.bobView ? p.bobA : 0, B = this.bobView || (this.bobView = new Float32Array(4));
     B[0] = Math.sin(f * Math.PI) * a * 0.5; B[1] = -Math.abs(Math.cos(f * Math.PI) * a);
     B[2] = Math.sin(f * Math.PI) * a * 3 * Math.PI / 180; B[3] = Math.abs(Math.cos(f * Math.PI - 0.2) * a) * 5 * Math.PI / 180;
     this.r.bob = B;
