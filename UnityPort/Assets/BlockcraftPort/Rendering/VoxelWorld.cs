@@ -1466,7 +1466,11 @@ namespace BlockcraftPort
             {
                 ChunkCoord c=kv.Key;uint mask=kv.Value;
                 if(!chunks.ContainsKey(c)){meshMaskScratch.Add(c);continue;}
-                if(!InRenderRadius(c)||!NeighborhoodReady(c)||LightEditsNear(c))continue;
+                if(!InRenderRadius(c)||!NeighborhoodReady(c))continue;
+                // Near a pending light edit, only chunks that are already on screen wait (so they never
+                // flash stale light). A chunk with no GPU mesh yet is a hole: publish it now; the
+                // edit's completion bumps its section stamps and remeshes it with the final light.
+                if(LightEditsNear(c)&&renders.TryGetValue(c,out var shown)&&shown.Drawable)continue;
                 bool schedulable=false;
                 for(int sec=0;sec<VoxelConstants.SectionCount;sec++)
                     if((mask&(1u<<sec))!=0&&!meshInFlight.Contains(new SectionKey(c,sec))){schedulable=true;break;}
