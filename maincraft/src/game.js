@@ -514,6 +514,15 @@ class Game {
     const w = this.world, p = this.player, tg = this.target;
     const held = this.inv[this.sel];
     const hid = held ? held.id : 0;
+    // feeding an animal its breeding food comes before eating it yourself
+    if (hid && this.ents) {
+      const h = this.ents.raycastMob(p.eye(), p.look(), 3.5);
+      const md = h && MOB_DEFS[h.e.type];
+      if (md && md.food && md.food.includes(hid) && (!tg || h.t < tg.t) && this.ents.feed(h.e)) {
+        if (this.mode === 'survival') this.consumeHeld();
+        this.swing(); return;
+      }
+    }
     // food
     if (hid && isItem(hid) && itemDef(hid)[5] && itemDef(hid)[5].food && this.mode === 'survival' && this.surv.food < 20) {
       if (!this.eating) this.eating = { t: 0 };
@@ -521,7 +530,7 @@ class Game {
     }
     if (hid === IT.SHEARS && this.ents) {
       const h = this.ents.raycastMob(p.eye(), p.look(), 3.5);
-      if (h && h.e.type === 'sheep' && !h.e.sheared) { h.e.sheared = true; h.e.woolT = 90 + Math.random() * 60; this.ents.dropItem(sheepWool(h.e), 1 + (Math.random() * 3 | 0), h.e.pos[0], h.e.pos[1] + 1, h.e.pos[2]); this.swing(); this.damageTool(); return; }
+      if (h && h.e.type === 'sheep' && !h.e.sheared && !h.e.baby) { h.e.sheared = true; this.ents.dropItem(sheepWool(h.e), 1 + (Math.random() * 3 | 0), h.e.pos[0], h.e.pos[1] + 1, h.e.pos[2]); this.swing(); this.damageTool(); return; }
     }
     if (!tg) return;
     const id = tg.id, m = tg.meta;
