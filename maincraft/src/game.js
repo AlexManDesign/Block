@@ -958,7 +958,7 @@ class Game {
     }
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
-    r.drawLines(new Float32Array(pts), [0, 0, 0, 0.55]);
+    r.drawLines(r.f32(pts), [0, 0, 0, 0.55]);
     // crack overlay
     if (this.breaking && this.breaking.p > 0) {
       const stage = Math.min(9, Math.floor(this.breaking.p * 10));
@@ -966,7 +966,7 @@ class Game {
       const v = [];
       for (const b of boxes) this.pushBox(v, t.x + b[0] - cam[0], t.y + b[1] - cam[1], t.z + b[2] - cam[2], t.x + b[3] - cam[0], t.y + b[4] - cam[1], t.z + b[5] - cam[2], layer, [1, 1, 1, 1], 0.004);
       gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -1);
-      r.drawArr(new Float32Array(v), v.length / 10, null, 0.01);
+      r.drawArr(r.f32(v), v.length / 10, null, 0.01);
       gl.disable(gl.POLYGON_OFFSET_FILL);
     }
     gl.depthMask(true); gl.disable(gl.BLEND);
@@ -1010,7 +1010,7 @@ class Game {
       for (const i of [0, 1, 2, 0, 2, 3]) v.push(c[i][0], c[i][1], c[i][2], c[i][3], c[i][4], q.layer, li, li, li, 1);
     }
     r.gl.disable(r.gl.CULL_FACE);
-    r.drawArr(new Float32Array(v), v.length / 10, env, 0.5);
+    r.drawArr(r.f32(v), v.length / 10, env, 0.5);
     r.gl.enable(r.gl.CULL_FACE);
   }
 
@@ -1042,7 +1042,7 @@ class Game {
       this.pushModelBox(ev, M, -0.1, -0.6, -0.1, 0.1, 0.0, 0.1, 40, 16, 4, 12, 4, 64, 64, li);
       gl.enable(gl.CULL_FACE);
       const saveVP = r.vp; r.vp = proj;
-      r.drawEnt(new Float32Array(ev), ev.length / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });
+      r.drawEnt(r.f32(ev), ev.length / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });
       r.vp = saveVP;
       return;
     }
@@ -1073,7 +1073,7 @@ class Game {
       for (const i of [0, 1, 2, 0, 2, 3]) { const q = rot(c[i][0], c[i][1], c[i][2]); v.push(q[0], q[1], q[2], c[i][3], c[i][4], layer, li, li, li, 1); }
     }
     gl.disable(gl.CULL_FACE);
-    r.drawArr(new Float32Array(v), v.length / 10, null, 0.5, proj);
+    r.drawArr(r.f32(v), v.length / 10, null, 0.5, proj);
     gl.enable(gl.CULL_FACE);
   }
 
@@ -1128,7 +1128,7 @@ class Game {
     this.pushModelBox(v, part(-2 * s, 12 * s, 0, -walk), -2 * s, -12 * s, -2 * s, 2 * s, 0, 2 * s, 0, 16, 4, 12, 4, 64, 64, li);
     this.pushModelBox(v, part(2 * s, 12 * s, 0, walk), -2 * s, -12 * s, -2 * s, 2 * s, 0, 2 * s, 16, 48, 4, 12, 4, 64, 64, li);
     r.gl.disable(r.gl.CULL_FACE);
-    r.drawEnt(new Float32Array(v), v.length / 10, tex, env);
+    r.drawEnt(r.f32(v), v.length / 10, tex, env);
     r.gl.enable(r.gl.CULL_FACE);
   }
 

@@ -578,8 +578,6 @@ class Renderer {
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.lmTex);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.animTex);
     gl.activeTexture(gl.TEXTURE0);
-    // sky
-    if (!env.underwater) this.drawSky(env);
     this.collectVisible(world, cam, env.renderDist);
     this.stats.sections = this.visCount;
     gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
@@ -589,6 +587,8 @@ class Renderer {
     this.drawPass(0, cam);
     this.bindTerrain(this.progCutout, cam, env, time, tick);
     this.drawPass(1, cam);
+    // sky after the opaque terrain: it only shades pixels the terrain left empty
+    if (!env.underwater) this.drawSky(env);
   }
   renderTranslucent(cam, env, time, tick) {
     const gl = this.gl;
@@ -602,9 +602,12 @@ class Renderer {
   }
 
   // ---------------------------------------------------------------- sky, sun, moon
+  // Drawn after opaque terrain. depthRange(1,1) puts every sky, sun and moon fragment on the far
+  // plane, so with LEQUAL they pass only where the depth buffer still holds the clear value.
   drawSky(env) {
     const gl = this.gl, p = this.progSky;
-    gl.disable(gl.DEPTH_TEST); gl.depthMask(false); gl.disable(gl.CULL_FACE);
+    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false); gl.disable(gl.CULL_FACE);
+    gl.depthRange(1, 1);
     gl.useProgram(p);
     gl.uniformMatrix4fv(p.u.uInvVP, false, this.invVP);
     gl.uniform3fv(p.u.uZenith, env.zenith);
@@ -623,7 +626,8 @@ class Renderer {
     const u0 = (ph % 4) / 4, v0 = Math.floor(ph / 4) / 2;
     this.drawCelestial(this.moonTex, [-s[0], -s[1], -s[2]], 11, [u0, v0, u0 + 0.25, v0 + 0.5], 1);
     gl.disable(gl.BLEND);
-    gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
+    gl.depthRange(0, 1);
+    gl.depthMask(true); gl.enable(gl.CULL_FACE);
   }
   drawCelestial(tex, dir, size, uv, alpha) {
     const gl = this.gl, p = this.progSprite;
@@ -645,7 +649,7 @@ class Renderer {
     gl.uniform1i(p.u.uKeyBlack, 1);
     gl.uniform1i(p.u.uTex, 3);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tex); gl.activeTexture(gl.TEXTURE0);
-    this.drawDynSprite(new Float32Array(v), 6);
+    this.drawDynSprite(this.f32(v), 6);
   }
 
   makeDyn() {
@@ -664,6 +668,14 @@ class Renderer {
     gl.bindVertexArray(null);
     return d;
   }
+  // Copies a plain array into a reused scratch Float32Array. The view is valid until the next call,
+  // so it is meant for data that is uploaded right away.
+  scratch(n) {
+    let b = this.f32buf;
+    if (!b || b.length < n) b = this.f32buf = new Float32Array(Math.max(n, b ? b.length * 2 : 16384));
+    return b;
+  }
+  f32(v) { const b = this.scratch(v.length); b.set(v); return b.subarray(0, v.length); }
   uploadDyn(arr) {
     const gl = this.gl, d = this.dyn;
     gl.bindBuffer(gl.ARRAY_BUFFER, d.vbo);

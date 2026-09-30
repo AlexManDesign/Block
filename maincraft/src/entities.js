@@ -1231,9 +1231,9 @@ class Entities {
         const t = r.entityTexture(tex);
         if (!t) continue;
         let n = 0; for (const a of list) n += a.length;
-        const all = new Float32Array(n); let o = 0;
+        const all = r.scratch(n); let o = 0;
         for (const a of list) { all.set(a, o); o += a.length; }
-        r.drawEnt(all, n / 10, t, env);
+        r.drawEnt(all.subarray(0, n), n / 10, t, env);
       }
     };
     gl.disable(gl.CULL_FACE);
@@ -1345,7 +1345,7 @@ class Entities {
     }
     void t;
     r.gl.disable(r.gl.CULL_FACE);
-    r.drawArr(new Float32Array(v), v.length / 10, env, 0.5);
+    r.drawArr(r.f32(v), v.length / 10, env, 0.5);
     r.gl.enable(r.gl.CULL_FACE);
   }
 }
