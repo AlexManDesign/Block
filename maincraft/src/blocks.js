@@ -56,7 +56,7 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
       A: BF_AQUATIC, W: BF_NEEDWATER, h: BF_HANG, c: BF_CLIMB, S: BF_STACK, O: BF_FACING }[c] || 0;
     if (sh === SH.CROSS || sh === SH.TALL || sh === SH.VINE || sh === SH.LICHEN || sh === SH.LILY) f |= BF_PLANT;
     if (sh === SH.CROSS || sh === SH.TALL || sh === SH.WATER || sh === SH.LAVA || sh === SH.VINE ||
-        sh === SH.LICHEN || sh === SH.FIRE || key === 'SNOWLAYER') f |= BF_REPLACE;
+        sh === SH.LICHEN || sh === SH.FIRE || key === 'SNOW_LAYER') f |= BF_REPLACE;
     if (/SAPLING|WHEAT_|CARROTS_|POTATOES_|STEM_|MUSHROOM$|FUNGUS|ROOTS|SPROUTS|CORAL_FAN|KELP|SEAGRASS|SUGAR_CANE|SWEET_BERRY|COBWEB|FLOWER_POT|DANDELION|POPPY|TULIP|ORCHID|ALLIUM|BLUET|CORNFLOWER|DAISY|LILY_OF|WITHER_ROSE/.test(key)) f &= ~BF_REPLACE;
     if (key === 'TALL_GRASS' || key === 'FERN' || key === 'DEAD_BUSH' || key === 'SEAGRASS') f |= BF_REPLACE;
     FLAGS[id] = f;

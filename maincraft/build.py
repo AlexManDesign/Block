@@ -92,6 +92,17 @@ def spawn_egg(egg, c1, c2):
     return out
 
 
+def snowy_side(dirt, snow):
+    """Side of a snow-covered grass block: dirt with a ragged snow band on top (as in Minecraft)."""
+    out = dirt.copy().convert('RGBA')
+    sp, op = snow.convert('RGBA').load(), out.load()
+    depth = [3, 4, 3, 3, 4, 3, 2, 3, 4, 4, 3, 3, 2, 3, 4, 3]
+    for x in range(16):
+        for y in range(depth[x]):
+            op[x, y] = sp[x, y]
+    return out
+
+
 def orb(dark, mid, light, rad):
     """Small shaded ball item (ender pearl, slimeball)."""
     im = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
@@ -167,6 +178,8 @@ def collect():
         extra['spruce_door_top'] = framed_planks(spruce, load('oak_door_top'), False)
     if 'spruce_door_bottom' not in names:
         extra['spruce_door_bottom'] = framed_planks(spruce, None, True)
+    if 'grass_block_snow' not in names:
+        extra['grass_block_snow'] = snowy_side(load('dirt'), load('snow'))
     extra['item_ender_pearl'] = orb((12, 59, 55), (46, 143, 134), (160, 230, 220), 6)
     extra['item_slime_ball'] = orb((74, 140, 58), (127, 196, 106), (210, 245, 200), 5)
     egg = load('item_spawn_egg')

@@ -532,7 +532,8 @@ class WorldGen {
     let r;
     switch (ob) {
       case BI.DESERT: case BI.BEACH: case BI.WARM_OCEAN: case BI.LUKEWARM_OCEAN: r = B.SAND; break;
-      case BI.SNOWY_BEACH: case BI.FROZEN_RIVER: r = B.SNOW; break;
+      case BI.SNOWY_BEACH: r = B.SAND; break;
+      case BI.FROZEN_RIVER: r = y >= SEA ? B.GRASS : this.floorMix(x, z, y); break;
       case BI.BADLANDS: r = B.RED_SAND; break;
       case BI.WOODED_BADLANDS: r = h >= SEA + 10 ? B.GRASS : B.RED_SAND; break;
       case BI.MUSHROOM_FIELDS: r = B.MYCELIUM; break;
@@ -540,7 +541,7 @@ class WorldGen {
       case BI.STONY_SHORE: case BI.STONY_PEAKS: r = B.STONE; break;
       case BI.COLD_OCEAN: case BI.FROZEN_OCEAN: r = B.GRAVEL; break;
       case BI.OCEAN: case BI.RIVER: r = y >= SEA ? B.GRASS : this.floorMix(x, z, y); break;
-      case BI.SNOWY_PLAINS: case BI.SNOWY_TAIGA: case BI.SNOWY_SLOPES: case BI.JAGGED_PEAKS: case BI.GROVE: case BI.ICE_SPIKES: r = B.SNOW; break;
+      case BI.SNOWY_SLOPES: case BI.JAGGED_PEAKS: case BI.GROVE: case BI.ICE_SPIKES: r = B.SNOW; break;
       case BI.FROZEN_PEAKS: r = V.f2(x * 0.1 + 3, z * 0.1 - 3) < 0.46 ? B.PACKED_ICE : B.SNOW; break;
       case BI.WINDSWEPT_HILLS: { const n = this.windswept(x, z, y); r = n < 0.55 ? B.GRASS : n < 0.68 ? B.STONE : B.GRAVEL; break; }
       case BI.OLD_GROWTH_SPRUCE_TAIGA: r = V.f2(x * 0.09 - 13, z * 0.09 + 13) < 0.58 ? B.PODZOL : B.GRASS; break;
@@ -567,8 +568,9 @@ class WorldGen {
       case BI.DESERT: return B.SANDSTONE;
       case BI.MANGROVE_SWAMP: return B.MUD;
       case BI.BEACH: case BI.SNOWY_BEACH: case BI.OCEAN: case BI.RIVER: case BI.WARM_OCEAN: case BI.LUKEWARM_OCEAN: return B.SAND;
+      case BI.FROZEN_RIVER: return top === B.GRASS ? B.DIRT : B.SAND;
       case BI.STONY_PEAKS: case BI.JAGGED_PEAKS: case BI.SNOWY_SLOPES: case BI.FROZEN_PEAKS: case BI.STONY_SHORE:
-      case BI.COLD_OCEAN: case BI.FROZEN_OCEAN: case BI.FROZEN_RIVER: return 0;
+      case BI.COLD_OCEAN: case BI.FROZEN_OCEAN: return 0;
       default: return B.DIRT;
     }
   }
@@ -677,11 +679,16 @@ class WorldGen {
         else ids[i] = 0;
         this.meta[i] = 0;
       }
-      // fix grass exposed without soil above: dirt under carved top keeps; grass whose block was removed ok
-      // surface block that lost support: if top was carved and block below top is dirt -> make grass
+      // a cave that opened the surface exposes filler (dirt, sand...): the new top gets the biome's
+      // surface block, as if the surface rules had run after carving (Minecraft's order)
       let ny = WORLD_MAX_Y - 1;
       while (ny > WORLD_MIN_Y && (ids[CI(x, ny, z)] === 0)) ny--;
-      if (ids[CI(x, ny, z)] === B.DIRT && ny >= SEA && ny < top && BPROP[this.BIO[z * 16 + x]].top === B.GRASS) ids[CI(x, ny, z)] = B.GRASS;
+      const nt = ids[CI(x, ny, z)];
+      if (ny >= SEA && ny < top && (nt === B.DIRT || nt === B.SAND || nt === B.SANDSTONE || nt === B.MUD)) {
+        const bio = this.BIO[z * 16 + x], wx = x0 + x, wz = z0 + z;
+        const t2 = this.bareSlope(bio, wx, wz, ny) ? B.STONE : this.surfTop(ORIG_BIOME[bio], wx, wz, ny, this.colInfo(wx, wz).h);
+        if (t2 !== B.STONE || nt === B.DIRT) ids[CI(x, ny, z)] = t2;
+      }
       TOP[z * 16 + x] = ids[CI(x, ny, z)] === B.WATER ? top : ny;
     }
   }
@@ -824,6 +831,7 @@ class WorldGen {
       if (spot) this.growTree(spot.t, x, spot.sy, z);
     }
     this.vegetation();
+    this.snowCover();
   }
 
   // Trees are assembled in a buffer first (logs forced, crown blocks only where free), then crown
@@ -1025,6 +1033,22 @@ class WorldGen {
       }
     }
   }
+  // Cold biomes (Minecraft's freeze-top-layer): open water at sea level freezes, and every top block
+  // that can hold snow (ground, leaves, logs) under open sky gets a snow layer.
+  snowCover() {
+    const ids = this.ids, TOP = this.TOP;
+    for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
+      if (BPROP[this.BIO[z * 16 + x]].cold !== 2) continue;
+      const s = CI(x, SEA, z);
+      if (ids[s] === B.WATER && ids[s + 256] === 0) ids[s] = B.ICE;
+      let y = Math.min(WORLD_MAX_Y - 2, TOP[z * 16 + x] + 40);
+      while (y > WORLD_MIN_Y && ids[CI(x, y, z)] === 0) y--;
+      const t = ids[CI(x, y, z)];
+      if (y >= WORLD_MAX_Y - 2 || ids[CI(x, y + 1, z)] !== 0) continue;
+      if (t === B.ICE || t === B.PACKED_ICE || t === B.SNOW || isWaterId(t)) continue;
+      if (OPAQUE[t] || (FLAGS[t] & BF_LEAVES)) ids[CI(x, y + 1, z)] = B.SNOW_LAYER;
+    }
+  }
   // land plant for a column (the original's per-biome table)
   plantAt(bio, ob, lx, lz, x, z, y) {
     const r = hash2(this.seed + 31, x * 7 + 3, z * 7 - 5), b2 = hash2(this.seed + 32, x * 11 - 7, z * 11 + 13);
@@ -1125,14 +1149,14 @@ class WorldGen {
   }
   // Sugar cane needs water right next to its ground block (Minecraft's rule, also the one the
   // game checks later). Ground is at sea level; a neighbour column is water there when its
-  // density surface is below sea level and it does not freeze.
+  // density surface is below sea level and its biome is not a freezing one.
   waterBeside(lx, lz, x, z) {
     for (let f = 0; f < 4; f++) {
       const dx = FACE4[f * 2], dz = FACE4[f * 2 + 1], nx = lx + dx, nz = lz + dz;
-      if (nx >= 0 && nx < 16 && nz >= 0 && nz < 16) { if (this.ids[CI(nx, SEA, nz)] === B.WATER) return true; continue; }
+      // water in a cold biome freezes over (snowCover), so it doesn't count
+      if (nx >= 0 && nx < 16 && nz >= 0 && nz < 16) { if (this.ids[CI(nx, SEA, nz)] === B.WATER && BPROP[this.BIO[nz * 16 + nx]].cold !== 2) return true; continue; }
       if (this.groundAt(x + dx, z + dz) >= SEA) continue;
-      const ob = ORIG_BIOME[this.biomeAtBlock(x + dx, z + dz)];
-      if (ob !== BI.FROZEN_OCEAN && ob !== BI.FROZEN_RIVER) return true;
+      if (BPROP[this.biomeAtBlock(x + dx, z + dz)].cold !== 2) return true;
     }
     return false;
   }
@@ -1154,9 +1178,6 @@ class WorldGen {
         } else if (ids[surf] === B.WATER) ids[surf] = B.ICE;
         return;
       }
-      case BI.FROZEN_RIVER:
-        if (ids[surf] === B.WATER) ids[surf] = B.ICE;
-        return;
       case BI.WARM_OCEAN: {
         if (ids[n] !== B.WATER) return;
         const v = V.f2(x * 0.03 + 123.4, z * 0.03 - 567.8);

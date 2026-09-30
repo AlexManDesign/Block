@@ -167,7 +167,7 @@ function setSlot(s, item) {
 // list of everything shown in the creative inventory, grouped by tab
 function creativeCatalog() {
   const tabs = { b: [], c: [], n: [], f: [], t: [] };
-  const skip = new Set(['WATER', 'LAVA', 'FIRE', 'FARMLAND_MOIST', 'FURNACE_LIT', 'BEDROCK_X']);
+  const skip = new Set(['WATER', 'LAVA', 'FIRE', 'FARMLAND_MOIST', 'FURNACE_LIT', 'BEDROCK_X', 'SNOWY_GRASS']);  // snowy grass is how grass looks under snow
   for (let id = 1; id < NB; id++) {
     const k = B_KEY[id];
     if (skip.has(k)) continue;

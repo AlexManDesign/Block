@@ -653,4 +653,6 @@ const BLOCK_TABLE = [
   ["FLOWER_POT", "Flower Pot", "Цветочный горшок", "flower_pot", "pot", "", 0, "", "f"],
   ["RAIL", "Rail", "Рельсы", "rail", "rail", "", 0, "", "f"],
   ["COBWEB", "Cobweb", "Паутина", "cobweb", "x", "", 0, "", "n"],
+  ["SNOW_LAYER", "Snow", "Слой снега", "snow", "snowlayer", "", 0, "", "n"],
+  ["SNOWY_GRASS", "Snowy Grass Block", "Заснеженный дёрн", "snow,grass_block_snow,dirt", "", "", 0, "", "n"],
 ];

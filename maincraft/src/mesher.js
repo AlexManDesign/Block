@@ -168,6 +168,8 @@ class Mesher {
         }
       }
       if ((fl & BF_FACING) && f === FACE_OF_DIR[m & 3]) layer = FRONT[id];
+      // grass under snow shows the snowy side (Minecraft's snowy=true grass block)
+      if (id === B.GRASS && f !== 2 && f !== 3) { const up = ids[p + FACE_DELTA[2]]; if (up === B.SNOW || up === B.SNOW_LAYER) layer = FTEX[B.SNOWY_GRASS * 6 + f]; }
       const nl = light[np];
       const baseSky = nl >> 4, baseBlk = nl & 15;
       const corners = FC[f], aoo = AO_OFF[f];
