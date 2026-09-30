@@ -308,6 +308,13 @@ class WorldGen {
     h += Math.pow(s, 1.15) * wk * 235;
     if (h > SEA - 3) h += this.fbm(this.nHill, x, z, 1 / 22, 3) * (9 + s * 15) * clamp01((h - (SEA - 2)) / 11);
     else if (h < SEA - 4) h += this.fbm(this.nMisc, x, z, 0.018, 2) * 2.2 * (2.5 + clamp01((SEA - 4 - h) / 22) * 8);
+    // Minecraft's highest erosion zone (6) inland is where swamps and mangrove swamps (snowy plains
+    // when frozen) sit: the terrain there is flat around sea level, its dips fill as pools
+    const k6 = sstep(0.5, 0.6, e * 1.5) * sstep(0.1, 0.22, c);
+    if (k6 > 0) {
+      const t = SEA + 0.6 + this.fbm(this.nHill, x, z, 1 / 38, 2) * 2.4;
+      if (h > t) h += (t - h) * k6;
+    }
     // valleys and rivers where weirdness crosses zero (peaks-and-valleys < -0.35)
     if (c > -0.2) {
       const bank = smooth01((-0.05 - pv) / 0.3);
@@ -326,7 +333,7 @@ class WorldGen {
       if (m > 0.8) { mush = smooth01((m - 0.8) / 0.12) * smooth01((-0.85 - c) / 0.12); const k = SEA - 14 + mush * 26 + this.fbm(this.nHill, x, z, 0.02, 2) * 3; if (k > h) h = k; }
     }
     if (h < WORLD_MIN_Y + 4) h = WORLD_MIN_Y + 4; if (h > WORLD_MAX_Y - 4) h = WORLD_MAX_Y - 4;
-    o.h = h; o.c = c; o.e = e; o.w = w; o.pv = pv; o.s = s; o.mush = mush;
+    o.h = h; o.c = c; o.e = e; o.w = w; o.pv = pv; o.s = s; o.mush = mush; o.k6 = k6;
     o.factor = spline(SPL_FACTOR, e);
     return o;
   }
@@ -343,13 +350,17 @@ class WorldGen {
   biomeOf(o, x, z) {
     const h = Math.round(o.h), ti = o.ti;
     if (o.mush > 0.25 && h > SEA) return BI.MUSHROOM_FIELDS;
+    // flat erosion-6 lowland: water level ground is still land (swamp), not beach or ocean
+    const low6 = o.k6 > 0.5 && h > SEA - 4;
     if (h <= SEA) {
       if (o.c > -0.11 && h > SEA - 5 && Math.abs(o.w) < 0.065) return ti === 0 ? BI.FROZEN_RIVER : BI.RIVER;
+    }
+    if (h <= SEA && !low6) {
       const deep = o.c < -0.455;
       return [deep ? BI.DEEP_FROZEN_OCEAN : BI.FROZEN_OCEAN, deep ? BI.DEEP_COLD_OCEAN : BI.COLD_OCEAN,
         deep ? BI.DEEP_OCEAN : BI.OCEAN, deep ? BI.DEEP_LUKEWARM_OCEAN : BI.LUKEWARM_OCEAN, BI.WARM_OCEAN][ti];
     }
-    if (h <= SEA + 2 && o.pv > -0.35) {
+    if (h <= SEA + 2 && o.pv > -0.35 && !low6) {
       if (ti === 0) return BI.SNOWY_BEACH;
       if (ti === 4) return BI.DESERT;
       if (o.e < -0.18) return BI.STONY_SHORE;
@@ -359,7 +370,10 @@ class WorldGen {
     if (sw > -0.12 && sw < 0.12) sw = sw < 0 ? -0.12 : 0.12;
     const q = this._q || (this._q = new Float64Array(5));
     q[0] = o.t; q[1] = clamp1(o.hu * 0.82); q[2] = spline(SPL_CONT_PARAM, o.c < 0.05 ? 0.05 : o.c);
-    q[3] = clamp1(o.e * 1.5 + (o.t > 0.5 ? 0.42 : 0)); q[4] = sw;
+    // hot land is shifted toward higher erosion (deserts over badlands), but never into zone 6:
+    // swamps / mangroves only where the terrain above really is the flat erosion-6 lowland
+    const e15 = o.e * 1.5;
+    q[3] = clamp1(o.t > 0.5 ? Math.min(e15 + 0.42, Math.max(e15, 0.5)) : e15); q[4] = sw;
     return lookupBiome(q);
   }
   // biome at quart resolution (4x4 columns, like Minecraft's biome storage)
@@ -641,6 +655,14 @@ class WorldGen {
         if (ob === BI.STONY_PEAKS && sn > 0.45) top = fill = B.CALCITE;
         // high non-snowy mountains get a snow cap
         if (!P.snow && y > 168 + sn * 12 && h > 150 && !P.badlands && ob !== BI.STONY_PEAKS) top = fill = B.SNOW;
+      }
+      // Minecraft's swamp surface rule: ground at the water line becomes water where the swamp
+      // noise is positive (pools); in mangrove swamps from two blocks lower
+      if (((ob === BI.SWAMP && y === SEA) || (ob === BI.MANGROVE_SWAMP && y >= SEA - 2 && y <= SEA)) &&
+          this.nSurf.n2(wx / 11 + 71.3, wz / 11 - 19.7) > 0) {
+        ids[CI(x, y, z)] = B.WATER;
+        y--; this.TOP[z * 16 + x] = y;
+        top = ob === BI.SWAMP ? B.DIRT : B.MUD;
       }
       ids[CI(x, y, z)] = top;
       for (let d = 1; d <= 3; d++) {
