@@ -33,6 +33,8 @@ function placementFor(world, heldId, hit, fd, player) {
     if (cur === heldId && BASE[heldId]) return [{ x, y, z, id: BASE[heldId], m: 0 }];
   }
   if (cur && !(FLAGS[cur] & BF_REPLACE)) return null;
+  // what water or lava would wash away cannot be placed into it (torches, flowers, saplings...)
+  if ((isWaterId(cur) || cur === B.LAVA) && fluidBreaks(heldId)) return null;
   const below = world.getBlock(x, y - 1, z);
   let m = 0;
   const fl = FLAGS[heldId];

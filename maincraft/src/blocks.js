@@ -105,6 +105,18 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
 function isWaterId(id) { return id === B.WATER || (FLAGS[id] & BF_AQUATIC) !== 0; }
 function isLavaId(id) { return id === B.LAVA; }
 function isLiquidId(id) { return id === B.WATER || id === B.LAVA || (FLAGS[id] & BF_AQUATIC) !== 0; }
+// Blocks that flowing water / lava destroys (Minecraft: not solid and unable to hold a fluid):
+// replaceable plants, torches, flowers, saplings, crops, double plants, buttons, fire. Ladders,
+// doors, sugar cane, cobwebs and underwater plants stay.
+function fluidBreaks(id) {
+  if (!id) return false;
+  const fl = FLAGS[id];
+  if (fl & BF_AQUATIC) return false;
+  if (fl & BF_REPLACE) return true;
+  const sh = SHAPE[id];
+  if (sh === SH.TORCH || sh === SH.FIRE || sh === SH.BUTTON || sh === SH.TALL) return true;
+  return sh === SH.CROSS && id !== B.SUGAR_CANE && id !== B.COBWEB;
+}
 
 // Resolve texture names -> layers once the atlas layer map is known.
 function resolveBlockTextures(layerMap) {

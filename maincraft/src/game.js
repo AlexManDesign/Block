@@ -510,10 +510,12 @@ class Game {
     this.breakingPlayer = false;
   }
   onBlockBroken(x, y, z, id, m, byUpdate) {
-    if (this.mode !== 'survival') return;
+    // the player breaking blocks drops nothing in creative; blocks broken by the world (lost
+    // support, washed away by water) drop in every mode, as in Minecraft
+    if (this.mode !== 'survival' && !byUpdate) return;
     const drops = dropsFor(id, m, byUpdate ? null : this.inv[this.sel]);
     for (const d of drops) this.ents.dropItem(d.id, d.count, x + 0.5, y + 0.3, z + 0.5);
-    this.surv.exh += 0.005;
+    if (!byUpdate) this.surv.exh += 0.005;
   }
 
   use() {

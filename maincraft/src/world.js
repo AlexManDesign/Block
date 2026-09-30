@@ -534,12 +534,12 @@ class World {
     return true;
   }
 
-  // remove block (drops handled by caller via onBreak hook)
-  breakBlock(x, y, z, byUpdate) {
+  // remove block (drops handled by caller via onBreak hook; noDrop: destroyed without drops, e.g. by lava)
+  breakBlock(x, y, z, byUpdate, noDrop) {
     const id = this.getBlock(x, y, z);
     if (!id) return;
     const m = this.getMeta(x, y, z);
-    if (this.onBreak) this.onBreak(x, y, z, id, m, byUpdate);
+    if (this.onBreak && !noDrop) this.onBreak(x, y, z, id, m, byUpdate);
     const fill = (FLAGS[id] & BF_AQUATIC) ? B.WATER : 0;
     this.setBlock(x, y, z, fill, 0);
     const sh = SHAPE[id];
@@ -583,7 +583,7 @@ class World {
       }
       return;
     }
-    if (id === B.WATER || id === B.LAVA || id === 0 || (FLAGS[id] & BF_REPLACE)) this.fluidUpdate(x, y, z, id);
+    if (id === B.WATER || id === B.LAVA || id === 0 || fluidBreaks(id)) this.fluidUpdate(x, y, z, id);
   }
 
   // Minecraft-like fluid flow. meta: bits0-2 level (0 = source), bit3 falling
@@ -594,8 +594,7 @@ class World {
       const drop = isW ? 1 : 2;
       const delay = isW ? 5 : 30;
       const cur = this.getBlock(x, y, z);
-      if (cur !== 0 && cur !== fid && !(FLAGS[cur] & BF_REPLACE)) continue;
-      if (cur !== fid && cur !== 0 && !(FLAGS[cur] & BF_REPLACE)) continue;
+      if (cur !== 0 && cur !== fid && !fluidBreaks(cur)) continue;
       const m = cur === fid ? this.getMeta(x, y, z) : 0;
       const isSource = cur === fid && (m & 7) === 0 && !(m & 8);
       if (cur === fid && (FLAGS[cur] & BF_AQUATIC)) continue;
@@ -629,8 +628,8 @@ class World {
         if (want !== m) { this.setBlock(x, y, z, fid, want); }
       } else {
         if (want === -1) continue;
-        if (cur !== 0 && (FLAGS[cur] & BF_REPLACE)) { if (this.onBreak) this.onBreak(x, y, z, cur, 0, true); }
-        // lava meets water -> stone/cobble
+        // the flow washes the block away: water drops it as an item, lava burns it
+        if (cur !== 0) this.breakBlock(x, y, z, true, !isW);
         this.setBlock(x, y, z, fid, want);
       }
       // spread from this cell
@@ -638,7 +637,7 @@ class World {
       if (this.getBlock(x, y, z) !== fid) continue;
       const lv = (nm & 8) ? 0 : (nm & 7);
       const below = this.getBlock(x, y - 1, z);
-      if (below === 0 || (FLAGS[below] & BF_REPLACE && !same(below))) {
+      if (below === 0 || (fluidBreaks(below) && !same(below))) {
         this.schedule(x, y - 1, z, delay);
       } else if (!isW && below === B.WATER) {
         this.setBlock(x, y - 1, z, B.STONE, 0);
@@ -646,7 +645,7 @@ class World {
         if (lv + drop <= 7) for (let d = 0; d < 4; d++) {
           const nx = x + DIRX_W[d], nz = z + DIRZ_W[d];
           const nid = this.getBlock(nx, y, nz);
-          if (nid === 0 || ((FLAGS[nid] & BF_REPLACE) && !same(nid))) this.schedule(nx, y, nz, delay);
+          if (nid === 0 || (fluidBreaks(nid) && !same(nid))) this.schedule(nx, y, nz, delay);
           else if (!isW && nid === B.WATER) this.setBlock(nx, y, nz, B.COBBLE, 0);
           else if (isW && nid === B.LAVA) this.setBlock(nx, y, nz, (this.getMeta(nx, y, nz) & 7) === 0 ? B.OBSIDIAN : B.COBBLE, 0);
         }
