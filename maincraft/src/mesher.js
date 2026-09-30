@@ -50,11 +50,17 @@ const FACE_DELTA = FN.map(n => n[0] * SX + n[1] * SY + n[2] * SZ);
 const AO_CURVE = [0.62, 0.7467, 0.8734, 1.0];
 
 class QBuf {
-  constructor(q) { this.d = new Uint32Array(q * 12); this.n = 0; }
+  constructor(q) { this.d = new Uint32Array(q * 12); this.g = new Uint8Array(q); this.n = 0; }
   ensure() {
-    if ((this.n + 2) * 12 > this.d.length) { const nd = new Uint32Array(this.d.length * 2); nd.set(this.d); this.d = nd; }
+    if ((this.n + 2) * 12 > this.d.length) {
+      const nd = new Uint32Array(this.d.length * 2); nd.set(this.d); this.d = nd;
+      const ng = new Uint8Array(this.g.length * 2); ng.set(this.g); this.g = ng;
+    }
   }
 }
+// Facing groups for directional culling: 0 -X, 1 +X, 2 -Y, 3 +Y, 4 -Z, 5 +Z, 6 anything else.
+// Inside each render pass the quads are stored group by group; counts per group go with the mesh.
+const FACE_GROUPS = 7;
 
 class Mesher {
   constructor() {
@@ -70,6 +76,17 @@ class Mesher {
     buf.ensure();
     const d = buf.d;
     let o = buf.n * 12;
+    // group from the winding normal of the emitted quad (front face = counter-clockwise)
+    const a = flip ? 1 : 0, b = flip ? 2 : 1, c = flip ? 3 : 2;
+    const e1x = px[b] - px[a], e1y = py[b] - py[a], e1z = pz[b] - pz[a];
+    const e2x = px[c] - px[a], e2y = py[c] - py[a], e2z = pz[c] - pz[a];
+    const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    let g = 6;
+    const flat = (q) => q[0] === q[1] && q[1] === q[2] && q[2] === q[3] && q[0] >= 0 && q[0] <= 256;   // 1/16-block units, section = 0..256
+    if (nx !== 0 && ny === 0 && nz === 0 && flat(px)) g = nx > 0 ? 1 : 0;
+    else if (ny !== 0 && nx === 0 && nz === 0 && flat(py)) g = ny > 0 ? 3 : 2;
+    else if (nz !== 0 && nx === 0 && ny === 0 && flat(pz)) g = nz > 0 ? 5 : 4;
+    buf.g[buf.n] = g;
     for (let k = 0; k < 4; k++) {
       const v = flip ? (k + 1) & 3 : k;
       let x = Math.round(px[v] * 2), y = Math.round(py[v] * 2), z = Math.round(pz[v] * 2);
@@ -107,9 +124,21 @@ class Mesher {
     const counts = this.bufs.map(b => b.n);
     const total = counts[0] + counts[1] + counts[2];
     const out = new Uint32Array(total * 12);
+    const gc = new Int32Array(3 * FACE_GROUPS);
     let off = 0;
-    for (const b of this.bufs) { out.set(b.d.subarray(0, b.n * 12), off); off += b.n * 12; }
-    return { data: out, counts, vis };
+    for (let pass = 0; pass < 3; pass++) {
+      const b = this.bufs[pass], G = gc.subarray(pass * FACE_GROUPS, pass * FACE_GROUPS + FACE_GROUPS);
+      for (let q = 0; q < b.n; q++) G[b.g[q]]++;
+      // counting sort of the pass's quads by facing group
+      const start = new Int32Array(FACE_GROUPS);
+      for (let k = 1; k < FACE_GROUPS; k++) start[k] = start[k - 1] + G[k - 1];
+      for (let q = 0; q < b.n; q++) {
+        const dst = (off + start[b.g[q]]++) * 12;
+        out.set(b.d.subarray(q * 12, q * 12 + 12), dst);
+      }
+      off += b.n;
+    }
+    return { data: out, counts, gc, vis };
   }
 
   // ---------------------------------------------------------------- full cubes

@@ -11,6 +11,26 @@ const Settings = {
 };
 
 const DAY_LEN = 1200; // seconds
+// model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
+const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
+const MB_SHADE = [0.72, 0.72, 1.0, 0.55, 0.8, 0.9], MB_TRI = [0, 1, 2, 0, 2, 3];
+
+// random-tick behaviour per block id, derived once from the block names
+// kind: 1 crop 0-2, 2 ripe stem, 3 sapling, 4 dirt, 5 grass, 6 fire, 7 farmland; next: crop stage / stem fruit
+const RT = (function () {
+  const n = B_KEY.length, kind = new Uint8Array(n), next = new Uint16Array(n), flam = new Uint8Array(n);
+  for (let id = 1; id < n; id++) {
+    const k = B_KEY[id] || '';
+    const crop = /^(WHEAT|CARROTS|POTATOES|PUMPKIN_STEM|MELON_STEM)_([0-2])$/.exec(k);
+    if (crop) { kind[id] = 1; next[id] = B[crop[1] + '_' + (+crop[2] + 1)]; }
+    else if (k === 'PUMPKIN_STEM_3') { kind[id] = 2; next[id] = B.PUMPKIN; }
+    else if (k === 'MELON_STEM_3') { kind[id] = 2; next[id] = B.MELON; }
+    else if (/SAPLING$/.test(k)) kind[id] = 3;
+    if ((FLAGS[id] & BF_LEAVES) || /PLANKS|LOG|WOOL|WOOD|BOOKSHELF/.test(k)) flam[id] = 1;
+  }
+  kind[B.DIRT] = 4; kind[B.GRASS] = 5; kind[B.FIRE] = 6; kind[B.FARMLAND] = 7; kind[B.FARMLAND_MOIST] = 7;
+  return { kind, next, flam };
+})();
 
 class Game {
   constructor(assets, workerSrc) {
@@ -775,8 +795,8 @@ class Game {
   }
 
   randomTicks() {
-    // a few random ticks per column near the player: crops, saplings, grass spread, fire, leaves nothing
-    const w = this.world, p = this.player;
+    // a few random ticks per section near the player (20/s): crops, stems, saplings, grass, fire, farmland
+    const w = this.world, p = this.player, kind = RT.kind;
     const pcx = Math.floor(p.pos[0]) >> 4, pcz = Math.floor(p.pos[2]) >> 4;
     for (let dz = -4; dz <= 4; dz++) for (let dx = -4; dx <= 4; dx++) {
       const c = w.col(pcx + dx, pcz + dz);
@@ -786,44 +806,48 @@ class Game {
         if (!sec) continue;
         for (let k = 0; k < 2; k++) {
           const i = (Math.random() * 4096) | 0, id = sec.ids[i];
-          if (!id) continue;
-          const x = c.cx * 16 + (i & 15), z = c.cz * 16 + ((i >> 4) & 15), y = WORLD_MIN_Y + s * 16 + (i >> 8);
-          this.randomTick(x, y, z, id);
+          if (!kind[id]) continue;
+          this.randomTick(c.cx * 16 + (i & 15), WORLD_MIN_Y + s * 16 + (i >> 8), c.cz * 16 + ((i >> 4) & 15), id);
         }
       }
     }
   }
   randomTick(x, y, z, id) {
-    const w = this.world, k = B_KEY[id];
-    const crop = /^(WHEAT|CARROTS|POTATOES|PUMPKIN_STEM|MELON_STEM)_([0-2])$/.exec(k);
-    if (crop) { if (Math.random() < 0.3 && (w.getLight(x, y, z) >> 4) > 8) w.setBlock(x, y, z, B[crop[1] + '_' + (+crop[2] + 1)], 0); return; }
-    if ((k === 'PUMPKIN_STEM_3' || k === 'MELON_STEM_3') && Math.random() < 0.2) {
-      const d = (Math.random() * 4) | 0, nx = x + DIRX_W[d], nz = z + DIRZ_W[d];
-      if (!w.getBlock(nx, y, nz) && isSoil(w.getBlock(nx, y - 1, nz))) w.setBlock(nx, y, nz, k === 'PUMPKIN_STEM_3' ? B.PUMPKIN : B.MELON, 0);
-      return;
-    }
-    if (/SAPLING$/.test(k)) { if (Math.random() < 0.05) this.growSapling(x, y, z, id); return; }
-    if (id === B.DIRT) {
-      if (!OPAQUE[w.getBlock(x, y + 1, z)] && (w.getLight(x, y + 1, z) >> 4) >= 9 && !isWaterId(w.getBlock(x, y + 1, z))) {
-        for (let t = 0; t < 4; t++) if (w.getBlock(x + ((Math.random() * 3) | 0) - 1, y + ((Math.random() * 3) | 0) - 1, z + ((Math.random() * 3) | 0) - 1) === B.GRASS) { w.setBlock(x, y, z, B.GRASS, 0); break; }
+    const w = this.world;
+    switch (RT.kind[id]) {
+      case 1: // crop stage 0-2
+        if (Math.random() < 0.3 && (w.getLight(x, y, z) >> 4) > 8) w.setBlock(x, y, z, RT.next[id], 0);
+        return;
+      case 2: // ripe stem: grow the fruit next to it
+        if (Math.random() < 0.2) {
+          const d = (Math.random() * 4) | 0, nx = x + DIRX_W[d], nz = z + DIRZ_W[d];
+          if (!w.getBlock(nx, y, nz) && isSoil(w.getBlock(nx, y - 1, nz))) w.setBlock(nx, y, nz, RT.next[id], 0);
+        }
+        return;
+      case 3: // sapling
+        if (Math.random() < 0.05) this.growSapling(x, y, z, id);
+        return;
+      case 4: // dirt: grass spreads onto it
+        if (!OPAQUE[w.getBlock(x, y + 1, z)] && (w.getLight(x, y + 1, z) >> 4) >= 9 && !isWaterId(w.getBlock(x, y + 1, z))) {
+          for (let t = 0; t < 4; t++) if (w.getBlock(x + ((Math.random() * 3) | 0) - 1, y + ((Math.random() * 3) | 0) - 1, z + ((Math.random() * 3) | 0) - 1) === B.GRASS) { w.setBlock(x, y, z, B.GRASS, 0); break; }
+        }
+        return;
+      case 5: // grass dies under an opaque block
+        if (OPAQUE[w.getBlock(x, y + 1, z)]) w.setBlock(x, y, z, B.DIRT, 0);
+        return;
+      case 6: // fire burns out or spreads to flammable blocks
+        if (Math.random() < 0.4) { w.setBlock(x, y, z, 0, 0); return; }
+        for (let t = 0; t < 3; t++) {
+          const nx = x + ((Math.random() * 3) | 0) - 1, ny = y + ((Math.random() * 3) | 0) - 1, nz = z + ((Math.random() * 3) | 0) - 1;
+          if (RT.flam[w.getBlock(nx, ny, nz)] && Math.random() < 0.3) w.setBlock(nx, ny, nz, B.FIRE, 0);
+        }
+        return;
+      case 7: { // farmland: moist within 4 blocks of water
+        let wet = false;
+        for (let dz = -4; dz <= 4 && !wet; dz++) for (let dx = -4; dx <= 4 && !wet; dx++) if (w.getBlock(x + dx, y, z + dz) === B.WATER) wet = true;
+        const want = wet ? B.FARMLAND_MOIST : B.FARMLAND;
+        if (want !== id) w.setBlock(x, y, z, want, 0);
       }
-      return;
-    }
-    if (id === B.GRASS && OPAQUE[w.getBlock(x, y + 1, z)]) { w.setBlock(x, y, z, B.DIRT, 0); return; }
-    if (id === B.FIRE) {
-      if (Math.random() < 0.4) { w.setBlock(x, y, z, 0, 0); return; }
-      for (let t = 0; t < 3; t++) {
-        const nx = x + ((Math.random() * 3) | 0) - 1, ny = y + ((Math.random() * 3) | 0) - 1, nz = z + ((Math.random() * 3) | 0) - 1;
-        const n = w.getBlock(nx, ny, nz);
-        if ((FLAGS[n] & BF_LEAVES) || /PLANKS|LOG|WOOL|WOOD|BOOKSHELF/.test(B_KEY[n] || '')) { if (Math.random() < 0.3) w.setBlock(nx, ny, nz, B.FIRE, 0); }
-      }
-      return;
-    }
-    if (id === B.FARMLAND || id === B.FARMLAND_MOIST) {
-      let wet = false;
-      for (let dz = -4; dz <= 4 && !wet; dz++) for (let dx = -4; dx <= 4 && !wet; dx++) if (w.getBlock(x + dx, y, z + dz) === B.WATER) wet = true;
-      const want = wet ? B.FARMLAND_MOIST : B.FARMLAND;
-      if (want !== id) w.setBlock(x, y, z, want, 0);
     }
   }
 
@@ -1040,23 +1064,27 @@ class Game {
     gl.enable(gl.CULL_FACE);
   }
 
-  // MC-style box with standard skin unwrap. M maps local coords -> camera relative
+  // MC-style box with standard skin unwrap. M maps local coords -> camera relative.
+  // The 8 corners are transformed once and shared by the faces (no per-face temporaries).
   pushModelBox(out, M, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
-    const tc = tint || [1, 1, 1];
-    const faces = [
-      // [corners(4) as [x,y,z]], uv rect [u0,v0,u1,v1], shade
-      [[[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], [u, v + d, u + d, v + d + h], 0.72],             // +x (right side in skin = u..u+d)
-      [[[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], [u + d + w, v + d, u + d + w + d, v + d + h], 0.72], // -x
-      [[[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], [u + d, v, u + d + w, v + d], 1.0],               // top
-      [[[x1, y0, z1], [x0, y0, z1], [x0, y0, z0], [x1, y0, z0]], [u + d + w, v, u + d + w + w, v + d], 0.55],      // bottom
-      [[[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], [u + d + w + d, v + d, u + d + w + d + w, v + d + h], 0.8], // back (+z)
-      [[[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], [u + d, v + d, u + d + w, v + d + h], 0.9],       // front (-z)
-    ];
-    for (const [q, uv, sh] of faces) {
-      const U = mirror ? [[uv[2], uv[3]], [uv[0], uv[3]], [uv[0], uv[1]], [uv[2], uv[1]]] : [[uv[0], uv[3]], [uv[2], uv[3]], [uv[2], uv[1]], [uv[0], uv[1]]];
-      const P = q.map(c => M(c[0], c[1], c[2]));
-      for (const i of [0, 1, 2, 0, 2, 3]) {
-        out.push(P[i][0], P[i][1], P[i][2], U[i][0] / tw, U[i][1] / th, 0, light * sh * tc[0], light * sh * tc[1], light * sh * tc[2], 1);
+    const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24));
+    for (let k = 0; k < 8; k++) { const q = M(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
+    // uv rects [u0, v0, u1, v1] of +x, -x, top, bottom, back (+z), front (-z)
+    R[0] = u; R[1] = v + d; R[2] = u + d; R[3] = v + d + h;
+    R[4] = u + d + w; R[5] = v + d; R[6] = u + d + w + d; R[7] = v + d + h;
+    R[8] = u + d; R[9] = v; R[10] = u + d + w; R[11] = v + d;
+    R[12] = u + d + w; R[13] = v; R[14] = u + d + w + w; R[15] = v + d;
+    R[16] = u + d + w + d; R[17] = v + d; R[18] = u + d + w + d + w; R[19] = v + d + h;
+    R[20] = u + d; R[21] = v + d; R[22] = u + d + w; R[23] = v + d + h;
+    const tr = tint ? tint[0] : 1, tg = tint ? tint[1] : 1, tb = tint ? tint[2] : 1;
+    for (let f = 0; f < 6; f++) {
+      const L = light * MB_SHADE[f], cr = L * tr, cg = L * tg, cb = L * tb;
+      const ua = R[f * 4] / tw, va = R[f * 4 + 1] / th, ub = R[f * 4 + 2] / tw, vb = R[f * 4 + 3] / th;
+      for (let t = 0; t < 6; t++) {
+        const i = MB_TRI[t], c = MB_FACES[f * 4 + i] * 3;
+        // corner uv: 0 (u0,v1) 1 (u1,v1) 2 (u1,v0) 3 (u0,v0), mirrored horizontally when asked
+        const left = (i === 0 || i === 3) !== !!mirror;
+        out.push(C[c], C[c + 1], C[c + 2], left ? ua : ub, i < 2 ? vb : va, 0, cr, cg, cb, 1);
       }
     }
   }

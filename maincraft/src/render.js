@@ -202,6 +202,7 @@ class Renderer {
     this.emptyVao = gl.createVertexArray();
     this.initTextures();
     this.initQuadIndex(1 << 17);
+    this.initMultiDraw();
     this.dyn = this.makeDyn(); // dynamic buffer for sprites/particles/etc
     this.lineBuf = gl.createBuffer(); this.lineVao = gl.createVertexArray();
     gl.bindVertexArray(this.lineVao); gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuf);
@@ -334,6 +335,11 @@ class Renderer {
     return t;
   }
 
+  initMultiDraw() {
+    this.multiDraw = this.gl.getExtension('WEBGL_multi_draw');
+    this.rangeCnt = new Int32Array(8); this.rangeOff = new Int32Array(8);
+    this.dirCull = true;
+  }
   initQuadIndex(maxQuads) {
     const gl = this.gl;
     const idx = new Uint32Array(maxQuads * 6);
@@ -372,7 +378,7 @@ class Renderer {
       gl.bufferData(gl.ARRAY_BUFFER, d.data, gl.STATIC_DRAW);
       m.cap = d.data.byteLength;
     } else gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.data);
-    m.counts = d.counts; m.vis = d.vis;
+    m.counts = d.counts; m.gc = d.gc || null; m.vis = d.vis;
   }
   freeColumn(c) {
     const gl = this.gl;
@@ -505,10 +511,13 @@ class Renderer {
     if (p.u.uAlphaMul) gl.uniform1f(p.u.uAlphaMul, 1);
     gl.uniform1i(p.u.uTex, 0); gl.uniform1i(p.u.uLM, 1); gl.uniform1i(p.u.uAnim, 2);
   }
+  // Draws one pass of every visible section. Quads are grouped by facing (-X,+X,-Y,+Y,-Z,+Z,other);
+  // groups that face away from the camera for the whole section are skipped (directional culling),
+  // the rest go out in one multi-draw per section.
   drawPass(pass, cam) {
-    const gl = this.gl, list = this.visList, n = this.visCount;
+    const gl = this.gl, list = this.visList, n = this.visCount, md = this.multiDraw;
     const p = pass === 0 ? this.progSolid : pass === 1 ? this.progCutout : this.progTrans;
-    const u = p.u.uOrigin;
+    const u = p.u.uOrigin, RC = this.rangeCnt, RO = this.rangeOff;
     let draws = 0, quads = 0;
     const back = pass === 2;
     for (let k = 0; k < n; k++) {
@@ -516,10 +525,32 @@ class Renderer {
       const cnt = m.counts[pass];
       if (!cnt) continue;
       const first = pass === 0 ? 0 : pass === 1 ? m.counts[0] : m.counts[0] + m.counts[1];
-      gl.uniform3f(u, m.cx * 16 - cam[0], WORLD_MIN_Y + m.sy * 16 - cam[1], m.cz * 16 - cam[2]);
+      const ox = m.cx * 16 - cam[0], oy = WORLD_MIN_Y + m.sy * 16 - cam[1], oz = m.cz * 16 - cam[2];
+      gl.uniform3f(u, ox, oy, oz);
       gl.bindVertexArray(m.vao);
-      gl.drawElements(gl.TRIANGLES, cnt * 6, gl.UNSIGNED_INT, first * 24);
-      draws++; quads += cnt;
+      const gc = m.gc;
+      if (!gc || !this.dirCull) {
+        gl.drawElements(gl.TRIANGLES, cnt * 6, gl.UNSIGNED_INT, first * 24);
+        draws++; quads += cnt;
+        continue;
+      }
+      // camera below / above / beside the section box on each axis (camera sits at the origin)
+      const vis = (ox > 0 ? 1 : ox + 16 < 0 ? 2 : 3) | (oy > 0 ? 4 : oy + 16 < 0 ? 8 : 12) | (oz > 0 ? 16 : oz + 16 < 0 ? 32 : 48) | 64;
+      let r = 0, at = first, open = false;
+      const g0 = pass * 7;
+      for (let g = 0; g < 7; g++) {
+        const c = gc[g0 + g];
+        if (!c) continue;
+        if (vis & (1 << g)) {
+          if (open && RO[r - 1] + RC[r - 1] * 4 === at * 24) RC[r - 1] += c * 6;
+          else { RC[r] = c * 6; RO[r] = at * 24; r++; open = true; }
+          quads += c;
+        }
+        at += c;
+      }
+      if (!r) continue;
+      if (md) { md.multiDrawElementsWEBGL(gl.TRIANGLES, RC, 0, gl.UNSIGNED_INT, RO, 0, r); draws++; }
+      else for (let q = 0; q < r; q++) { gl.drawElements(gl.TRIANGLES, RC[q], gl.UNSIGNED_INT, RO[q]); draws++; }
     }
     this.stats.draws += draws; this.stats.quads += quads;
   }

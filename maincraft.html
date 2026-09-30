@@ -2489,11 +2489,17 @@ const FACE_DELTA = FN.map(n => n[0] * SX + n[1] * SY + n[2] * SZ);
 const AO_CURVE = [0.62, 0.7467, 0.8734, 1.0];
 
 class QBuf {
-  constructor(q) { this.d = new Uint32Array(q * 12); this.n = 0; }
+  constructor(q) { this.d = new Uint32Array(q * 12); this.g = new Uint8Array(q); this.n = 0; }
   ensure() {
-    if ((this.n + 2) * 12 > this.d.length) { const nd = new Uint32Array(this.d.length * 2); nd.set(this.d); this.d = nd; }
+    if ((this.n + 2) * 12 > this.d.length) {
+      const nd = new Uint32Array(this.d.length * 2); nd.set(this.d); this.d = nd;
+      const ng = new Uint8Array(this.g.length * 2); ng.set(this.g); this.g = ng;
+    }
   }
 }
+// Facing groups for directional culling: 0 -X, 1 +X, 2 -Y, 3 +Y, 4 -Z, 5 +Z, 6 anything else.
+// Inside each render pass the quads are stored group by group; counts per group go with the mesh.
+const FACE_GROUPS = 7;
 
 class Mesher {
   constructor() {
@@ -2509,6 +2515,17 @@ class Mesher {
     buf.ensure();
     const d = buf.d;
     let o = buf.n * 12;
+    // group from the winding normal of the emitted quad (front face = counter-clockwise)
+    const a = flip ? 1 : 0, b = flip ? 2 : 1, c = flip ? 3 : 2;
+    const e1x = px[b] - px[a], e1y = py[b] - py[a], e1z = pz[b] - pz[a];
+    const e2x = px[c] - px[a], e2y = py[c] - py[a], e2z = pz[c] - pz[a];
+    const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    let g = 6;
+    const flat = (q) => q[0] === q[1] && q[1] === q[2] && q[2] === q[3] && q[0] >= 0 && q[0] <= 256;   // 1/16-block units, section = 0..256
+    if (nx !== 0 && ny === 0 && nz === 0 && flat(px)) g = nx > 0 ? 1 : 0;
+    else if (ny !== 0 && nx === 0 && nz === 0 && flat(py)) g = ny > 0 ? 3 : 2;
+    else if (nz !== 0 && nx === 0 && ny === 0 && flat(pz)) g = nz > 0 ? 5 : 4;
+    buf.g[buf.n] = g;
     for (let k = 0; k < 4; k++) {
       const v = flip ? (k + 1) & 3 : k;
       let x = Math.round(px[v] * 2), y = Math.round(py[v] * 2), z = Math.round(pz[v] * 2);
@@ -2546,9 +2563,21 @@ class Mesher {
     const counts = this.bufs.map(b => b.n);
     const total = counts[0] + counts[1] + counts[2];
     const out = new Uint32Array(total * 12);
+    const gc = new Int32Array(3 * FACE_GROUPS);
     let off = 0;
-    for (const b of this.bufs) { out.set(b.d.subarray(0, b.n * 12), off); off += b.n * 12; }
-    return { data: out, counts, vis };
+    for (let pass = 0; pass < 3; pass++) {
+      const b = this.bufs[pass], G = gc.subarray(pass * FACE_GROUPS, pass * FACE_GROUPS + FACE_GROUPS);
+      for (let q = 0; q < b.n; q++) G[b.g[q]]++;
+      // counting sort of the pass's quads by facing group
+      const start = new Int32Array(FACE_GROUPS);
+      for (let k = 1; k < FACE_GROUPS; k++) start[k] = start[k - 1] + G[k - 1];
+      for (let q = 0; q < b.n; q++) {
+        const dst = (off + start[b.g[q]]++) * 12;
+        out.set(b.d.subarray(q * 12, q * 12 + 12), dst);
+      }
+      off += b.n;
+    }
+    return { data: out, counts, gc, vis };
   }
 
   // ---------------------------------------------------------------- full cubes
@@ -3157,7 +3186,7 @@ self.onmessage = function (e) {
   if (d.t === 'mesh') {
     MESHER.sway = d.sway !== false;
     const r = MESHER.mesh(d);
-    self.postMessage({ t: 'mesh', cx: d.cx, cz: d.cz, sy: d.sy, ver: d.ver, data: r.data, counts: r.counts, vis: r.vis,
+    self.postMessage({ t: 'mesh', cx: d.cx, cz: d.cz, sy: d.sy, ver: d.ver, data: r.data, counts: r.counts, gc: r.gc, vis: r.vis,
       ids: d.ids, meta: d.meta, light: d.light }, [r.data.buffer, d.ids.buffer, d.meta.buffer, d.light.buffer]);
     return;
   }
@@ -5492,11 +5521,17 @@ const FACE_DELTA = FN.map(n => n[0] * SX + n[1] * SY + n[2] * SZ);
 const AO_CURVE = [0.62, 0.7467, 0.8734, 1.0];
 
 class QBuf {
-  constructor(q) { this.d = new Uint32Array(q * 12); this.n = 0; }
+  constructor(q) { this.d = new Uint32Array(q * 12); this.g = new Uint8Array(q); this.n = 0; }
   ensure() {
-    if ((this.n + 2) * 12 > this.d.length) { const nd = new Uint32Array(this.d.length * 2); nd.set(this.d); this.d = nd; }
+    if ((this.n + 2) * 12 > this.d.length) {
+      const nd = new Uint32Array(this.d.length * 2); nd.set(this.d); this.d = nd;
+      const ng = new Uint8Array(this.g.length * 2); ng.set(this.g); this.g = ng;
+    }
   }
 }
+// Facing groups for directional culling: 0 -X, 1 +X, 2 -Y, 3 +Y, 4 -Z, 5 +Z, 6 anything else.
+// Inside each render pass the quads are stored group by group; counts per group go with the mesh.
+const FACE_GROUPS = 7;
 
 class Mesher {
   constructor() {
@@ -5512,6 +5547,17 @@ class Mesher {
     buf.ensure();
     const d = buf.d;
     let o = buf.n * 12;
+    // group from the winding normal of the emitted quad (front face = counter-clockwise)
+    const a = flip ? 1 : 0, b = flip ? 2 : 1, c = flip ? 3 : 2;
+    const e1x = px[b] - px[a], e1y = py[b] - py[a], e1z = pz[b] - pz[a];
+    const e2x = px[c] - px[a], e2y = py[c] - py[a], e2z = pz[c] - pz[a];
+    const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    let g = 6;
+    const flat = (q) => q[0] === q[1] && q[1] === q[2] && q[2] === q[3] && q[0] >= 0 && q[0] <= 256;   // 1/16-block units, section = 0..256
+    if (nx !== 0 && ny === 0 && nz === 0 && flat(px)) g = nx > 0 ? 1 : 0;
+    else if (ny !== 0 && nx === 0 && nz === 0 && flat(py)) g = ny > 0 ? 3 : 2;
+    else if (nz !== 0 && nx === 0 && ny === 0 && flat(pz)) g = nz > 0 ? 5 : 4;
+    buf.g[buf.n] = g;
     for (let k = 0; k < 4; k++) {
       const v = flip ? (k + 1) & 3 : k;
       let x = Math.round(px[v] * 2), y = Math.round(py[v] * 2), z = Math.round(pz[v] * 2);
@@ -5549,9 +5595,21 @@ class Mesher {
     const counts = this.bufs.map(b => b.n);
     const total = counts[0] + counts[1] + counts[2];
     const out = new Uint32Array(total * 12);
+    const gc = new Int32Array(3 * FACE_GROUPS);
     let off = 0;
-    for (const b of this.bufs) { out.set(b.d.subarray(0, b.n * 12), off); off += b.n * 12; }
-    return { data: out, counts, vis };
+    for (let pass = 0; pass < 3; pass++) {
+      const b = this.bufs[pass], G = gc.subarray(pass * FACE_GROUPS, pass * FACE_GROUPS + FACE_GROUPS);
+      for (let q = 0; q < b.n; q++) G[b.g[q]]++;
+      // counting sort of the pass's quads by facing group
+      const start = new Int32Array(FACE_GROUPS);
+      for (let k = 1; k < FACE_GROUPS; k++) start[k] = start[k - 1] + G[k - 1];
+      for (let q = 0; q < b.n; q++) {
+        const dst = (off + start[b.g[q]]++) * 12;
+        out.set(b.d.subarray(q * 12, q * 12 + 12), dst);
+      }
+      off += b.n;
+    }
+    return { data: out, counts, gc, vis };
   }
 
   // ---------------------------------------------------------------- full cubes
@@ -7207,6 +7265,7 @@ class Renderer {
     this.emptyVao = gl.createVertexArray();
     this.initTextures();
     this.initQuadIndex(1 << 17);
+    this.initMultiDraw();
     this.dyn = this.makeDyn(); // dynamic buffer for sprites/particles/etc
     this.lineBuf = gl.createBuffer(); this.lineVao = gl.createVertexArray();
     gl.bindVertexArray(this.lineVao); gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuf);
@@ -7339,6 +7398,11 @@ class Renderer {
     return t;
   }
 
+  initMultiDraw() {
+    this.multiDraw = this.gl.getExtension('WEBGL_multi_draw');
+    this.rangeCnt = new Int32Array(8); this.rangeOff = new Int32Array(8);
+    this.dirCull = true;
+  }
   initQuadIndex(maxQuads) {
     const gl = this.gl;
     const idx = new Uint32Array(maxQuads * 6);
@@ -7377,7 +7441,7 @@ class Renderer {
       gl.bufferData(gl.ARRAY_BUFFER, d.data, gl.STATIC_DRAW);
       m.cap = d.data.byteLength;
     } else gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.data);
-    m.counts = d.counts; m.vis = d.vis;
+    m.counts = d.counts; m.gc = d.gc || null; m.vis = d.vis;
   }
   freeColumn(c) {
     const gl = this.gl;
@@ -7510,10 +7574,13 @@ class Renderer {
     if (p.u.uAlphaMul) gl.uniform1f(p.u.uAlphaMul, 1);
     gl.uniform1i(p.u.uTex, 0); gl.uniform1i(p.u.uLM, 1); gl.uniform1i(p.u.uAnim, 2);
   }
+  // Draws one pass of every visible section. Quads are grouped by facing (-X,+X,-Y,+Y,-Z,+Z,other);
+  // groups that face away from the camera for the whole section are skipped (directional culling),
+  // the rest go out in one multi-draw per section.
   drawPass(pass, cam) {
-    const gl = this.gl, list = this.visList, n = this.visCount;
+    const gl = this.gl, list = this.visList, n = this.visCount, md = this.multiDraw;
     const p = pass === 0 ? this.progSolid : pass === 1 ? this.progCutout : this.progTrans;
-    const u = p.u.uOrigin;
+    const u = p.u.uOrigin, RC = this.rangeCnt, RO = this.rangeOff;
     let draws = 0, quads = 0;
     const back = pass === 2;
     for (let k = 0; k < n; k++) {
@@ -7521,10 +7588,32 @@ class Renderer {
       const cnt = m.counts[pass];
       if (!cnt) continue;
       const first = pass === 0 ? 0 : pass === 1 ? m.counts[0] : m.counts[0] + m.counts[1];
-      gl.uniform3f(u, m.cx * 16 - cam[0], WORLD_MIN_Y + m.sy * 16 - cam[1], m.cz * 16 - cam[2]);
+      const ox = m.cx * 16 - cam[0], oy = WORLD_MIN_Y + m.sy * 16 - cam[1], oz = m.cz * 16 - cam[2];
+      gl.uniform3f(u, ox, oy, oz);
       gl.bindVertexArray(m.vao);
-      gl.drawElements(gl.TRIANGLES, cnt * 6, gl.UNSIGNED_INT, first * 24);
-      draws++; quads += cnt;
+      const gc = m.gc;
+      if (!gc || !this.dirCull) {
+        gl.drawElements(gl.TRIANGLES, cnt * 6, gl.UNSIGNED_INT, first * 24);
+        draws++; quads += cnt;
+        continue;
+      }
+      // camera below / above / beside the section box on each axis (camera sits at the origin)
+      const vis = (ox > 0 ? 1 : ox + 16 < 0 ? 2 : 3) | (oy > 0 ? 4 : oy + 16 < 0 ? 8 : 12) | (oz > 0 ? 16 : oz + 16 < 0 ? 32 : 48) | 64;
+      let r = 0, at = first, open = false;
+      const g0 = pass * 7;
+      for (let g = 0; g < 7; g++) {
+        const c = gc[g0 + g];
+        if (!c) continue;
+        if (vis & (1 << g)) {
+          if (open && RO[r - 1] + RC[r - 1] * 4 === at * 24) RC[r - 1] += c * 6;
+          else { RC[r] = c * 6; RO[r] = at * 24; r++; open = true; }
+          quads += c;
+        }
+        at += c;
+      }
+      if (!r) continue;
+      if (md) { md.multiDrawElementsWEBGL(gl.TRIANGLES, RC, 0, gl.UNSIGNED_INT, RO, 0, r); draws++; }
+      else for (let q = 0; q < r; q++) { gl.drawElements(gl.TRIANGLES, RC[q], gl.UNSIGNED_INT, RO[q]); draws++; }
     }
     this.stats.draws += draws; this.stats.quads += quads;
   }
@@ -9892,6 +9981,26 @@ const Settings = {
 };
 
 const DAY_LEN = 1200; // seconds
+// model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
+const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
+const MB_SHADE = [0.72, 0.72, 1.0, 0.55, 0.8, 0.9], MB_TRI = [0, 1, 2, 0, 2, 3];
+
+// random-tick behaviour per block id, derived once from the block names
+// kind: 1 crop 0-2, 2 ripe stem, 3 sapling, 4 dirt, 5 grass, 6 fire, 7 farmland; next: crop stage / stem fruit
+const RT = (function () {
+  const n = B_KEY.length, kind = new Uint8Array(n), next = new Uint16Array(n), flam = new Uint8Array(n);
+  for (let id = 1; id < n; id++) {
+    const k = B_KEY[id] || '';
+    const crop = /^(WHEAT|CARROTS|POTATOES|PUMPKIN_STEM|MELON_STEM)_([0-2])$/.exec(k);
+    if (crop) { kind[id] = 1; next[id] = B[crop[1] + '_' + (+crop[2] + 1)]; }
+    else if (k === 'PUMPKIN_STEM_3') { kind[id] = 2; next[id] = B.PUMPKIN; }
+    else if (k === 'MELON_STEM_3') { kind[id] = 2; next[id] = B.MELON; }
+    else if (/SAPLING$/.test(k)) kind[id] = 3;
+    if ((FLAGS[id] & BF_LEAVES) || /PLANKS|LOG|WOOL|WOOD|BOOKSHELF/.test(k)) flam[id] = 1;
+  }
+  kind[B.DIRT] = 4; kind[B.GRASS] = 5; kind[B.FIRE] = 6; kind[B.FARMLAND] = 7; kind[B.FARMLAND_MOIST] = 7;
+  return { kind, next, flam };
+})();
 
 class Game {
   constructor(assets, workerSrc) {
@@ -10656,8 +10765,8 @@ class Game {
   }
 
   randomTicks() {
-    // a few random ticks per column near the player: crops, saplings, grass spread, fire, leaves nothing
-    const w = this.world, p = this.player;
+    // a few random ticks per section near the player (20/s): crops, stems, saplings, grass, fire, farmland
+    const w = this.world, p = this.player, kind = RT.kind;
     const pcx = Math.floor(p.pos[0]) >> 4, pcz = Math.floor(p.pos[2]) >> 4;
     for (let dz = -4; dz <= 4; dz++) for (let dx = -4; dx <= 4; dx++) {
       const c = w.col(pcx + dx, pcz + dz);
@@ -10667,44 +10776,48 @@ class Game {
         if (!sec) continue;
         for (let k = 0; k < 2; k++) {
           const i = (Math.random() * 4096) | 0, id = sec.ids[i];
-          if (!id) continue;
-          const x = c.cx * 16 + (i & 15), z = c.cz * 16 + ((i >> 4) & 15), y = WORLD_MIN_Y + s * 16 + (i >> 8);
-          this.randomTick(x, y, z, id);
+          if (!kind[id]) continue;
+          this.randomTick(c.cx * 16 + (i & 15), WORLD_MIN_Y + s * 16 + (i >> 8), c.cz * 16 + ((i >> 4) & 15), id);
         }
       }
     }
   }
   randomTick(x, y, z, id) {
-    const w = this.world, k = B_KEY[id];
-    const crop = /^(WHEAT|CARROTS|POTATOES|PUMPKIN_STEM|MELON_STEM)_([0-2])$/.exec(k);
-    if (crop) { if (Math.random() < 0.3 && (w.getLight(x, y, z) >> 4) > 8) w.setBlock(x, y, z, B[crop[1] + '_' + (+crop[2] + 1)], 0); return; }
-    if ((k === 'PUMPKIN_STEM_3' || k === 'MELON_STEM_3') && Math.random() < 0.2) {
-      const d = (Math.random() * 4) | 0, nx = x + DIRX_W[d], nz = z + DIRZ_W[d];
-      if (!w.getBlock(nx, y, nz) && isSoil(w.getBlock(nx, y - 1, nz))) w.setBlock(nx, y, nz, k === 'PUMPKIN_STEM_3' ? B.PUMPKIN : B.MELON, 0);
-      return;
-    }
-    if (/SAPLING$/.test(k)) { if (Math.random() < 0.05) this.growSapling(x, y, z, id); return; }
-    if (id === B.DIRT) {
-      if (!OPAQUE[w.getBlock(x, y + 1, z)] && (w.getLight(x, y + 1, z) >> 4) >= 9 && !isWaterId(w.getBlock(x, y + 1, z))) {
-        for (let t = 0; t < 4; t++) if (w.getBlock(x + ((Math.random() * 3) | 0) - 1, y + ((Math.random() * 3) | 0) - 1, z + ((Math.random() * 3) | 0) - 1) === B.GRASS) { w.setBlock(x, y, z, B.GRASS, 0); break; }
+    const w = this.world;
+    switch (RT.kind[id]) {
+      case 1: // crop stage 0-2
+        if (Math.random() < 0.3 && (w.getLight(x, y, z) >> 4) > 8) w.setBlock(x, y, z, RT.next[id], 0);
+        return;
+      case 2: // ripe stem: grow the fruit next to it
+        if (Math.random() < 0.2) {
+          const d = (Math.random() * 4) | 0, nx = x + DIRX_W[d], nz = z + DIRZ_W[d];
+          if (!w.getBlock(nx, y, nz) && isSoil(w.getBlock(nx, y - 1, nz))) w.setBlock(nx, y, nz, RT.next[id], 0);
+        }
+        return;
+      case 3: // sapling
+        if (Math.random() < 0.05) this.growSapling(x, y, z, id);
+        return;
+      case 4: // dirt: grass spreads onto it
+        if (!OPAQUE[w.getBlock(x, y + 1, z)] && (w.getLight(x, y + 1, z) >> 4) >= 9 && !isWaterId(w.getBlock(x, y + 1, z))) {
+          for (let t = 0; t < 4; t++) if (w.getBlock(x + ((Math.random() * 3) | 0) - 1, y + ((Math.random() * 3) | 0) - 1, z + ((Math.random() * 3) | 0) - 1) === B.GRASS) { w.setBlock(x, y, z, B.GRASS, 0); break; }
+        }
+        return;
+      case 5: // grass dies under an opaque block
+        if (OPAQUE[w.getBlock(x, y + 1, z)]) w.setBlock(x, y, z, B.DIRT, 0);
+        return;
+      case 6: // fire burns out or spreads to flammable blocks
+        if (Math.random() < 0.4) { w.setBlock(x, y, z, 0, 0); return; }
+        for (let t = 0; t < 3; t++) {
+          const nx = x + ((Math.random() * 3) | 0) - 1, ny = y + ((Math.random() * 3) | 0) - 1, nz = z + ((Math.random() * 3) | 0) - 1;
+          if (RT.flam[w.getBlock(nx, ny, nz)] && Math.random() < 0.3) w.setBlock(nx, ny, nz, B.FIRE, 0);
+        }
+        return;
+      case 7: { // farmland: moist within 4 blocks of water
+        let wet = false;
+        for (let dz = -4; dz <= 4 && !wet; dz++) for (let dx = -4; dx <= 4 && !wet; dx++) if (w.getBlock(x + dx, y, z + dz) === B.WATER) wet = true;
+        const want = wet ? B.FARMLAND_MOIST : B.FARMLAND;
+        if (want !== id) w.setBlock(x, y, z, want, 0);
       }
-      return;
-    }
-    if (id === B.GRASS && OPAQUE[w.getBlock(x, y + 1, z)]) { w.setBlock(x, y, z, B.DIRT, 0); return; }
-    if (id === B.FIRE) {
-      if (Math.random() < 0.4) { w.setBlock(x, y, z, 0, 0); return; }
-      for (let t = 0; t < 3; t++) {
-        const nx = x + ((Math.random() * 3) | 0) - 1, ny = y + ((Math.random() * 3) | 0) - 1, nz = z + ((Math.random() * 3) | 0) - 1;
-        const n = w.getBlock(nx, ny, nz);
-        if ((FLAGS[n] & BF_LEAVES) || /PLANKS|LOG|WOOL|WOOD|BOOKSHELF/.test(B_KEY[n] || '')) { if (Math.random() < 0.3) w.setBlock(nx, ny, nz, B.FIRE, 0); }
-      }
-      return;
-    }
-    if (id === B.FARMLAND || id === B.FARMLAND_MOIST) {
-      let wet = false;
-      for (let dz = -4; dz <= 4 && !wet; dz++) for (let dx = -4; dx <= 4 && !wet; dx++) if (w.getBlock(x + dx, y, z + dz) === B.WATER) wet = true;
-      const want = wet ? B.FARMLAND_MOIST : B.FARMLAND;
-      if (want !== id) w.setBlock(x, y, z, want, 0);
     }
   }
 
@@ -10921,23 +11034,27 @@ class Game {
     gl.enable(gl.CULL_FACE);
   }
 
-  // MC-style box with standard skin unwrap. M maps local coords -> camera relative
+  // MC-style box with standard skin unwrap. M maps local coords -> camera relative.
+  // The 8 corners are transformed once and shared by the faces (no per-face temporaries).
   pushModelBox(out, M, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
-    const tc = tint || [1, 1, 1];
-    const faces = [
-      // [corners(4) as [x,y,z]], uv rect [u0,v0,u1,v1], shade
-      [[[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], [u, v + d, u + d, v + d + h], 0.72],             // +x (right side in skin = u..u+d)
-      [[[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], [u + d + w, v + d, u + d + w + d, v + d + h], 0.72], // -x
-      [[[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], [u + d, v, u + d + w, v + d], 1.0],               // top
-      [[[x1, y0, z1], [x0, y0, z1], [x0, y0, z0], [x1, y0, z0]], [u + d + w, v, u + d + w + w, v + d], 0.55],      // bottom
-      [[[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], [u + d + w + d, v + d, u + d + w + d + w, v + d + h], 0.8], // back (+z)
-      [[[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], [u + d, v + d, u + d + w, v + d + h], 0.9],       // front (-z)
-    ];
-    for (const [q, uv, sh] of faces) {
-      const U = mirror ? [[uv[2], uv[3]], [uv[0], uv[3]], [uv[0], uv[1]], [uv[2], uv[1]]] : [[uv[0], uv[3]], [uv[2], uv[3]], [uv[2], uv[1]], [uv[0], uv[1]]];
-      const P = q.map(c => M(c[0], c[1], c[2]));
-      for (const i of [0, 1, 2, 0, 2, 3]) {
-        out.push(P[i][0], P[i][1], P[i][2], U[i][0] / tw, U[i][1] / th, 0, light * sh * tc[0], light * sh * tc[1], light * sh * tc[2], 1);
+    const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24));
+    for (let k = 0; k < 8; k++) { const q = M(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
+    // uv rects [u0, v0, u1, v1] of +x, -x, top, bottom, back (+z), front (-z)
+    R[0] = u; R[1] = v + d; R[2] = u + d; R[3] = v + d + h;
+    R[4] = u + d + w; R[5] = v + d; R[6] = u + d + w + d; R[7] = v + d + h;
+    R[8] = u + d; R[9] = v; R[10] = u + d + w; R[11] = v + d;
+    R[12] = u + d + w; R[13] = v; R[14] = u + d + w + w; R[15] = v + d;
+    R[16] = u + d + w + d; R[17] = v + d; R[18] = u + d + w + d + w; R[19] = v + d + h;
+    R[20] = u + d; R[21] = v + d; R[22] = u + d + w; R[23] = v + d + h;
+    const tr = tint ? tint[0] : 1, tg = tint ? tint[1] : 1, tb = tint ? tint[2] : 1;
+    for (let f = 0; f < 6; f++) {
+      const L = light * MB_SHADE[f], cr = L * tr, cg = L * tg, cb = L * tb;
+      const ua = R[f * 4] / tw, va = R[f * 4 + 1] / th, ub = R[f * 4 + 2] / tw, vb = R[f * 4 + 3] / th;
+      for (let t = 0; t < 6; t++) {
+        const i = MB_TRI[t], c = MB_FACES[f * 4 + i] * 3;
+        // corner uv: 0 (u0,v1) 1 (u1,v1) 2 (u1,v0) 3 (u0,v0), mirrored horizontally when asked
+        const left = (i === 0 || i === 3) !== !!mirror;
+        out.push(C[c], C[c + 1], C[c + 2], left ? ua : ub, i < 2 ? vb : va, 0, cr, cg, cb, 1);
       }
     }
   }
