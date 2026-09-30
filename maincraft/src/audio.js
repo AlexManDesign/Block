@@ -55,6 +55,7 @@ const Sfx = {
   },
   pop() { if (!this.enabled || !this.ctx) return; const t = this.ctx.currentTime; this.tone(t, 900 + Math.random() * 400, 0.08, 0.12, 'triangle'); },
   hurt() { if (!this.enabled || !this.ctx) return; const t = this.ctx.currentTime; this.noise(t, 0.18, 0.4, 'bandpass', 500, 200, 1); this.tone(t, 180, 0.15, 0.2, 'square'); },
+  fuse() { if (!this.enabled || !this.ctx) return; this.noise(this.ctx.currentTime, 1.4, 0.22, 'highpass', 3000, 5000, 0.7); },
   splash() { if (!this.enabled || !this.ctx) return; this.noise(this.ctx.currentTime, 0.35, 0.3, 'lowpass', 1500, 200, 0.6); },
   click() { if (!this.enabled || !this.ctx) return; this.tone(this.ctx.currentTime, 1200, 0.03, 0.08, 'square'); },
   door(open) { if (!this.enabled || !this.ctx) return; const t = this.ctx.currentTime; this.noise(t, 0.2, 0.35, 'bandpass', open ? 500 : 350, 200, 3); },

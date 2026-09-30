@@ -138,15 +138,15 @@ function humanoid(armW, wide, hat) {
 }
 
 const MOB_DEFS = {
-  pig: { w: 0.9, h: 0.9, hp: 10, speed: 1.2, drops: () => [[IT.PORKCHOP, 1 + (Math.random() * 3 | 0)]], passive: true },
-  cow: { w: 0.9, h: 1.4, hp: 10, speed: 1.1, drops: () => [[IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
-  sheep: { w: 0.9, h: 1.3, hp: 8, speed: 1.1, drops: (e) => [[IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
-  chicken: { w: 0.4, h: 0.7, hp: 4, speed: 1.0, drops: () => [[IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
-  zombie: { w: 0.6, h: 1.95, hp: 20, speed: 2.3, dmg: 3, drops: () => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0]], hostile: true, burns: true },
-  skeleton: { w: 0.6, h: 1.99, hp: 20, speed: 2.4, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true },
-  creeper: { w: 0.6, h: 1.7, hp: 20, speed: 2.2, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
-  spider: { w: 1.4, h: 0.9, hp: 16, speed: 3.0, dmg: 2, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
-  enderman: { w: 0.6, h: 2.9, hp: 40, speed: 3.2, dmg: 7, drops: () => [[IT.ENDER_PEARL, Math.random() * 2 | 0]], hostile: true, neutral: true },
+  pig: { w: 0.9, h: 0.9, hp: 10, speed: 2.6, drops: () => [[IT.PORKCHOP, 1 + (Math.random() * 3 | 0)]], passive: true },
+  cow: { w: 0.9, h: 1.4, hp: 10, speed: 2.1, drops: () => [[IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
+  sheep: { w: 0.9, h: 1.3, hp: 8, speed: 2.4, drops: (e) => [[IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
+  chicken: { w: 0.5, h: 0.7, hp: 4, speed: 2.5, drops: () => [[IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
+  zombie: { w: 0.6, h: 1.95, hp: 20, speed: 2.4, dmg: 3, drops: () => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0]], hostile: true, burns: true },
+  skeleton: { w: 0.6, h: 1.95, hp: 20, speed: 2.6, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true },
+  creeper: { w: 0.6, h: 1.6, hp: 20, speed: 2.7, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
+  spider: { w: 1.4, h: 0.9, hp: 16, speed: 3.2, dmg: 2, climber: true, neutralLight: 12, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
+  enderman: { w: 0.6, h: 2.9, hp: 40, speed: 3.2, dmg: 7, detect: 64, drops: () => [[IT.ENDER_PEARL, Math.random() * 2 | 0]], hostile: true, neutral: true },
   slime: { w: 1.02, h: 1.02, hp: 4, speed: 2.7, dmg: 2, drops: (e) => [[IT.SLIME_BALL, e.size === 1 ? Math.random() * 3 | 0 : 0]], hostile: true, slime: true },
   salmon: { w: 0.7, h: 0.4, hp: 3, speed: 1.6, drops: (e) => [[e.fire > 0 ? IT.COOKED_SALMON : IT.RAW_SALMON, 1]], passive: true, aquatic: true },
   shark: { w: 0.9, h: 0.8, hp: 24, speed: 4.2, dmg: 6, drops: (e) => [[e.fire > 0 ? IT.COOKED_COD : IT.RAW_COD, 1 + (Math.random() * 2 | 0)], [IT.BONE, Math.random() < 0.35 ? 1 : 0]], hostile: true, aquatic: true },
@@ -195,6 +195,30 @@ function entMove(world, e, dt) {
   else e.onGround = entCollides(world, e.pos[0], e.pos[1] - 0.03, e.pos[2], e.w, e.h) && e.vel[1] <= 0;
 }
 
+const MOB_DT = 0.05;   // mob simulation step (20 Hz, as in the original)
+const PATH_NODES = 900, PATH_RANGE = 28;
+const NB8 = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
+// binary heap on node.f for A*
+function heapPush(h, n) {
+  h.push(n);
+  let i = h.length - 1;
+  while (i > 0) { const p = (i - 1) >> 1; if (h[p].f <= h[i].f) break; const t = h[p]; h[p] = h[i]; h[i] = t; i = p; }
+}
+function heapPop(h) {
+  const top = h[0], last = h.pop();
+  if (!h.length) return top;
+  h[0] = last;
+  for (let i = 0, n = h.length; ;) {
+    const a = i * 2 + 1, b = a + 1;
+    let m = i;
+    if (a < n && h[a].f < h[m].f) m = a;
+    if (b < n && h[b].f < h[m].f) m = b;
+    if (m === i) break;
+    const t = h[m]; h[m] = h[i]; h[i] = t; i = m;
+  }
+  return top;
+}
+
 function slimeChunk(cx, cz, seed) {
   let t = Math.imul(cx, 522133279) ^ Math.imul(cz, 668265261) ^ (seed | 0);
   t = Math.imul(t ^ (t >>> 15), 2246822507); t ^= t >>> 13;
@@ -213,11 +237,17 @@ class Entities {
 
   spawnMob(type, x, y, z, opts) {
     const d = MOB_DEFS[type];
-    const e = { type, pos: [x, y, z], vel: [0, 0, 0], yaw: Math.random() * 6.28, headYaw: 0, bodyYaw: Math.random() * 6.28, hp: d.hp, w: d.w, h: d.h,
-      onGround: false, walk: 0, walkAmt: 0, hurtT: 0, deathT: 0, ai: 0, target: null, attackT: 0, fuse: 0, fire: 0, age: 0 };
+    const yaw = Math.random() * 6.2832;
+    const e = { type, pos: [x, y, z], vel: [0, 0, 0], wish: [0, 0, 0], bodyYaw: yaw, tgtYaw: yaw, headYaw: yaw, hp: d.hp, w: d.w, h: d.h,
+      onGround: false, walk: 0, walkAmt: 0, hurtT: 0, deathT: 0, age: 0, fire: 0,
+      // behaviour state (see ai / aiFish)
+      aiT: Math.random() * 2, tgt: null, fleeT: 0, angryT: 0, kbT: 0, jumpT: 0, atkT: 0, shootT: Math.random(), fuse: -1,
+      leapT: 1.5 + Math.random() * 1.5, hopT: Math.random() * 0.8, stuckT: 0, detourT: 0, detX: 0, detZ: 0,
+      path: null, pathI: 0, pathT: Math.random() * 0.6, pathTx: 0, pathTz: 0, tpT: 0, stareT: 0, burnT: 0, wetT: 0, lavaT: 0,
+      dryT: 0, swimT: 0, huntT: 0, prey: null, esc: null, escT: 0, escD: null, fleeing: false, aggro: false };
     if (d.slime) {
       const size = (opts && opts.size) || [1, 2, 4][Math.random() * 3 | 0], S = SLIME_SIZES[size];
-      e.size = size; e.hp = S[0]; e.w = e.h = 0.51 * size; e.squish = 0; e.tsq = 0; e.jumpT = 1 + Math.random() * 2;
+      e.size = size; e.hp = S[0]; e.w = e.h = 0.51 * size; e.squish = 0; e.tsq = 0; e.hopT = 0.5 + Math.random() * 1.5;
     }
     if (type === 'sheep') {
       const r = Math.random(); e.color = 'white';
@@ -249,73 +279,16 @@ class Entities {
       this.sharkT = (this.sharkT || 0) - 1;
       if (this.sharkT <= 0) { this.sharkT = 12; if (sharks < 2) this.trySpawnShark(); }
     }
-    // ---- mobs
-    for (let i = this.mobs.length - 1; i >= 0; i--) {
-      const e = this.mobs[i], d = MOB_DEFS[e.type];
-      e.age += dt;
-      const dx = p.pos[0] - e.pos[0], dz = p.pos[2] - e.pos[2], dist = Math.hypot(dx, dz);
-      if (dist > (d.hostile ? 96 : 140) || !w.isLoaded(Math.floor(e.pos[0]), Math.floor(e.pos[2]))) { this.mobs.splice(i, 1); continue; }
-      if (e.deathT > 0) { e.deathT += dt; if (e.deathT > 1.0) { this.mobs.splice(i, 1); } continue; }
-      if (e.hurtT > 0) e.hurtT -= dt;
-      this.ai(e, d, dt, dx, dz, dist);
-      // physics
-      const inW = isWaterId(w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + (d.aquatic ? e.h * 0.5 : 0.3)), Math.floor(e.pos[2])));
-      const inL = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2])) === B.LAVA;
-      e.inWater = inW;
-      if (d.aquatic && inW) { /* swimming: the AI steers all three axes */ }
-      else if (inW) { e.vel[1] += (1.2 - e.vel[1]) * Math.min(1, dt * 3); if (e.type === 'chicken') e.vel[1] = Math.max(e.vel[1], 0.5); }
-      else e.vel[1] -= (e.type === 'chicken' && !e.onGround ? 8 : 28) * dt;
-      if (d.aquatic && !inW) {
-        // out of water: flop around and slowly suffocate
-        e.dryT = (e.dryT || 0) + dt;
-        if (e.onGround && Math.random() < dt * 2) { e.vel[1] = 4; e.vel[0] = (Math.random() - 0.5) * 3; e.vel[2] = (Math.random() - 0.5) * 3; }
-        if (e.dryT > 4) { e.dryHurtT = (e.dryHurtT || 0) - dt; if (e.dryHurtT <= 0) { e.dryHurtT = 1; this.damageMob(e, 1, null); } }
-      } else e.dryT = 0;
-      if (e.type === 'enderman' && inW) {
-        // endermen hate water: hurt and teleport away
-        e.wetT = (e.wetT || 0) - dt;
-        if (e.wetT <= 0) { e.wetT = 0.6; this.damageMob(e, 1, null); this.teleport(e); }
-      }
-      if (e.type === 'sheep' && e.sheared) { e.woolT = (e.woolT ?? 120) - dt; if (e.woolT <= 0) { e.sheared = false; e.woolT = undefined; } }
-      if (e.type === 'chicken' && e.vel[1] < -2.5) e.vel[1] = -2.5;
-      if (e.vel[1] < -50) e.vel[1] = -50;
-      // soft collision with other mobs and the player
-      for (let j = 0; j < this.mobs.length; j++) {
-        const o = this.mobs[j];
-        if (o === e || o.deathT > 0) continue;
-        const sx = e.pos[0] - o.pos[0], sz = e.pos[2] - o.pos[2], r = (e.w + o.w) * 0.5;
-        if (Math.abs(sx) < r && Math.abs(sz) < r && Math.abs(e.pos[1] - o.pos[1]) < 1.5) {
-          const l = Math.hypot(sx, sz) || 0.01, push = (r - l) * 4;
-          e.vel[0] += sx / l * push; e.vel[2] += sz / l * push;
-        }
-      }
-      { const r = (e.w + PLAYER_W) * 0.5, l = Math.hypot(dx, dz) || 0.01;
-        if (l < r && Math.abs(p.pos[1] - e.pos[1]) < 1.8) { e.vel[0] -= dx / l * (r - l) * 6; e.vel[2] -= dz / l * (r - l) * 6; } }
-      const fallStart = e.onGround ? e.pos[1] : e.fallY ?? e.pos[1];
-      e.fallY = Math.max(fallStart, e.pos[1]);
-      const wasGround = e.onGround;
-      entMove(w, e, dt);
-      if (d.slime && e.onGround && !wasGround) e.tsq = -0.5;
-      if (e.onGround) { const fh = e.fallY - e.pos[1]; if (fh > 3.5 && e.type !== 'chicken' && !d.slime && !inW) this.damageMob(e, Math.floor(fh - 3), null); e.fallY = e.pos[1]; }
-      if (d.slime) { e.squish += (e.tsq - e.squish) * 0.5 * Math.min(1, dt * 20); e.tsq *= Math.pow(0.6, dt * 20); }
-      if (d.aquatic) { const hs0 = Math.hypot(e.vel[0], e.vel[2]); e.swimPitch += ((inW ? Math.atan2(e.vel[1], hs0 + 0.01) : 0) - e.swimPitch) * Math.min(1, dt * 6); }
-      const hs = Math.hypot(e.vel[0], e.vel[2]);
-      e.walk += hs * dt * 1.9;
-      e.walkAmt += ((hs > 0.2 ? Math.min(1, hs / 2) : 0) - e.walkAmt) * Math.min(1, dt * 8);
-      if (hs > 0.2) {
-        const ty = Math.atan2(e.vel[0], -e.vel[2]);
-        let dy = ty - e.bodyYaw; while (dy > Math.PI) dy -= 6.2832; while (dy < -Math.PI) dy += 6.2832;
-        e.bodyYaw += dy * Math.min(1, dt * 8);
-      }
-      if (inL) { e.fire = 3; if ((e.lavaT = (e.lavaT || 0) - dt) <= 0) { e.lavaT = 0.5; this.damageMob(e, 4, null); } }
-      // daylight burning
-      if (d.burns && g.envObj.day > 0.6 && !inW) {
-        const lt = w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 1.6), Math.floor(e.pos[2]));
-        if ((lt >> 4) === 15) e.fire = Math.max(e.fire, 1);
-      }
-      if (e.fire > 0) { e.fire -= dt; e.fireT = (e.fireT || 0) - dt; if (e.fireT <= 0) { e.fireT = 1; this.damageMob(e, 1, null); } if (inW) e.fire = 0; }
-      if (e.pos[1] < WORLD_MIN_Y - 30) this.mobs.splice(i, 1);
+    // ---- mobs: fixed 20 Hz simulation (as in the original); rendering interpolates between ticks
+    this.acc = Math.min((this.acc || 0) + dt, MOB_DT * 8);
+    let steps = 0;
+    while (this.acc >= MOB_DT && steps < 3) {
+      for (const e of this.mobs) this.snapshot(e);
+      this.tickMobs(MOB_DT);
+      this.acc -= MOB_DT; steps++;
     }
+    if (this.acc > MOB_DT) this.acc = MOB_DT;
+    this.alpha = this.acc / MOB_DT;
     // ---- item entities
     for (let i = this.items.length - 1; i >= 0; i--) {
       const it = this.items[i];
@@ -344,177 +317,606 @@ class Entities {
         }
       }
     }
-    // ---- arrows
+    // ---- arrows: sub-stepped, swept against the player so fast arrows can't pass through
     for (let i = this.arrows.length - 1; i >= 0; i--) {
       const a = this.arrows[i];
       a.age += dt;
-      if (a.age > 10) { this.arrows.splice(i, 1); continue; }
-      if (a.stuck) continue;
+      if (a.stuck) {
+        // stuck arrows can be picked up (as in the original); they vanish after a minute
+        if (!g.surv.dead && Math.hypot(p.pos[0] - a.pos[0], p.pos[1] + 0.9 - a.pos[1], p.pos[2] - a.pos[2]) < 1.5 && g.giveItem(IT.ARROW, 1) === 0) {
+          this.arrows.splice(i, 1); Sfx.pop(); continue;
+        }
+        if (a.age > 60) this.arrows.splice(i, 1);
+        continue;
+      }
+      if (a.age > 8) { this.arrows.splice(i, 1); continue; }
       a.vel[1] -= 12 * dt;
-      const nx = a.pos[0] + a.vel[0] * dt, ny = a.pos[1] + a.vel[1] * dt, nz = a.pos[2] + a.vel[2] * dt;
-      if (SOLID[w.getBlock(Math.floor(nx), Math.floor(ny), Math.floor(nz))]) { a.stuck = true; continue; }
-      a.pos = [nx, ny, nz];
-      const px = p.pos[0] - nx, py = p.pos[1] + 0.9 - ny, pz = p.pos[2] - nz;
-      if (a.hostile && Math.abs(px) < 0.4 && Math.abs(py) < 0.95 && Math.abs(pz) < 0.4) {
-        g.hurt(a.dmg); p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1);
+      const n = Math.max(1, Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) * dt / 0.3)), s = dt / n;
+      for (let k = 0; k < n; k++) {
+        const ox = a.pos[0], oy = a.pos[1], oz = a.pos[2], mx = a.vel[0] * s, my = a.vel[1] * s, mz = a.vel[2] * s;
+        if (a.hostile && !g.surv.dead) {
+          const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
+          if (hb && hb.t <= 1) { g.hurt(a.dmg); p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+        }
+        if (this.pointSolid(ox + mx, oy + my, oz + mz)) {
+          let lo = 0, hi = 1;
+          for (let q = 0; q < 6; q++) { const m = (lo + hi) / 2; if (this.pointSolid(ox + mx * m, oy + my * m, oz + mz * m)) hi = m; else lo = m; }
+          const l = Math.hypot(a.vel[0], a.vel[1], a.vel[2]) || 1;
+          a.dir = [a.vel[0] / l, a.vel[1] / l, a.vel[2] / l];
+          a.pos = [ox + mx * hi + a.dir[0] * 0.1, oy + my * hi + a.dir[1] * 0.1, oz + mz * hi + a.dir[2] * 0.1];
+          a.vel = [0, 0, 0]; a.stuck = true; a.age = 0;
+          break;
+        }
+        a.pos = [ox + mx, oy + my, oz + mz];
       }
     }
   }
+  snapshot(e) {
+    if (!e.pp) e.pp = [0, 0, 0];
+    e.pp[0] = e.pos[0]; e.pp[1] = e.pos[1]; e.pp[2] = e.pos[2];
+    e.pyaw = e.bodyYaw; e.phead = e.headYaw; e.pwalk = e.walk; e.pitchP = e.swimPitch;
+  }
 
-  ai(e, d, dt, dx, dz, dist) {
-    if (d.aquatic) return this.aiFish(e, d, dt, dx, dz, dist);
-    if (d.slime) return this.aiSlime(e, d, dt, dx, dz, dist);
+  tickMobs(dt) {
     const g = this.game, w = g.world, p = g.player;
-    let tx = 0, tz = 0, speed = d.speed;
-    const canHunt = g.mode === 'survival' && !g.surv.dead;
-    if (e.type === 'enderman') {
-      // provoked by being looked at (in the head) or by being hit; wanders and teleports otherwise
-      if (!e.aggro && canHunt && dist < 64) {
-        const eye = p.eye(), look = p.look();
-        const vx = e.pos[0] - eye[0], vy = e.pos[1] + 2.55 - eye[1], vz = e.pos[2] - eye[2], l = Math.hypot(vx, vy, vz) || 1;
-        if ((vx * look[0] + vy * look[1] + vz * look[2]) / l > 1 - 0.025 / l && !this.rayBlocked(eye, [e.pos[0], e.pos[1] + 2.55, e.pos[2]])) { e.aggro = true; e.stareT = 0.6; }
+    const hunt = g.mode === 'survival' && !g.surv.dead, day = g.envObj.day > 0.55;
+    for (let i = this.mobs.length - 1; i >= 0; i--) {
+      const e = this.mobs[i], d = MOB_DEFS[e.type];
+      e.age += dt;
+      const dx = p.pos[0] - e.pos[0], dz = p.pos[2] - e.pos[2], dist = Math.hypot(dx, dz);
+      const h = Math.hypot(dx, p.pos[1] + 0.9 - (e.pos[1] + e.h * 0.5), dz);
+      if (dist > (d.hostile ? 96 : 140) || !w.isLoaded(Math.floor(e.pos[0]), Math.floor(e.pos[2])) || e.pos[1] < WORLD_MIN_Y - 8) { this.mobs.splice(i, 1); continue; }
+      // far hostiles despawn now and then (original: beyond 32 blocks, ~1/25 per second)
+      if (d.hostile && h > 32 && !e.persist && Math.random() < dt / 25) { this.mobs.splice(i, 1); continue; }
+      if (e.deathT > 0) { e.deathT += dt; if (e.deathT > 1.0) this.mobs.splice(i, 1); continue; }
+      if (e.hurtT > 0) e.hurtT -= dt;
+      if (e.angryT > 0) e.angryT -= dt;
+      if (e.tpT > 0) e.tpT -= dt;
+      e.atkT += dt; e.shootT += dt;
+      if (e.type === 'sheep' && e.sheared) { e.woolT -= dt; if (e.woolT <= 0) e.sheared = false; }
+      // lava and fire
+      if (e.lavaT > 0) e.lavaT -= dt;
+      else {
+        const fb = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2]));
+        if (fb === B.LAVA || fb === B.FIRE) { e.lavaT = 0.7; e.fire = 3; this.damageMob(e, fb === B.LAVA ? 4 : 1, null); if (e.hp <= 0) continue; }
       }
-      if (e.aggro && (!canHunt || dist > 64)) e.aggro = false;
-      e.tpT = (e.tpT ?? 10 + Math.random() * 30) - dt;
-      if (e.tpT <= 0) { e.tpT = 10 + Math.random() * 30; if (!e.aggro || dist > 12) this.teleport(e, e.aggro ? p.pos : null); }
-      if (e.stareT > 0) { e.stareT -= dt; e.headYaw = Math.atan2(dx, -dz); e.vel[0] *= 0.5; e.vel[2] *= 0.5; return; }
-    }
-    const chase = d.hostile && canHunt && dist < (e.type === 'enderman' ? 64 : d.ranged ? 18 : 16) &&
-      (e.type !== 'spider' || g.envObj.day < 0.5 || e.hurtT > 0 || e.aggro) && (!d.neutral || e.aggro);
-    if (e.panic > 0) {
-      e.panic -= dt;
-      if (!e.target || e.ai <= 0) { const a = Math.random() * 6.28; e.target = [e.pos[0] + Math.cos(a) * 8, e.pos[2] + Math.sin(a) * 8]; e.ai = 1; }
-      speed *= 2;
-    } else if (chase) {
-      e.target = [p.pos[0], p.pos[2]];
-      e.headYaw = Math.atan2(dx, -dz);
-      const dy = p.pos[1] - e.pos[1];
-      if (d.ranged) {
-        if (dist < 7) e.target = [e.pos[0] - dx, e.pos[2] - dz];
-        else if (dist < 12) e.target = null;
-        e.attackT -= dt;
-        if (e.attackT <= 0 && dist < 16) {
-          e.attackT = 1.8;
-          const tgt = [p.pos[0], p.pos[1] + 1.2, p.pos[2]], src = [e.pos[0], e.pos[1] + 1.5, e.pos[2]];
-          const vx = tgt[0] - src[0], vy = tgt[1] - src[1], vz = tgt[2] - src[2], l = Math.hypot(vx, vy, vz) || 1;
-          const sp = 22;
-          this.arrows.push({ pos: src, vel: [vx / l * sp, vy / l * sp + l * 0.3, vz / l * sp], age: 0, hostile: true, dmg: 2 + (Math.random() * 3 | 0) });
+      if (e.fire > 0) e.fire -= dt;
+      if (d.aquatic) { this.aiFish(e, d, dt, dx, dz, h); continue; }
+      const feet = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2]));
+      const inW = isWaterId(feet);
+      if (inW) e.fire = 0;
+      // enderman: provoked by a stare, hates water
+      if (e.type === 'enderman') {
+        if (e.angryT <= 0 && hunt) {
+          if (this.stared(e, h)) { e.stareT += dt; if (e.stareT > 0.25) { e.angryT = 30; e.stareT = 0; } } else e.stareT = 0;
         }
-      } else if (d.creeper) {
-        if (dist < 3 && Math.abs(dy) < 2.5) {
-          e.fuse += dt; e.target = null;
-          if (e.fuse > 1.5) { g.explode(e.pos[0], e.pos[1] + 0.8, e.pos[2], 3); e.deathT = 0.9; e.hp = 0; this.mobs.splice(this.mobs.indexOf(e), 1); return; }
-        } else e.fuse = Math.max(0, e.fuse - dt);
-      } else {
-        e.attackT -= dt;
-        if (dist < 1.2 + e.w * 0.5 && Math.abs(dy) < 1.6 && e.attackT <= 0) {
-          e.attackT = 1.0;
-          g.hurt(d.dmg);
-          const l = dist || 1; p.vel[0] += dx / l * 6; p.vel[2] += dz / l * 6; p.vel[1] = Math.max(p.vel[1], 4);
+        const body = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h * 0.5), Math.floor(e.pos[2]));
+        if (isWaterId(body) || inW) {
+          e.wetT -= dt;
+          if (e.wetT <= 0) { e.wetT = 0.5; this.damageMob(e, 1, null); if (e.hp <= 0) continue; }
+          if (e.tpT <= 0 && this.teleportNear(e, e.pos[0], e.pos[2], 24)) e.tpT = 1;
         }
       }
-    } else {
-      e.ai -= dt;
-      if (e.ai <= 0) {
-        e.ai = 2 + Math.random() * 6;
-        if (Math.random() < 0.7) { const a = Math.random() * 6.28, r = 3 + Math.random() * 7; e.target = [e.pos[0] + Math.cos(a) * r, e.pos[2] + Math.sin(a) * r]; }
-        else e.target = null;
-        e.lookT = Math.random() * 6.28;
+      e.aggro = e.angryT > 0;
+      // undead burn in daylight
+      if (d.burns && day && !inW && (w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h), Math.floor(e.pos[2])) >> 4) >= 14) {
+        e.fire = Math.max(e.fire, 0.5);
+        e.burnT += dt;
+        if (e.burnT >= 1.2) { e.burnT = 0; this.damageMob(e, 2, null); if (e.hp <= 0) continue; }
       }
-      speed *= 0.85;
-      // look at the player sometimes
-      if (dist < 8) e.headYaw = Math.atan2(dx, -dz); else e.headYaw = e.bodyYaw;
+      this.ai(e, d, dt, dx, dz, h, hunt);
+      if (e.deathT > 0 || this.mobs[i] !== e) continue;
+      // don't walk off cliffs (drops over 3 blocks) and keep animals out of water
+      if (e.onGround && this.cliffAhead(e)) {
+        const l = Math.hypot(e.wish[0], e.wish[2]) || 1, sgn = Math.random() < 0.5 ? 1 : -1;
+        const px = e.wish[2] / l, pz = -e.wish[0] / l;
+        this.stop(e); e.path = null; e.stuckT = 0; e.detourT = 0.5;
+        e.detX = e.pos[0] + px * sgn * 3; e.detZ = e.pos[2] + pz * sgn * 3;
+      }
+      if ((!d.hostile || e.type === 'enderman') && !inW && this.waterAhead(e)) {
+        this.stop(e); e.detourT = 0; e.tgt = null; e.aiT = Math.min(e.aiT, 0.5);
+      }
+      // soft collisions with other mobs and the player
+      for (let j = 0; j < this.mobs.length; j++) {
+        const o = this.mobs[j];
+        if (o === e || o.deathT > 0 || MOB_DEFS[o.type].aquatic) continue;
+        const sx = e.pos[0] - o.pos[0], sz = e.pos[2] - o.pos[2], r = (e.w + o.w) * 0.5;
+        if (Math.abs(sx) < r && Math.abs(sz) < r && Math.abs(e.pos[1] - o.pos[1]) < 1.5) {
+          const l = Math.hypot(sx, sz) || 0.01, push = (r - l) * 4;
+          e.vel[0] += sx / l * push; e.vel[2] += sz / l * push;
+        }
+      }
+      { const r = (e.w + PLAYER_W) * 0.5, l = dist || 0.01;
+        if (l < r && Math.abs(p.pos[1] - e.pos[1]) < 1.8) { e.vel[0] -= dx / l * (r - l) * 6; e.vel[2] -= dz / l * (r - l) * 6; } }
+      const wl = Math.hypot(e.wish[0], e.wish[2]), ox = e.pos[0], oz = e.pos[2], wasGround = e.onGround;
+      const fallStart = e.onGround ? e.pos[1] : e.fallY ?? e.pos[1];
+      e.fallY = Math.max(fallStart, e.pos[1]);
+      this.walkPhysics(e, d, dt, inW);
+      if (d.slime && e.onGround && !wasGround) e.tsq = -0.5;
+      if (d.slime) { e.squish += (e.tsq - e.squish) * 0.5; e.tsq *= 0.6; }
+      if (e.onGround) { const fh = e.fallY - e.pos[1]; if (fh > 3.5 && e.type !== 'chicken' && !d.slime && !inW) this.damageMob(e, Math.floor(fh - 3), null); e.fallY = e.pos[1]; }
+      // stuck against something: take a short detour sideways
+      if (wl > 0.5) {
+        const moved = Math.hypot(e.pos[0] - ox, e.pos[2] - oz);
+        if (moved < wl * dt * 0.3) e.stuckT += dt; else e.stuckT = Math.max(0, e.stuckT - dt * 2);
+        if (e.stuckT > 0.5 && e.detourT <= 0) {
+          e.stuckT = 0; e.detourT = 0.7; e.path = null;
+          const sgn = Math.random() < 0.5 ? 1 : -1;
+          e.detX = e.pos[0] + e.wish[2] / wl * 5 * sgn; e.detZ = e.pos[2] - e.wish[0] / wl * 5 * sgn;
+        }
+      } else e.stuckT = 0;
+      const hs = Math.hypot(e.vel[0], e.vel[2]);
+      e.walk += hs * dt * 1.9;
+      e.walkAmt += ((hs > 0.3 ? Math.min(1, hs / 2.2) : 0) - e.walkAmt) * Math.min(1, dt * 8);
     }
-    if (chase && !d.ranged && dist < 0.55 + e.w * 0.5) e.target = null; // stay in front of the player, not inside
-    if (e.target) {
-      tx = e.target[0] - e.pos[0]; tz = e.target[1] - e.pos[2];
-      const l = Math.hypot(tx, tz);
-      if (l < 0.5) { e.target = chase ? e.target : null; tx = tz = 0; }
-      else { tx /= l; tz /= l; }
-    }
-    // avoid walking off high edges when wandering
-    if ((tx || tz) && !chase && e.onGround) {
-      const fx = Math.floor(e.pos[0] + tx * (e.w * 0.5 + 0.4)), fz = Math.floor(e.pos[2] + tz * (e.w * 0.5 + 0.4));
-      let drop = 0; for (let k = 1; k <= 4; k++) { if (SOLID[w.getBlock(fx, Math.floor(e.pos[1]) - k, fz)]) break; drop++; }
-      const ahead = w.getBlock(fx, Math.floor(e.pos[1]), fz);
-      if (drop > 2 || ahead === B.LAVA || (isWaterId(w.getBlock(fx, Math.floor(e.pos[1]) - 1, fz)) && d.passive && Math.random() < 0.8)) { e.target = null; tx = tz = 0; }
-    }
-    const a = Math.min(1, dt * (e.onGround ? 10 : 2));
-    e.vel[0] += (tx * speed - e.vel[0]) * a; e.vel[2] += (tz * speed - e.vel[2]) * a;
-    if ((tx || tz) && e.hitWall && e.onGround) e.vel[1] = 8.4;
-    if (e.type === 'spider' && e.hitWall && (tx || tz)) e.vel[1] = 3; // climbing
   }
 
-  // ---- fish (salmon, shark): swim in 3D inside water, flop on land
-  aiFish(e, d, dt, dx, dz, dist) {
+  // ------------------------------------------------------------------ land mob behaviour
+  ai(e, d, dt, dx, dz, h, hunt) {
+    const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? S[2] : d.speed;
+    const face = () => { e.headYaw = Math.atan2(dx, -dz); };
+    const aggressive = e.angryT > 0 || (d.neutralLight ? this.lightAt(e) < d.neutralLight : !d.neutral);
+    if (e.detourT > 0 && !(d.creeper && e.fuse >= 0)) {
+      e.detourT -= dt; if (e.fleeT > 0) e.fleeT -= dt;
+      this.steer(e, e.detX, e.detZ, speed * (e.fleeT > 0 ? 2 : 1));
+      e.headYaw = e.bodyYaw;
+      return;
+    }
+    if (e.fleeT > 0) {
+      e.fleeT -= dt;
+      this.steer(e, e.pos[0] - dx, e.pos[2] - dz, speed * 2);
+      e.headYaw = e.bodyYaw;
+      return;
+    }
+    if (d.creeper && e.fuse >= 0) {
+      e.fuse += dt; this.stop(e); face();
+      if (h > 5) e.fuse = -1;
+      else if (e.fuse > 1.5) {
+        this.mobs.splice(this.mobs.indexOf(e), 1);
+        g.explode(Math.round(e.pos[0]), Math.round(e.pos[1] + 0.5), Math.round(e.pos[2]), 3);
+      }
+      return;
+    }
+    const dy = p.pos[1] - e.pos[1];
+    if (d.hostile && hunt && h < (d.detect || 16) && aggressive) {
+      face();
+      if (d.slime) {
+        if (e.onGround) {
+          e.hopT -= dt;
+          if (e.hopT <= 0) { e.hopT = 0.6 + Math.random() * 0.6; this.hop(e, dx, dz, speed); }
+          else this.stop(e);
+        }
+        if (S[1] > 0 && h < e.w * 0.5 + 1.1 && Math.abs(dy) < e.h + 0.6 && e.atkT > 0.5) { e.atkT = 0; this.hitPlayer(e, S[1], dx, dz); }
+        return;
+      }
+      if (e.type === 'spider') {
+        this.steer(e, p.pos[0], p.pos[2], speed);
+        e.leapT -= dt;
+        if (e.onGround && e.leapT <= 0 && h > 2 && h < 8) {
+          e.leapT = 1.5 + Math.random() * 1.5;
+          const l = Math.hypot(dx, dz) || 1;
+          e.vel[0] = dx / l * 7; e.vel[2] = dz / l * 7; e.vel[1] = 6.5; e.kbT = 0.45;
+        }
+        if (h < 1.6 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+        return;
+      }
+      if (e.type === 'enderman') {
+        // close in to striking range (the original stopped at 3 but struck only within 2.2)
+        if (h > 2) this.goTo(e, p.pos[0], p.pos[2], speed * 1.25, dt); else this.stop(e);
+        if (e.tpT <= 0 && h > 6 && h < 32) {
+          e.tpT = 2 + Math.random() * 2;
+          const a = Math.random() * 6.2832;
+          this.teleportNear(e, p.pos[0] + Math.cos(a) * 3, p.pos[2] + Math.sin(a) * 3, 2);
+        }
+        if (h < 2.2 && Math.abs(dy) < 3 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+        return;
+      }
+      if (d.ranged) {
+        if (h > 9) this.goTo(e, p.pos[0], p.pos[2], speed, dt);
+        else if (h < 5) this.steer(e, e.pos[0] - dx, e.pos[2] - dz, speed);
+        else this.stop(e);
+        if (e.shootT > 2 && h < 12) {
+          e.shootT = 0;
+          const src = [e.pos[0], e.pos[1] + 1.5, e.pos[2]];
+          const vx = p.pos[0] - src[0], vy = p.pos[1] + 1.2 - src[1], vz = p.pos[2] - src[2], l = Math.hypot(vx, vy, vz) || 1;
+          this.arrows.push({ pos: src, vel: [vx / l * 16, vy / l * 16 + 1.5, vz / l * 16], age: 0, hostile: true, dmg: 2 + (Math.random() * 3 | 0) });
+        }
+        return;
+      }
+      if (d.creeper) {
+        this.goTo(e, p.pos[0], p.pos[2], speed, dt);
+        if (h < 2.2) { e.fuse = 0; Sfx.fuse(); }
+        return;
+      }
+      this.goTo(e, p.pos[0], p.pos[2], speed, dt);
+      if (h < 1.4 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+      return;
+    }
+    // wander: every 3-8 s either pick a spot within 6 blocks or rest
+    e.aiT -= dt;
+    if (e.aiT <= 0) {
+      e.aiT = 3 + Math.random() * 5;
+      e.tgt = Math.random() < 0.6 ? [e.pos[0] + (Math.random() - 0.5) * 12, e.pos[2] + (Math.random() - 0.5) * 12] : null;
+    }
+    if (h < 8) e.headYaw = Math.atan2(dx, -dz); else e.headYaw = e.bodyYaw;
+    if (d.slime) {
+      if (e.onGround) {
+        e.hopT -= dt;
+        if (e.hopT <= 0 && e.tgt) {
+          e.hopT = 0.8 + Math.random() * 1.2;
+          const tx = e.tgt[0] - e.pos[0], tz = e.tgt[1] - e.pos[2];
+          if (Math.hypot(tx, tz) > 0.5) this.hop(e, tx, tz, speed * 0.8);
+        } else this.stop(e);
+      }
+      return;
+    }
+    if (e.tgt) { if (this.goTo(e, e.tgt[0], e.tgt[1], speed * 0.85, dt)) e.tgt = null; }
+    else this.stop(e);
+  }
+  hop(e, dx, dz, speed) {
+    const l = Math.hypot(dx, dz) || 1;
+    e.wish[0] = dx / l * speed; e.wish[2] = dz / l * speed;
+    e.vel[0] = e.wish[0]; e.vel[2] = e.wish[2]; e.vel[1] = 7.4; e.kbT = 0.4;
+    e.bodyYaw = e.tgtYaw = Math.atan2(dx, -dz);
+    e.tsq = 1; e.onGround = false;
+  }
+  hitPlayer(e, dmg, dx, dz) {
+    const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
+    g.hurt(dmg);
+    p.vel[0] += dx / l * 4; p.vel[2] += dz / l * 4; p.vel[1] = Math.max(p.vel[1], 4);
+  }
+  lightAt(e) {
+    const lt = this.game.world.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.5), Math.floor(e.pos[2]));
+    return Math.max(lt & 15, this.game.envObj.day > 0.55 ? lt >> 4 : 0);
+  }
+  // the player looks the enderman in the face (original's cone test + line of sight)
+  stared(e, h) {
+    if (h > 64 || h < 0.5) return false;
+    const p = this.game.player, eye = p.eye(), look = p.look();
+    const hy = e.pos[1] + e.h * 0.9;
+    const vx = e.pos[0] - eye[0], vy = hy - eye[1], vz = e.pos[2] - eye[2], u = Math.hypot(vx, vy, vz) || 1;
+    const dot = (vx * look[0] + vy * look[1] + vz * look[2]) / u, r = e.w * 0.6 / u;
+    if (dot <= Math.min(0.999, 1 - r * r * 0.5)) return false;
+    return !this.rayBlocked(eye, [e.pos[0], hy, e.pos[2]]);
+  }
+
+  // ------------------------------------------------------------------ movement
+  stop(e) { e.wish[0] = e.wish[1] = e.wish[2] = 0; }
+  // steer straight at a point; true once it is reached
+  steer(e, tx, tz, speed) {
+    const dx = tx - e.pos[0], dz = tz - e.pos[2], l = Math.hypot(dx, dz);
+    if (l < 0.4) { e.wish[0] = e.wish[2] = 0; return true; }
+    e.wish[0] = dx / l * speed; e.wish[2] = dz / l * speed;
+    return false;
+  }
+  // follow an A* path to (tx, tz); refreshed every 0.6 s or when the goal moved by more than 2
+  goTo(e, tx, tz, speed, dt) {
+    e.pathT -= dt;
+    if (!e.path || e.pathT <= 0 || Math.abs(tx - e.pathTx) + Math.abs(tz - e.pathTz) > 2) {
+      e.pathT = 0.6; e.pathTx = tx; e.pathTz = tz; e.path = this.findPath(e, tx, tz); e.pathI = 0;
+    }
+    const P = e.path;
+    if (!P || e.pathI >= P.length) return this.steer(e, tx, tz, speed);
+    let wp = P[e.pathI];
+    if (Math.hypot(wp[0] - e.pos[0], wp[1] - e.pos[2]) < 0.55) {
+      e.pathI++;
+      if (e.pathI >= P.length) return this.steer(e, tx, tz, speed);
+      wp = P[e.pathI];
+    }
+    this.steer(e, wp[0], wp[1], speed);
+    return false;
+  }
+  pointSolid(x, y, z) {
+    const w = this.game.world, bx = Math.floor(x), by = Math.floor(y), bz = Math.floor(z), id = w.getBlock(bx, by, bz);
+    if (!id || !SOLID[id]) return false;
+    if (SHAPE[id] === SH.CUBE) return true;
+    const boxes = collisionBoxes(w, id, w.getMeta(bx, by, bz), bx, by, bz);
+    if (!boxes) return false;
+    for (const b of boxes) if (x >= bx + b[0] && x <= bx + b[3] && y >= by + b[1] && y <= by + b[4] && z >= bz + b[2] && z <= bz + b[5]) return true;
+    return false;
+  }
+  hazard(x, y, z) { const id = this.game.world.getBlock(x, y, z); return id === B.LAVA || id === B.FIRE; }
+  clear2(x, y, z) { return !this.pointSolid(x + 0.5, y + 0.4, z + 0.5) && !this.pointSolid(x + 0.5, y + 1.4, z + 0.5); }
+  standable(x, y, z) {
+    return this.pointSolid(x + 0.5, y - 0.2, z + 0.5) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
+  }
+  // walkable height in column x,z near y: one step up or a drop of up to 3
+  standY(x, y, z) {
+    for (let t = 1; t >= -3; t--) if (this.standable(x, y + t, z)) return y + t;
+    return null;
+  }
+  // A* over block columns (8 directions, no corner cutting), at most PATH_NODES nodes within
+  // PATH_RANGE blocks (the original: 320 / 22; wider here so mobs find the way around long walls).
+  // Returns waypoints to the goal, or to the closest reachable node when the goal is out of reach.
+  findPath(e, tx, tz) {
+    const sx = Math.floor(e.pos[0]), sy = Math.floor(e.pos[1] + 0.1), sz = Math.floor(e.pos[2]);
+    const gx = Math.floor(tx), gz = Math.floor(tz);
+    if (sx === gx && sz === gz) return null;
+    const oct = (ax, az) => { ax = ax < 0 ? -ax : ax; az = az < 0 ? -az : az; return ax > az ? ax - az + Math.SQRT2 * az : az - ax + Math.SQRT2 * ax; };
+    const key = (x, z) => (x - sx + 64) * 256 + (z - sz + 64);
+    const nodes = new Map(), heap = [], memo = new Map();
+    const stand = (x, y, z) => {
+      const k = ((x - sx + 64) * 256 + (z - sz + 64)) * 1024 + (y - sy + 512);
+      let v = memo.get(k);
+      if (v === undefined) { v = this.standY(x, y, z); memo.set(k, v); }
+      return v;
+    };
+    const start = { x: sx, y: sy, z: sz, from: null, g: 0, f: oct(sx - gx, sz - gz), done: false };
+    nodes.set(key(sx, sz), start); heapPush(heap, start);
+    let best = start, bestH = start.f, n = 0;
+    while (heap.length && n < PATH_NODES) {
+      const P = heapPop(heap);
+      if (P.done) continue;
+      P.done = true; n++;
+      if (P.x === gx && P.z === gz) { best = P; break; }
+      for (let k = 0; k < 8; k++) {
+        const bx = NB8[k * 2], bz = NB8[k * 2 + 1], hx = P.x + bx, hz = P.z + bz;
+        if (Math.abs(hx - sx) > PATH_RANGE || Math.abs(hz - sz) > PATH_RANGE) continue;
+        const y = stand(hx, P.y, hz);
+        if (y === null) continue;
+        const diag = bx !== 0 && bz !== 0;
+        if (diag && (y !== P.y || !this.clear2(P.x + bx, P.y, P.z) || !this.clear2(P.x, P.y, P.z + bz))) continue;
+        const gc = P.g + (diag ? Math.SQRT2 : 1), kk = key(hx, hz), O = nodes.get(kk);
+        if (O) {
+          if (O.done || gc >= O.g) continue;
+          O.g = gc; O.from = P; O.y = y; O.f = gc + oct(hx - gx, hz - gz); heapPush(heap, O);
+          continue;
+        }
+        const hh = oct(hx - gx, hz - gz), N = { x: hx, y, z: hz, from: P, g: gc, f: gc + hh, done: false };
+        nodes.set(kk, N);
+        if (hh < bestH) { bestH = hh; best = N; }
+        heapPush(heap, N);
+      }
+    }
+    if (best === start) return null;
+    const out = [];
+    for (let q = best; q && q.from; q = q.from) out.push([q.x + 0.5, q.z + 0.5]);
+    out.reverse();
+    return out;
+  }
+  // a drop of more than 3 blocks right ahead
+  cliffAhead(e) {
+    const l = Math.hypot(e.wish[0], e.wish[2]);
+    if (l < 0.2) return false;
+    const x = Math.floor(e.pos[0] + e.wish[0] / l * 0.8), z = Math.floor(e.pos[2] + e.wish[2] / l * 0.8), y = Math.floor(e.pos[1] + 0.1);
+    for (let a = 0; a <= 3; a++) if (this.pointSolid(x + 0.5, y - a - 0.2, z + 0.5)) return false;
+    return true;
+  }
+  // water (or lava) right ahead, at feet level or just below
+  waterAhead(e) {
+    const l = Math.hypot(e.wish[0], e.wish[2]);
+    if (l < 0.2) return false;
+    const w = this.game.world, x = Math.floor(e.pos[0] + e.wish[0] / l * 0.9), z = Math.floor(e.pos[2] + e.wish[2] / l * 0.9), y = Math.floor(e.pos[1] + 0.3);
+    const wet = id => isWaterId(id) || id === B.LAVA, a = w.getBlock(x, y, z);
+    return wet(a) || (!a && (wet(w.getBlock(x, y - 1, z)) || wet(w.getBlock(x, y - 2, z))));
+  }
+  // move along one axis; on contact the position is refined to touch the obstacle. true = blocked
+  moveAxis(e, ax, d) {
+    if (!d) return false;
+    const w = this.game.world, n = Math.max(1, Math.ceil(Math.abs(d) / 0.4)), s = d / n, p = e.pos;
+    for (let i = 0; i < n; i++) {
+      const o = p[ax];
+      p[ax] = o + s;
+      if (!entCollides(w, p[0], p[1], p[2], e.w, e.h)) continue;
+      let lo = 0, hi = 1;
+      for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; p[ax] = o + s * m; if (entCollides(w, p[0], p[1], p[2], e.w, e.h)) hi = m; else lo = m; }
+      p[ax] = o + s * lo;
+      return true;
+    }
+    return false;
+  }
+  // walking physics (original): steer velocity toward the wish, gravity, auto jump onto one
+  // block steps, climbing spiders, turning at most 8 rad/s
+  walkPhysics(e, d, dt, inW) {
+    const w = this.game.world;
+    if (e.jumpT > 0) e.jumpT -= dt;
+    if (e.kbT > 0) e.kbT -= dt;
+    if (inW) e.vel[1] += (2.5 - e.vel[1]) * Math.min(1, dt * 3);
+    else {
+      e.vel[1] -= 23 * dt;
+      if (e.vel[1] < -40) e.vel[1] = -40;
+      if (e.type === 'chicken' && e.vel[1] < -2.5) e.vel[1] = -2.5;   // chickens flutter down
+    }
+    const k = e.kbT > 0 ? 1.5 : e.onGround || inW ? 10 : 2.5, a = Math.min(1, dt * k);
+    e.vel[0] += (e.wish[0] - e.vel[0]) * a; e.vel[2] += (e.wish[2] - e.vel[2]) * a;
+    const wl = Math.hypot(e.wish[0], e.wish[2]);
+    if (wl > 0.2) e.tgtYaw = Math.atan2(e.wish[0], -e.wish[2]);
+    let dy = e.tgtYaw - e.bodyYaw;
+    while (dy > Math.PI) dy -= 6.2832; while (dy < -Math.PI) dy += 6.2832;
+    const tr = dt * 8; e.bodyYaw += dy > tr ? tr : dy < -tr ? -tr : dy;
+    const vy = e.vel[1] * dt;
+    if (this.moveAxis(e, 1, vy)) { if (vy < 0) e.onGround = true; e.vel[1] = 0; }
+    else if (vy !== 0) e.onGround = false;
+    let blocked = false;
+    for (const ax of [0, 2]) {
+      const dd = e.vel[ax] * dt;
+      if (!dd) continue;
+      const tx = e.pos[0] + (ax === 0 ? dd : 0), tz = e.pos[2] + (ax === 2 ? dd : 0);
+      if (!this.moveAxis(e, ax, dd)) continue;
+      if (e.onGround && e.jumpT <= 0 && e.vel[1] <= 0 && !entCollides(w, tx, e.pos[1] + 1.01, tz, e.w, e.h)) { e.vel[1] = 8.2; e.jumpT = 0.5; e.onGround = false; }
+      else blocked = true;
+    }
+    e.climbing = false;
+    if (d.climber && blocked && wl > 0.3 && !inW) {
+      e.climbing = true;
+      if (!this.moveAxis(e, 1, 3.4 * dt)) { e.vel[1] = 0; e.onGround = false; }
+    }
+    e.hitWall = blocked;
+  }
+
+  // ------------------------------------------------------------------ fish (original yp / pf)
+  aiFish(e, d, dt, dx, dz, h) {
     const g = this.game, w = g.world, p = g.player;
     const water = (x, y, z) => isWaterId(w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)));
-    if (!e.inWater) { e.headYaw = e.bodyYaw; return; }
-    let speed = d.speed, tgt = null;
-    const dy = p.pos[1] + 0.9 - e.pos[1];
-    const hunt = e.type === 'shark' && g.mode === 'survival' && !g.surv.dead && p.inWater && Math.hypot(dist, dy) < 20;
-    if (hunt) {
-      tgt = [p.pos[0], p.pos[1] + 0.9, p.pos[2]];
-      e.attackT -= dt;
-      if (Math.hypot(dist, dy) < 1.4 + e.w * 0.5 && e.attackT <= 0) {
-        e.attackT = 1.0; g.hurt(d.dmg);
-        const l = dist || 1; p.vel[0] += dx / l * 4; p.vel[2] += dz / l * 4;
+    e.inWater = water(e.pos[0], e.pos[1] + 0.05, e.pos[2]);
+    if (!e.inWater) {
+      // on land: flop and suffocate
+      e.dryT += dt;
+      if (e.dryT >= 1) { e.dryT -= 1; this.damageMob(e, 1, null); if (e.hp <= 0) return; }
+      e.hopT -= dt;
+      if (e.onGround && e.hopT <= 0) {
+        e.hopT = 0.5 + Math.random() * 0.5;
+        const a = Math.random() * 6.2832;
+        e.vel[1] = 2.6; e.vel[0] = Math.cos(a) * 0.7; e.vel[2] = Math.sin(a) * 0.7; e.bodyYaw = e.tgtYaw = a;
       }
-    } else {
-      if (e.panic > 0) { e.panic -= dt; speed *= 2.2; }
-      e.ai -= dt;
-      if (e.ai <= 0 || !e.target || e.target.length < 3) {
-        e.ai = 1.5 + Math.random() * 4;
-        e.target = null;
-        for (let k = 0; k < 6; k++) {
-          let a = Math.random() * 6.28;
-          if (e.panic > 0 && dist > 0.1) a = Math.atan2(-dz, -dx) + (Math.random() - 0.5);
-          const r = 2 + Math.random() * 6, t = [e.pos[0] + Math.cos(a) * r, e.pos[1] + (Math.random() - 0.5) * 3, e.pos[2] + Math.sin(a) * r];
-          if (water(t[0], t[1], t[2]) && water(t[0], t[1] + e.h, t[2])) { e.target = t; break; }
+      this.stop(e); this.fishPhysics(e, d, dt);
+      return;
+    }
+    e.dryT = 0;
+    if (e.fleeT > 0) e.fleeT -= dt;
+    e.swimT -= dt;
+    if (d.hostile) {
+      // sharks hunt the player in water, or other fish
+      e.huntT -= dt;
+      if (e.huntT <= 0) { e.huntT = 0.4; e.prey = this.findPrey(e, h); }
+      let q = e.prey;
+      if (q && q !== 'player' && (q.hp <= 0 || q.deathT > 0 || this.mobs.indexOf(q) < 0)) q = e.prey = null;
+      if (q) {
+        const pl = q === 'player', tx = pl ? p.pos[0] : q.pos[0], ty = pl ? p.pos[1] + 0.4 : q.pos[1], tz = pl ? p.pos[2] : q.pos[2];
+        const vx = tx - e.pos[0], vy = ty - e.pos[1], vz = tz - e.pos[2], l = Math.hypot(vx, vy, vz) || 1;
+        e.wish[0] = vx / l * d.speed; e.wish[1] = vy / l * d.speed * 0.6; e.wish[2] = vz / l * d.speed;
+        e.fleeing = false; e.swimT = 0.5;
+        if (l < e.w * 0.5 + (pl ? 1.1 : 0.9) && e.atkT > 1.2) {
+          e.atkT = 0;
+          if (pl) this.hitPlayer(e, d.dmg, p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]); else this.damageMob(q, d.dmg, null);
         }
+        if (!water(e.pos[0], e.pos[1] + 0.9, e.pos[2])) e.wish[1] = Math.min(e.wish[1], -0.15);
+        this.fishPhysics(e, d, dt);
+        return;
       }
-      tgt = e.target;
-      speed *= 0.7;
     }
-    let vx = 0, vy = 0, vz = 0;
-    if (tgt) {
-      vx = tgt[0] - e.pos[0]; vy = tgt[1] - e.pos[1]; vz = tgt[2] - e.pos[2];
-      const l = Math.hypot(vx, vy, vz);
-      if (l < 0.4) { if (!hunt) e.target = null; vx = vy = vz = 0; } else { vx /= l; vy /= l; vz /= l; }
+    if (!d.hostile && (h < 8 || e.fleeT > 0)) {
+      // escape: a reachable water spot farther from the player
+      e.escT -= dt;
+      let need = !e.esc || e.escT <= 0 || Math.hypot(e.esc[0] - e.pos[0], e.esc[2] - e.pos[2]) < 1.5;
+      if (!need && e.esc) {
+        const ax = e.pos[0] - p.pos[0], az = e.pos[2] - p.pos[2], al = Math.hypot(ax, az) || 1;
+        const bx = e.esc[0] - e.pos[0], bz = e.esc[2] - e.pos[2], bl = Math.hypot(bx, bz) || 1;
+        if (Math.hypot(e.esc[0] - p.pos[0], e.esc[2] - p.pos[2]) < al || (bx / bl) * (ax / al) + (bz / bl) * (az / al) < -0.15) need = true;
+      }
+      if (need) {
+        const t = this.escapeSpot(e, p.pos[0], p.pos[2]);
+        if (t) { const l = Math.hypot(t[0] - e.pos[0], t[2] - e.pos[2]) || 1; e.escD = [(t[0] - e.pos[0]) / l, (t[2] - e.pos[2]) / l]; e.esc = t; e.escT = 8; }
+        else { e.esc = null; e.escT = 0.6; }
+      }
+      if (e.esc) {
+        const sp = d.speed * (e.fleeT > 0 ? 3.8 : 3.4), vx = e.esc[0] - e.pos[0], vy = e.esc[1] - e.pos[1], vz = e.esc[2] - e.pos[2], l = Math.hypot(vx, vy, vz) || 1;
+        e.wish[0] = vx / l * sp; e.wish[1] = vy / l * sp * 0.5; e.wish[2] = vz / l * sp;
+        e.fleeing = true; e.swimT = 0.5;
+      } else e.fleeing = false;
+    } else if (e.fleeing) { e.fleeing = false; e.esc = null; e.escT = 0; e.escD = null; e.swimT = 0; }
+    if (!e.fleeing && e.swimT <= 0) {
+      e.escD = null;
+      e.swimT = 2.5 + Math.random() * 2.5;
+      if (Math.random() < 0.35) {
+        // drift slowly in the current direction
+        const b = Math.hypot(e.wish[0], e.wish[2]), a = b > 0.01 ? Math.atan2(e.wish[0], e.wish[2]) : Math.random() * 6.2832;
+        e.wish[0] = Math.sin(a) * d.speed * 0.2; e.wish[2] = Math.cos(a) * d.speed * 0.2; e.wish[1] = 0;
+      } else {
+        const a = Math.random() * 6.2832;
+        e.wish[0] = Math.cos(a) * d.speed; e.wish[2] = Math.sin(a) * d.speed; e.wish[1] = (Math.random() - 0.5) * d.speed * 0.2;
+        // schooling: toward the group, away from fish that are too close
+        let cx = 0, cz = 0, n = 0, sx = 0, sz = 0;
+        for (const o of this.mobs) {
+          if (o === e || o.type !== e.type) continue;
+          const l = Math.hypot(o.pos[0] - e.pos[0], o.pos[1] - e.pos[1], o.pos[2] - e.pos[2]);
+          if (l > 8 || l < 0.001) continue;
+          cx += o.pos[0]; cz += o.pos[2]; n++;
+          if (l < 1.8) { sx += (e.pos[0] - o.pos[0]) / l; sz += (e.pos[2] - o.pos[2]) / l; }
+        }
+        if (n) { const ax = cx / n - e.pos[0], az = cz / n - e.pos[2], al = Math.hypot(ax, az); if (al > 4) { e.wish[0] += ax / al * d.speed * 0.4; e.wish[2] += az / al * d.speed * 0.4; } }
+        const sl = Math.hypot(sx, sz);
+        if (sl > 0) { e.wish[0] += sx / sl * d.speed * 0.8; e.wish[2] += sz / sl * d.speed * 0.8; }
+      }
     }
-    // stay inside the water body
-    if (vy > 0 && !water(e.pos[0], e.pos[1] + e.h + 0.2, e.pos[2])) vy = Math.min(vy, -0.2);
-    if ((vx || vz) && !water(e.pos[0] + vx * 0.8, e.pos[1] + e.h * 0.5, e.pos[2] + vz * 0.8)) { vx = vz = 0; e.target = null; }
-    const a = Math.min(1, dt * 3);
-    e.vel[0] += (vx * speed - e.vel[0]) * a; e.vel[1] += (vy * speed * 0.6 - e.vel[1]) * a; e.vel[2] += (vz * speed - e.vel[2]) * a;
-    e.headYaw = e.bodyYaw;
+    // stay below the surface and off the bottom
+    if (water(e.pos[0], e.pos[1] + 0.9, e.pos[2])) { if (!water(e.pos[0], e.pos[1] - 0.6, e.pos[2])) e.wish[1] = Math.max(e.wish[1], 0.15); }
+    else e.wish[1] = Math.min(e.wish[1], -0.15);
+    this.fishPhysics(e, d, dt);
   }
-
-  // ---- slime: hops toward the player (or randomly), damages on contact
-  aiSlime(e, d, dt, dx, dz, dist) {
-    const g = this.game, p = g.player, S = SLIME_SIZES[e.size];
-    const chase = g.mode === 'survival' && !g.surv.dead && dist < 16;
-    e.headYaw = chase ? Math.atan2(dx, -dz) : e.bodyYaw;
-    if (e.onGround) {
-      e.vel[0] *= Math.max(0, 1 - dt * 12); e.vel[2] *= Math.max(0, 1 - dt * 12);
-      e.jumpT -= dt;
-      if (e.jumpT <= 0) {
-        let a;
-        if (chase) a = Math.atan2(dz, dx);
-        else { a = e.hopDir ?? Math.random() * 6.28; if (Math.random() < 0.3) a = Math.random() * 6.28; }
-        e.hopDir = a;
-        e.vel[0] = Math.cos(a) * S[2]; e.vel[2] = Math.sin(a) * S[2]; e.vel[1] = 6 + e.size * 0.35;
-        e.bodyYaw = Math.atan2(Math.cos(a), -Math.sin(a));
-        e.tsq = 1; e.onGround = false;
-        e.jumpT = chase ? 0.4 + Math.random() * 0.9 : 1 + Math.random() * 2.5;
+  findPrey(e, h) {
+    const g = this.game, det = 20;
+    if (h < det && g.player.inWater && g.mode === 'survival' && !g.surv.dead) return 'player';
+    let best = null, bd = det;
+    for (const o of this.mobs) {
+      if (o === e || !MOB_DEFS[o.type].aquatic || MOB_DEFS[o.type].hostile || o.hp <= 0 || o.deathT > 0) continue;
+      const l = Math.hypot(o.pos[0] - e.pos[0], o.pos[1] - e.pos[1], o.pos[2] - e.pos[2]);
+      if (l < bd) { bd = l; best = o; }
+    }
+    return best;
+  }
+  // water spot that is farther from the threat, reachable in a straight line through water
+  escapeSpot(e, px, pz) {
+    const w = this.game.world, water = (x, y, z) => isWaterId(w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)));
+    const d0 = Math.hypot(e.pos[0] - px, e.pos[2] - pz), ed = e.escD || [0, 0];
+    let ax = e.pos[0] - px, az = e.pos[2] - pz; const al = Math.hypot(ax, az) || 1; ax /= al; az /= al;
+    const lineWet = (x, y, z) => {
+      const l = Math.hypot(x - e.pos[0], y - e.pos[1], z - e.pos[2]), n = Math.max(2, Math.ceil(l / 0.8));
+      for (let k = 1; k <= n; k++) { const t = k / n; if (!water(e.pos[0] + (x - e.pos[0]) * t, e.pos[1] + 0.2 + (y - e.pos[1]) * t, e.pos[2] + (z - e.pos[2]) * t)) return false; }
+      return true;
+    };
+    let best = null, bs = 0;
+    for (let pass = 0; pass < 2 && !best; pass++) {
+      const r0 = pass === 0 ? 6 : 2, r1 = pass === 0 ? 16 : 6;
+      for (let k = 0; k < 12; k++) {
+        const a = Math.random() * 6.2832, r = r0 + Math.random() * (r1 - r0);
+        const x = e.pos[0] + Math.cos(a) * r, z = e.pos[2] + Math.sin(a) * r, y = e.pos[1] + (Math.random() - 0.5) * 4;
+        if (!water(x, y, z)) continue;
+        const gain = Math.hypot(x - px, z - pz) - d0;
+        if (gain <= 0) continue;
+        const tl = Math.hypot(x - e.pos[0], z - e.pos[2]) || 1, ux = (x - e.pos[0]) / tl, uz = (z - e.pos[2]) / tl;
+        if (ux * ax + uz * az < -0.15 || !lineWet(x, y, z)) continue;
+        const open = (water(x + 2, y, z) ? 1 : 0) + (water(x - 2, y, z) ? 1 : 0) + (water(x, y, z + 2) ? 1 : 0) + (water(x, y, z - 2) ? 1 : 0);
+        const s = gain + open * 1.5 + (ux * ed[0] + uz * ed[1]) * 4;
+        if (s > bs) { bs = s; best = [x, y, z]; }
       }
     }
-    e.attackT -= dt;
-    const dy = p.pos[1] - e.pos[1];
-    if (chase && S[1] > 0 && dist < e.w * 0.5 + 0.55 && dy > -1 && dy < e.h && e.attackT <= 0) {
-      e.attackT = 1.0; g.hurt(S[1]);
-      const l = dist || 1; p.vel[0] += dx / l * 4; p.vel[2] += dz / l * 4;
+    if (best) return best;
+    // fall back: the longest open water line in 16 directions
+    let fb = null, fs = 0;
+    for (let k = 0; k < 16; k++) {
+      const a = k * Math.PI / 8, c = Math.cos(a), s = Math.sin(a);
+      let b = 0;
+      for (let r = 1; r <= 8 && water(e.pos[0] + c * r, e.pos[1] + 0.2, e.pos[2] + s * r); r++) b = r;
+      if (!b || c * ax + s * az < -0.15) continue;
+      const x = e.pos[0] + c * b, z = e.pos[2] + s * b, sc = b + (Math.hypot(x - px, z - pz) - d0) * 2 + (c * ed[0] + s * ed[1]) * 4;
+      if (sc > fs) { fs = sc; fb = [x, e.pos[1], z]; }
     }
+    return fb;
+  }
+  fishPhysics(e, d, dt) {
+    const w = this.game.world, water = (x, y, z) => isWaterId(w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)));
+    e.inWater = water(e.pos[0], e.pos[1] + 0.05, e.pos[2]);
+    if (e.inWater) {
+      const a = Math.min(1, dt * (e.fleeing ? 10 : 4));
+      for (let k = 0; k < 3; k++) e.vel[k] += (e.wish[k] - e.vel[k]) * a;
+    } else {
+      e.vel[1] -= 23 * dt;
+      const f = Math.max(0, 1 - dt * 4); e.vel[0] *= f; e.vel[2] *= f;
+    }
+    const sp = Math.hypot(e.vel[0], e.vel[1], e.vel[2]);
+    if (sp > 0.15) {
+      e.tgtYaw = Math.atan2(e.vel[0], -e.vel[2]);
+      const pt = Math.atan2(e.vel[1], Math.hypot(e.vel[0], e.vel[2]));
+      e.swimPitch += (pt - e.swimPitch) * Math.min(1, dt * 4);
+    }
+    if (!e.inWater) e.swimPitch += (0 - e.swimPitch) * Math.min(1, dt * 4);
+    let dy = e.tgtYaw - e.bodyYaw;
+    while (dy > Math.PI) dy -= 6.2832; while (dy < -Math.PI) dy += 6.2832;
+    const tr = dt * 4; e.bodyYaw += dy > tr ? tr : dy < -tr ? -tr : dy;
+    e.headYaw = e.bodyYaw;
+    // in water a fish only moves to spots that are water too (it bounces off the edge)
+    const ok = (x, y, z) => !entCollides(w, x, y, z, e.w, e.h) && (!e.inWater || water(x, y + 0.05, z));
+    const nx = e.pos[0] + e.vel[0] * dt;
+    if (ok(nx, e.pos[1], e.pos[2])) e.pos[0] = nx; else { e.vel[0] = 0; e.wish[0] = -e.wish[0]; }
+    const nz = e.pos[2] + e.vel[2] * dt;
+    if (ok(e.pos[0], e.pos[1], nz)) e.pos[2] = nz; else { e.vel[2] = 0; e.wish[2] = -e.wish[2]; }
+    const vy = e.vel[1] * dt;
+    if (ok(e.pos[0], e.pos[1] + vy, e.pos[2])) { e.pos[1] += vy; e.onGround = false; }
+    else if (vy <= 0) { this.moveAxis(e, 1, vy); e.vel[1] = 0; e.onGround = true; }
+    else e.vel[1] = 0;
+    e.walk += dt * (0.6 + sp * 0.5);
+    e.walkAmt = 0;
   }
 
   rayBlocked(a, b) {
@@ -525,19 +927,22 @@ class Entities {
     }
     return false;
   }
-  // enderman teleport: a random dry spot with room for its 3-block height (near `toward` if given)
-  teleport(e, toward) {
-    const w = this.game.world, cx = toward ? toward[0] : e.pos[0], cz = toward ? toward[2] : e.pos[2], cy = toward ? toward[1] : e.pos[1];
-    for (let k = 0; k < 16; k++) {
-      const x = Math.floor(cx + (Math.random() - 0.5) * (toward ? 10 : 32)), z = Math.floor(cz + (Math.random() - 0.5) * (toward ? 10 : 32));
-      if (!w.isLoaded(x, z)) continue;
-      for (let y = Math.floor(cy) + 8; y > cy - 16; y--) {
-        const g = w.getBlock(x, y - 1, z);
-        if (!SOLID[g] || !OPAQUE[g] || isWaterId(g)) continue;
-        if (w.getBlock(x, y, z) || w.getBlock(x, y + 1, z) || w.getBlock(x, y + 2, z)) break;
-        this.game.spawnParticles(e.pos[0] - 0.5, e.pos[1] + 0.8, e.pos[2] - 0.5, B.OBSIDIAN, 12);
-        e.pos = [x + 0.5, y, z + 0.5]; e.vel = [0, 0, 0]; e.target = null; e.fallY = y;
-        this.game.spawnParticles(e.pos[0] - 0.5, e.pos[1] + 0.8, e.pos[2] - 0.5, B.OBSIDIAN, 12);
+  // enderman teleport (original): up to 32 random spots within r of (cx, cz), scanning 8 up to 16
+  // down for dry ground with room for the body
+  teleportNear(e, cx, cz, r) {
+    const w = this.game.world;
+    for (let k = 0; k < 32; k++) {
+      const x = Math.floor(cx + (Math.random() - 0.5) * 2 * r) + 0.5, z = Math.floor(cz + (Math.random() - 0.5) * 2 * r) + 0.5;
+      if (!w.isLoaded(Math.floor(x), Math.floor(z))) continue;
+      for (let s = 8; s >= -16; s--) {
+        const y = Math.floor(e.pos[1]) + s;
+        if (y < WORLD_MIN_Y + 2 || y > WORLD_MAX_Y - 4 || !this.pointSolid(x, y - 0.2, z) || entCollides(w, x, y, z, e.w, e.h)) continue;
+        const b = w.getBlock(Math.floor(x), y, Math.floor(z));
+        if (isWaterId(b) || b === B.LAVA) continue;
+        this.game.spawnParticles(e.pos[0] - 0.5, e.pos[1] + 0.8, e.pos[2] - 0.5, B.OBSIDIAN, 8);
+        e.pos[0] = x; e.pos[1] = y; e.pos[2] = z; e.vel[0] = e.vel[1] = e.vel[2] = 0; e.path = null; e.fallY = y;
+        if (e.pp) { e.pp[0] = x; e.pp[1] = y; e.pp[2] = z; }
+        this.game.spawnParticles(x - 0.5, y + 0.8, z - 0.5, B.OBSIDIAN, 8);
         return true;
       }
     }
@@ -634,24 +1039,27 @@ class Entities {
     return best;
   }
   damageMob(e, dmg, from) {
-    if (e.deathT > 0 || e.hurtT > 0.35) return;
-    e.hp -= dmg; e.hurtT = 0.5;
+    if (e.deathT > 0 || e.hurtT > 0.3) return;
+    const d = MOB_DEFS[e.type];
+    e.hp -= dmg; e.hurtT = 0.4;
     if (from) {
       const dx = e.pos[0] - from[0], dz = e.pos[2] - from[2], l = Math.hypot(dx, dz) || 1;
-      e.vel[0] = dx / l * 7; e.vel[2] = dz / l * 7; e.vel[1] = 5.5;
+      e.vel[0] += dx / l * 6; e.vel[2] += dz / l * 6; e.vel[1] = 4.5; e.kbT = 0.3; e.onGround = false;
     }
-    if (MOB_DEFS[e.type].passive) e.panic = 5;
-    if (e.type === 'spider') e.aggro = true;
-    if (e.type === 'enderman' && from) { e.aggro = true; if (e.hp > 0 && Math.random() < 0.35) this.teleport(e, this.game.player.pos); }
+    if (!d.hostile) e.fleeT = 4;
+    if (d.aquatic) { e.esc = null; e.escT = 0; }
+    if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 30;
+    if (e.hp > 0 && e.type === 'enderman' && Math.random() < 0.5 && this.teleportNear(e, e.pos[0], e.pos[2], 24)) e.tpT = 1;
     Sfx.hurt();
     if (e.hp <= 0) {
       e.deathT = 0.001;
-      for (const [id, n] of MOB_DEFS[e.type].drops(e)) if (id && n > 0) this.dropItem(id, n, e.pos[0], e.pos[1] + 0.5, e.pos[2]);
+      for (const [id, n] of d.drops(e)) if (id && n > 0) this.dropItem(id, n, e.pos[0], e.pos[1] + 0.5, e.pos[2]);
       if (e.type === 'slime' && e.size > 1) {
-        const n = 2 + (Math.random() * 3 | 0);
+        const n = 2 + (Math.random() * 3 | 0), r = e.w * 0.4;
         for (let k = 0; k < n; k++) {
-          const c = this.spawnMob('slime', e.pos[0] + (Math.random() - 0.5) * e.w * 0.5, e.pos[1] + 0.2, e.pos[2] + (Math.random() - 0.5) * e.w * 0.5, { size: e.size / 2 });
-          c.vel = [(Math.random() - 0.5) * 3, 3, (Math.random() - 0.5) * 3];
+          const a = k / n * 6.2832 + Math.random() * 0.5;
+          const c = this.spawnMob('slime', e.pos[0] + Math.cos(a) * r, e.pos[1] + 0.1, e.pos[2] + Math.sin(a) * r, { size: e.size / 2 });
+          c.vel = [Math.cos(a) * 2.5, 3, Math.sin(a) * 2.5]; c.angryT = e.angryT;
         }
       }
     }
@@ -662,12 +1070,20 @@ class Entities {
     const g = this.game, r = g.r;
     const byTex = new Map(), transTex = new Map();
     const add = (tex, arr, map) => { map = map || byTex; let a = map.get(tex); if (!a) map.set(tex, a = []); a.push(arr); };
-    const R2 = (env.renderDist * 16) ** 2;
+    const R2 = (env.renderDist * 16) ** 2, al = this.alpha ?? 1;
+    const lerpA = (a, b) => { let d = b - a; while (d > Math.PI) d -= 6.2832; while (d < -Math.PI) d += 6.2832; return a + d * al; };
     for (const e of this.mobs) {
-      const dx = e.pos[0] - cam[0], dz = e.pos[2] - cam[2];
+      // state between the last two simulation ticks
+      const P = e.rpos || (e.rpos = [0, 0, 0]);
+      if (e.pp) {
+        for (let k = 0; k < 3; k++) P[k] = e.pp[k] + (e.pos[k] - e.pp[k]) * al;
+        e.ryaw = lerpA(e.pyaw, e.bodyYaw); e.rhead = lerpA(e.phead, e.headYaw); e.rwalk = e.pwalk + (e.walk - e.pwalk) * al;
+        e.rpitch = e.pitchP !== undefined ? e.pitchP + ((e.swimPitch || 0) - e.pitchP) * al : e.swimPitch;
+      } else { P[0] = e.pos[0]; P[1] = e.pos[1]; P[2] = e.pos[2]; e.ryaw = e.bodyYaw; e.rhead = e.headYaw; e.rwalk = e.walk; e.rpitch = e.swimPitch; }
+      const dx = P[0] - cam[0], dz = P[2] - cam[2], rr = Math.max(2, e.w * 0.5 + 1);
       if (dx * dx + dz * dz > R2) continue;
-      if (!r.boxVisible(dx - 1.5, e.pos[1] - cam[1] - 0.5, dz - 1.5, dx + 1.5, e.pos[1] - cam[1] + 2.5, dz + 1.5)) continue;
-      const li = g.lightAt(e.pos[0], e.pos[1] + e.h * 0.6, e.pos[2], env);
+      if (!r.boxVisible(dx - rr, P[1] - cam[1] - 0.5, dz - rr, dx + rr, P[1] - cam[1] + e.h + 0.5, dz + rr)) continue;
+      const li = g.lightAt(P[0], P[1] + e.h * 0.6, P[2], env);
       const tint = e.hurtT > 0 || e.deathT > 0 ? [1, 0.45, 0.45] : e.fuse > 0 && Math.sin(e.fuse * 20) > 0 ? [1.6, 1.6, 1.6] : null;
       const m = MODELS[e.type];
       const v = [], tv = [];
@@ -711,16 +1127,17 @@ class Entities {
   }
   buildModel(out, m, e, cam, li, tint, transOut) {
     const g = this.game;
-    const by = e.bodyYaw, cy = Math.cos(by), sy = Math.sin(by);
-    let hy = (e.headYaw !== undefined ? e.headYaw : by) - by;
+    // interpolated state for mobs (rpos / ryaw / ...), the raw one for the player model
+    const EP = e.rpos || e.pos, by = e.ryaw !== undefined ? e.ryaw : e.bodyYaw, cy = Math.cos(by), sy = Math.sin(by);
+    let hy = (e.rhead !== undefined ? e.rhead : e.headYaw !== undefined ? e.headYaw : by) - by;
     while (hy > Math.PI) hy -= 6.2832; while (hy < -Math.PI) hy += 6.2832;
     hy = Math.max(-1.2, Math.min(1.2, hy));
-    let walkA = Math.cos(e.walk * 3.3) * 1.2 * e.walkAmt;
+    let walkA = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 3.3) * 1.2 * e.walkAmt;
     if (m.halfSwing) walkA = Math.max(-0.4, Math.min(0.4, walkA * 0.5));
     // model scale: fixed per model, slime size with MC's squish (wide on landing, tall when jumping)
     let S = (m.scale || 1) * (e.size ? e.size * 0.999 : 1), sxz = 1, syy = 1;
     if (e.size) { const f = (e.squish || 0) / (e.size * 0.5 + 1), f1 = 1 / (f + 1); sxz = f1; syy = 1 / f1; }
-    const sp = e.swimPitch || 0, cpt = Math.cos(sp), spt = Math.sin(sp), pY = (m.pitchY || 0) / 16 * S;
+    const sp = (e.rpitch !== undefined ? e.rpitch : e.swimPitch) || 0, cpt = Math.cos(sp), spt = Math.sin(sp), pY = (m.pitchY || 0) / 16 * S;
     const tail = Math.sin(performance.now() / 1000 * (e.type === 'shark' ? 7 : 12)) * (e.type === 'shark' ? 0.3 : 0.25) * (e.inWater === false ? 1.5 : 1);
     const death = e.deathT > 0 ? Math.min(1, e.deathT * 2.5) * Math.PI / 2 : 0;
     const t = performance.now() / 1000;
@@ -760,7 +1177,7 @@ class Entities {
         if (sneakBody) wy -= 0.12;
         if (death) { const yy = wy * Math.cos(death) - wx * Math.sin(death); wx = wy * Math.sin(death) + wx * Math.cos(death); wy = yy; }
         const rx2 = wx * cy - wz * sy, rz2 = wx * sy + wz * cy;
-        return [e.pos[0] + rx2 - cam[0], e.pos[1] + wy - cam[1], e.pos[2] + rz2 - cam[2]];
+        return [EP[0] + rx2 - cam[0], EP[1] + wy - cam[1], EP[2] + rz2 - cam[2]];
       };
       g.pushModelBox(dst, M, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
     }
@@ -774,7 +1191,7 @@ class Entities {
     for (const it of list) {
       const li = g.lightAt(it.pos[0], it.pos[1] + 0.2, it.pos[2], env);
       if (it.arrow) {
-        const a = it.arrow, l = Math.hypot(...a.vel) || 1, d = a.vel.map(x => x / l * 0.5);
+        const a = it.arrow, v = a.stuck && a.dir ? a.dir : a.vel, l = Math.hypot(...v) || 1, d = v.map(x => x / l * 0.5);
         const x = a.pos[0] - cam[0], y = a.pos[1] - cam[1], z = a.pos[2] - cam[2];
         g.pushBox(v, x - 0.03 - Math.max(0, -d[0]), y - 0.03, z - 0.03 - Math.max(0, -d[2]), x + 0.03 + Math.max(0, d[0]), y + 0.03, z + 0.03 + Math.max(0, d[2]), g.assets.layers.oak_planks, [li, li, li, 1]);
         continue;
