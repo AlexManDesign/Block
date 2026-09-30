@@ -96,3 +96,36 @@ class Simplex {
     return s / n;
   }
 }
+
+// Value noise of the original maincraft generator (hash lattice + smoothstep, rotated octaves).
+// Its thresholds (coral reefs, kelp forests, icebergs, podzol / packed-ice patches, windswept
+// gravel) are tuned to this distribution, so it is ported as is rather than replaced by simplex.
+class ValueNoise {
+  constructor(seed) { this.s = seed | 0; }
+  g(a, c) {
+    let w = ((a + this.s) | 0) * 374761393 + ((c - this.s) | 0) * 668265263 + 527595518;
+    w = (w ^ (w >>> 13)) | 0; w = Math.imul(w, 1274126177); w = (w ^ (w >>> 16)) >>> 0;
+    return w / 4294967296;
+  }
+  g3(a, c, e) {
+    let q = ((a + this.s) | 0) * 374761393 + (c | 0) * 668265263 + ((e - this.s) | 0) * 2147483423;
+    q = (q ^ (q >>> 13)) | 0; q = Math.imul(q, 1274126177); q = (q ^ (q >>> 16)) >>> 0;
+    return q / 4294967296;
+  }
+  v2(x, z) {
+    const xi = Math.floor(x), zi = Math.floor(z), fx = x - xi, fz = z - zi;
+    const a = this.g(xi, zi), b = this.g(xi + 1, zi), c = this.g(xi, zi + 1), d = this.g(xi + 1, zi + 1);
+    const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  // 4 octaves, each rotated 30 degrees further; result in [0, 1]
+  f2(x, z) {
+    let s = 0, amp = 0.5, fr = 1, tot = 0;
+    for (let k = 0; k < 4; k++) {
+      const r = VN_ROT[k], u = x * r[0] - z * r[1], v = x * r[1] + z * r[0];
+      s += this.v2(u * fr + k * 119.7, v * fr - k * 53.3) * amp; tot += amp; amp *= 0.5; fr *= 2.17;
+    }
+    return s / tot;
+  }
+}
+const VN_ROT = [[1, 0], [0.866, 0.5], [0.5, 0.866], [0, 1]];

@@ -80,7 +80,7 @@ function placementFor(world, heldId, hit, fd, player) {
     case SH.CROSS:
       if (fl & BF_AQUATIC) { if (!isWaterId(cur) && cur !== B.WATER) return null; if (!SOLID[below] && below !== heldId) return null; }
       else if (fl & BF_HANG) { const a = world.getBlock(x, y + 1, z); if (!SOLID[a] && a !== heldId) return null; }
-      else if (heldId === B.SUGAR_CANE) { if (below !== heldId && !isSoil(below) && below !== B.SAND && below !== B.RED_SAND) return null; }
+      else if (heldId === B.SUGAR_CANE) { if (!world.caneSupported(x, y, z)) return null; }
       else if (heldId === B.DEAD_BUSH) { if (!isSoil(below) && below !== B.SAND && below !== B.RED_SAND && below !== B.TERRACOTTA) return null; }
       else if (/MUSHROOM|FUNGUS|ROOTS|SPROUTS/.test(B_KEY[heldId])) { if (!SOLID[below]) return null; }
       else if (heldId === B.COBWEB) { /* anywhere */ }

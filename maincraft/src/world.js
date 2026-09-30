@@ -485,6 +485,14 @@ class World {
     };
     check(x, y + 1, z); check(x, y - 1, z); check(x + 1, y, z); check(x - 1, y, z); check(x, y, z + 1); check(x, y, z - 1);
   }
+  // sugar cane: on cane, or on soil / sand with water right next to that block (Minecraft rule)
+  caneSupported(x, y, z) {
+    const b = this.getBlock(x, y - 1, z);
+    if (b === B.SUGAR_CANE) return true;
+    if (b !== B.GRASS && b !== B.DIRT && b !== B.PODZOL && b !== B.COARSE_DIRT && b !== B.MUD && b !== B.SAND && b !== B.RED_SAND) return false;
+    return isWaterId(this.getBlock(x + 1, y - 1, z)) || isWaterId(this.getBlock(x - 1, y - 1, z)) ||
+      isWaterId(this.getBlock(x, y - 1, z + 1)) || isWaterId(this.getBlock(x, y - 1, z - 1));
+  }
   canStay(x, y, z, id, m) {
     const sh = SHAPE[id], below = this.getBlock(x, y - 1, z);
     const fl = FLAGS[id];
@@ -492,7 +500,8 @@ class World {
     if (fl & BF_AQUATIC) return SOLID[below] || below === id;
     if (sh === SH.CROSS) {
       if (fl & BF_HANG) { const a = this.getBlock(x, y + 1, z); return SOLID[a] || a === id; }
-      if (id === B.SUGAR_CANE || id === B.CACTUS || id === B.BAMBOO_PLANT) return below === id || SOLID[below];
+      if (id === B.SUGAR_CANE) return this.caneSupported(x, y, z);
+      if (id === B.CACTUS || id === B.BAMBOO_PLANT) return below === id || SOLID[below];
       if (id === B.COBWEB) return true;
       return SOLID[below] && below !== B.GLASS;
     }
