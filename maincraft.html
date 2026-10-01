@@ -1583,6 +1583,7 @@ class WorldGen {
     this.gCache = new Map();
     this.candCache = new Map();
     this.treeCache = new Map();
+    this.structCache = new Map();
     this.deco = [];                              // tree decorations of the chunk being generated
     this.treeWrites = null;                      // queued tree blocks while features() runs
     // tree buffer; id carries the log axis in bits 16+ (0 y, 1 x, 2 z)
@@ -1798,6 +1799,7 @@ class WorldGen {
     this.caves();
     this.geodes();
     this.spawnerList = [];
+    this.mineshafts();
     this.dungeons();
     this.ores();
     this.bedrock();
@@ -2193,6 +2195,242 @@ class WorldGen {
       const x = ni(0, 15), z = ni(0, 15), lo = WORLD_MIN_Y, hi = WORLD_MAX_Y - 1 - 8;
       const a = ni(lo + 8, hi), b = ni(lo, a - 1), y = ni(lo, b - 1 + 8);
       tryAt(x, y, z, B.LAVA, LROCK);
+    }
+  }
+
+  // ---------------------------------------------------------------- mineshafts
+  // MineshaftStructure / MineshaftPieces: a start in 0.4% of chunks grows a tree of pieces (room,
+  // corridors, crossings, stairs, up to depth 8 and 80 blocks from the start) from the start
+  // chunk's random alone, then moves it below sea level (badlands: up to the surface, dark oak).
+  // Every chunk the tree reaches builds the pieces' parts inside it, reading only its own blocks
+  // (as Minecraft does: outside the chunk counts as air), and skips a piece when liquid touches
+  // its box here.
+  mineshaftAt(scx, scz) {
+    const k = scx * 131072 + scz, C = this.structCache;
+    let st = C.get(k);
+    if (st !== undefined) return st;
+    st = null;
+    if (hash2(this.seed + 2203, scx, scz) < 0.004) {
+      const rnd = mulberry(hash2i(this.seed + 2207, scx, scz)), ri = (n) => (rnd() * n) | 0;
+      const pieces = [], sx = scx * 16 + 2, sz = scz * 16 + 2;
+      const hit = (b) => { for (const p of pieces) { const a = p.box; if (a[0] <= b[3] && a[3] >= b[0] && a[1] <= b[4] && a[4] >= b[1] && a[2] <= b[5] && a[5] >= b[2]) return p; } return null; };
+      // directions: 0 north (-z), 1 east (+x), 2 south (+z), 3 west (-x)
+      const boxAt = (d, x, y, z, a) => {   // a: [x0,y0,z0,x1,y1,z1] given for north/south/west/east in that order
+        const b = a[d];
+        return [b[0] + x, b[1] + y, b[2] + z, b[3] + x, b[4] + y, b[5] + z];
+      };
+      const add = (x, y, z, d, depth) => {
+        if (depth > 8 || Math.abs(x - sx) > 80 || Math.abs(z - sz) > 80) return null;
+        const i = ri(100);
+        let p = null;
+        if (i >= 80) {
+          const h = ri(4) === 0 ? 6 : 2;
+          const b = boxAt(d, x, y, z, [[-1, 0, -4, 3, h, 0], [0, 0, -1, 4, h, 3], [-1, 0, 0, 3, h, 4], [-4, 0, -1, 0, h, 3]]);
+          if (!hit(b)) p = { kind: 'crossing', box: b, dir: d, depth: depth + 1, two: b[4] - b[1] + 1 > 3 };
+        } else if (i >= 70) {
+          const b = boxAt(d, x, y, z, [[0, -5, -8, 2, 2, 0], [0, -5, 0, 8, 2, 2], [0, -5, 0, 2, 2, 8], [-8, -5, 0, 0, 2, 2]]);
+          if (!hit(b)) p = { kind: 'stairs', box: b, dir: d, depth: depth + 1 };
+        } else {
+          for (let n = ri(3) + 2; n > 0; n--) {
+            const j = n * 5;
+            const b = boxAt(d, x, y, z, [[0, 0, -(j - 1), 2, 2, 0], [0, 0, 0, j - 1, 2, 2], [0, 0, 0, 2, 2, j - 1], [-(j - 1), 0, 0, 0, 2, 2]]);
+            if (!hit(b)) {
+              const rails = ri(3) === 0, spider = !rails && ri(23) === 0;
+              p = { kind: 'corridor', box: b, dir: d, depth: depth + 1, rails, spider, n: (d & 1 ? b[3] - b[0] + 1 : b[5] - b[2] + 1) / 5 };
+              break;
+            }
+          }
+        }
+        if (p) { pieces.push(p); children(p); }
+        return p;
+      };
+      const children = (p) => {
+        const b = p.box, g = p.depth, d = p.dir;
+        if (p.kind === 'corridor') {
+          const j = ri(4), yy = () => b[1] - 1 + ri(3);
+          if (d === 0) { if (j <= 1) add(b[0], yy(), b[2] - 1, d, g); else if (j === 2) add(b[0] - 1, yy(), b[2], 3, g); else add(b[3] + 1, yy(), b[2], 1, g); }
+          else if (d === 2) { if (j <= 1) add(b[0], yy(), b[5] + 1, d, g); else if (j === 2) add(b[0] - 1, yy(), b[5] - 3, 3, g); else add(b[3] + 1, yy(), b[5] - 3, 1, g); }
+          else if (d === 3) { if (j <= 1) add(b[0] - 1, yy(), b[2], d, g); else if (j === 2) add(b[0], yy(), b[2] - 1, 0, g); else add(b[0], yy(), b[5] + 1, 2, g); }
+          else { if (j <= 1) add(b[3] + 1, yy(), b[2], d, g); else if (j === 2) add(b[3] - 3, yy(), b[2] - 1, 0, g); else add(b[3] - 3, yy(), b[5] + 1, 2, g); }
+          if (g < 8) {
+            if (d & 1) { for (let k2 = b[0] + 3; k2 + 3 <= b[3]; k2 += 5) { const l = ri(5); if (l === 0) add(k2, b[1], b[2] - 1, 0, g + 1); else if (l === 1) add(k2, b[1], b[5] + 1, 2, g + 1); } }
+            else { for (let k2 = b[2] + 3; k2 + 3 <= b[5]; k2 += 5) { const l = ri(5); if (l === 0) add(b[0] - 1, b[1], k2, 3, g + 1); else if (l === 1) add(b[3] + 1, b[1], k2, 1, g + 1); } }
+          }
+        } else if (p.kind === 'crossing') {
+          if (d === 0) { add(b[0] + 1, b[1], b[2] - 1, 0, g); add(b[0] - 1, b[1], b[2] + 1, 3, g); add(b[3] + 1, b[1], b[2] + 1, 1, g); }
+          else if (d === 2) { add(b[0] + 1, b[1], b[5] + 1, 2, g); add(b[0] - 1, b[1], b[2] + 1, 3, g); add(b[3] + 1, b[1], b[2] + 1, 1, g); }
+          else if (d === 3) { add(b[0] + 1, b[1], b[2] - 1, 0, g); add(b[0] + 1, b[1], b[5] + 1, 2, g); add(b[0] - 1, b[1], b[2] + 1, 3, g); }
+          else { add(b[0] + 1, b[1], b[2] - 1, 0, g); add(b[0] + 1, b[1], b[5] + 1, 2, g); add(b[3] + 1, b[1], b[2] + 1, 1, g); }
+          if (p.two) {
+            if (rnd() < 0.5) add(b[0] + 1, b[1] + 4, b[2] - 1, 0, g);
+            if (rnd() < 0.5) add(b[0] - 1, b[1] + 4, b[2] + 1, 3, g);
+            if (rnd() < 0.5) add(b[3] + 1, b[1] + 4, b[2] + 1, 1, g);
+            if (rnd() < 0.5) add(b[0] + 1, b[1] + 4, b[5] + 1, 2, g);
+          }
+        } else if (p.kind === 'stairs') {
+          if (d === 0) add(b[0], b[1], b[2] - 1, 0, g); else if (d === 2) add(b[0], b[1], b[5] + 1, 2, g);
+          else if (d === 3) add(b[0] - 1, b[1], b[2], 3, g); else add(b[3] + 1, b[1], b[2], 1, g);
+        } else {
+          // room: openings into new pieces along all four walls
+          const xs = b[3] - b[0] + 1, zs = b[5] - b[2] + 1, j = Math.max(1, b[4] - b[1] + 1 - 4);
+          p.ent = [];
+          const keep = (q, e) => { if (q) p.ent.push(e(q.box)); };
+          for (let k2 = 0; k2 < xs; k2 += 4) { k2 += ri(xs); if (k2 + 3 > xs) break; keep(add(b[0] + k2, b[1] + ri(j) + 1, b[2] - 1, 0, g), (q) => [q[0], q[1], b[2], q[3], q[4], b[2] + 1]); }
+          for (let k2 = 0; k2 < xs; k2 += 4) { k2 += ri(xs); if (k2 + 3 > xs) break; keep(add(b[0] + k2, b[1] + ri(j) + 1, b[5] + 1, 2, g), (q) => [q[0], q[1], b[5] - 1, q[3], q[4], b[5]]); }
+          for (let k2 = 0; k2 < zs; k2 += 4) { k2 += ri(zs); if (k2 + 3 > zs) break; keep(add(b[0] - 1, b[1] + ri(j) + 1, b[2] + k2, 3, g), (q) => [b[0], q[1], q[2], b[0] + 1, q[4], q[5]]); }
+          for (let k2 = 0; k2 < zs; k2 += 4) { k2 += ri(zs); if (k2 + 3 > zs) break; keep(add(b[3] + 1, b[1] + ri(j) + 1, b[2] + k2, 1, g), (q) => [b[3] - 1, q[1], q[2], b[3], q[4], q[5]]); }
+        }
+      };
+      const room = { kind: 'room', box: [sx, 50, sz, sx + 7 + ri(6), 54 + ri(6), sz + 7 + ri(6)], dir: 0, depth: 0 };
+      pieces.push(room);
+      children(room);
+      let y0 = Infinity, y1 = -Infinity;
+      for (const p of pieces) { y0 = Math.min(y0, p.box[1]); y1 = Math.max(y1, p.box[4]); }
+      const mesa = !!(BPROP[this.biomeAt(scx * 16 + 8, scz * 16 + 8)] || {}).badlands;
+      let dy;
+      if (mesa) dy = SEA - y0 + ((y1 - y0 + 1) >> 1) + 5;
+      else {   // StructurePiecesBuilder.moveBelowSeaLevel(seaLevel, minY, random, 10)
+        const top = SEA - 10;
+        let j = y1 - y0 + 1 + WORLD_MIN_Y + 1;
+        if (j < top) j += ri(top - j);
+        dy = j - y1;
+      }
+      const X = [1e9, 1e9, -1e9, -1e9];
+      for (const p of pieces) {
+        p.box[1] += dy; p.box[4] += dy;
+        if (p.ent) for (const e of p.ent) { e[1] += dy; e[4] += dy; }
+        X[0] = Math.min(X[0], p.box[0]); X[1] = Math.min(X[1], p.box[2]); X[2] = Math.max(X[2], p.box[3]); X[3] = Math.max(X[3], p.box[5]);
+      }
+      st = { pieces, mesa, ext: X, id: k };
+    }
+    if (C.size > 4000) C.clear();
+    C.set(k, st);
+    return st;
+  }
+  mineshafts() {
+    const cx = this.cx, cz = this.cz, x0 = this.x0, z0 = this.z0;
+    for (let sz = cz - 6; sz <= cz + 6; sz++) for (let sx = cx - 6; sx <= cx + 6; sx++) {
+      const st = this.mineshaftAt(sx, sz);
+      if (!st || st.ext[0] > x0 + 16 || st.ext[2] < x0 - 1 || st.ext[1] > z0 + 16 || st.ext[3] < z0 - 1) continue;
+      for (const p of st.pieces) {
+        const b = p.box;
+        if (b[0] > x0 + 16 || b[3] < x0 - 1 || b[2] > z0 + 16 || b[5] < z0 - 1) continue;
+        this.placeMinePiece(p, st);
+      }
+    }
+  }
+  placeMinePiece(p, st) {
+    const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0, seed = this.seed, TOP = this.TOP;
+    const PL = st.mesa ? B.DARK_PLANKS : B.PLANKS, FE = st.mesa ? B.DARK_PLANKS_FENCE : B.OAK_FENCE, LG = st.mesa ? B.DARK_LOG : B.LOG;
+    const b = p.box, d = p.kind === 'corridor' || p.kind === 'stairs' ? p.dir : -1;
+    const inC = (x, y, z) => x >= x0 && x < x0 + 16 && z >= z0 && z < z0 + 16 && y > WORLD_MIN_Y && y < WORLD_MAX_Y;
+    const at = (x, y, z) => inC(x, y, z) ? ids[CI(x - x0, y, z - z0)] : 0;
+    // piece-local -> world (StructurePiece.getWorldX/Y/Z; crossings and rooms use world coordinates)
+    const wx = (x, z) => d === 0 || d === 2 ? b[0] + x : d === 3 ? b[3] - z : d === 1 ? b[0] + z : x;
+    const wz = (x, z) => d === 0 ? b[5] - z : d === 2 ? b[2] + z : d === 1 || d === 3 ? b[2] + x : z;
+    const wy = (y) => d < 0 ? y : b[1] + y;
+    const set = (x, y, z, id, m) => {
+      if (!inC(x, y, z)) return;
+      const i = CI(x - x0, y, z - z0), c = ids[i];
+      if (c === PL || c === FE || c === LG) return;   // MineShaftPiece.canBeReplaced
+      ids[i] = id; meta[i] = m | 0;
+    };
+    const L = (x, y, z, id, m) => set(wx(x, z), wy(y), wz(x, z), id, m);
+    const Lat = (x, y, z) => at(wx(x, z), wy(y), wz(x, z));
+    const box = (ax, ay, az, bx, by, bz, id, m) => { for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) L(x, y, z, id, m); };
+    const rnd = (k, x, y, z) => hash3(seed + 2300 + k, wx(x, z), wy(y), wz(x, z));
+    // below the ocean-floor height of its column (StructurePiece.isInterior checks the block above)
+    const interior = (x, y, z) => { const X = wx(x, z), Z = wz(x, z), Y = wy(y) + 1; return inC(X, Y, Z) && Y < TOP[(Z - z0) * 16 + X - x0]; };
+    const sturdy = (id) => OPAQUE[id] === 1;
+    const planksUnder = (x, y, z) => { if (interior(x, y, z) && !sturdy(Lat(x, y, z))) L(x, y, z, PL, 0); };
+    // isInInvalidLocation: liquid on the faces of the box grown by 1, inside this chunk
+    {
+      const X0 = Math.max(b[0] - 1, x0), X1 = Math.min(b[3] + 1, x0 + 15), Z0 = Math.max(b[2] - 1, z0), Z1 = Math.min(b[5] + 1, z0 + 15), Y0 = b[1] - 1, Y1 = b[4] + 1;
+      const liq = (x, y, z) => { const id = at(x, y, z); return id === B.WATER || id === B.LAVA || (FLAGS[id] & BF_AQUATIC) !== 0; };
+      for (let x = X0; x <= X1; x++) for (let z = Z0; z <= Z1; z++) if (liq(x, Y0, z) || liq(x, Y1, z)) return;
+      for (let x = X0; x <= X1; x++) for (let y = Y0; y <= Y1; y++) if (liq(x, y, Z0) || liq(x, y, Z1)) return;
+      for (let z = Z0; z <= Z1; z++) for (let y = Y0; y <= Y1; y++) if (liq(X0, y, z) || liq(X1, y, z)) return;
+    }
+    if (p.kind === 'corridor') {
+      const i1 = p.n * 5 - 1;
+      box(0, 0, 0, 2, 1, i1, 0, 0);
+      for (let x = 0; x <= 2; x++) for (let z = 0; z <= i1; z++) if (rnd(1, x, 2, z) <= 0.8) L(x, 2, z, 0, 0);
+      if (p.spider) for (let y = 0; y <= 1; y++) for (let x = 0; x <= 2; x++) for (let z = 0; z <= i1; z++) if (rnd(2, x, y, z) <= 0.6 && interior(x, y, z)) L(x, y, z, B.COBWEB, 0);
+      let spawner = false;
+      for (let s = 0; s < p.n; s++) {
+        const k1 = 2 + s * 5;
+        this.mineSupport(L, Lat, rnd, d, k1, PL, FE);
+        for (const [x, z, ch] of [[0, k1 - 1, 0.1], [2, k1 - 1, 0.1], [0, k1 + 1, 0.1], [2, k1 + 1, 0.1], [0, k1 - 2, 0.05], [2, k1 - 2, 0.05], [0, k1 + 2, 0.05], [2, k1 + 2, 0.05]]) {
+          if (!interior(x, 2, z) || rnd(3, x, 2, z) >= ch) continue;
+          let n = 0;
+          for (const [ax, ay, az] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) if (sturdy(Lat(x + ax, 2 + ay, z + az))) n++;
+          if (n >= 2) L(x, 2, z, B.COBWEB, 0);
+        }
+        if (p.spider && !spawner) {
+          const z = k1 - 1 + ((rnd(4, 1, 0, k1) * 3) | 0), X = wx(1, z), Y = wy(0), Z = wz(1, z);
+          if (inC(X, Y, Z) && interior(1, 0, z)) {
+            spawner = true;
+            L(1, 0, z, B.SPAWNER, SPAWNER_MOB.cave_spider);
+            this.spawnerList.push(X, Y, Z);
+          }
+        }
+      }
+      for (let x = 0; x <= 2; x++) for (let z = 0; z <= i1; z++) planksUnder(x, -1, z);
+      // MineShaftCorridor.placeDoubleLowerOrUpperSupport: log pillars down to the ground under the
+      // floor planks at the first and the last support
+      const pillar = (x, z) => {
+        if (Lat(x, -1, z) !== PL) return;
+        let y = -2;
+        while (wy(y) > WORLD_MIN_Y + 1 && !sturdy(Lat(x, y, z)) && Lat(x, y, z) !== B.WATER && Lat(x, y, z) !== B.LAVA) y--;
+        if (!sturdy(Lat(x, y, z))) return;
+        for (let yy = y + 1; yy <= -2; yy++) L(x, yy, z, LG, 0);
+      };
+      for (const z of p.n > 1 ? [2, i1 - 2] : [2]) { pillar(0, z); pillar(2, z); }
+      if (p.rails) {
+        const rm = d & 1 ? 1 : 0;
+        for (let z = 0; z <= i1; z++) {
+          const under = Lat(1, -1, z);
+          if (under && sturdy(under) && rnd(5, 1, 0, z) < (interior(1, 0, z) ? 0.7 : 0.9)) L(1, 0, z, B.RAIL, rm);
+        }
+      }
+    } else if (p.kind === 'crossing') {
+      const [ax, ay, az, bx, by, bz] = b, A = (X0, Y0, Z0, X1, Y1, Z1) => box(X0, Y0, Z0, X1, Y1, Z1, 0, 0);
+      if (p.two) {
+        A(ax + 1, ay, az, bx - 1, ay + 2, bz); A(ax, ay, az + 1, bx, ay + 2, bz - 1);
+        A(ax + 1, by - 2, az, bx - 1, by, bz); A(ax, by - 2, az + 1, bx, by, bz - 1);
+        A(ax + 1, ay + 3, az + 1, bx - 1, ay + 3, bz - 1);
+      } else { A(ax + 1, ay, az, bx - 1, by, bz); A(ax, ay, az + 1, bx, by, bz - 1); }
+      for (const [x, z] of [[ax + 1, az + 1], [ax + 1, bz - 1], [bx - 1, az + 1], [bx - 1, bz - 1]]) if (at(x, by + 1, z)) for (let y = ay; y <= by; y++) set(x, y, z, PL, 0);
+      for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) planksUnder(x, ay - 1, z);
+    } else if (p.kind === 'stairs') {
+      box(0, 5, 0, 2, 7, 1, 0, 0);
+      box(0, 0, 7, 2, 2, 8, 0, 0);
+      for (let i = 0; i < 5; i++) box(0, 5 - i - (i < 4 ? 1 : 0), 2 + i, 2, 7 - i, 2 + i, 0, 0);
+    } else {
+      const [ax, ay, az, bx, by, bz] = b;
+      for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) if (at(x, ay, z)) set(x, ay, z, B.DIRT, 0);
+      for (let y = ay + 1; y <= Math.min(ay + 3, by); y++) for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) set(x, y, z, 0, 0);
+      for (const e of p.ent) for (let y = e[4] - 2; y <= e[4]; y++) for (let x = e[0]; x <= e[3]; x++) for (let z = e[2]; z <= e[5]; z++) set(x, y, z, 0, 0);
+      // generateUpperHalfSphere
+      const fx = bx - ax + 1, fy = by - (ay + 4) + 1, fz = bz - az + 1, cx = ax + fx / 2, cz = az + fz / 2;
+      for (let y = ay + 4; y <= by; y++) {
+        const f4 = (y - (ay + 4)) / fy;
+        for (let x = ax; x <= bx; x++) { const f5 = (x - cx) / (fx * 0.5); for (let z = az; z <= bz; z++) { const f6 = (z - cz) / (fz * 0.5); if (f5 * f5 + f4 * f4 + f6 * f6 <= 1.05) set(x, y, z, 0, 0); } }
+      }
+    }
+  }
+  // MineShaftCorridor.placeSupport: two fence posts and a planks beam where the roof above is not air
+  // (a quarter of them only the two beam ends), now and then a torch on the beam
+  mineSupport(L, Lat, rnd, d, z, PL, FE) {
+    for (let x = 0; x <= 2; x++) if (!Lat(x, 3, z)) return;
+    L(0, 0, z, FE, 0); L(0, 1, z, FE, 0); L(2, 0, z, FE, 0); L(2, 1, z, FE, 0);
+    if (rnd(6, 0, 2, z) < 0.25) { L(0, 2, z, PL, 0); L(2, 2, z, PL, 0); }
+    else {
+      L(0, 2, z, PL, 0); L(1, 2, z, PL, 0); L(2, 2, z, PL, 0);
+      // wall torches on the beam: local z-1 hangs on the beam at +z, z+1 on the beam at -z
+      const tz = (s) => { const dl = s > 0 ? 1 : -1; const dz = d === 0 ? -dl : d === 2 ? dl : 0, dx = d === 1 ? dl : d === 3 ? -dl : 0; return 1 + HDX.findIndex((v, i) => v === dx && HDZ[i] === dz); };
+      if (rnd(7, 1, 2, z - 1) < 0.05) L(1, 2, z - 1, B.TORCH, tz(1));
+      if (rnd(7, 1, 2, z + 1) < 0.05) L(1, 2, z + 1, B.TORCH, tz(-1));
     }
   }
 
@@ -5514,6 +5752,7 @@ class WorldGen {
     this.gCache = new Map();
     this.candCache = new Map();
     this.treeCache = new Map();
+    this.structCache = new Map();
     this.deco = [];                              // tree decorations of the chunk being generated
     this.treeWrites = null;                      // queued tree blocks while features() runs
     // tree buffer; id carries the log axis in bits 16+ (0 y, 1 x, 2 z)
@@ -5729,6 +5968,7 @@ class WorldGen {
     this.caves();
     this.geodes();
     this.spawnerList = [];
+    this.mineshafts();
     this.dungeons();
     this.ores();
     this.bedrock();
@@ -6124,6 +6364,242 @@ class WorldGen {
       const x = ni(0, 15), z = ni(0, 15), lo = WORLD_MIN_Y, hi = WORLD_MAX_Y - 1 - 8;
       const a = ni(lo + 8, hi), b = ni(lo, a - 1), y = ni(lo, b - 1 + 8);
       tryAt(x, y, z, B.LAVA, LROCK);
+    }
+  }
+
+  // ---------------------------------------------------------------- mineshafts
+  // MineshaftStructure / MineshaftPieces: a start in 0.4% of chunks grows a tree of pieces (room,
+  // corridors, crossings, stairs, up to depth 8 and 80 blocks from the start) from the start
+  // chunk's random alone, then moves it below sea level (badlands: up to the surface, dark oak).
+  // Every chunk the tree reaches builds the pieces' parts inside it, reading only its own blocks
+  // (as Minecraft does: outside the chunk counts as air), and skips a piece when liquid touches
+  // its box here.
+  mineshaftAt(scx, scz) {
+    const k = scx * 131072 + scz, C = this.structCache;
+    let st = C.get(k);
+    if (st !== undefined) return st;
+    st = null;
+    if (hash2(this.seed + 2203, scx, scz) < 0.004) {
+      const rnd = mulberry(hash2i(this.seed + 2207, scx, scz)), ri = (n) => (rnd() * n) | 0;
+      const pieces = [], sx = scx * 16 + 2, sz = scz * 16 + 2;
+      const hit = (b) => { for (const p of pieces) { const a = p.box; if (a[0] <= b[3] && a[3] >= b[0] && a[1] <= b[4] && a[4] >= b[1] && a[2] <= b[5] && a[5] >= b[2]) return p; } return null; };
+      // directions: 0 north (-z), 1 east (+x), 2 south (+z), 3 west (-x)
+      const boxAt = (d, x, y, z, a) => {   // a: [x0,y0,z0,x1,y1,z1] given for north/south/west/east in that order
+        const b = a[d];
+        return [b[0] + x, b[1] + y, b[2] + z, b[3] + x, b[4] + y, b[5] + z];
+      };
+      const add = (x, y, z, d, depth) => {
+        if (depth > 8 || Math.abs(x - sx) > 80 || Math.abs(z - sz) > 80) return null;
+        const i = ri(100);
+        let p = null;
+        if (i >= 80) {
+          const h = ri(4) === 0 ? 6 : 2;
+          const b = boxAt(d, x, y, z, [[-1, 0, -4, 3, h, 0], [0, 0, -1, 4, h, 3], [-1, 0, 0, 3, h, 4], [-4, 0, -1, 0, h, 3]]);
+          if (!hit(b)) p = { kind: 'crossing', box: b, dir: d, depth: depth + 1, two: b[4] - b[1] + 1 > 3 };
+        } else if (i >= 70) {
+          const b = boxAt(d, x, y, z, [[0, -5, -8, 2, 2, 0], [0, -5, 0, 8, 2, 2], [0, -5, 0, 2, 2, 8], [-8, -5, 0, 0, 2, 2]]);
+          if (!hit(b)) p = { kind: 'stairs', box: b, dir: d, depth: depth + 1 };
+        } else {
+          for (let n = ri(3) + 2; n > 0; n--) {
+            const j = n * 5;
+            const b = boxAt(d, x, y, z, [[0, 0, -(j - 1), 2, 2, 0], [0, 0, 0, j - 1, 2, 2], [0, 0, 0, 2, 2, j - 1], [-(j - 1), 0, 0, 0, 2, 2]]);
+            if (!hit(b)) {
+              const rails = ri(3) === 0, spider = !rails && ri(23) === 0;
+              p = { kind: 'corridor', box: b, dir: d, depth: depth + 1, rails, spider, n: (d & 1 ? b[3] - b[0] + 1 : b[5] - b[2] + 1) / 5 };
+              break;
+            }
+          }
+        }
+        if (p) { pieces.push(p); children(p); }
+        return p;
+      };
+      const children = (p) => {
+        const b = p.box, g = p.depth, d = p.dir;
+        if (p.kind === 'corridor') {
+          const j = ri(4), yy = () => b[1] - 1 + ri(3);
+          if (d === 0) { if (j <= 1) add(b[0], yy(), b[2] - 1, d, g); else if (j === 2) add(b[0] - 1, yy(), b[2], 3, g); else add(b[3] + 1, yy(), b[2], 1, g); }
+          else if (d === 2) { if (j <= 1) add(b[0], yy(), b[5] + 1, d, g); else if (j === 2) add(b[0] - 1, yy(), b[5] - 3, 3, g); else add(b[3] + 1, yy(), b[5] - 3, 1, g); }
+          else if (d === 3) { if (j <= 1) add(b[0] - 1, yy(), b[2], d, g); else if (j === 2) add(b[0], yy(), b[2] - 1, 0, g); else add(b[0], yy(), b[5] + 1, 2, g); }
+          else { if (j <= 1) add(b[3] + 1, yy(), b[2], d, g); else if (j === 2) add(b[3] - 3, yy(), b[2] - 1, 0, g); else add(b[3] - 3, yy(), b[5] + 1, 2, g); }
+          if (g < 8) {
+            if (d & 1) { for (let k2 = b[0] + 3; k2 + 3 <= b[3]; k2 += 5) { const l = ri(5); if (l === 0) add(k2, b[1], b[2] - 1, 0, g + 1); else if (l === 1) add(k2, b[1], b[5] + 1, 2, g + 1); } }
+            else { for (let k2 = b[2] + 3; k2 + 3 <= b[5]; k2 += 5) { const l = ri(5); if (l === 0) add(b[0] - 1, b[1], k2, 3, g + 1); else if (l === 1) add(b[3] + 1, b[1], k2, 1, g + 1); } }
+          }
+        } else if (p.kind === 'crossing') {
+          if (d === 0) { add(b[0] + 1, b[1], b[2] - 1, 0, g); add(b[0] - 1, b[1], b[2] + 1, 3, g); add(b[3] + 1, b[1], b[2] + 1, 1, g); }
+          else if (d === 2) { add(b[0] + 1, b[1], b[5] + 1, 2, g); add(b[0] - 1, b[1], b[2] + 1, 3, g); add(b[3] + 1, b[1], b[2] + 1, 1, g); }
+          else if (d === 3) { add(b[0] + 1, b[1], b[2] - 1, 0, g); add(b[0] + 1, b[1], b[5] + 1, 2, g); add(b[0] - 1, b[1], b[2] + 1, 3, g); }
+          else { add(b[0] + 1, b[1], b[2] - 1, 0, g); add(b[0] + 1, b[1], b[5] + 1, 2, g); add(b[3] + 1, b[1], b[2] + 1, 1, g); }
+          if (p.two) {
+            if (rnd() < 0.5) add(b[0] + 1, b[1] + 4, b[2] - 1, 0, g);
+            if (rnd() < 0.5) add(b[0] - 1, b[1] + 4, b[2] + 1, 3, g);
+            if (rnd() < 0.5) add(b[3] + 1, b[1] + 4, b[2] + 1, 1, g);
+            if (rnd() < 0.5) add(b[0] + 1, b[1] + 4, b[5] + 1, 2, g);
+          }
+        } else if (p.kind === 'stairs') {
+          if (d === 0) add(b[0], b[1], b[2] - 1, 0, g); else if (d === 2) add(b[0], b[1], b[5] + 1, 2, g);
+          else if (d === 3) add(b[0] - 1, b[1], b[2], 3, g); else add(b[3] + 1, b[1], b[2], 1, g);
+        } else {
+          // room: openings into new pieces along all four walls
+          const xs = b[3] - b[0] + 1, zs = b[5] - b[2] + 1, j = Math.max(1, b[4] - b[1] + 1 - 4);
+          p.ent = [];
+          const keep = (q, e) => { if (q) p.ent.push(e(q.box)); };
+          for (let k2 = 0; k2 < xs; k2 += 4) { k2 += ri(xs); if (k2 + 3 > xs) break; keep(add(b[0] + k2, b[1] + ri(j) + 1, b[2] - 1, 0, g), (q) => [q[0], q[1], b[2], q[3], q[4], b[2] + 1]); }
+          for (let k2 = 0; k2 < xs; k2 += 4) { k2 += ri(xs); if (k2 + 3 > xs) break; keep(add(b[0] + k2, b[1] + ri(j) + 1, b[5] + 1, 2, g), (q) => [q[0], q[1], b[5] - 1, q[3], q[4], b[5]]); }
+          for (let k2 = 0; k2 < zs; k2 += 4) { k2 += ri(zs); if (k2 + 3 > zs) break; keep(add(b[0] - 1, b[1] + ri(j) + 1, b[2] + k2, 3, g), (q) => [b[0], q[1], q[2], b[0] + 1, q[4], q[5]]); }
+          for (let k2 = 0; k2 < zs; k2 += 4) { k2 += ri(zs); if (k2 + 3 > zs) break; keep(add(b[3] + 1, b[1] + ri(j) + 1, b[2] + k2, 1, g), (q) => [b[3] - 1, q[1], q[2], b[3], q[4], q[5]]); }
+        }
+      };
+      const room = { kind: 'room', box: [sx, 50, sz, sx + 7 + ri(6), 54 + ri(6), sz + 7 + ri(6)], dir: 0, depth: 0 };
+      pieces.push(room);
+      children(room);
+      let y0 = Infinity, y1 = -Infinity;
+      for (const p of pieces) { y0 = Math.min(y0, p.box[1]); y1 = Math.max(y1, p.box[4]); }
+      const mesa = !!(BPROP[this.biomeAt(scx * 16 + 8, scz * 16 + 8)] || {}).badlands;
+      let dy;
+      if (mesa) dy = SEA - y0 + ((y1 - y0 + 1) >> 1) + 5;
+      else {   // StructurePiecesBuilder.moveBelowSeaLevel(seaLevel, minY, random, 10)
+        const top = SEA - 10;
+        let j = y1 - y0 + 1 + WORLD_MIN_Y + 1;
+        if (j < top) j += ri(top - j);
+        dy = j - y1;
+      }
+      const X = [1e9, 1e9, -1e9, -1e9];
+      for (const p of pieces) {
+        p.box[1] += dy; p.box[4] += dy;
+        if (p.ent) for (const e of p.ent) { e[1] += dy; e[4] += dy; }
+        X[0] = Math.min(X[0], p.box[0]); X[1] = Math.min(X[1], p.box[2]); X[2] = Math.max(X[2], p.box[3]); X[3] = Math.max(X[3], p.box[5]);
+      }
+      st = { pieces, mesa, ext: X, id: k };
+    }
+    if (C.size > 4000) C.clear();
+    C.set(k, st);
+    return st;
+  }
+  mineshafts() {
+    const cx = this.cx, cz = this.cz, x0 = this.x0, z0 = this.z0;
+    for (let sz = cz - 6; sz <= cz + 6; sz++) for (let sx = cx - 6; sx <= cx + 6; sx++) {
+      const st = this.mineshaftAt(sx, sz);
+      if (!st || st.ext[0] > x0 + 16 || st.ext[2] < x0 - 1 || st.ext[1] > z0 + 16 || st.ext[3] < z0 - 1) continue;
+      for (const p of st.pieces) {
+        const b = p.box;
+        if (b[0] > x0 + 16 || b[3] < x0 - 1 || b[2] > z0 + 16 || b[5] < z0 - 1) continue;
+        this.placeMinePiece(p, st);
+      }
+    }
+  }
+  placeMinePiece(p, st) {
+    const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0, seed = this.seed, TOP = this.TOP;
+    const PL = st.mesa ? B.DARK_PLANKS : B.PLANKS, FE = st.mesa ? B.DARK_PLANKS_FENCE : B.OAK_FENCE, LG = st.mesa ? B.DARK_LOG : B.LOG;
+    const b = p.box, d = p.kind === 'corridor' || p.kind === 'stairs' ? p.dir : -1;
+    const inC = (x, y, z) => x >= x0 && x < x0 + 16 && z >= z0 && z < z0 + 16 && y > WORLD_MIN_Y && y < WORLD_MAX_Y;
+    const at = (x, y, z) => inC(x, y, z) ? ids[CI(x - x0, y, z - z0)] : 0;
+    // piece-local -> world (StructurePiece.getWorldX/Y/Z; crossings and rooms use world coordinates)
+    const wx = (x, z) => d === 0 || d === 2 ? b[0] + x : d === 3 ? b[3] - z : d === 1 ? b[0] + z : x;
+    const wz = (x, z) => d === 0 ? b[5] - z : d === 2 ? b[2] + z : d === 1 || d === 3 ? b[2] + x : z;
+    const wy = (y) => d < 0 ? y : b[1] + y;
+    const set = (x, y, z, id, m) => {
+      if (!inC(x, y, z)) return;
+      const i = CI(x - x0, y, z - z0), c = ids[i];
+      if (c === PL || c === FE || c === LG) return;   // MineShaftPiece.canBeReplaced
+      ids[i] = id; meta[i] = m | 0;
+    };
+    const L = (x, y, z, id, m) => set(wx(x, z), wy(y), wz(x, z), id, m);
+    const Lat = (x, y, z) => at(wx(x, z), wy(y), wz(x, z));
+    const box = (ax, ay, az, bx, by, bz, id, m) => { for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) L(x, y, z, id, m); };
+    const rnd = (k, x, y, z) => hash3(seed + 2300 + k, wx(x, z), wy(y), wz(x, z));
+    // below the ocean-floor height of its column (StructurePiece.isInterior checks the block above)
+    const interior = (x, y, z) => { const X = wx(x, z), Z = wz(x, z), Y = wy(y) + 1; return inC(X, Y, Z) && Y < TOP[(Z - z0) * 16 + X - x0]; };
+    const sturdy = (id) => OPAQUE[id] === 1;
+    const planksUnder = (x, y, z) => { if (interior(x, y, z) && !sturdy(Lat(x, y, z))) L(x, y, z, PL, 0); };
+    // isInInvalidLocation: liquid on the faces of the box grown by 1, inside this chunk
+    {
+      const X0 = Math.max(b[0] - 1, x0), X1 = Math.min(b[3] + 1, x0 + 15), Z0 = Math.max(b[2] - 1, z0), Z1 = Math.min(b[5] + 1, z0 + 15), Y0 = b[1] - 1, Y1 = b[4] + 1;
+      const liq = (x, y, z) => { const id = at(x, y, z); return id === B.WATER || id === B.LAVA || (FLAGS[id] & BF_AQUATIC) !== 0; };
+      for (let x = X0; x <= X1; x++) for (let z = Z0; z <= Z1; z++) if (liq(x, Y0, z) || liq(x, Y1, z)) return;
+      for (let x = X0; x <= X1; x++) for (let y = Y0; y <= Y1; y++) if (liq(x, y, Z0) || liq(x, y, Z1)) return;
+      for (let z = Z0; z <= Z1; z++) for (let y = Y0; y <= Y1; y++) if (liq(X0, y, z) || liq(X1, y, z)) return;
+    }
+    if (p.kind === 'corridor') {
+      const i1 = p.n * 5 - 1;
+      box(0, 0, 0, 2, 1, i1, 0, 0);
+      for (let x = 0; x <= 2; x++) for (let z = 0; z <= i1; z++) if (rnd(1, x, 2, z) <= 0.8) L(x, 2, z, 0, 0);
+      if (p.spider) for (let y = 0; y <= 1; y++) for (let x = 0; x <= 2; x++) for (let z = 0; z <= i1; z++) if (rnd(2, x, y, z) <= 0.6 && interior(x, y, z)) L(x, y, z, B.COBWEB, 0);
+      let spawner = false;
+      for (let s = 0; s < p.n; s++) {
+        const k1 = 2 + s * 5;
+        this.mineSupport(L, Lat, rnd, d, k1, PL, FE);
+        for (const [x, z, ch] of [[0, k1 - 1, 0.1], [2, k1 - 1, 0.1], [0, k1 + 1, 0.1], [2, k1 + 1, 0.1], [0, k1 - 2, 0.05], [2, k1 - 2, 0.05], [0, k1 + 2, 0.05], [2, k1 + 2, 0.05]]) {
+          if (!interior(x, 2, z) || rnd(3, x, 2, z) >= ch) continue;
+          let n = 0;
+          for (const [ax, ay, az] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) if (sturdy(Lat(x + ax, 2 + ay, z + az))) n++;
+          if (n >= 2) L(x, 2, z, B.COBWEB, 0);
+        }
+        if (p.spider && !spawner) {
+          const z = k1 - 1 + ((rnd(4, 1, 0, k1) * 3) | 0), X = wx(1, z), Y = wy(0), Z = wz(1, z);
+          if (inC(X, Y, Z) && interior(1, 0, z)) {
+            spawner = true;
+            L(1, 0, z, B.SPAWNER, SPAWNER_MOB.cave_spider);
+            this.spawnerList.push(X, Y, Z);
+          }
+        }
+      }
+      for (let x = 0; x <= 2; x++) for (let z = 0; z <= i1; z++) planksUnder(x, -1, z);
+      // MineShaftCorridor.placeDoubleLowerOrUpperSupport: log pillars down to the ground under the
+      // floor planks at the first and the last support
+      const pillar = (x, z) => {
+        if (Lat(x, -1, z) !== PL) return;
+        let y = -2;
+        while (wy(y) > WORLD_MIN_Y + 1 && !sturdy(Lat(x, y, z)) && Lat(x, y, z) !== B.WATER && Lat(x, y, z) !== B.LAVA) y--;
+        if (!sturdy(Lat(x, y, z))) return;
+        for (let yy = y + 1; yy <= -2; yy++) L(x, yy, z, LG, 0);
+      };
+      for (const z of p.n > 1 ? [2, i1 - 2] : [2]) { pillar(0, z); pillar(2, z); }
+      if (p.rails) {
+        const rm = d & 1 ? 1 : 0;
+        for (let z = 0; z <= i1; z++) {
+          const under = Lat(1, -1, z);
+          if (under && sturdy(under) && rnd(5, 1, 0, z) < (interior(1, 0, z) ? 0.7 : 0.9)) L(1, 0, z, B.RAIL, rm);
+        }
+      }
+    } else if (p.kind === 'crossing') {
+      const [ax, ay, az, bx, by, bz] = b, A = (X0, Y0, Z0, X1, Y1, Z1) => box(X0, Y0, Z0, X1, Y1, Z1, 0, 0);
+      if (p.two) {
+        A(ax + 1, ay, az, bx - 1, ay + 2, bz); A(ax, ay, az + 1, bx, ay + 2, bz - 1);
+        A(ax + 1, by - 2, az, bx - 1, by, bz); A(ax, by - 2, az + 1, bx, by, bz - 1);
+        A(ax + 1, ay + 3, az + 1, bx - 1, ay + 3, bz - 1);
+      } else { A(ax + 1, ay, az, bx - 1, by, bz); A(ax, ay, az + 1, bx, by, bz - 1); }
+      for (const [x, z] of [[ax + 1, az + 1], [ax + 1, bz - 1], [bx - 1, az + 1], [bx - 1, bz - 1]]) if (at(x, by + 1, z)) for (let y = ay; y <= by; y++) set(x, y, z, PL, 0);
+      for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) planksUnder(x, ay - 1, z);
+    } else if (p.kind === 'stairs') {
+      box(0, 5, 0, 2, 7, 1, 0, 0);
+      box(0, 0, 7, 2, 2, 8, 0, 0);
+      for (let i = 0; i < 5; i++) box(0, 5 - i - (i < 4 ? 1 : 0), 2 + i, 2, 7 - i, 2 + i, 0, 0);
+    } else {
+      const [ax, ay, az, bx, by, bz] = b;
+      for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) if (at(x, ay, z)) set(x, ay, z, B.DIRT, 0);
+      for (let y = ay + 1; y <= Math.min(ay + 3, by); y++) for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) set(x, y, z, 0, 0);
+      for (const e of p.ent) for (let y = e[4] - 2; y <= e[4]; y++) for (let x = e[0]; x <= e[3]; x++) for (let z = e[2]; z <= e[5]; z++) set(x, y, z, 0, 0);
+      // generateUpperHalfSphere
+      const fx = bx - ax + 1, fy = by - (ay + 4) + 1, fz = bz - az + 1, cx = ax + fx / 2, cz = az + fz / 2;
+      for (let y = ay + 4; y <= by; y++) {
+        const f4 = (y - (ay + 4)) / fy;
+        for (let x = ax; x <= bx; x++) { const f5 = (x - cx) / (fx * 0.5); for (let z = az; z <= bz; z++) { const f6 = (z - cz) / (fz * 0.5); if (f5 * f5 + f4 * f4 + f6 * f6 <= 1.05) set(x, y, z, 0, 0); } }
+      }
+    }
+  }
+  // MineShaftCorridor.placeSupport: two fence posts and a planks beam where the roof above is not air
+  // (a quarter of them only the two beam ends), now and then a torch on the beam
+  mineSupport(L, Lat, rnd, d, z, PL, FE) {
+    for (let x = 0; x <= 2; x++) if (!Lat(x, 3, z)) return;
+    L(0, 0, z, FE, 0); L(0, 1, z, FE, 0); L(2, 0, z, FE, 0); L(2, 1, z, FE, 0);
+    if (rnd(6, 0, 2, z) < 0.25) { L(0, 2, z, PL, 0); L(2, 2, z, PL, 0); }
+    else {
+      L(0, 2, z, PL, 0); L(1, 2, z, PL, 0); L(2, 2, z, PL, 0);
+      // wall torches on the beam: local z-1 hangs on the beam at +z, z+1 on the beam at -z
+      const tz = (s) => { const dl = s > 0 ? 1 : -1; const dz = d === 0 ? -dl : d === 2 ? dl : 0, dx = d === 1 ? dl : d === 3 ? -dl : 0; return 1 + HDX.findIndex((v, i) => v === dx && HDZ[i] === dz); };
+      if (rnd(7, 1, 2, z - 1) < 0.05) L(1, 2, z - 1, B.TORCH, tz(1));
+      if (rnd(7, 1, 2, z + 1) < 0.05) L(1, 2, z + 1, B.TORCH, tz(-1));
     }
   }
 
