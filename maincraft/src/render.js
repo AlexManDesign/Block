@@ -551,12 +551,14 @@ class Renderer {
     Q[qt++] = ccx; Q[qt++] = ccz; Q[qt++] = csy; Q[qt++] = -1; Q[qt++] = 0;
     const R2 = (renderDist + 0.5) * (renderDist + 0.5);
     const noCull = this.noOcclusion;
+    // fog occlusion (as in Sodium), only where it changes no pixel: see fullyFogged()
+    const fc = this.fogCull, fogEnd = fc ? fc.end : 0, fogY = fc ? fc.y : null;
     while (qh < qt) {
       const cx = Q[qh], cz = Q[qh + 1], sy = Q[qh + 2], from = Q[qh + 3], dirs = Q[qh + 4];
       qh += 5;
       const c = world.col(cx, cz);
       const m = c.meshes[sy];
-      if (m && m.vbo) list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
+      if (m && m.vbo && !(fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY))) list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
       const vis = m && m.vis;
       for (let d = 0; d < 6; d++) {
         if (dirs & (1 << OPP6[d])) continue;
@@ -578,6 +580,22 @@ class Renderer {
       }
     }
     this.visCount = n;
+  }
+
+  // A section is skipped when every point of it is in full fog (the terrain fog distance is
+  // max(horizontal distance, |dy| / 2)) and it lies wholly below the eye: every ray to it points
+  // down, where the sky shader draws exactly the fog colour (no sunset glow, see renderWorld), so
+  // the pixel is the same with or without it.
+  fullyFogged(cx, sy, cz, cam, fogEnd, eyeY) {
+    const y0 = WORLD_MIN_Y + sy * 16;
+    if (y0 + 17 > eyeY) return false;
+    // seen from above the clouds, terrain reaching into the cloud layer would hide cloud behind it
+    if (eyeY > 191 && y0 + 16 > 191) return false;
+    const x0 = cx * 16, z0 = cz * 16;
+    const dx = cam[0] < x0 ? x0 - cam[0] : cam[0] > x0 + 16 ? cam[0] - x0 - 16 : 0;
+    const dz = cam[2] < z0 ? z0 - cam[2] : cam[2] > z0 + 16 ? cam[2] - z0 - 16 : 0;
+    const dy = eyeY - (y0 + 17);
+    return Math.max(Math.hypot(dx, dz), dy * 0.5) >= fogEnd + 1;
   }
 
   // ---------------------------------------------------------------- terrain passes
@@ -659,6 +677,8 @@ class Renderer {
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.lmTex);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.animTex);
     gl.activeTexture(gl.TEXTURE0);
+    // fog occlusion only when the sky below the horizon is plain fog colour
+    this.fogCull = !env.underwater && env.sunset < 0.001 && !this.noFogCull ? { end: env.fogEnd, y: cam[1] } : null;
     this.collectVisible(world, cam, env.renderDist);
     this.stats.sections = this.visCount;
     gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
