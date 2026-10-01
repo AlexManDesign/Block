@@ -321,18 +321,17 @@ class WorldGen {
   fbm(n, x, z, scale, oct) { return n.f2(x * scale, z * scale, oct) * 0.72; }
   // terrain part of the climate: height + density parameters for column x,z
   terrain(x, z, o) {
-    const c = this.fbm(this.nCont, x, z, 1 / 2200, 4) * 2.3 + 0.24;
+    const c = this.fbm(this.nCont, x, z, 1 / 2200, 4) * 2.3 + 0.3;
     const e = this.fbm(this.nEro, x, z, 1 / 2000, 4) * 2.1;
     const w = this.fbm(this.nWeird, x, z, 1 / 850, 5) * 2.2;
     const pv = 1 - Math.abs(3 * Math.abs(w) - 2);
     let h = spline(SPL_BASE, c);
     const s = spline(SPL_MOUNT, e) * clamp01((c + 0.25) / 0.4);
-    // mountains: low erosion raises the land, the peaks-and-valleys ridge decides how much (peaks
-    // on ridges, gentler slopes elsewhere); the top is eased off so peaks stay below ~y 260 as in
-    // Minecraft
+    // mountains: low erosion raises the land, the peaks-and-valleys ridge decides how much. The
+    // power above 1 keeps high ground rare and the tops pointed (no clipping, which would leave
+    // flat mesas), and the amplitude keeps peaks below ~y 255 as in Minecraft
     const wk = Math.pow(clamp01(pv * 0.5 + 0.5), 2);
-    h += Math.pow(s, 1.15) * wk * 205;
-    if (h > 190) h = 190 + (h - 190) * 0.55;
+    h += Math.pow(Math.pow(s, 1.15) * wk, 1.3) * 175;
     if (h > SEA - 3) h += this.fbm(this.nHill, x, z, 1 / 22, 3) * (9 + s * 15) * clamp01((h - (SEA - 2)) / 11);
     else if (h < SEA - 4) h += this.fbm(this.nMisc, x, z, 0.018, 2) * 2.2 * (2.5 + clamp01((SEA - 4 - h) / 22) * 8);
     // Minecraft's highest erosion zone (6) inland is where swamps and mangrove swamps (snowy plains
@@ -393,8 +392,10 @@ class WorldGen {
       if (o.e < -0.18) return BI.STONY_SHORE;
       if (this.nMisc.n2(x * 0.011 + 401.7, z * 0.011 - 233.1) * 0.5 + 0.5 > 0.35) return BI.BEACH;
     }
-    let sw = clamp1(o.w * 3.5);
-    if (sw > -0.12 && sw < 0.12) sw = sw < 0 ? -0.12 : 0.12;
+    // the same weirdness the terrain was shaped with (Minecraft: peaks / valleys and the biome
+    // slices come from one value); the valley slice itself is the river, decided above
+    let sw = clamp1(o.w);
+    if (sw > -0.06 && sw < 0.06) sw = sw < 0 ? -0.06 : 0.06;
     const q = this._q || (this._q = new Float64Array(5));
     q[0] = o.t; q[1] = clamp1(o.hu * 0.82); q[2] = spline(SPL_CONT_PARAM, o.c < 0.05 ? 0.05 : o.c);
     // hot land is shifted toward higher erosion (deserts over badlands), but never into zone 6:
