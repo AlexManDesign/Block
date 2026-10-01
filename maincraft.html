@@ -2940,10 +2940,15 @@ class WorldGen {
       if (below === B.GRASS) { ids[i] = [B.DANDELION, B.POPPY, B.AZURE_BLUET, B.OXEYE_DAISY, B.RED_TULIP, B.ORANGE_TULIP, B.WHITE_TULIP, B.PINK_TULIP][ri(8)]; meta[i] = 0; }
     }
   }
+  // a tree's trunk needs free space (TreeFeature): none grows where a village piece stands
+  inVillage(x, y, z) {
+    for (const b of this.vilBoxes) if (x >= b[0] && x <= b[3] && z >= b[2] && z <= b[5] && y <= b[4] + 1 && y >= b[1] - 8) return true;
+    return false;
+  }
   // Beardifier: terrain pushed toward the village: filled below and cleared above each rigid piece's
   // ground level and around junctions, with Minecraft's kernel (radius 12)
   villageBeard() {
-    const cx = this.cx, cz = this.cz, x0 = this.x0, z0 = this.z0, near = [], junc = [];
+    const cx = this.cx, cz = this.cz, x0 = this.x0, z0 = this.z0, near = [], junc = [], all = this.vilBoxes = [];
     const set = STRUCTURE_SETS_VIL;
     const r0x = Math.floor((cx - 7) / set.spacing), r1x = Math.floor((cx + 7) / set.spacing), r0z = Math.floor((cz - 7) / set.spacing), r1z = Math.floor((cz + 7) / set.spacing);
     for (let rz = r0z; rz <= r1z; rz++) for (let rx = r0x; rx <= r1x; rx++) {
@@ -2954,6 +2959,7 @@ class WorldGen {
       for (const p of st) {
         const b = p.box;
         if (b[0] > x0 + 27 || b[3] < x0 - 12 || b[2] > z0 + 27 || b[5] < z0 - 12) continue;
+        all.push(b);
         if (p.vil.e[3] === 0) near.push(p);
         for (const j of p.vil.junctions) if (j[0] >= x0 - 12 && j[0] <= x0 + 27 && j[2] >= z0 - 12 && j[2] <= z0 + 27) junc.push(j);
       }
@@ -3454,7 +3460,7 @@ class WorldGen {
       let r = TC.get(k);
       if (r === undefined) {
         const spot = this.treeSpot(x, z);
-        r = spot ? this.buildTree(spot.t, x, spot.sy, z) : null;
+        r = spot && !this.inVillage(x, spot.sy + 1, z) ? this.buildTree(spot.t, x, spot.sy, z) : null;
         if (TC.size > 60000) TC.clear();
         TC.set(k, r);
       }
@@ -7974,10 +7980,15 @@ class WorldGen {
       if (below === B.GRASS) { ids[i] = [B.DANDELION, B.POPPY, B.AZURE_BLUET, B.OXEYE_DAISY, B.RED_TULIP, B.ORANGE_TULIP, B.WHITE_TULIP, B.PINK_TULIP][ri(8)]; meta[i] = 0; }
     }
   }
+  // a tree's trunk needs free space (TreeFeature): none grows where a village piece stands
+  inVillage(x, y, z) {
+    for (const b of this.vilBoxes) if (x >= b[0] && x <= b[3] && z >= b[2] && z <= b[5] && y <= b[4] + 1 && y >= b[1] - 8) return true;
+    return false;
+  }
   // Beardifier: terrain pushed toward the village: filled below and cleared above each rigid piece's
   // ground level and around junctions, with Minecraft's kernel (radius 12)
   villageBeard() {
-    const cx = this.cx, cz = this.cz, x0 = this.x0, z0 = this.z0, near = [], junc = [];
+    const cx = this.cx, cz = this.cz, x0 = this.x0, z0 = this.z0, near = [], junc = [], all = this.vilBoxes = [];
     const set = STRUCTURE_SETS_VIL;
     const r0x = Math.floor((cx - 7) / set.spacing), r1x = Math.floor((cx + 7) / set.spacing), r0z = Math.floor((cz - 7) / set.spacing), r1z = Math.floor((cz + 7) / set.spacing);
     for (let rz = r0z; rz <= r1z; rz++) for (let rx = r0x; rx <= r1x; rx++) {
@@ -7988,6 +7999,7 @@ class WorldGen {
       for (const p of st) {
         const b = p.box;
         if (b[0] > x0 + 27 || b[3] < x0 - 12 || b[2] > z0 + 27 || b[5] < z0 - 12) continue;
+        all.push(b);
         if (p.vil.e[3] === 0) near.push(p);
         for (const j of p.vil.junctions) if (j[0] >= x0 - 12 && j[0] <= x0 + 27 && j[2] >= z0 - 12 && j[2] <= z0 + 27) junc.push(j);
       }
@@ -8488,7 +8500,7 @@ class WorldGen {
       let r = TC.get(k);
       if (r === undefined) {
         const spot = this.treeSpot(x, z);
-        r = spot ? this.buildTree(spot.t, x, spot.sy, z) : null;
+        r = spot && !this.inVillage(x, spot.sy + 1, z) ? this.buildTree(spot.t, x, spot.sy, z) : null;
         if (TC.size > 60000) TC.clear();
         TC.set(k, r);
       }
