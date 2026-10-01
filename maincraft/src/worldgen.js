@@ -525,6 +525,7 @@ class WorldGen {
     this.geodes();
     this.ores();
     this.bedrock();
+    this.springs();
     this.features();
     this.caveDecor();
     // split into sections
@@ -542,7 +543,7 @@ class WorldGen {
       secs[s] = { ids: ids.slice(off, off + 4096), meta: meta.slice(off, off + 4096) };
     }
     const bio = new Uint8Array(BIO);
-    return { sections: secs, biomes: bio };
+    return { sections: secs, biomes: bio, springs: this.springList };
   }
 
   fillTerrain() {
@@ -885,6 +886,37 @@ class WorldGen {
           break;
         }
       }
+    }
+  }
+
+  // ------------------------------------------------------------ fluid springs (waterfalls)
+  // Minecraft's spring_water (25 tries a chunk, y uniform from the bottom to 192) and spring_lava
+  // (20 tries, very biased toward the bottom), SpringFeature: the block above and the one below are
+  // rock, of the four sides plus the one below exactly four are rock and exactly one is open; the
+  // spot (air or rock) becomes a source that the game then lets flow (a waterfall from a cliff or
+  // a cave wall). The sources are handed to the world, which schedules their first fluid update.
+  springs() {
+    const ids = this.ids, x0 = this.x0, z0 = this.z0, list = this.springList = [];
+    const rnd = mulberry(hash2i(this.seed + 433, this.cx, this.cz));
+    const WROCK = new Set([B.STONE, B.GRANITE, B.DIORITE, B.ANDESITE, B.DEEPSLATE, B.TUFF, B.CALCITE, B.DIRT, B.SNOW, B.PACKED_ICE]);
+    const LROCK = new Set([B.STONE, B.GRANITE, B.DIORITE, B.ANDESITE, B.DEEPSLATE, B.TUFF, B.CALCITE]);
+    const ni = (a, b) => a + ((rnd() * (b - a + 1)) | 0);                  // Mth.nextInt(a, b)
+    const tryAt = (x, y, z, fluid, rock) => {
+      if (x < 1 || x > 14 || z < 1 || z > 14 || y <= WORLD_MIN_Y || y >= WORLD_MAX_Y - 1) return;   // sides must be in this chunk
+      const i = CI(x, y, z), at = ids[i];
+      if (!rock.has(ids[i + 256]) || !rock.has(ids[i - 256])) return;
+      if (at !== 0 && !rock.has(at)) return;
+      let r = 1, open = 0;                                                       // the one below is rock
+      for (const j of [i - 1, i + 1, i - 16, i + 16]) { const n = ids[j]; if (rock.has(n)) r++; else if (n === 0) open++; }
+      if (r !== 4 || open !== 1) return;
+      ids[i] = fluid; this.meta[i] = 0;
+      list.push(x0 + x, y, z0 + z);
+    };
+    for (let k = 0; k < 25; k++) { const x = ni(0, 15), z = ni(0, 15), y = ni(WORLD_MIN_Y, 192); tryAt(x, y, z, B.WATER, WROCK); }
+    for (let k = 0; k < 20; k++) {
+      const x = ni(0, 15), z = ni(0, 15), lo = WORLD_MIN_Y, hi = WORLD_MAX_Y - 1 - 8;
+      const a = ni(lo + 8, hi), b = ni(lo, a - 1), y = ni(lo, b - 1 + 8);
+      tryAt(x, y, z, B.LAVA, LROCK);
     }
   }
 

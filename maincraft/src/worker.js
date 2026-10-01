@@ -15,7 +15,7 @@ self.onmessage = function (e) {
     const r = GEN.generate(d.cx, d.cz);
     const tr = [r.biomes.buffer];
     for (const s of r.sections) if (s) { tr.push(s.ids.buffer, s.meta.buffer); }
-    self.postMessage({ t: 'gen', cx: d.cx, cz: d.cz, sections: r.sections, biomes: r.biomes }, tr);
+    self.postMessage({ t: 'gen', cx: d.cx, cz: d.cz, sections: r.sections, biomes: r.biomes, springs: r.springs }, tr);
     return;
   }
   if (d.t === 'mesh') {

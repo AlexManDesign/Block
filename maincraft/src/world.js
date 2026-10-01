@@ -77,7 +77,8 @@ class World {
     this.lq = new Int32Array(1 << 20); this.lqh = 0; this.lqt = 0;
     this.rq = new Int32Array(1 << 20); this.rqh = 0; this.rqt = 0;
     // scheduled block updates: Map key -> due tick
-    this.sched = new Map();
+    this.sched = new Map(); this.schedB = new Map();
+    this.springCols = new Set();   // columns whose generated fluid springs have not started yet
     this.tick = 0;
     this.stats = { gen: 0, mesh: 0, lit: 0 };
   }
@@ -158,6 +159,8 @@ class World {
     for (let s = SECTIONS - 1; s >= 0; s--) if (c.secs[s]) { top = s; break; }
     for (let s = 0; s < top; s++) if (!c.secs[s]) c.secs[s] = new Section(false);
     c.biomes = d.biomes;
+    // fluid springs start flowing once the column and its neighbours are lit (see gameTick)
+    if (d.springs && d.springs.length) { c.springs = d.springs; this.springCols.add(c); }
     const saved = this.savedEdits.get(c.key);
     if (saved) { c.edits = saved; this.applyEdits(c); }
     this.skyInit(c);
@@ -461,17 +464,23 @@ class World {
   }
 
   // ------------------------------------------------------------------ scheduled updates (fluids, falling)
+  // Block ticks as Minecraft's LevelTicks: due time per position (the earliest wins), kept in
+  // buckets by tick, at most 65536 run per game tick.
   schedule(x, y, z, delay) {
-    const k = `${x},${y},${z}`;
-    const due = this.tick + delay;
+    const k = ((x + 1048576) * 2097152 + (z + 1048576)) * 512 + (y - WORLD_MIN_Y), due = this.tick + Math.max(1, delay);
     const cur = this.sched.get(k);
-    if (cur === undefined || cur > due) this.sched.set(k, due);
+    if (cur !== undefined && cur <= due) return;
+    this.sched.set(k, due);
+    let bk = this.schedB.get(due);
+    if (!bk) this.schedB.set(due, bk = []);
+    bk.push(k);
   }
+  // a block changed: it and its six neighbours get a tick, after the delay of what is there
+  // (water 5, lava 30, falling blocks 2, anything else 1)
   scheduleAround(x, y, z) {
-    this.schedule(x, y, z, 1);
-    this.schedule(x + 1, y, z, 1); this.schedule(x - 1, y, z, 1);
-    this.schedule(x, y + 1, z, 1); this.schedule(x, y - 1, z, 1);
-    this.schedule(x, y, z + 1, 1); this.schedule(x, y, z - 1, 1);
+    const d = (xx, yy, zz) => { const id = this.getBlock(xx, yy, zz); return id === B.WATER ? 5 : id === B.LAVA ? 30 : (FLAGS[id] & BF_FALL) ? 2 : 1; };
+    this.schedule(x, y, z, d(x, y, z));
+    for (const [dx, dy, dz] of FACE_DIR) this.schedule(x + dx, y + dy, z + dz, d(x + dx, y + dy, z + dz));
   }
 
   // support rules for attached blocks
@@ -562,15 +571,29 @@ class World {
   // one game tick (20 per second)
   gameTick() {
     this.tick++;
-    if (!this.sched.size) return;
-    const due = [];
-    for (const [k, t] of this.sched) if (t <= this.tick) due.push(k);
+    // Minecraft schedules a fluid tick for every spring it generates; here once the column and
+    // its neighbours are lit, so the water can run over the chunk border
+    for (const c of this.springCols) {
+      if (this.cols.get(c.key) !== c) { this.springCols.delete(c); continue; }
+      let ready = c.state === 2;
+      for (let dz = -1; dz <= 1 && ready; dz++) for (let dx = -1; dx <= 1 && ready; dx++) { const n = this.col(c.cx + dx, c.cz + dz); if (!n || n.state !== 2) ready = false; }
+      if (!ready) continue;
+      const sp = c.springs;
+      for (let i = 0; i < sp.length; i += 3) this.schedule(sp[i], sp[i + 1], sp[i + 2], 1);
+      c.springs = null; this.springCols.delete(c);
+    }
     let n = 0;
-    for (const k of due) {
-      this.sched.delete(k);
-      const p = k.split(',');
-      this.updateBlock(+p[0], +p[1], +p[2]);
-      if (++n > 400) break;
+    for (const [t, bk] of this.schedB) {
+      if (t > this.tick) continue;
+      while (bk.length && n < 65536) {
+        const k = bk.pop();
+        if (this.sched.get(k) !== t) continue;      // moved to an earlier tick, or done
+        this.sched.delete(k);
+        const y = (k % 512) + WORLD_MIN_Y, xz = Math.floor(k / 512), z = (xz % 2097152) - 1048576, x = Math.floor(xz / 2097152) - 1048576;
+        this.updateBlock(x, y, z);
+        n++;
+      }
+      if (!bk.length) this.schedB.delete(t);
     }
   }
 
@@ -588,76 +611,98 @@ class World {
       }
       return;
     }
-    if (id === B.WATER || id === B.LAVA || id === 0 || fluidBreaks(id)) this.fluidUpdate(x, y, z, id);
+    if (id === B.WATER || id === B.LAVA) this.fluidUpdate(x, y, z, id);
   }
 
-  // Minecraft-like fluid flow. meta: bits0-2 level (0 = source), bit3 falling
-  fluidUpdate(x, y, z, id) {
-    for (const fid of [B.WATER, B.LAVA]) {
-      const isW = fid === B.WATER;
-      const same = (q) => isW ? isWaterId(q) : q === B.LAVA;
-      const drop = isW ? 1 : 2;
-      const delay = isW ? 5 : 30;
-      const cur = this.getBlock(x, y, z);
-      if (cur !== 0 && cur !== fid && !fluidBreaks(cur)) continue;
-      const m = cur === fid ? this.getMeta(x, y, z) : 0;
-      const isSource = cur === fid && (m & 7) === 0 && !(m & 8);
-      if (cur === fid && (FLAGS[cur] & BF_AQUATIC)) continue;
-      // compute what this cell should be
-      let want = -1; // -1 none, else level (0..7), +8 falling
-      if (isSource) want = 0;
-      else {
-        const up = this.getBlock(x, y + 1, z);
-        if (same(up)) want = 8;
-        else {
-          let best = 99, sources = 0;
-          for (let d = 0; d < 4; d++) {
-            const nx = x + DIRX_W[d], nz = z + DIRZ_W[d];
-            const nid = this.getBlock(nx, y, nz);
-            if (!same(nid)) continue;
-            const nm = nid === fid ? this.getMeta(nx, y, nz) : 0;
-            let lv = (nm & 8) ? 0 : (nm & 7);
-            if ((nm & 7) === 0 && !(nm & 8)) sources++;
-            if (lv < best) best = lv;
-          }
-          if (isW && sources >= 2) {
-            const b = this.getBlock(x, y - 1, z);
-            if (SOLID[b] || (b === B.WATER && (this.getMeta(x, y - 1, z) & 15) === 0)) best = -1;
-          }
-          if (best === -1) want = 0;
-          else if (best < 99 && best + drop <= 7) want = best + drop;
-        }
-      }
-      if (cur === fid) {
-        if (want === -1) { this.setBlock(x, y, z, 0, 0); continue; }
-        if (want !== m) { this.setBlock(x, y, z, fid, want); }
-      } else {
-        if (want === -1) continue;
-        // the flow washes the block away: water drops it as an item, lava burns it
-        if (cur !== 0) this.breakBlock(x, y, z, true, !isW);
-        this.setBlock(x, y, z, fid, want);
-      }
-      // spread from this cell
-      const nm = this.getMeta(x, y, z);
-      if (this.getBlock(x, y, z) !== fid) continue;
-      const lv = (nm & 8) ? 0 : (nm & 7);
-      const below = this.getBlock(x, y - 1, z);
-      if (below === 0 || (fluidBreaks(below) && !same(below))) {
-        this.schedule(x, y - 1, z, delay);
-      } else if (!isW && below === B.WATER) {
-        this.setBlock(x, y - 1, z, B.STONE, 0);
-      } else if (SOLID[below] || same(below)) {
-        if (lv + drop <= 7) for (let d = 0; d < 4; d++) {
-          const nx = x + DIRX_W[d], nz = z + DIRZ_W[d];
-          const nid = this.getBlock(nx, y, nz);
-          if (nid === 0 || (fluidBreaks(nid) && !same(nid))) this.schedule(nx, y, nz, delay);
-          else if (!isW && nid === B.WATER) this.setBlock(nx, y, nz, B.COBBLE, 0);
-          else if (isW && nid === B.LAVA) this.setBlock(nx, y, nz, (this.getMeta(nx, y, nz) & 7) === 0 ? B.OBSIDIAN : B.COBBLE, 0);
-        }
-      }
-      // neighbours that depend on this cell
-      for (let d = 0; d < 4; d++) { const nx = x + DIRX_W[d], nz = z + DIRZ_W[d]; if (this.getBlock(nx, y, nz) === fid) this.schedule(nx, y, nz, delay); }
-      if (this.getBlock(x, y - 1, z) === fid) this.schedule(x, y - 1, z, delay);
+  // Minecraft's FlowingFluid. meta: bits 0-2 level (0 = source, amount = 8 - level), bit 3 falling
+  // (amount 8). A ticked flowing cell recomputes its state from its neighbours (getNewLiquid), then
+  // every cell spreads: down when it can (sideways too only with 3+ source neighbours), else, if it
+  // is a source or stands on ground, sideways one level lower (lava two) toward the nearest drop
+  // within 4 blocks (lava 2). Spreading sets the target directly; setBlock then schedules the
+  // neighbours' ticks (water 5, lava 30), so water advances a block every 5 ticks.
+  fluidUpdate(x, y, z, fid) {
+    const isW = fid === B.WATER;
+    let m = this.getMeta(x, y, z);
+    // LiquidBlock.shouldSpreadLiquid: lava touching water (beside or above) hardens
+    if (!isW) for (const [dx, dy, dz] of FACE_DIR) {
+      if (dy < 0 || !isWaterId(this.getBlock(x + dx, y + dy, z + dz))) continue;
+      this.setBlock(x, y, z, m === 0 ? B.OBSIDIAN : B.COBBLE, 0);
+      return;
+    }
+    if (m !== 0) {
+      const nw = this.newLiquid(x, y, z, fid);
+      if (nw < 0) { this.setBlock(x, y, z, 0, 0); return; }
+      if (nw !== m) { this.setBlock(x, y, z, fid, nw); m = nw; }
+    }
+    this.spread(x, y, z, fid, m);
+  }
+  sameFluid(id, fid) { return fid === B.WATER ? isWaterId(id) : id === fid; }
+  fluidMeta(x, y, z, id) { return id === B.WATER || id === B.LAVA ? this.getMeta(x, y, z) : 0; }
+  // the fluid can flow into this cell: nothing there, or a block the flow washes away
+  canFlowInto(id) { return id === 0 || (fluidBreaks(id) && !isLiquidId(id)); }
+  newLiquid(x, y, z, fid) {
+    const isW = fid === B.WATER;
+    let maxA = 0, sources = 0;
+    for (let d = 0; d < 4; d++) {
+      const nx = x + DIRX_W[d], nz = z + DIRZ_W[d], n = this.getBlock(nx, y, nz);
+      if (!this.sameFluid(n, fid)) continue;
+      const nm = this.fluidMeta(nx, y, nz, n);
+      if (nm === 0) sources++;
+      maxA = Math.max(maxA, (nm & 8) ? 8 : 8 - (nm & 7));
+    }
+    if (isW && sources >= 2) {
+      const b = this.getBlock(x, y - 1, z);
+      if ((SOLID[b] && !isLiquidId(b)) || (this.sameFluid(b, fid) && this.fluidMeta(x, y - 1, z, b) === 0)) return 0;
+    }
+    if (this.sameFluid(this.getBlock(x, y + 1, z), fid)) return 8;
+    const a = maxA - (isW ? 1 : 2);
+    return a <= 0 ? -1 : 8 - a;
+  }
+  spread(x, y, z, fid, m) {
+    const isW = fid === B.WATER, below = this.getBlock(x, y - 1, z);
+    if (!isW && isWaterId(below)) { this.setBlock(x, y - 1, z, B.STONE, 0); return; }   // lava falling onto water
+    if (this.canFlowInto(below)) {
+      this.spreadTo(x, y - 1, z, fid, 8, below);
+      let src = 0;
+      for (let d = 0; d < 4; d++) { const n = this.getBlock(x + DIRX_W[d], y, z + DIRZ_W[d]); if (this.sameFluid(n, fid) && this.fluidMeta(x + DIRX_W[d], y, z + DIRZ_W[d], n) === 0) src++; }
+      if (src >= 3) this.spreadSides(x, y, z, fid, m);
+    } else if (m === 0 || !this.sameFluid(below, fid)) this.spreadSides(x, y, z, fid, m);
+  }
+  spreadTo(x, y, z, fid, meta, cur) {
+    if (cur !== 0) this.breakBlock(x, y, z, true, fid === B.LAVA);   // water drops the block, lava burns it
+    this.setBlock(x, y, z, fid, meta);
+  }
+  // a drop below this cell the fluid could fall into
+  isHole(x, y, z, fid) { const b = this.getBlock(x, y - 1, z); return this.canFlowInto(b) || (this.sameFluid(b, fid) && b === fid); }
+  slopeDistance(x, y, z, depth, from, fid, maxD) {
+    let best = 1000;
+    for (let d = 0; d < 4; d++) {
+      if (d === from) continue;
+      const nx = x + DIRX_W[d], nz = z + DIRZ_W[d], n = this.getBlock(nx, y, nz);
+      if (!(this.canFlowInto(n) || (n === fid && this.getMeta(nx, y, nz) !== 0))) continue;
+      if (this.isHole(nx, y, nz, fid)) return depth;
+      if (depth < maxD) best = Math.min(best, this.slopeDistance(nx, y, nz, depth + 1, (d + 2) & 3, fid, maxD));
+    }
+    return best;
+  }
+  spreadSides(x, y, z, fid, m) {
+    const isW = fid === B.WATER;
+    const amount = (m & 8) ? 7 : 8 - (m & 7) - (isW ? 1 : 2);
+    if (amount <= 0) return;
+    // FlowingFluid.getSpread: the directions with the shortest way to a drop
+    const maxD = isW ? 4 : 2, dist = [1000, 1000, 1000, 1000];
+    let min = 1000;
+    for (let d = 0; d < 4; d++) {
+      // flowing fluid of the same kind takes part in choosing the way (it cannot be spread into)
+      const nx = x + DIRX_W[d], nz = z + DIRZ_W[d], n = this.getBlock(nx, y, nz);
+      if (!this.canFlowInto(n) && !(n === fid && this.getMeta(nx, y, nz) !== 0)) continue;
+      dist[d] = this.isHole(nx, y, nz, fid) ? 0 : this.slopeDistance(nx, y, nz, 1, (d + 2) & 3, fid, maxD);
+      if (dist[d] < min) min = dist[d];
+    }
+    for (let d = 0; d < 4; d++) {
+      const nx = x + DIRX_W[d], nz = z + DIRZ_W[d], n = this.getBlock(nx, y, nz);
+      if (!this.canFlowInto(n) || dist[d] > min) continue;
+      this.spreadTo(nx, y, nz, fid, 8 - amount, n);
     }
   }
 
