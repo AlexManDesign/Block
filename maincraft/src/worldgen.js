@@ -322,7 +322,7 @@ class WorldGen {
   // terrain part of the climate: height + density parameters for column x,z
   terrain(x, z, o) {
     const c = this.fbm(this.nCont, x, z, 1 / 2200, 4) * 2.3 + 0.24;
-    const e = this.fbm(this.nEro, x, z, 1 / 1300, 4) * 2.1;
+    const e = this.fbm(this.nEro, x, z, 1 / 2000, 4) * 2.1;
     const w = this.fbm(this.nWeird, x, z, 1 / 850, 5) * 2.2;
     const pv = 1 - Math.abs(3 * Math.abs(w) - 2);
     let h = spline(SPL_BASE, c);
@@ -368,7 +368,7 @@ class WorldGen {
   climate(x, z, o) {
     this.terrain(x, z, o);
     const wx = x + (this.nWarp.n2(x * 0.008, z * 0.008) * 0.5) * 16, wz = z + (this.nWarp.n2(x * 0.008 + 300, z * 0.008 - 300) * 0.5) * 16;
-    o.t = clamp1(this.fbm(this.nTemp, wx, wz, 1 / 1600, 3) * 2.4);
+    o.t = clamp1(this.fbm(this.nTemp, wx, wz, 1 / 3200, 3) * 2.4);
     o.hu = clamp1(this.fbm(this.nHum, wx, wz, 1 / 1500, 3) * 2.1);
     o.ti = o.t < -0.45 ? 0 : o.t < -0.15 ? 1 : o.t < 0.2 ? 2 : o.t < 0.55 ? 3 : 4;
     return o;

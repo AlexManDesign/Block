@@ -101,6 +101,7 @@ class Game {
     w.onMeshResult = (c, sy, d) => this.meshQueue.push(c, sy, d);
     w.onColumnUnload = (c) => { this.r.freeColumn(c); if (c.edits && c.edits.size) this.pendingSave.set(c.key, c.edits); };
     w.onBreak = (x, y, z, id, m, byUpdate) => this.onBlockBroken(x, y, z, id, m, byUpdate);
+    w.onFall = (x, y, z, id, m) => this.ents.spawnFalling(id, m, x, y, z);
     this.world = w;
     this.pendingSave = new Map();
     this.particles.length = 0;
@@ -163,6 +164,7 @@ class Game {
 
   async saveWorld(quitting) {
     if (!this.world || !this.meta) return;
+    if (this.ents) this.ents.settleFalling();
     const w = this.world;
     const entries = [];
     for (const [k, m] of this.pendingSave) entries.push([k, m]);

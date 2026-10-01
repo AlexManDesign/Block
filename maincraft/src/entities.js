@@ -231,9 +231,56 @@ class Entities {
     this.mobs = [];
     this.items = [];
     this.arrows = [];
+    this.falling = [];
     this.spawnT = 0;
   }
-  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; }
+  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; }
+
+  // ------------------------------------------------------------------ falling blocks
+  // Minecraft's FallingBlockEntity: per tick motion.y -= 0.04, move, motion *= 0.98. It passes
+  // through blocks without collision (plants, torches, water) and lands on the first solid one; it
+  // becomes a block again where the cell is free, otherwise it drops as an item.
+  spawnFalling(id, m, x, y, z) {
+    this.falling.push({ id, m, x: x + 0.5, z: z + 0.5, y, py: y, vy: 0, t: 0 });
+  }
+  tickFalling() {
+    const w = this.game.world, F = this.falling;
+    for (let i = F.length - 1; i >= 0; i--) {
+      const f = F[i];
+      f.py = f.y;
+      const bx = Math.floor(f.x), bz = Math.floor(f.z);
+      if (!w.isLoaded(bx, bz)) continue;
+      f.t++;
+      f.vy = (f.vy - 0.04) * 0.98;
+      const ny = f.y + f.vy;
+      let landed = false, y = ny;
+      for (let cy = Math.ceil(f.y) - 1; cy >= Math.floor(ny); cy--) {
+        if (SOLID[w.getBlock(bx, cy, bz)]) { y = cy + 1; landed = true; break; }
+      }
+      f.y = y;
+      if (y < WORLD_MIN_Y - 8 || f.t > 600) { F.splice(i, 1); continue; }
+      if (landed) { this.landFalling(f, bx, Math.round(y), bz); F.splice(i, 1); }
+    }
+  }
+  landFalling(f, x, y, z) {
+    const w = this.game.world, cur = w.getBlock(x, y, z);
+    const free = cur === 0 || SHAPE[cur] === SH.WATER || SHAPE[cur] === SH.LAVA || (FLAGS[cur] & BF_REPLACE);
+    if (free) {
+      if (cur && (FLAGS[cur] & BF_REPLACE) && SHAPE[cur] !== SH.WATER && SHAPE[cur] !== SH.LAVA) w.breakBlock(x, y, z, true);
+      w.setBlock(x, y, z, f.id, f.m);
+    } else this.dropItem(f.id, 1, f.x, y + 0.3, f.z);
+  }
+  // before a save: every falling block lands at once, so none is lost with the world
+  settleFalling() {
+    const w = this.game.world;
+    for (const f of this.falling) {
+      const bx = Math.floor(f.x), bz = Math.floor(f.z);
+      let y = Math.ceil(f.y);
+      while (y > WORLD_MIN_Y && !SOLID[w.getBlock(bx, y - 1, bz)]) y--;
+      this.landFalling(f, bx, y, bz);
+    }
+    this.falling.length = 0;
+  }
 
   spawnMob(type, x, y, z, opts) {
     const d = MOB_DEFS[type];
@@ -288,6 +335,7 @@ class Entities {
     while (this.acc >= MOB_DT && steps < 3) {
       for (const e of this.mobs) this.snapshot(e);
       this.tickMobs(MOB_DT);
+      this.tickFalling();
       this.acc -= MOB_DT; steps++;
     }
     if (this.acc > MOB_DT) this.acc = MOB_DT;
@@ -1309,8 +1357,16 @@ class Entities {
   renderItems(env, cam) {
     const g = this.game, r = g.r;
     const list = this.items.concat(this.arrows.map(a => ({ arrow: a, pos: a.pos })));
-    if (!list.length) return;
+    if (!list.length && !this.falling.length) return;
     const v = [];
+    // falling blocks: the block model at the entity position, between the last two ticks
+    const al = this.alpha ?? 1;
+    for (const f of this.falling) {
+      const y = f.py + (f.y - f.py) * al;
+      const li = g.lightAt(f.x, y + 0.5, f.z, env);
+      const L = [0, 1, 2, 3, 4, 5].map(k => FTEX[f.id * 6 + k]);
+      g.pushBox(v, f.x - 0.5 - cam[0], y - cam[1], f.z - 0.5 - cam[2], f.x + 0.5 - cam[0], y + 1 - cam[1], f.z + 0.5 - cam[2], 0, [li, li, li, 1], 0, L, [0.6, 0.6, 1, 0.5, 0.8, 0.8]);
+    }
     const t = performance.now() / 1000;
     for (const it of list) {
       const li = g.lightAt(it.pos[0], it.pos[1] + 0.2, it.pos[2], env);

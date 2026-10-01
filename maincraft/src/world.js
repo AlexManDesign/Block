@@ -578,8 +578,9 @@ class World {
       if (b === 0 || SHAPE[b] === SH.WATER || SHAPE[b] === SH.LAVA || (FLAGS[b] & BF_REPLACE)) {
         const m = this.getMeta(x, y, z);
         this.setBlock(x, y, z, 0, 0);
-        this.setBlock(x, y - 1, z, id, m);
-        this.schedule(x, y - 1, z, 2);
+        // the game turns it into a falling block entity (Minecraft's FallingBlockEntity)
+        if (this.onFall) this.onFall(x, y, z, id, m);
+        else { this.setBlock(x, y - 1, z, id, m); this.schedule(x, y - 1, z, 2); }
       }
       return;
     }
