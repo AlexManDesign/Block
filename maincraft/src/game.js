@@ -64,7 +64,8 @@ class Game {
     this.camMode = 0;
     this.debug = false;
     this.hideHud = false;
-    this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, lavaT: 0 };
+    this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, lavaT: 0, invT: 0, lastHurt: 0 };
+    this.atkT = 10; this.atkBarV = -1; this.lastHeld = null;
     this.spiral = [];
     for (let dz = -40; dz <= 40; dz++) for (let dx = -40; dx <= 40; dx++) this.spiral.push([dx, dz, Math.hypot(dx, dz)]);
     this.spiral.sort((a, b) => a[2] - b[2]);
@@ -669,6 +670,8 @@ class Game {
       this.use();
     }
     if (this.swingT > 0) this.swingT = Math.max(0, this.swingT - dt * 3.3);
+    this.atkT += dt;
+    this.updateAttackBar();
     // eating
     if (this.eating) {
       this.eating.t += dt;
@@ -683,16 +686,28 @@ class Game {
     const p = this.player, eye = p.eye(), l = p.look();
     const hit = this.ents.raycastMob(eye, l, 3.5);
     if (!hit || (this.target && this.target.t < hit.t)) return false;
-    const held = this.inv[this.sel], t = toolInfo(held);
-    let dmg = 1;
-    if (t) dmg = t.tool === 'sword' ? [0, 4, 5, 6, 4, 7][t.tier] : t.tool === 'axe' ? [0, 3, 4, 5, 3, 6][t.tier] : 2;
-    const crit = !p.onGround && p.vel[1] < 0;
-    this.ents.damageMob(hit.e, Math.round(dmg * (crit ? 1.5 : 1)), p.pos);
+    // Player.attack: base damage scaled by the attack strength (cooldown) of the held item
+    const a = attackStats(this.inv[this.sel]), f = this.attackStrength(a.speed);
+    let dmg = a.dmg * (0.2 + f * f * 0.8);
+    const strong = f > 0.9;
+    const crit = strong && p.fallDist > 0 && !p.onGround && !p.onLadder && !p.inWater && !p.flying && !p.sprinting;
+    if (crit) dmg *= 1.5;
+    let extra = null;
+    if (strong && p.sprinting) {
+      const yaw = p.yaw;
+      extra = [0.5, Math.sin(yaw), -Math.cos(yaw)];
+      p.vel[0] *= 0.6; p.vel[2] *= 0.6; p.sprinting = false;
+    }
+    this.ents.damageMob(hit.e, dmg, p.pos, extra);
+    if (crit) this.spawnParticles(hit.e.pos[0] - 0.5, hit.e.pos[1] + hit.e.h * 0.5, hit.e.pos[2] - 0.5, B.WOOL_WHITE, 8);
+    this.atkT = 0;
     this.swing();
     this.damageTool();
     this.surv.exh += 0.1;
     return true;
   }
+  // Player.getAttackStrengthScale(0.5): ticks since the last attack over the item's cooldown
+  attackStrength(speed) { return Math.min(1, (this.atkT * 20 + 0.5) / (20 / speed)); }
   swing() { this.swingT = 1; }
 
   doBreak(x, y, z) {
@@ -989,16 +1004,29 @@ class Game {
       else if (s.food <= 0 && s.hp > 1) this.hurt(1);
     }
     if (s.hurtT > 0) s.hurtT -= dt;
+    if (s.invT > 0) s.invT -= dt;
     this.updateSurvivalHud();
   }
+  // LivingEntity.hurt: 20 ticks of invulnerability; in the first 10 only a bigger hit lands, by the difference
   hurt(n) {
-    if (this.mode !== 'survival' || this.surv.dead || n <= 0) return;
-    this.surv.hp = Math.max(0, this.surv.hp - n);
-    this.surv.hurtT = 0.4;
+    const s = this.surv;
+    if (this.mode !== 'survival' || s.dead || n <= 0) return false;
+    if (s.invT > 0.5) {
+      if (n <= s.lastHurt) return false;
+      const d = n - s.lastHurt; s.lastHurt = n;
+      s.hp = Math.max(0, s.hp - d);
+      if (s.hp <= 0) this.die();
+      this.updateSurvivalHud();
+      return false;
+    }
+    s.lastHurt = n; s.invT = 1;
+    s.hp = Math.max(0, s.hp - n);
+    s.hurtT = 0.4;
     Sfx.hurt();
     $('hurt').classList.remove('flash'); void $('hurt').offsetWidth; $('hurt').classList.add('flash');
-    if (this.surv.hp <= 0) this.die();
+    if (s.hp <= 0) this.die();
     this.updateSurvivalHud();
+    return true;
   }
   die() {
     this.surv.dead = true;
@@ -1399,7 +1427,17 @@ class Game {
   }
 
   // ------------------------------------------------------------------ HUD
-  updateHotbar() { UI.updateHotbar(); }
+  updateHotbar() { if (this.inv[this.sel] !== this.lastHeld) { this.lastHeld = this.inv[this.sel]; this.atkT = 0; } UI.updateHotbar(); }
+  // attack indicator under the crosshair (shown while the weapon recharges)
+  updateAttackBar() {
+    const f = this.attackStrength(attackStats(this.inv[this.sel]).speed);
+    const v = f >= 1 ? -1 : Math.round(f * 16);
+    if (v === this.atkBarV) return;
+    this.atkBarV = v;
+    const el = $('atk');
+    el.style.display = v < 0 ? 'none' : 'block';
+    if (v >= 0) el.firstChild.style.width = v + 'px';
+  }
   updateSurvivalHud() { UI.updateSurvival(); }
   updateDebug() {
     const el = $('debug'), bi = $('biomeInfo');

@@ -38,6 +38,7 @@ input[type=text],input:not([type]){font:inherit;font-size:14px;background:#000;c
 body.nohud #hud>*:not(#debug){display:none}
 #cross{position:absolute;left:50%;top:50%;width:20px;height:20px;transform:translate(-50%,-50%);mix-blend-mode:difference}
 #cross:before,#cross:after{content:'';position:absolute;background:#fff}
+#atk{display:none;position:absolute;left:50%;top:50%;width:16px;height:2px;margin:12px 0 0 -8px;background:rgba(0,0,0,.5)}#atk i{display:block;height:2px;width:0;background:#fff}
 #cross:before{left:9px;top:0;width:2px;height:20px}#cross:after{left:0;top:9px;width:20px;height:2px}
 #hotbar{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);display:flex;background:rgba(0,0,0,.35);border:3px solid #2b2b2b;outline:2px solid #6b6b6b;pointer-events:auto}
 .slot{width:var(--slot);height:var(--slot);position:relative;display:flex;align-items:center;justify-content:center;background:#8b8b8b;border:2px solid;border-color:#373737 #fff #fff #373737}
@@ -135,6 +136,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
 
 <div id="hud" class="hidden">
   <div id="cross"></div>
+  <div id="atk"><i></i></div>
   <div id="hint"></div>
   <div id="survBars" class="hidden"><div id="hearts"></div><div id="food"></div><div id="air"></div></div>
   <div id="heldName"></div>
@@ -10504,7 +10506,7 @@ class Entities {
     const d = MOB_DEFS[type];
     const yaw = Math.random() * 6.2832;
     const e = { type, pos: [x, y, z], vel: [0, 0, 0], wish: [0, 0, 0], bodyYaw: yaw, tgtYaw: yaw, headYaw: yaw, hp: d.hp, w: d.w, h: d.h,
-      onGround: false, walk: 0, walkAmt: 0, hurtT: 0, deathT: 0, age: 0, fire: 0,
+      onGround: false, walk: 0, walkAmt: 0, hurtT: 0, invT: 0, lastHurt: 0, deathT: 0, age: 0, fire: 0,
       // behaviour state (see ai / aiFish)
       aiT: Math.random() * 2, tgt: null, fleeT: 0, angryT: 0, noJump: 0, wantJump: false, atkT: 0, shootT: Math.random(), fuse: -1,
       leapT: 1.5 + Math.random() * 1.5, hopT: Math.random() * 0.8, stuckT: 0, detourT: 0, detX: 0, detZ: 0,
@@ -10641,6 +10643,7 @@ class Entities {
       if (d.hostile && h > 32 && !e.persist && Math.random() < dt / 25) { this.mobs.splice(i, 1); continue; }
       if (e.deathT > 0) { e.deathT += dt; if (e.deathT > 1.0) this.mobs.splice(i, 1); continue; }
       if (e.hurtT > 0) e.hurtT -= dt;
+      if (e.invT > 0) e.invT -= dt;
       if (e.angryT > 0) e.angryT -= dt;
       if (e.tpT > 0) e.tpT -= dt;
       e.atkT += dt; e.shootT += dt;
@@ -10967,7 +10970,7 @@ class Entities {
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
-    g.hurt(dmg);
+    if (!g.hurt(dmg)) return;
     // LivingEntity.knockback(0.4) on the player
     p.vel[0] = p.vel[0] / 2 + dx / l * 8; p.vel[2] = p.vel[2] / 2 + dz / l * 8;
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
@@ -11492,22 +11495,37 @@ class Entities {
     }
     return best;
   }
-  damageMob(e, dmg, from) {
-    if (e.deathT > 0 || e.hurtT > 0.3) return;
+  // LivingEntity.hurt: after a hit the mob is invulnerable for 10 ticks, the next 10 a stronger
+  // hit only deals the difference (without knockback or the red flash). from: the attacker's
+  // position (knockback 0.4 away); extra: [strength, dirX, dirZ] of a sprint attack's knockback.
+  damageMob(e, dmg, from, extra) {
+    if (e.deathT > 0 || dmg <= 0) return;
     const d = MOB_DEFS[e.type];
-    e.hp -= dmg; e.hurtT = 0.4;
-    if (from) {
-      // LivingEntity.knockback(0.4): half the velocity plus 0.4 blocks/tick away, 0.4 up from the ground
-      const dx = e.pos[0] - from[0], dz = e.pos[2] - from[2], l = Math.hypot(dx, dz) || 1;
-      e.vel[0] = e.vel[0] / 2 + dx / l * 8; e.vel[2] = e.vel[2] / 2 + dz / l * 8;
-      if (e.onGround) e.vel[1] = Math.min(8, e.vel[1] / 2 + 8);
+    if (e.invT > 0.5) {
+      if (dmg <= e.lastHurt) return;
+      const add = dmg - e.lastHurt;
+      e.lastHurt = dmg; e.hp -= add;
+      if (e.hp <= 0) this.mobDied(e, d);
+      return;
     }
+    e.lastHurt = dmg; e.invT = 1; e.hurtT = 0.5;
+    e.hp -= dmg;
+    const kb = (s, dx, dz) => {
+      // LivingEntity.knockback: half the velocity plus s blocks/tick along the push, s up from the ground
+      const l = Math.hypot(dx, dz) || 1;
+      e.vel[0] = e.vel[0] / 2 + dx / l * s * 20; e.vel[2] = e.vel[2] / 2 + dz / l * s * 20;
+      if (e.onGround) e.vel[1] = Math.min(8, e.vel[1] / 2 + s * 20);
+    };
+    if (from) kb(0.4, e.pos[0] - from[0], e.pos[2] - from[2]);
+    if (extra) kb(extra[0], extra[1], extra[2]);
     if (!d.hostile) e.fleeT = 5;   // lastHurtByMob is kept for 100 ticks
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 30;
     if (e.hp > 0 && e.type === 'enderman' && Math.random() < 0.5 && this.teleportNear(e, e.pos[0], e.pos[2], 24)) e.tpT = 1;
     Sfx.hurt();
-    if (e.hp <= 0) {
+    if (e.hp <= 0) this.mobDied(e, d);
+  }
+  mobDied(e, d) {
       e.deathT = 0.001;
       for (const [id, n] of d.drops(e)) if (id && n > 0) this.dropItem(id, n, e.pos[0], e.pos[1] + 0.5, e.pos[2]);
       if (e.type === 'slime' && e.size > 1) {
@@ -11518,7 +11536,6 @@ class Entities {
           c.vel = [Math.cos(a) * 2.5, 3, Math.sin(a) * 2.5]; c.angryT = e.angryT;
         }
       }
-    }
   }
 
   // ------------------------------------------------------------------ rendering
@@ -11926,6 +11943,20 @@ function toolInfo(item) {
   if (!item || !isItem(item.id)) return null;
   const d = itemDef(item.id);
   return d && d[5] && d[5].tool ? d[5] : null;
+}
+// attack damage / attack speed of the held item (vanilla item attributes; tier 1 wood, 2 stone, 3 iron, 4 gold, 5 diamond)
+const ATK_TABLE = {
+  sword: [[4, 5, 6, 4, 7], [1.6, 1.6, 1.6, 1.6, 1.6]],
+  axe: [[7, 9, 9, 7, 9], [0.8, 0.8, 0.9, 1, 1]],
+  pickaxe: [[2, 3, 4, 2, 5], [1.2, 1.2, 1.2, 1.2, 1.2]],
+  shovel: [[2.5, 3.5, 4.5, 2.5, 5.5], [1, 1, 1, 1, 1]],
+  hoe: [[1, 1, 1, 1, 1], [1, 2, 3, 1, 4]],
+};
+function attackStats(item) {
+  const t = toolInfo(item), e = t && ATK_TABLE[t.tool];
+  if (!e) return { dmg: 1, speed: 4 };
+  const i = Math.min(4, Math.max(0, t.tier - 1));
+  return { dmg: e[0][i], speed: e[1][i] };
 }
 const TIER_SPEED = [1, 2, 4, 6, 12, 8];
 function needTier(id) {
@@ -12490,7 +12521,8 @@ class Game {
     this.camMode = 0;
     this.debug = false;
     this.hideHud = false;
-    this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, lavaT: 0 };
+    this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, lavaT: 0, invT: 0, lastHurt: 0 };
+    this.atkT = 10; this.atkBarV = -1; this.lastHeld = null;
     this.spiral = [];
     for (let dz = -40; dz <= 40; dz++) for (let dx = -40; dx <= 40; dx++) this.spiral.push([dx, dz, Math.hypot(dx, dz)]);
     this.spiral.sort((a, b) => a[2] - b[2]);
@@ -13095,6 +13127,8 @@ class Game {
       this.use();
     }
     if (this.swingT > 0) this.swingT = Math.max(0, this.swingT - dt * 3.3);
+    this.atkT += dt;
+    this.updateAttackBar();
     // eating
     if (this.eating) {
       this.eating.t += dt;
@@ -13109,16 +13143,28 @@ class Game {
     const p = this.player, eye = p.eye(), l = p.look();
     const hit = this.ents.raycastMob(eye, l, 3.5);
     if (!hit || (this.target && this.target.t < hit.t)) return false;
-    const held = this.inv[this.sel], t = toolInfo(held);
-    let dmg = 1;
-    if (t) dmg = t.tool === 'sword' ? [0, 4, 5, 6, 4, 7][t.tier] : t.tool === 'axe' ? [0, 3, 4, 5, 3, 6][t.tier] : 2;
-    const crit = !p.onGround && p.vel[1] < 0;
-    this.ents.damageMob(hit.e, Math.round(dmg * (crit ? 1.5 : 1)), p.pos);
+    // Player.attack: base damage scaled by the attack strength (cooldown) of the held item
+    const a = attackStats(this.inv[this.sel]), f = this.attackStrength(a.speed);
+    let dmg = a.dmg * (0.2 + f * f * 0.8);
+    const strong = f > 0.9;
+    const crit = strong && p.fallDist > 0 && !p.onGround && !p.onLadder && !p.inWater && !p.flying && !p.sprinting;
+    if (crit) dmg *= 1.5;
+    let extra = null;
+    if (strong && p.sprinting) {
+      const yaw = p.yaw;
+      extra = [0.5, Math.sin(yaw), -Math.cos(yaw)];
+      p.vel[0] *= 0.6; p.vel[2] *= 0.6; p.sprinting = false;
+    }
+    this.ents.damageMob(hit.e, dmg, p.pos, extra);
+    if (crit) this.spawnParticles(hit.e.pos[0] - 0.5, hit.e.pos[1] + hit.e.h * 0.5, hit.e.pos[2] - 0.5, B.WOOL_WHITE, 8);
+    this.atkT = 0;
     this.swing();
     this.damageTool();
     this.surv.exh += 0.1;
     return true;
   }
+  // Player.getAttackStrengthScale(0.5): ticks since the last attack over the item's cooldown
+  attackStrength(speed) { return Math.min(1, (this.atkT * 20 + 0.5) / (20 / speed)); }
   swing() { this.swingT = 1; }
 
   doBreak(x, y, z) {
@@ -13415,16 +13461,29 @@ class Game {
       else if (s.food <= 0 && s.hp > 1) this.hurt(1);
     }
     if (s.hurtT > 0) s.hurtT -= dt;
+    if (s.invT > 0) s.invT -= dt;
     this.updateSurvivalHud();
   }
+  // LivingEntity.hurt: 20 ticks of invulnerability; in the first 10 only a bigger hit lands, by the difference
   hurt(n) {
-    if (this.mode !== 'survival' || this.surv.dead || n <= 0) return;
-    this.surv.hp = Math.max(0, this.surv.hp - n);
-    this.surv.hurtT = 0.4;
+    const s = this.surv;
+    if (this.mode !== 'survival' || s.dead || n <= 0) return false;
+    if (s.invT > 0.5) {
+      if (n <= s.lastHurt) return false;
+      const d = n - s.lastHurt; s.lastHurt = n;
+      s.hp = Math.max(0, s.hp - d);
+      if (s.hp <= 0) this.die();
+      this.updateSurvivalHud();
+      return false;
+    }
+    s.lastHurt = n; s.invT = 1;
+    s.hp = Math.max(0, s.hp - n);
+    s.hurtT = 0.4;
     Sfx.hurt();
     $('hurt').classList.remove('flash'); void $('hurt').offsetWidth; $('hurt').classList.add('flash');
-    if (this.surv.hp <= 0) this.die();
+    if (s.hp <= 0) this.die();
     this.updateSurvivalHud();
+    return true;
   }
   die() {
     this.surv.dead = true;
@@ -13825,7 +13884,17 @@ class Game {
   }
 
   // ------------------------------------------------------------------ HUD
-  updateHotbar() { UI.updateHotbar(); }
+  updateHotbar() { if (this.inv[this.sel] !== this.lastHeld) { this.lastHeld = this.inv[this.sel]; this.atkT = 0; } UI.updateHotbar(); }
+  // attack indicator under the crosshair (shown while the weapon recharges)
+  updateAttackBar() {
+    const f = this.attackStrength(attackStats(this.inv[this.sel]).speed);
+    const v = f >= 1 ? -1 : Math.round(f * 16);
+    if (v === this.atkBarV) return;
+    this.atkBarV = v;
+    const el = $('atk');
+    el.style.display = v < 0 ? 'none' : 'block';
+    if (v >= 0) el.firstChild.style.width = v + 'px';
+  }
   updateSurvivalHud() { UI.updateSurvival(); }
   updateDebug() {
     const el = $('debug'), bi = $('biomeInfo');

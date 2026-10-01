@@ -38,6 +38,7 @@ input[type=text],input:not([type]){font:inherit;font-size:14px;background:#000;c
 body.nohud #hud>*:not(#debug){display:none}
 #cross{position:absolute;left:50%;top:50%;width:20px;height:20px;transform:translate(-50%,-50%);mix-blend-mode:difference}
 #cross:before,#cross:after{content:'';position:absolute;background:#fff}
+#atk{display:none;position:absolute;left:50%;top:50%;width:16px;height:2px;margin:12px 0 0 -8px;background:rgba(0,0,0,.5)}#atk i{display:block;height:2px;width:0;background:#fff}
 #cross:before{left:9px;top:0;width:2px;height:20px}#cross:after{left:0;top:9px;width:20px;height:2px}
 #hotbar{position:absolute;left:50%;bottom:6px;transform:translateX(-50%);display:flex;background:rgba(0,0,0,.35);border:3px solid #2b2b2b;outline:2px solid #6b6b6b;pointer-events:auto}
 .slot{width:var(--slot);height:var(--slot);position:relative;display:flex;align-items:center;justify-content:center;background:#8b8b8b;border:2px solid;border-color:#373737 #fff #fff #373737}
@@ -135,6 +136,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
 
 <div id="hud" class="hidden">
   <div id="cross"></div>
+  <div id="atk"><i></i></div>
   <div id="hint"></div>
   <div id="survBars" class="hidden"><div id="hearts"></div><div id="food"></div><div id="air"></div></div>
   <div id="heldName"></div>

@@ -294,7 +294,7 @@ class Entities {
     const d = MOB_DEFS[type];
     const yaw = Math.random() * 6.2832;
     const e = { type, pos: [x, y, z], vel: [0, 0, 0], wish: [0, 0, 0], bodyYaw: yaw, tgtYaw: yaw, headYaw: yaw, hp: d.hp, w: d.w, h: d.h,
-      onGround: false, walk: 0, walkAmt: 0, hurtT: 0, deathT: 0, age: 0, fire: 0,
+      onGround: false, walk: 0, walkAmt: 0, hurtT: 0, invT: 0, lastHurt: 0, deathT: 0, age: 0, fire: 0,
       // behaviour state (see ai / aiFish)
       aiT: Math.random() * 2, tgt: null, fleeT: 0, angryT: 0, noJump: 0, wantJump: false, atkT: 0, shootT: Math.random(), fuse: -1,
       leapT: 1.5 + Math.random() * 1.5, hopT: Math.random() * 0.8, stuckT: 0, detourT: 0, detX: 0, detZ: 0,
@@ -397,7 +397,7 @@ class Entities {
         const ox = a.pos[0], oy = a.pos[1], oz = a.pos[2], mx = a.vel[0] * s, my = a.vel[1] * s, mz = a.vel[2] * s;
         if (a.hostile && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
-          if (hb && hb.t <= 1) { g.hurt(a.dmg); p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+          if (hb && hb.t <= 1) { if (g.hurt(a.dmg)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } this.arrows.splice(i, 1); break; }
         }
         if (this.pointSolid(ox + mx, oy + my, oz + mz)) {
           let lo = 0, hi = 1;
@@ -431,6 +431,7 @@ class Entities {
       if (d.hostile && h > 32 && !e.persist && Math.random() < dt / 25) { this.mobs.splice(i, 1); continue; }
       if (e.deathT > 0) { e.deathT += dt; if (e.deathT > 1.0) this.mobs.splice(i, 1); continue; }
       if (e.hurtT > 0) e.hurtT -= dt;
+      if (e.invT > 0) e.invT -= dt;
       if (e.angryT > 0) e.angryT -= dt;
       if (e.tpT > 0) e.tpT -= dt;
       e.atkT += dt; e.shootT += dt;
@@ -757,7 +758,7 @@ class Entities {
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
-    g.hurt(dmg);
+    if (!g.hurt(dmg)) return;
     // LivingEntity.knockback(0.4) on the player
     p.vel[0] = p.vel[0] / 2 + dx / l * 8; p.vel[2] = p.vel[2] / 2 + dz / l * 8;
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
@@ -1282,22 +1283,37 @@ class Entities {
     }
     return best;
   }
-  damageMob(e, dmg, from) {
-    if (e.deathT > 0 || e.hurtT > 0.3) return;
+  // LivingEntity.hurt: after a hit the mob is invulnerable for 10 ticks, the next 10 a stronger
+  // hit only deals the difference (without knockback or the red flash). from: the attacker's
+  // position (knockback 0.4 away); extra: [strength, dirX, dirZ] of a sprint attack's knockback.
+  damageMob(e, dmg, from, extra) {
+    if (e.deathT > 0 || dmg <= 0) return;
     const d = MOB_DEFS[e.type];
-    e.hp -= dmg; e.hurtT = 0.4;
-    if (from) {
-      // LivingEntity.knockback(0.4): half the velocity plus 0.4 blocks/tick away, 0.4 up from the ground
-      const dx = e.pos[0] - from[0], dz = e.pos[2] - from[2], l = Math.hypot(dx, dz) || 1;
-      e.vel[0] = e.vel[0] / 2 + dx / l * 8; e.vel[2] = e.vel[2] / 2 + dz / l * 8;
-      if (e.onGround) e.vel[1] = Math.min(8, e.vel[1] / 2 + 8);
+    if (e.invT > 0.5) {
+      if (dmg <= e.lastHurt) return;
+      const add = dmg - e.lastHurt;
+      e.lastHurt = dmg; e.hp -= add;
+      if (e.hp <= 0) this.mobDied(e, d);
+      return;
     }
+    e.lastHurt = dmg; e.invT = 1; e.hurtT = 0.5;
+    e.hp -= dmg;
+    const kb = (s, dx, dz) => {
+      // LivingEntity.knockback: half the velocity plus s blocks/tick along the push, s up from the ground
+      const l = Math.hypot(dx, dz) || 1;
+      e.vel[0] = e.vel[0] / 2 + dx / l * s * 20; e.vel[2] = e.vel[2] / 2 + dz / l * s * 20;
+      if (e.onGround) e.vel[1] = Math.min(8, e.vel[1] / 2 + s * 20);
+    };
+    if (from) kb(0.4, e.pos[0] - from[0], e.pos[2] - from[2]);
+    if (extra) kb(extra[0], extra[1], extra[2]);
     if (!d.hostile) e.fleeT = 5;   // lastHurtByMob is kept for 100 ticks
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 30;
     if (e.hp > 0 && e.type === 'enderman' && Math.random() < 0.5 && this.teleportNear(e, e.pos[0], e.pos[2], 24)) e.tpT = 1;
     Sfx.hurt();
-    if (e.hp <= 0) {
+    if (e.hp <= 0) this.mobDied(e, d);
+  }
+  mobDied(e, d) {
       e.deathT = 0.001;
       for (const [id, n] of d.drops(e)) if (id && n > 0) this.dropItem(id, n, e.pos[0], e.pos[1] + 0.5, e.pos[2]);
       if (e.type === 'slime' && e.size > 1) {
@@ -1308,7 +1324,6 @@ class Entities {
           c.vel = [Math.cos(a) * 2.5, 3, Math.sin(a) * 2.5]; c.angryT = e.angryT;
         }
       }
-    }
   }
 
   // ------------------------------------------------------------------ rendering

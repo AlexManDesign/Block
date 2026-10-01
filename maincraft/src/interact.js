@@ -126,6 +126,20 @@ function toolInfo(item) {
   const d = itemDef(item.id);
   return d && d[5] && d[5].tool ? d[5] : null;
 }
+// attack damage / attack speed of the held item (vanilla item attributes; tier 1 wood, 2 stone, 3 iron, 4 gold, 5 diamond)
+const ATK_TABLE = {
+  sword: [[4, 5, 6, 4, 7], [1.6, 1.6, 1.6, 1.6, 1.6]],
+  axe: [[7, 9, 9, 7, 9], [0.8, 0.8, 0.9, 1, 1]],
+  pickaxe: [[2, 3, 4, 2, 5], [1.2, 1.2, 1.2, 1.2, 1.2]],
+  shovel: [[2.5, 3.5, 4.5, 2.5, 5.5], [1, 1, 1, 1, 1]],
+  hoe: [[1, 1, 1, 1, 1], [1, 2, 3, 1, 4]],
+};
+function attackStats(item) {
+  const t = toolInfo(item), e = t && ATK_TABLE[t.tool];
+  if (!e) return { dmg: 1, speed: 4 };
+  const i = Math.min(4, Math.max(0, t.tier - 1));
+  return { dmg: e[0][i], speed: e[1][i] };
+}
 const TIER_SPEED = [1, 2, 4, 6, 12, 8];
 function needTier(id) {
   const k = B_KEY[id];
