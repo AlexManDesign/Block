@@ -157,8 +157,10 @@ class Mesher {
   // ---------------------------------------------------------------- full cubes
   cube(ids, meta, light, p, id, x, y, z, bright) {
     const fl = FLAGS[id];
-    const layerBuf = this.bufs[RLAYER[id]];
     const leaves = (fl & BF_LEAVES) !== 0;
+    // fast leaves are solid: opaque texture in the solid pass (no alpha test)
+    const fastLeaf = leaves && !this.fancyLeaves;
+    const layerBuf = this.bufs[fastLeaf ? RL_SOLID : RLAYER[id]];
     const clear = (fl & (BF_GLASS | BF_TRANS)) !== 0;
     const emissive = (fl & BF_EMISSIVE) !== 0;
     const m = meta[p];
@@ -191,6 +193,7 @@ class Mesher {
         }
       }
       if ((fl & BF_FACING) && f === FACE_OF_DIR[m & 3]) layer = FRONT[id];
+      if (fastLeaf && OPAQUE_LEAF[layer]) layer = OPAQUE_LEAF[layer];
       // grass under snow shows the snowy side (Minecraft's snowy=true grass block)
       if (id === B.GRASS && f !== 2 && f !== 3) { const up = ids[p + FACE_DELTA[2]]; if (up === B.SNOW || up === B.SNOW_LAYER) layer = FTEX[B.SNOWY_GRASS * 6 + f]; }
       const nl = light[np];
@@ -750,9 +753,12 @@ const DEFAULT_TINTS = (() => {
   t.fill(c565(0x91BD59), 0, 256); t.fill(c565(0x77AB2F), 256, 512); t.fill(c565(0x3F76E4), 512, 768);
   return t;
 })();
+// fast leaves (Minecraft's fast graphics): leaf layer -> its opaque variant, drawn in the solid pass
+const OPAQUE_LEAF = new Uint16Array(4096);
 function initMesherTextures(layers) {
-  TINT_KIND.fill(0);
-  for (const [k, n] of TINT_NAMES) {
+  TINT_KIND.fill(0); OPAQUE_LEAF.fill(0);
+  for (const n in layers) if (layers[n + '_opaque'] !== undefined) OPAQUE_LEAF[layers[n]] = layers[n + '_opaque'];
+  for (const [k, n] of TINT_NAMES.concat(TINT_NAMES.filter(t => t[0] === 2).map(t => [2, t[1] + '_opaque']))) {
     const l = layers[n], u = layers[n + '_bt'];
     if (l === undefined || u === undefined) continue;
     TINT_KIND[l] = k; TINT_LAYER[l] = u;

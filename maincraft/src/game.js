@@ -4,7 +4,7 @@
 const SETTINGS_KEY = 'maincraft.settings.v1';
 const IS_TOUCH = (() => { try { return 'ontouchstart' in window || matchMedia('(pointer: coarse)').matches; } catch (e) { return false; } })();
 const Settings = {
-  renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, leaves: 2, sway: true, bobView: true,
+  renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, leaves: IS_TOUCH ? 0 : 2, sway: true, bobView: true,
   scale: IS_TOUCH ? 0.75 : 1, fps: false, sound: true, lang: '',
   load() {
     try { Object.assign(this, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { }

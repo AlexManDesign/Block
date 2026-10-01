@@ -189,6 +189,26 @@ def mangrove_propagule():
     return im
 
 
+LEAF_TEXTURES = {'oak_leaves', 'birch_leaves', 'spruce_leaves', 'jungle_leaves', 'acacia_leaves', 'dark_oak_leaves',
+                 'mangrove_leaves', 'azalea_leaves', 'flowering_azalea_leaves'}
+
+
+def opaque_leaves(img):
+    """Minecraft's fast leaves: drawn solid, the see-through pixels filled with a dark shade of the leaf."""
+    src = img.convert('RGBA')
+    px = src.load()
+    solid = [px[x, y] for y in range(src.height) for x in range(src.width) if px[x, y][3] >= 128]
+    avg = tuple(sum(p[i] for p in solid) // max(1, len(solid)) for i in range(3))
+    dark = tuple(int(c * 0.4) for c in avg) + (255,)
+    out = Image.new('RGBA', src.size)
+    op = out.load()
+    for y in range(src.height):
+        for x in range(src.width):
+            p = px[x, y]
+            op[x, y] = (p[0], p[1], p[2], 255) if p[3] >= 128 else dark
+    return out
+
+
 def snowy_side(dirt, snow):
     """Side of a snow-covered grass block: dirt with a ragged snow band on top (as in Minecraft)."""
     out = dirt.copy().convert('RGBA')
@@ -302,6 +322,11 @@ def collect():
         tiles.append((k, [v], 0))
     for s in range(10):
         tiles.append(('destroy_stage_%d' % s, [crack_stage(s)], 0))
+    # opaque variants of the leaves (and of their untinted copies) for the fast leaves setting
+    for name, frames, _ in list(tiles):
+        base = name[:-3] if name.endswith('_bt') else name
+        if base in LEAF_TEXTURES:
+            tiles.append((base + '_opaque' + ('_bt' if name.endswith('_bt') else ''), [opaque_leaves(frames[0])], 0))
     # white tile used for untextured geometry (outline, clouds, particles)
     tiles.append(('white', [Image.new('RGBA', (16, 16), (255, 255, 255, 255))], 0))
     return tiles
