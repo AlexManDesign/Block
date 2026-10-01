@@ -5,7 +5,7 @@ const SETTINGS_KEY = 'maincraft.settings.v1';
 const IS_TOUCH = (() => { try { return 'ontouchstart' in window || matchMedia('(pointer: coarse)').matches; } catch (e) { return false; } })();
 const Settings = {
   renderDist: IS_TOUCH ? 5 : 8, fov: 70, sens: 1, bright: 0.5, clouds: true, leaves: IS_TOUCH ? 0 : 2, sway: true, bobView: true,
-  scale: IS_TOUCH ? 0.75 : 1, fps: false, sound: true, lang: '',
+  scale: IS_TOUCH ? 0.75 : 1, autoScale: IS_TOUCH, fps: false, sound: true, lang: '',
   load() {
     try { Object.assign(this, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { }
     // older saves kept an on/off "fancyLeaves" switch
@@ -77,7 +77,7 @@ class Game {
   }
 
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2) * Settings.scale;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2) * Settings.scale * (Settings.autoScale ? this.dynScale || 1 : 1);
     const w = Math.max(1, Math.round(window.innerWidth * dpr)), h = Math.max(1, Math.round(window.innerHeight * dpr));
     if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; }
   }
@@ -183,6 +183,7 @@ class Game {
 
   async quitToTitle() {
     this.playing = false;
+    if (this.bench) this.endBenchmark(true);
     await this.saveWorld(true);
     if (this.world) { this.world.pool.terminate(); for (const c of this.world.cols.values()) this.r.freeColumn(c); }
     this.world = null;
@@ -395,6 +396,32 @@ class Game {
     this.updateDebug();
     this.perfT('hud', performance.now() - tu);
     this.perfT('frame', performance.now() - tf0);
+    this.autoScaleTick(dt * 1000, performance.now() - tf0);
+  }
+  // Dynamic resolution ("Auto Resolution"): when frames are slow because of the GPU (our JS takes
+  // well under the frame interval), the render resolution steps down below the Render Scale
+  // setting; when frames keep up with the display it steps back up. Decisions use the median
+  // frame interval of one-second windows so garbage-collection hiccups do not count, and a scale
+  // that was too slow is not retried for 30 s, so the picture does not pump up and down.
+  autoScaleTick(ms, js) {
+    const A = this.autoS || (this.autoS = { iv: [], js: 0, t: 0, good: 0, failAt: 0, failScale: 2 });
+    if (!Settings.autoScale || this.bench || this.paused || this.loadingWorld || !this.playing) { A.iv.length = 0; A.js = A.t = 0; return; }
+    A.iv.push(ms); A.js += js; A.t += ms;
+    if (A.t < 1000) return;
+    const iv = A.iv.sort((a, b) => a - b), med = iv[iv.length >> 1], jsAvg = A.js / iv.length;
+    A.iv.length = 0; A.js = A.t = 0;
+    const cur = this.dynScale || 1, now = performance.now();
+    let next = cur;
+    if (med > 20 && jsAvg < med * 0.6) {
+      A.good = 0;
+      if (cur > 0.5) { next = Math.max(0.5, cur * 0.85); A.failAt = now; A.failScale = cur; }
+    } else if (med < 17.5) {
+      if (++A.good >= 3 && cur < 1) {
+        const up = Math.min(1, cur / 0.85);
+        if (up < A.failScale - 1e-6 || now - A.failAt > 30000) { next = up; A.good = 0; }
+      }
+    } else A.good = 0;
+    if (next !== cur) { this.dynScale = next; this.resize(); }
   }
   // Stutter attribution: a frame interval over 25 ms is charged to the biggest JS stage of the
   // frame before it when JS took most of that time, otherwise to work outside our JS (garbage
@@ -432,7 +459,7 @@ class Game {
   // Repeatable measurement in place: waits until every column within the render distance is
   // generated and meshed, then turns the camera a full circle in 12 s from where the player
   // stands, averaging frame times, GPU and CPU time per pass and the geometry drawn. The result
-  // is copied to the clipboard. Run it, change one setting, run it again on the same spot.
+  // opens in a window with a copy button. Run it, change one setting, run it again on the same spot.
   startBenchmark() {
     if (this.bench) { this.endBenchmark(true); return; }
     const p = this.player;
@@ -440,6 +467,8 @@ class Game {
       frames: [], cpu: {}, sec: 0, draws: 0, quads: 0, fog: 0, n: 0 };
     p.flying = true;
     this.r.gpuAcc = null;
+    show('benchBox', false);
+    UI.benchStatus(T('benchWait') + '…');
   }
   worldReady() {
     const w = this.world, p = this.player.pos;
@@ -460,19 +489,30 @@ class Game {
       p.yaw = b.yaw; p.pitch = b.pitch;
       b.ready = this.worldReady() ? b.ready + dt : 0;
       if (b.ready > 1.5 || b.t > 45) { b.loadedAll = b.ready > 1.5; b.waited = b.t; b.phase = 'run'; b.t = 0; this.r.gpuAcc = {}; }
+      else this.benchProgress(`${T('benchWait')}… ${Math.floor(b.t)} ${CUR_LANG === 'ru' ? 'с' : 's'}`);
       return;
     }
     p.yaw = b.yaw + Math.PI * 2 * Math.min(1, b.t / 12); p.pitch = b.pitch;
     b.frames.push(dt * 1000);
+    this.benchProgress(`${T('benchRun')}… ${Math.min(100, Math.floor(b.t / 12 * 100))}%`);
     const r = this.r, ps = r.pstat;
     b.sec += r.visCount; b.draws += r.stats.draws; b.quads += ps[0].quads + ps[1].quads + ps[2].quads; b.fog += r.stats.fogCulled || 0; b.n++;
     if (b.t >= 12) this.endBenchmark(false);
   }
+  benchProgress(text) {
+    if (text !== this.benchLast) { this.benchLast = text; UI.benchStatus(text); }
+  }
   endBenchmark(cancelled) {
     const b = this.bench, p = this.player, r = this.r;
-    this.bench = null;
+    if (!b) return;
+    this.bench = null; this.benchLast = '';
+    UI.benchStatus('');
     p.yaw = b.yaw; p.pitch = b.pitch; p.flying = b.flying;
     const acc = r.gpuAcc; r.gpuAcc = null;
+    // back to the game menu; the result window opens above it with a copy button (a click is a
+    // user gesture, so copying works everywhere, phones included)
+    if (document.pointerLockElement) document.exitPointerLock();
+    else if (this.playing && !this.surv.dead) { this.paused = true; UI.showPause(); }
     if (cancelled || !b.frames.length) { this.benchText = 'бенчмарк отменён'; return; }
     const f = (v, d = 2) => (v || 0).toFixed(d);
     const a = b.frames.slice(1).sort((x, y) => x - y), n = a.length;
@@ -487,7 +527,7 @@ class Game {
     L.push(`Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${b.pos.map(v => v.toFixed(1)).join(' ')} · pitch ${b.pitch.toFixed(2)} · биом ${BIOME_LIST[pb] ? BIOME_LIST[pb][0] : '?'}`);
     L.push(`GPU: ${r.gpuName || '?'}`);
     L.push(`${navigator.userAgent}`);
-    L.push(`настройки: экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'}`);
+    L.push(`настройки: экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'}`);
     L.push(`FPS ${f(1000 / avg, 1)} · кадр ${f(avg)} мс · 1% low ${f(1000 / p99, 1)} fps · худший ${f(worst, 1)} мс · кадров ${n}`);
     if (acc) L.push(`GPU мс (отброшено замеров ${r.gpuBad || 0}): всего ${f(gsum)} | рельеф ${f(Gv('solid'))} листва ${f(Gv('cutout'))} небо ${f(Gv('sky'))} облака ${f(Gv('clouds'))} частицы ${f(Gv('particles'))} мобы ${f(Gv('entities'))} вода ${f(Gv('water'))} рука ${f(Gv('hand'))}`);
     else L.push('GPU мс: таймер видеокарты недоступен');
@@ -498,9 +538,7 @@ class Game {
     L.push(this.spikeReport());
     this.benchText = L.join('\n');
     console.log(this.benchText);
-    const done = () => { this.copiedT = performance.now() + 4000; };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(this.benchText).then(done, () => { this.copyFallback(this.benchText); done(); });
-    else { this.copyFallback(this.benchText); done(); }
+    UI.showBench(this.benchText);
   }
 
   update(dt) {
@@ -1376,7 +1414,7 @@ class Game {
     if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
     else if (this.benchText) t += '\n' + this.benchText + '\n';
     t += '\n' + this.perfReport();
-    t += this.copiedT > performance.now() ? '\n>>> отчёт скопирован в буфер обмена' : '\nP — скопировать отчёт целиком · B — бенчмарк (12 с на месте, результат копируется)';
+    t += this.copiedT > performance.now() ? '\n>>> отчёт скопирован в буфер обмена' : '\nP — скопировать отчёт целиком · B — бенчмарк (12 с на месте, результат в окне; он же в меню паузы)';
     el.textContent = t;
   }
 
@@ -1395,7 +1433,7 @@ class Game {
     const L = [];
     L.push(`== ПРОИЗВОДИТЕЛЬНОСТЬ ==  FPS ${this.fps} · кадр ${f(avg)} мс · 1% low ${f(p99 ? 1000 / p99 : 0, 0)} fps · худший ${f(worst, 1)} мс`);
     L.push(`GPU: ${r.gpuName || '?'}`);
-    L.push(`экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'} · multiDraw ${r.multiDraw ? 'да' : 'нет'}`);
+    L.push(`экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'} · multiDraw ${r.multiDraw ? 'да' : 'нет'}`);
     if (r.tq) {
       const names = ['solid', 'cutout', 'sky', 'clouds', 'particles', 'entities', 'water', 'hand'];
       let sum = 0; for (const k of names) sum += G[k] || 0;
@@ -1447,6 +1485,7 @@ class Game {
     document.addEventListener('pointerlockchange', () => {
       const locked = document.pointerLockElement === cv;
       if (locked) { this.paused = false; UI.hidePause(); }
+      else if (this.bench) this.endBenchmark(true);
       else if (this.playing && !UI.invOpen && !this.surv.dead && !this.loadingWorld) { this.paused = true; this.mouse.l = this.mouse.r = false; this.keys = {}; UI.showPause(); }
     });
     document.addEventListener('mousemove', (e) => {
@@ -1464,6 +1503,7 @@ class Game {
       if (!this.playing) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'F3', 'F5', 'F1', 'Tab'].includes(e.code)) e.preventDefault();
       if (e.code === 'KeyE' && !e.repeat) { if (UI.invOpen) UI.closeInventory(); else if (!this.paused) UI.openInventory(); return; }
+      if (this.bench && e.code === 'Escape') { this.endBenchmark(true); return; }
       if (UI.invOpen) { if (e.code === 'Escape') UI.closeInventory(); return; }
       if (this.paused) return;
       this.keys[e.code] = true;

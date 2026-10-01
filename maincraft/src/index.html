@@ -61,6 +61,10 @@ body.nohud #hud>*:not(#debug){display:none}
 @keyframes hurt{0%{opacity:1}100%{opacity:0}}
 #vignette{position:fixed;inset:0;pointer-events:none;z-index:8;background:radial-gradient(ellipse at center,transparent 60%,rgba(0,0,0,.28))}
 #pause,#death{background:rgba(0,0,0,.5);z-index:25}
+#benchStatus{position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:26;display:flex;align-items:center;gap:10px;padding:6px 10px;background:rgba(0,0,0,.6);font-size:13px;white-space:nowrap}
+#benchStatus button{padding:4px 10px;min-width:0;font-size:12px}
+#benchBox{background:rgba(0,0,0,.6);z-index:36}
+#benchOut{font:11px/1.35 ui-monospace,Menlo,Consolas,monospace;background:#000;color:#ddd;border:2px solid #a0a0a0;padding:6px;width:100%;height:min(52vh,420px);resize:none;white-space:pre;overflow:auto}
 #death{background:rgba(120,0,0,.45)}#death h2{font-size:36px;text-shadow:3px 3px #3f0000}
 #clickToPlay{position:fixed;left:50%;top:60%;transform:translateX(-50%);z-index:20;font-size:16px;padding:12px 18px;background:rgba(0,0,0,.6);cursor:pointer}
 #inventory{position:fixed;inset:0;z-index:22;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center}
@@ -143,7 +147,13 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
   <h2 data-t="paused"></h2>
   <button id="btnResume" data-t="resume"></button>
   <button id="btnSettingsPause" data-t="settings"></button>
+  <button id="btnBench" data-t="bench"></button>
   <button id="btnQuit" data-t="saveQuit"></button>
+</div>
+<div id="benchStatus" class="hidden"><span id="benchStatusText"></span><button id="btnBenchCancel" data-t="cancel"></button></div>
+<div id="benchBox" class="screen hidden">
+  <div class="panel"><h2 data-t="bench"></h2><textarea id="benchOut" readonly spellcheck="false"></textarea>
+  <div class="row"><button id="btnBenchCopy" data-t="copy"></button><button id="btnBenchClose" data-t="close"></button></div></div>
 </div>
 <div id="death" class="screen hidden">
   <h2 data-t="died"></h2>

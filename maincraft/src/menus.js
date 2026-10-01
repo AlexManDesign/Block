@@ -89,6 +89,15 @@ const UI = {
     };
     $('btnResume').onclick = () => this.resume();
     $('btnSettingsPause').onclick = () => this.showSettings('pause');
+    $('btnBench').onclick = () => { this.hidePause(); this.game.paused = false; this.game.startBenchmark(); };
+    $('btnBenchCancel').onclick = () => this.game.endBenchmark(true);
+    $('btnBenchClose').onclick = () => show('benchBox', false);
+    $('btnBenchCopy').onclick = () => {
+      const ta = $('benchOut'), b = $('btnBenchCopy'), ok = () => { b.textContent = T('copied'); };
+      ta.focus(); ta.select();
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(ok, () => { try { if (document.execCommand('copy')) ok(); } catch (e) { } });
+      else try { if (document.execCommand('copy')) ok(); } catch (e) { }
+    };
     $('btnQuit').onclick = () => { show('pause', false); this.game.quitToTitle(); };
     $('btnRespawn').onclick = () => { this.game.respawn(); this.resume(); };
     $('btnDeathQuit').onclick = () => { this.game.respawn(); show('death', false); this.game.quitToTitle(); };
@@ -109,6 +118,9 @@ const UI = {
   },
   showPause() { if (!this.game.loadingWorld) show('pause', true); show('clickToPlay', false); },
   hidePause() { show('pause', false); show('clickToPlay', false); },
+  // benchmark progress line and result window (the text stays selectable for manual copying)
+  benchStatus(text) { show('benchStatus', !!text); if (text) $('benchStatusText').textContent = text; },
+  showBench(text) { $('benchOut').value = text; $('btnBenchCopy').textContent = T('copy'); show('benchBox', true); $('benchOut').scrollTop = 0; },
   showDeath() { show('death', true); },
   hideDeath() { show('death', false); },
 
@@ -135,6 +147,7 @@ const UI = {
     slider(T('sens'), 'sens', 0.2, 3, 0.05, v => Math.round(v * 100) + '%');
     slider(T('bright'), 'bright', 0, 1, 0.05, v => Math.round(v * 100) + '%');
     slider(T('scale'), 'scale', 0.4, 1, 0.05, v => Math.round(v * 100) + '%', () => this.game.resize());
+    toggle(T('autoScale'), 'autoScale', () => this.game.resize());
     toggle(T('clouds'), 'clouds');
     const leafNames = [T('leavesFast'), T('leavesOpt'), T('leavesFancy')];
     const lv = el('button', { class: 'tog' }, T('leaves') + ': ' + leafNames[Settings.leaves]);

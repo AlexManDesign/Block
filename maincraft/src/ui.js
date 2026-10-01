@@ -16,6 +16,8 @@ const STR = {
     crafting: 'Crafting', chest: 'Chest', furnace: 'Furnace', clickToPlay: 'Click to play', sound: 'Sound',
     hintDesktop: 'WASD - move, Space - jump, F or double Space - fly, Shift - sneak, Ctrl - sprint, LMB - break, RMB - place/use, MMB - pick, E - inventory, F3 - debug, F5 - camera',
     biome: 'Biome', flying: 'Flying (F)', lastPlayed: 'Last played', gamemodeChanged: 'Game mode changed', mouse: 'Mouse',
+    bench: 'Performance Test', copy: 'Copy', copied: 'Copied', close: 'Close', autoScale: 'Auto Resolution',
+    benchWait: 'Test: waiting for the world to load', benchRun: 'Test: turning the camera',
   },
   ru: {
     singleplayer: 'Одиночная игра', settings: 'Настройки', play: 'Играть в выбранном мире', create: 'Создать новый мир',
@@ -30,6 +32,8 @@ const STR = {
     crafting: 'Крафт', chest: 'Сундук', furnace: 'Печь', clickToPlay: 'Нажмите, чтобы играть', sound: 'Звук',
     hintDesktop: 'WASD — ходьба, Пробел — прыжок, F или двойной Пробел — полёт, Shift — присесть, Ctrl — бег, ЛКМ — сломать, ПКМ — поставить/использовать, СКМ — взять блок, E — инвентарь, F3 — отладка, F5 — камера',
     biome: 'Биом', flying: 'Полёт (F)', lastPlayed: 'Последняя игра', gamemodeChanged: 'Режим игры изменён', mouse: 'Мышь',
+    bench: 'Тест производительности', copy: 'Копировать', copied: 'Скопировано', close: 'Закрыть', autoScale: 'Авто-разрешение',
+    benchWait: 'Тест: ждём загрузку мира', benchRun: 'Тест: поворот камеры',
   },
 };
 let CUR_LANG = LANG;
