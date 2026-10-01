@@ -55,7 +55,7 @@ function placementFor(world, heldId, hit, fd, player) {
       return out;
     }
     case SH.TRAPDOOR:
-      if (hdir >= 0) m = ((hdir + 2) & 3) | (fy > 0.5 ? 4 : 0);
+      if (hdir >= 0) m = hdir | (fy > 0.5 ? 4 : 0);   // TrapDoorBlock: facing = clicked face, hinged on that block
       else m = ((fd + 2) & 3) | (hit.face === 3 ? 4 : 0);
       break;
     case SH.LADDER:
@@ -115,8 +115,10 @@ function placementFor(world, heldId, hit, fd, player) {
       if (fl & BF_AXIS) m = hit.face <= 1 ? 1 : hit.face >= 4 ? 2 : 0;
       else if (fl & BF_FACING) m = (fd + 2) & 3;
   }
-  // aquatic plants keep water around them; other blocks in water displace it
-  out.push({ x, y, z, id: heldId, m });
+  // aquatic plants keep water around them; blocks that can hold water placed into a water source
+  // become waterlogged; other blocks in water displace it
+  const wet = WET[heldId] && ((cur === B.WATER && world.getMeta(x, y, z) === 0) || (FLAGS[cur] & (BF_AQUATIC | BF_WET)));
+  out.push({ x, y, z, id: wet ? WET[heldId] : heldId, m });
   return out;
 }
 
@@ -173,6 +175,7 @@ function canHarvest(id, item) {
 }
 // list of {id,count}
 function dropsFor(id, m, item) {
+  id = dryId(id);
   if (!canHarvest(id, item)) return [];
   const k = B_KEY[id], r = Math.random();
   const t = toolInfo(item);
@@ -290,10 +293,10 @@ function rollLoot(table) {
 // contents of a chest (rolling its loot table the first time; the block keeps only its facing then)
 function chestContents(game, x, y, z) {
   const C = game.chests = game.meta.chests || (game.meta.chests = {}), k = `${x},${y},${z}`;
-  const m = game.world.getMeta(x, y, z);
-  if (game.world.getBlock(x, y, z) === B.CHEST && (m >> 2)) {
+  const m = game.world.getMeta(x, y, z), id = game.world.getBlock(x, y, z);
+  if (dryId(id) === B.CHEST && (m >> 2)) {
     if (!C[k]) C[k] = rollLoot(m >> 2);
-    game.world.setBlock(x, y, z, B.CHEST, m & 3);
+    game.world.setBlock(x, y, z, id, m & 3);
   }
   return C[k] || null;
 }

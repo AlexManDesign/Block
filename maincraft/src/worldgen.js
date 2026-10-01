@@ -338,6 +338,36 @@ const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
 const CI = (x, y, z) => ((y - WORLD_MIN_Y) << 8) | (z << 4) | x;
 const COL_N = WORLD_H * 256;
 
+// structure sets (worldgen/structure_set): salt, spacing, separation; reach = chunks a start's
+// pieces can extend from its chunk
+const TPL_CACHE = new Map();
+const IGLOO_BIOMES = new Set([BI.SNOWY_TAIGA, BI.SNOWY_PLAINS, BI.SNOWY_SLOPES]);
+const RUIN_COLD = new Set([BI.FROZEN_OCEAN, BI.COLD_OCEAN, BI.OCEAN, BI.DEEP_FROZEN_OCEAN, BI.DEEP_COLD_OCEAN, BI.DEEP_OCEAN]);
+const RUIN_WARM = new Set([BI.LUKEWARM_OCEAN, BI.WARM_OCEAN, BI.DEEP_LUKEWARM_OCEAN]);
+const SHIPWRECK_BEACHED = ['with_mast', 'sideways_full', 'sideways_fronthalf', 'sideways_backhalf', 'rightsideup_full', 'rightsideup_fronthalf',
+  'rightsideup_backhalf', 'with_mast_degraded', 'rightsideup_full_degraded', 'rightsideup_fronthalf_degraded', 'rightsideup_backhalf_degraded'];
+const SHIPWRECK_OCEAN = ['with_mast', 'upsidedown_full', 'upsidedown_fronthalf', 'upsidedown_backhalf', 'sideways_full', 'sideways_fronthalf',
+  'sideways_backhalf', 'rightsideup_full', 'rightsideup_fronthalf', 'rightsideup_backhalf', 'with_mast_degraded', 'upsidedown_full_degraded',
+  'upsidedown_fronthalf_degraded', 'upsidedown_backhalf_degraded', 'sideways_full_degraded', 'sideways_fronthalf_degraded',
+  'sideways_backhalf_degraded', 'rightsideup_full_degraded', 'rightsideup_fronthalf_degraded', 'rightsideup_backhalf_degraded'];
+const SHIP_LOOT = { supply_chest: LOOT.SHIPWRECK_SUPPLY, map_chest: LOOT.SHIPWRECK_MAP, treasure_chest: LOOT.SHIPWRECK_TREASURE };
+const STRUCTURE_SETS = [
+  { salt: 14357618, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.iglooStart(x, z); } },
+  { salt: 165745295, spacing: 24, separation: 4, reach: 2, start: function (x, z) { return this.shipwreckStart(x, z); } },
+  { salt: 14357621, spacing: 20, separation: 8, reach: 3, start: function (x, z) { return this.oceanRuinStart(x, z); } },
+];
+// block meta turned with a template rotation (0..3 clockwise quarter turns)
+function rotMeta(id, m, r) {
+  if (!r) return m;
+  const sh = SHAPE[id];
+  if (sh === SH.STAIRS || sh === SH.DOOR || sh === SH.TRAPDOOR || sh === SH.LADDER || sh === SH.CHEST || sh === SH.BED || sh === SH.GATE ||
+    sh === SH.BUTTON || (FLAGS[id] & BF_FACING)) return (m & ~3) | (((m & 3) + r) & 3);
+  if (sh === SH.TORCH) return m ? 1 + ((m - 1 + r) & 3) : 0;
+  if (sh === SH.RAIL) return r & 1 ? m ^ 1 : m;
+  if ((FLAGS[id] & BF_AXIS) && (r & 1) && (m & 3)) return (m & ~3) | (3 - (m & 3));
+  return m;
+}
+
 class WorldGen {
   constructor(seed) {
     this.seed = seed | 0;
@@ -361,6 +391,7 @@ class WorldGen {
     this.candCache = new Map();
     this.treeCache = new Map();
     this.structCache = new Map();
+    this.surfCache = new Map();
     this.deco = [];                              // tree decorations of the chunk being generated
     this.treeWrites = null;                      // queued tree blocks while features() runs
     // tree buffer; id carries the log axis in bits 16+ (0 y, 1 x, 2 z)
@@ -578,6 +609,7 @@ class WorldGen {
     this.spawnerList = [];
     this.mineshafts();
     this.dungeons();
+    this.structures();
     this.ores();
     this.bedrock();
     this.springs();
@@ -973,6 +1005,208 @@ class WorldGen {
       const a = ni(lo + 8, hi), b = ni(lo, a - 1), y = ni(lo, b - 1 + 8);
       tryAt(x, y, z, B.LAVA, LROCK);
     }
+  }
+
+  // ---------------------------------------------------------------- template structures
+  // Minecraft's StructureTemplate pieces (structures.js): placed with a rotation (0 none, 1 clockwise,
+  // 2 180, 3 counter-clockwise) about a pivot, block states turned with it; markers handled per kind.
+  // Starts follow RandomSpreadStructurePlacement (one candidate chunk per spacing x spacing region,
+  // offset by random 0..spacing-separation-1) and the structure's biomes; layouts come from the start
+  // chunk's random, heights from the density surface, so every chunk agrees.
+  spreadStart(set, rx, rz) {
+    const rnd = mulberry(hash2i(this.seed + set.salt, rx, rz)), n = set.spacing - set.separation;
+    return [rx * set.spacing + ((rnd() * n) | 0), rz * set.spacing + ((rnd() * n) | 0)];
+  }
+  structures() {
+    const cx = this.cx, cz = this.cz;
+    for (const set of STRUCTURE_SETS) {
+      const R = set.reach;
+      const r0x = Math.floor((cx - R) / set.spacing), r1x = Math.floor((cx + R) / set.spacing);
+      const r0z = Math.floor((cz - R) / set.spacing), r1z = Math.floor((cz + R) / set.spacing);
+      for (let rz = r0z; rz <= r1z; rz++) for (let rx = r0x; rx <= r1x; rx++) {
+        const [sx, sz] = this.spreadStart(set, rx, rz);
+        if (Math.abs(sx - cx) > R || Math.abs(sz - cz) > R) continue;
+        const key = set.salt + ':' + sx + ':' + sz, C = this.structCache;
+        let st = C.get(key);
+        if (st === undefined) { st = set.start.call(this, sx, sz); if (C.size > 4000) C.clear(); C.set(key, st); }
+        if (st) for (const p of st) this.placePiece(p);
+      }
+    }
+  }
+  // decoded template: grid of state + 1, per palette the block id / meta of each state (-1 nothing)
+  tpl(name) {
+    let T = TPL_CACHE.get(name);
+    if (T) return T;
+    const S = STRUCT_TPL[name], [sx, sy, sz] = S.s, g = new Uint8Array(sx * sy * sz);
+    const raw = atob(S.g);
+    for (let i = 0, o = 0; i < raw.length; i += 2) { const v = raw.charCodeAt(i), n = raw.charCodeAt(i + 1); g.fill(v, o, o + n); o += n; }
+    const pals = S.m.map((m) => m.map((e) => {
+      if (!e) return [-1, 0];
+      const [key, meta, wet] = S.p[e - 1], id = key === 'AIR' ? 0 : B[key];
+      return [wet && WET[id] ? WET[id] : id, meta];
+    }));
+    T = { sx, sy, sz, g, pals, marks: S.d };
+    TPL_CACHE.set(name, T);
+    return T;
+  }
+  // StructureTemplate.transform: template position -> offset from the template origin
+  static tplPos(x, z, rot, px, pz) {
+    switch (rot) {
+      case 1: return [px + pz - z, pz - px + x];
+      case 2: return [px + px - x, pz + pz - z];
+      case 3: return [px - pz + z, px + pz - x];
+      default: return [x, z];
+    }
+  }
+  // placed bounds of a piece (world x0, z0, x1, z1)
+  pieceBox(p) {
+    const T = this.tpl(p.name), a = WorldGen.tplPos(0, 0, p.rot, p.px, p.pz), b = WorldGen.tplPos(T.sx - 1, T.sz - 1, p.rot, p.px, p.pz);
+    return [p.x + Math.min(a[0], b[0]), p.z + Math.min(a[1], b[1]), p.x + Math.max(a[0], b[0]), p.z + Math.max(a[1], b[1])];
+  }
+  placePiece(p) {
+    const x0 = this.x0, z0 = this.z0, bx = p.box || (p.box = this.pieceBox(p));
+    if (bx[0] > x0 + 15 || bx[2] < x0 || bx[1] > z0 + 15 || bx[3] < z0) return;
+    const T = this.tpl(p.name), pal = T.pals[p.pal || 0], ids = this.ids, meta = this.meta, g = T.g, seed = this.seed;
+    const { sx, sy, sz } = T, rot = p.rot, px = p.px, pz = p.pz;
+    for (let y = 0; y < sy; y++) {
+      const wy = p.y + y;
+      if (wy <= WORLD_MIN_Y || wy >= WORLD_MAX_Y) continue;
+      for (let z = 0; z < sz; z++) for (let x = 0; x < sx; x++) {
+        const v = g[(y * sz + z) * sx + x];
+        if (!v) continue;
+        const e = pal[v - 1];
+        if (e[0] < 0) continue;
+        const o = WorldGen.tplPos(x, z, rot, px, pz), wx = p.x + o[0], wz = p.z + o[1];
+        if (wx < x0 || wx > x0 + 15 || wz < z0 || wz > z0 + 15) continue;
+        // BlockRotProcessor: each block kept with the piece's integrity
+        if (p.integrity < 1 && hash3(seed + p.salt, wx, wy, wz) > p.integrity) continue;
+        const i = CI(wx - x0, wy, wz - z0), cur = ids[i];
+        let id = e[0];
+        // a block that can hold water placed into a water source becomes waterlogged
+        if (id && WET[id] && (cur === B.WATER && meta[i] === 0 || isWaterId(cur))) id = WET[id];
+        ids[i] = id; meta[i] = id ? rotMeta(id, e[1], rot) : 0;
+      }
+    }
+    if (p.marker) for (const [x, y, z, name] of T.marks) {
+      const o = WorldGen.tplPos(x, z, rot, px, pz), wx = p.x + o[0], wy = p.y + y, wz = p.z + o[1];
+      if (wx < x0 || wx > x0 + 15 || wz < z0 || wz > z0 + 15 || wy <= WORLD_MIN_Y + 1 || wy >= WORLD_MAX_Y) continue;
+      p.marker.call(this, name, wx, wy, wz, CI(wx - x0, wy, wz - z0));
+    }
+    if (p.after) p.after.call(this, p);
+  }
+  // chest at index i gets a loot table (rolled when opened)
+  lootChest(i, table) { if (dryId(this.ids[i]) === B.CHEST) this.meta[i] = (this.meta[i] & 3) | (table << 2); }
+  // OCEAN_FLOOR_WG / WORLD_SURFACE_WG heights from the density surface
+  floorH(x, z) {
+    const k = x * 131072 + z, C = this.surfCache;
+    let h = C.get(k);
+    if (h === undefined) { h = this.surfaceAt(x, z) + 1; if (C.size > 50000) C.clear(); C.set(k, h); }
+    return h;
+  }
+  surfH(x, z) { return Math.max(this.floorH(x, z), SEA); }
+
+  // IglooStructure / IglooPieces: the igloo on the surface; half of them with a ladder shaft of
+  // 4..11 sections down to a basement laboratory
+  iglooStart(cx, cz) {
+    if (!IGLOO_BIOMES.has(this.biomeAt(cx * 16, cz * 16))) return null;
+    const rnd = mulberry(hash2i(this.seed + 14357618 * 3, cx, cz)), rot = (rnd() * 4) | 0;
+    const X = cx * 16, Z = cz * 16, out = [];
+    const PIV = { 'igloo/top': [3, 5], 'igloo/middle': [1, 1], 'igloo/bottom': [3, 7] };
+    const OFF = { 'igloo/top': [0, 0, 0], 'igloo/middle': [2, -3, 4], 'igloo/bottom': [0, -3, -2] };
+    const piece = (name, down) => {
+      const [ox, oy, oz] = OFF[name], [px, pz] = PIV[name];
+      const p = { name, x: X + ox, y: 90 + oy - down, z: Z + oz, rot, px, pz, integrity: 1 };
+      // height: WORLD_SURFACE_WG at the template position + rotate(3 - offset x, 0, -offset z) - 91
+      const r = WorldGen.tplPos(3 - ox, -oz, rot, px, pz), h = this.surfH(p.x + r[0], p.z + r[1]);
+      p.y += h - 90 - 1;
+      return p;
+    };
+    if (rnd() < 0.5) {
+      const n = ((rnd() * 8) | 0) + 4;
+      const lab = piece('igloo/bottom', n * 3);
+      lab.marker = function (name, x, y, z, i) { if (name === 'chest') this.lootChest(i - 256, LOOT.IGLOO); };
+      out.push(lab);
+      for (let j = 0; j < n - 1; j++) out.push(piece('igloo/middle', j * 3));
+    }
+    const top = piece('igloo/top', 0);
+    // without the shaft the trapdoor spot becomes snow
+    top.after = function (p) {
+      const r = WorldGen.tplPos(3, 5, p.rot, p.px, p.pz), x = p.x + r[0], z = p.z + r[1], y = p.y;
+      if (x < this.x0 || x > this.x0 + 15 || z < this.z0 || z > this.z0 + 15) return;
+      const i = CI(x - this.x0, y, z - this.z0), under = this.ids[i - 256];
+      if (under && dryId(under) !== B.LADDER) { this.ids[i] = B.SNOW; this.meta[i] = 0; }
+    };
+    out.push(top);
+    return out;
+  }
+
+  // ShipwreckStructure / ShipwreckPieces: a random wreck (beached ones on beaches, half buried in
+  // the sand) laid on the average ocean floor of its area, loot chests by marker
+  shipwreckStart(cx, cz) {
+    const bio = this.biomeAt(cx * 16, cz * 16), bp = BPROP[bio];
+    const beached = bio === BI.BEACH || bio === BI.SNOWY_BEACH;
+    if (!beached && !(bp && bp.ocean && bio !== BI.RIVER && bio !== BI.FROZEN_RIVER)) return null;
+    const rnd = mulberry(hash2i(this.seed + 165745295 * 3, cx, cz)), rot = (rnd() * 4) | 0;
+    const list = beached ? SHIPWRECK_BEACHED : SHIPWRECK_OCEAN, name = 'shipwreck/' + list[(rnd() * list.length) | 0];
+    const T = this.tpl(name), X = cx * 16, Z = cz * 16;
+    let sum = 0, mn = 1e9;
+    for (let z = 0; z < T.sz; z++) for (let x = 0; x < T.sx; x++) { const h = beached ? this.surfH(X + x, Z + z) : this.floorH(X + x, Z + z); sum += h; mn = Math.min(mn, h); }
+    const y = beached ? mn - (T.sy >> 1) - ((rnd() * 3) | 0) : Math.floor(sum / (T.sx * T.sz));
+    const p = { name, x: X, y, z: Z, rot, px: 4, pz: 15, integrity: 1, pal: (rnd() * T.pals.length) | 0 };
+    p.marker = function (name, x, y, z, i) { const t = SHIP_LOOT[name]; if (t) this.lootChest(i - 256, t); };
+    return [p];
+  }
+
+  // OceanRuinStructure / OceanRuinPieces: cold ruins (brick with cracked 0.7 and mossy 0.5 overlays)
+  // or warm sandstone ones; 30% large, those mostly with 4..8 small ruins around
+  oceanRuinStart(cx, cz) {
+    const bio = this.biomeAt(cx * 16, cz * 16);
+    const warm = RUIN_WARM.has(bio), cold = RUIN_COLD.has(bio);
+    if (!warm && !cold) return null;
+    const rnd = mulberry(hash2i(this.seed + 14357621 * 3, cx, cz)), ri = (n) => (rnd() * n) | 0, nI = (a, b) => a + ri(b - a + 1);
+    const X = cx * 16, Z = cz * 16, out = [];
+    let salt = 0;
+    const add = (x, z, rot, large, integrity) => {
+      const mk = (name, integ) => {
+        const p = { name, x, y: 0, z, rot, px: 0, pz: 0, integrity: integ, salt: 900 + (salt++) * 7, large };
+        // height: ocean floor at the corner, lowered onto the floor across the footprint (getHeight)
+        const T = this.tpl(name), c = WorldGen.tplPos(T.sx - 1, T.sz - 1, rot, 0, 0);
+        const yy = this.floorH(x, z);
+        let j = 512, l = 0;
+        const xa = Math.min(x, x + c[0]), xb = Math.max(x, x + c[0]), za = Math.min(z, z + c[1]), zb = Math.max(z, z + c[1]);
+        for (let qz = za; qz <= zb; qz++) for (let qx = xa; qx <= xb; qx++) {
+          const k1 = Math.min(yy - 1, this.floorH(qx, qz) - 1);
+          j = Math.min(j, k1); if (k1 < yy - 3) l++;
+        }
+        p.y = (yy - 1 - j > 2 && l > Math.abs(c[0]) - 2) ? j + 1 : yy;
+        p.marker = function (name, mx, my, mz, i) {
+          if (name === 'chest') { const w = isWaterId(this.ids[i]); this.ids[i] = w ? WET[B.CHEST] : B.CHEST; this.meta[i] = 2 | ((large ? LOOT.UNDERWATER_RUIN_BIG : LOOT.UNDERWATER_RUIN_SMALL) << 2); }
+          else if (name === 'drowned') { const w = isWaterId(this.ids[i - 256]); this.ids[i] = w ? B.WATER : 0; this.meta[i] = 0; }
+        };
+        out.push(p);
+      };
+      if (warm) mk('underwater_ruin/' + (large ? 'big_warm_' + (4 + ri(4)) : 'warm_' + (1 + ri(8))), integrity);
+      else {
+        const i = large ? 1 + ri(3) : 1 + ri(8), pre = large ? 'big_' : '';
+        mk('underwater_ruin/' + pre + 'brick_' + i, integrity);
+        mk('underwater_ruin/' + pre + 'cracked_' + i, 0.7);
+        mk('underwater_ruin/' + pre + 'mossy_' + i, 0.5);
+      }
+    };
+    const rot = ri(4), large = rnd() <= 0.3;
+    add(X, Z, rot, large, large ? 0.9 : 0.8);
+    if (large && rnd() <= 0.9) {
+      const c = WorldGen.tplPos(15, 15, rot, 0, 0), bx0 = Math.min(X, X + c[0]), bx1 = Math.max(X, X + c[0]), bz0 = Math.min(Z, Z + c[1]), bz1 = Math.max(Z, Z + c[1]);
+      const ax = bx0, az = bz0;
+      const spots = [[-16 + nI(1, 8), 16 + nI(1, 7)], [-16 + nI(1, 8), nI(1, 7)], [-16 + nI(1, 8), -16 + nI(4, 8)], [nI(1, 7), 16 + nI(1, 7)],
+        [nI(1, 7), -16 + nI(4, 6)], [16 + nI(1, 7), 16 + nI(3, 8)], [16 + nI(1, 7), nI(1, 7)], [16 + nI(1, 7), -16 + nI(4, 8)]].map(([a, b]) => [ax + a, az + b]);
+      for (let n = nI(4, 8); n > 0 && spots.length; n--) {
+        const [qx, qz] = spots.splice(ri(spots.length), 1)[0], r1 = ri(4), e = WorldGen.tplPos(5, 6, r1, 0, 0);
+        const ex0 = Math.min(qx, qx + e[0]), ex1 = Math.max(qx, qx + e[0]), ez0 = Math.min(qz, qz + e[1]), ez1 = Math.max(qz, qz + e[1]);
+        if (!(ex0 <= bx1 && ex1 >= bx0 && ez0 <= bz1 && ez1 >= bz0)) add(qx, qz, r1, false, 0.8);
+      }
+    }
+    return out;
   }
 
   // ---------------------------------------------------------------- mineshafts

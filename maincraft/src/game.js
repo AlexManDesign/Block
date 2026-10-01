@@ -723,7 +723,7 @@ class Game {
   }
   onBlockBroken(x, y, z, id, m, byUpdate) {
     // a broken chest spills its contents in every mode (Containers.dropContents)
-    if (id === B.CHEST) {
+    if (dryId(id) === B.CHEST) {
       const C = this.chests = this.meta.chests || (this.meta.chests = {}), k = `${x},${y},${z}`;
       const items = C[k] || ((m >> 2) ? rollLoot(m >> 2) : null);
       delete C[k];
@@ -783,7 +783,7 @@ class Game {
         w.setBlock(tg.x, tg.y, tg.z, id, nm); Sfx.door(!!(nm & 4)); this.swing(); return;
       }
       if (id === B.CRAFTING_TABLE && this.mode === 'survival') { UI.openInventory('craft3'); return; }
-      if (id === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
+      if (dryId(id) === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
       if (id === B.FURNACE || id === B.FURNACE_LIT) { UI.openFurnace(tg.x, tg.y, tg.z); return; }
       if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { this.explode(tg.x + 0.5, tg.y + 0.5, tg.z + 0.5, 4, tg); return; }
     }
@@ -960,7 +960,7 @@ class Game {
   pickBlock() {
     const tg = this.target;
     if (!tg) return;
-    let id = tg.id;
+    let id = dryId(tg.id);
     if (id === B.FARMLAND_MOIST) id = B.FARMLAND;
     if (id === B.MANGROVE_ROOTS_WET) id = B.MANGROVE_ROOTS;
     if (id === B.SNOWY_GRASS) id = B.GRASS;

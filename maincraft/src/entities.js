@@ -987,7 +987,7 @@ class Entities {
       const id = w.getBlock(x, y, z);
       if (!isWaterId(id)) continue;
       let top = 8 / 9;
-      if (!(FLAGS[id] & BF_AQUATIC)) { const m = w.getMeta(x, y, z); if (!(m & 8)) top = (8 - (m & 7)) / 9; }
+      if (!(FLAGS[id] & (BF_AQUATIC | BF_WET))) { const m = w.getMeta(x, y, z); if (!(m & 8)) top = (8 - (m & 7)) / 9; }
       if (isWaterId(w.getBlock(x, y + 1, z))) top = 1;
       dep = Math.max(dep, y + top - e.pos[1]);
     }

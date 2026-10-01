@@ -347,6 +347,8 @@ class Mesher {
     const buf = this.bufs[RLAYER[id]];
     const T = id * 6;
     const texs = [FTEX[T], FTEX[T + 1], FTEX[T + 2], FTEX[T + 3], FTEX[T + 4], FTEX[T + 5]];
+    // waterlogged: the water of the cell is drawn with the block
+    if (FLAGS[id] & BF_WET) this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
     switch (shape) {
       case SH.WATER: case SH.LAVA:
         this.fluid(ids, meta, light, p, id, x, y, z);

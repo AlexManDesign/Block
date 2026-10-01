@@ -210,7 +210,7 @@ class Player {
       const id = world.getBlock(x, y, z), w = isWaterId(id), l = id === B.LAVA;
       if (!w && !l) continue;
       let top = 8 / 9;
-      if (!(FLAGS[id] & BF_AQUATIC)) { const m = world.getMeta(x, y, z); if (!(m & 8)) top = (8 - (m & 7)) / 9; }
+      if (!(FLAGS[id] & (BF_AQUATIC | BF_WET))) { const m = world.getMeta(x, y, z); if (!(m & 8)) top = (8 - (m & 7)) / 9; }
       const up = world.getBlock(x, y + 1, z);
       if ((w && isWaterId(up)) || (l && up === B.LAVA)) top = 1;
       const d = y + top - p[1];

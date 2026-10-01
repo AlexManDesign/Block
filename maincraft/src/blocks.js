@@ -25,18 +25,21 @@ const RL_SOLID = 0, RL_CUTOUT = 1, RL_TRANS = 2;
 // block flag bits
 const BF_LEAVES = 1, BF_AXIS = 2, BF_GLASS = 4, BF_TRANS = 8, BF_FALL = 16, BF_EMISSIVE = 32,
   BF_AQUATIC = 64, BF_NEEDWATER = 128, BF_HANG = 256, BF_CLIMB = 512, BF_STACK = 1024,
-  BF_FACING = 2048, BF_REPLACE = 4096, BF_PLANT = 8192;
+  BF_FACING = 2048, BF_REPLACE = 4096, BF_PLANT = 8192, BF_WET = 16384;
 
 const NB = BLOCK_TABLE.length + 1;
+// Waterlogged blocks (Minecraft's waterlogged=true): a twin id WET_BASE + id with the same shape,
+// textures and behaviour that also holds a water source. Fixed offset, so saved ids stay valid.
+const WET_BASE = 4096, NBX = WET_BASE + NB;
 const B = { AIR: 0 };
 const B_KEY = ['AIR'], B_EN = ['Air'], B_RU = ['Воздух'];
-const SHAPE = new Uint8Array(NB), OPAQUE = new Uint8Array(NB), RLAYER = new Uint8Array(NB);
-const LCOST = new Uint8Array(NB), VDIM = new Uint8Array(NB), EMIT = new Uint8Array(NB), SOLID = new Uint8Array(NB);
-const FLAGS = new Uint16Array(NB), BASE = new Uint16Array(NB), TAB = new Uint8Array(NB);
-const HARD = new Float32Array(NB), TOOL = new Uint8Array(NB);
+const SHAPE = new Uint8Array(NBX), OPAQUE = new Uint8Array(NBX), RLAYER = new Uint8Array(NBX);
+const LCOST = new Uint8Array(NBX), VDIM = new Uint8Array(NBX), EMIT = new Uint8Array(NBX), SOLID = new Uint8Array(NBX);
+const FLAGS = new Uint16Array(NBX), BASE = new Uint16Array(NBX), TAB = new Uint8Array(NBX);
+const HARD = new Float32Array(NBX), TOOL = new Uint8Array(NBX);
 // face textures (layer index): 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z ; FRONT = facing face texture
-const FTEX = new Uint16Array(NB * 6), FRONT = new Uint16Array(NB);
-const TEXNAMES = new Array(NB); // raw texture names per block (for icons / worker tex resolve)
+const FTEX = new Uint16Array(NBX * 6), FRONT = new Uint16Array(NBX);
+const TEXNAMES = new Array(NBX); // raw texture names per block (for icons / worker tex resolve)
 const TABS = ['b', 'c', 'n', 'f'];
 
 for (let i = 0; i < BLOCK_TABLE.length; i++) {
@@ -102,6 +105,22 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
   }
 })();
 
+// waterlogged twins of the shapes Minecraft lets hold water
+const WET = new Uint16Array(NB);
+(function initWet() {
+  const ok = new Set([SH.STAIRS, SH.SLAB, SH.FENCE, SH.PANE, SH.WALL, SH.GATE, SH.TRAPDOOR, SH.LADDER, SH.CHEST, SH.RAIL]);
+  for (let id = 1; id < NB; id++) {
+    if (!ok.has(SHAPE[id])) continue;
+    const t = WET_BASE + id;
+    WET[id] = t;
+    for (const A of [SHAPE, OPAQUE, RLAYER, LCOST, EMIT, SOLID, BASE, TAB, HARD, TOOL]) A[t] = A[id];
+    FLAGS[t] = FLAGS[id] | BF_WET; VDIM[t] = 1;
+    B_KEY[t] = B_KEY[id]; B_EN[t] = B_EN[id]; B_RU[t] = B_RU[id];
+  }
+})();
+// the plain block of a waterlogged twin
+function dryId(id) { return id >= WET_BASE ? id - WET_BASE : id; }
+
 // horizontal directions (same order as the main thread's DIRX_W / DIRZ_W: +z, -x, -z, +x)
 const HDX = [0, -1, 0, 1], HDZ = [1, 0, -1, 0];
 // loot tables of generated chests (chest meta bits 2+, rolled when first opened or broken)
@@ -111,9 +130,9 @@ const SPAWNER_MOB = { pig: 0, zombie: 1, skeleton: 2, spider: 3, cave_spider: 4 
 const SPAWNER_TYPES = ['pig', 'zombie', 'skeleton', 'spider', 'cave_spider'];
 
 // water / aquatic helpers
-function isWaterId(id) { return id === B.WATER || (FLAGS[id] & BF_AQUATIC) !== 0; }
+function isWaterId(id) { return id === B.WATER || (FLAGS[id] & (BF_AQUATIC | BF_WET)) !== 0; }
 function isLavaId(id) { return id === B.LAVA; }
-function isLiquidId(id) { return id === B.WATER || id === B.LAVA || (FLAGS[id] & BF_AQUATIC) !== 0; }
+function isLiquidId(id) { return id === B.WATER || id === B.LAVA || (FLAGS[id] & (BF_AQUATIC | BF_WET)) !== 0; }
 // Blocks that flowing water / lava destroys (Minecraft: not solid and unable to hold a fluid):
 // replaceable plants, torches, flowers, saplings, crops, double plants, buttons, fire. Ladders,
 // doors, sugar cane, cobwebs and underwater plants stay.
@@ -154,6 +173,12 @@ function resolveBlockTextures(layerMap) {
       for (let k = 0; k < 6; k++) FTEX[o + k] = FTEX[base * 6 + k];
       if (sh === SH.FENCE || sh === SH.GATE) for (let k = 0; k < 6; k++) FTEX[o + k] = FTEX[base * 6];
     }
+  }
+  for (let id = 1; id < NB; id++) {
+    const t = WET[id];
+    if (!t) continue;
+    for (let k = 0; k < 6; k++) FTEX[t * 6 + k] = FTEX[id * 6 + k];
+    FRONT[t] = FRONT[id]; TEXNAMES[t] = TEXNAMES[id];
   }
 }
 
@@ -230,5 +255,5 @@ ITEM_TABLE.push(['SPAWN_EGG_SALMON', 'Salmon Spawn Egg', 'Яйцо призыв�
 ITEM_TABLE.push(['SPAWN_EGG_SHARK', 'Shark Spawn Egg', 'Яйцо призыва акулы', 'item_spawn_egg_shark', 64, { mob: 'shark' }]);
 const IT = {};
 for (let i = 0; i < ITEM_TABLE.length; i++) IT[ITEM_TABLE[i][0]] = ITEM_BASE + i;
-function isItem(id) { return id >= ITEM_BASE; }
+function isItem(id) { return id >= ITEM_BASE && id < WET_BASE; }
 function itemDef(id) { return ITEM_TABLE[id - ITEM_BASE]; }

@@ -386,6 +386,16 @@ def collect():
     extra['large_amethyst_bud'] = amethyst_shards([(8, 10, 2.0), (4.5, 6, 1.3), (11.5, 7, 1.3)])
     extra['amethyst_cluster'] = amethyst_shards([(8, 13, 2.2), (4, 9, 1.5), (12, 10, 1.5), (6, 6, 1.1), (10.5, 6, 1.1)])
     extra['spawner'] = spawner_cage()
+    # redstone torch: the torch with a red, dimmer head (the pack has the torch only)
+    rt = load('torch').convert('RGBA')
+    rp = rt.load()
+    for yy in range(16):
+        for xx in range(16):
+            r, g, b, a = rp[xx, yy]
+            if a and r > 150 and g > 100 and b < 120:   # flame pixels
+                l = (r + g) / 510
+                rp[xx, yy] = (int(150 + 105 * l), int(10 + 30 * l), int(8 + 20 * l), a)
+    extra['redstone_torch'] = rt
     if 'grass_block_snow' not in names:
         extra['grass_block_snow'] = snowy_side(load('dirt'), load('snow'))
     extra['item_ender_pearl'] = orb((12, 59, 55), (46, 143, 134), (160, 230, 220), 6)

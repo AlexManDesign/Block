@@ -555,7 +555,7 @@ class World {
     if (!id) return;
     const m = this.getMeta(x, y, z);
     if (this.onBreak && !noDrop) this.onBreak(x, y, z, id, m, byUpdate);
-    const fill = (FLAGS[id] & BF_AQUATIC) ? B.WATER : 0;
+    const fill = (FLAGS[id] & (BF_AQUATIC | BF_WET)) ? B.WATER : 0;
     this.setBlock(x, y, z, fill, 0);
     const sh = SHAPE[id];
     if (sh === SH.DOOR || sh === SH.TALL) {
