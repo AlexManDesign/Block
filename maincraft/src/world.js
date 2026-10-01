@@ -679,7 +679,9 @@ class World {
           const sec = inRange && col ? col.secs[s] : null;
           const dst = k === 0 ? o : k === 1 ? o + 1 : o + 17, n = k === 1 ? 16 : 1;
           if (!sec) {
-            const fid = inRange ? 0 : (wy < 0 ? B.BEDROCK : 0), fl = inRange && col ? 0xF0 : (wy < 0 ? 0 : 0xF0);
+            // outside the world is open (below: the void, so the world's underside is drawn as in
+            // Minecraft); missing sections inside it are air with full sky light
+            const fid = 0, fl = inRange && col ? 0xF0 : (wy < 0 ? 0 : 0xF0);
             ids.fill(fid, dst, dst + n); meta.fill(0, dst, dst + n); light.fill(fl, dst, dst + n);
             continue;
           }

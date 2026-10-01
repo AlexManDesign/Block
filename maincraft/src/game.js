@@ -1190,9 +1190,29 @@ class Game {
     if (this.target && !this.hideHud) this.drawSelection(env);
     // hand
     if (!this.camMode && !this.hideHud) this.drawHand(env, dt);
+    this.drawInWall();
     r.gpuEnd();
     this.perfT('rHand', performance.now() - t);
     this.perfT('rVis', r.cpuVis || 0); this.perfT('rTerrain', r.cpuTerrain || 0); this.perfT('rSort', r.cpuSort || 0);
+    gl.enable(gl.DEPTH_TEST);
+  }
+  // Minecraft's in-wall overlay (ScreenEffectRenderer): with the eye inside an opaque block the
+  // screen shows that block's texture at 1/10 brightness, so one cannot look through the ground.
+  drawInWall() {
+    if (this.camMode) return;
+    const w = this.world, e = this.cam, hw = PLAYER_W * 0.4;
+    let id = 0;
+    for (let i = 0; i < 8 && !id; i++) {
+      const b = w.getBlock(Math.floor(e[0] + ((i & 1) - 0.5) * 2 * hw), Math.floor(e[1] + (((i >> 1) & 1) - 0.5) * 0.1), Math.floor(e[2] + (((i >> 2) & 1) - 0.5) * 2 * hw));
+      if (OPAQUE[b] && SOLID[b]) id = b;
+    }
+    if (!id) return;
+    const gl = this.r.gl, L = this.particleLayer(id), c = 0.1;
+    const I = this.inWallVP || (this.inWallVP = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
+    const v = [-1, -1, 0, 0, 1, L, c, c, c, 1, 1, -1, 0, 1, 1, L, c, c, c, 1, 1, 1, 0, 1, 0, L, c, c, c, 1,
+      -1, -1, 0, 0, 1, L, c, c, c, 1, 1, 1, 0, 1, 0, L, c, c, c, 1, -1, 1, 0, 0, 0, L, c, c, c, 1];
+    gl.disable(gl.DEPTH_TEST);
+    this.r.drawArr(this.r.f32(v), 6, null, 0, I);
     gl.enable(gl.DEPTH_TEST);
   }
   drawSelection(env) {
