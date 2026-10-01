@@ -492,49 +492,12 @@ class Game {
       else this.benchProgress(`${T('benchWait')}… ${Math.floor(b.t)} ${CUR_LANG === 'ru' ? 'с' : 's'}`);
       return;
     }
-    const r = this.r, ps = r.pstat;
-    if (b.phase === 'diag') { this.benchDiagTick(dt); return; }
     p.yaw = b.yaw + Math.PI * 2 * Math.min(1, b.t / 12); p.pitch = b.pitch;
     b.frames.push(dt * 1000);
     this.benchProgress(`${T('benchRun')}… ${Math.min(100, Math.floor(b.t / 12 * 100))}%`);
+    const r = this.r, ps = r.pstat;
     b.sec += r.visCount; b.draws += r.stats.draws; b.quads += ps[0].quads + ps[1].quads + ps[2].quads; b.fog += r.stats.fogCulled || 0; b.n++;
-    if (b.t >= 12) { b.acc = r.gpuAcc; b.phase = 'diag'; b.vi = -1; b.t = 0; this.benchVariant(0); }
-  }
-  // Diagnosis after the main run: the same circle (6 s each) with one thing changed at a time, to
-  // find what the GPU time is spent on on this machine: every other visible section skipped (half
-  // the geometry and draws at nearly the same pixels), the cutout pass skipped, or both terrain
-  // passes skipped (what is left is the cost of the pass setup itself).
-  benchVariants() {
-    const r = this.r;
-    return [
-      { name: 'как есть', set: () => { } },
-      { name: 'каждая вторая секция', set: () => { r.diagHalf = true; } },
-      { name: 'без прохода листвы', set: () => { r.diagSkip = 2; } },
-      { name: 'без рельефа и листвы', set: () => { r.diagSkip = 3; } },
-    ];
-  }
-  benchRestore() {
-    const r = this.r;
-    r.diagHalf = false; r.diagSkip = 0;
-  }
-  benchVariant(i) {
-    const b = this.bench, V = this.benchVariants();
-    this.benchRestore();
-    b.vi = i; b.t = 0;
-    if (i >= V.length) { this.endBenchmark(false); return; }
-    V[i].set();
-    this.r.gpuAcc = null;
-    (b.diag || (b.diag = []))[i] = { name: V[i].name, frames: [], draws: 0, quads: 0, n: 0, acc: null };
-  }
-  benchDiagTick(dt) {
-    const b = this.bench, p = this.player, r = this.r, ps = r.pstat, d = b.diag[b.vi], N = this.benchVariants().length;
-    p.yaw = b.yaw + Math.PI * 2 * Math.min(1, b.t / 6); p.pitch = b.pitch;
-    this.benchProgress(`${T('benchRun')}… ${CUR_LANG === 'ru' ? 'диагностика' : 'diagnosis'} ${b.vi + 1}/${N}`);
-    if (b.t > 0.5) {
-      if (!r.gpuAcc) r.gpuAcc = d.acc = {};
-      d.frames.push(dt * 1000); d.draws += r.stats.draws; d.quads += ps[0].quads + ps[1].quads + ps[2].quads; d.n++;
-    }
-    if (b.t >= 6) this.benchVariant(b.vi + 1);
+    if (b.t >= 12) this.endBenchmark(false);
   }
   benchProgress(text) {
     if (text !== this.benchLast) { this.benchLast = text; UI.benchStatus(text); }
@@ -544,9 +507,8 @@ class Game {
     if (!b) return;
     this.bench = null; this.benchLast = '';
     UI.benchStatus('');
-    this.benchRestore();
     p.yaw = b.yaw; p.pitch = b.pitch; p.flying = b.flying;
-    const acc = b.acc || r.gpuAcc; r.gpuAcc = null;
+    const acc = r.gpuAcc; r.gpuAcc = null;
     // back to the game menu; the result window opens above it with a copy button (a click is a
     // user gesture, so copying works everywhere, phones included)
     if (document.pointerLockElement) document.exitPointerLock();
@@ -561,7 +523,7 @@ class Game {
     let gsum = 0; for (const k of names) gsum += Gv(k);
     const cv = r.canvas, w = this.world, pb = w.biomeAt(Math.floor(b.pos[0]), Math.floor(b.pos[2]));
     const L = [];
-    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры, затем диагностика 4 × 6 с) ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
+    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры) ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
     L.push(`Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${b.pos.map(v => v.toFixed(1)).join(' ')} · pitch ${b.pitch.toFixed(2)} · биом ${BIOME_LIST[pb] ? BIOME_LIST[pb][0] : '?'}`);
     L.push(`GPU: ${r.gpuName || '?'}`);
     L.push(`${navigator.userAgent}`);
@@ -574,15 +536,6 @@ class Game {
     const mem = r.meshMemory(w);
     L.push(`память мешей ${f(mem.bytes / 1048576, 1)} МБ · колонок ${w.cols.size} · ожидание загрузки ${f(b.waited, 1)} с`);
     L.push(this.spikeReport());
-    if (b.diag) {
-      L.push('== ДИАГНОСТИКА (тот же оборот за 6 с, меняется одно) ==');
-      for (const d of b.diag) {
-        const fa = d.frames.length ? d.frames.reduce((x, y) => x + y, 0) / d.frames.length : 0, A = d.acc, g = (k) => A && A[k] ? A[k].s / A[k].n : 0;
-        let gs = 0; for (const k of names) gs += g(k);
-        const dn = d.n || 1;
-        L.push(`${d.name}: кадр ${f(fa)} мс · GPU ${A ? f(gs) : '—'} (рельеф ${f(g('solid'))} листва ${f(g('cutout'))} вода ${f(g('water'))}) · вызовов ${f(d.draws / dn, 0)} · треугольников ${f(d.quads * 2 / dn / 1000, 0)}k`);
-      }
-    }
     this.benchText = L.join('\n');
     console.log(this.benchText);
     UI.showBench(this.benchText);
@@ -1458,7 +1411,7 @@ class Game {
     t += `Sections: ${r.stats.sections}  draws ${r.stats.draws}  quads ${r.stats.quads}\n`;
     t += `Time: ${Math.floor((this.time * 24 + 6) % 24)}:${String(Math.floor((this.time * 1440) % 60)).padStart(2, '0')}  Day ${this.days || 0}\n`;
     if (this.target) t += `Target: ${B_KEY[this.target.id]} [${this.target.meta}] @ ${this.target.x} ${this.target.y} ${this.target.z}\n`;
-    if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : this.bench.phase === 'diag' ? 'диагностика ' + (this.bench.vi + 1) + '/4' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
+    if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
     else if (this.benchText) t += '\n' + this.benchText + '\n';
     t += '\n' + this.perfReport();
     t += this.copiedT > performance.now() ? '\n>>> отчёт скопирован в буфер обмена' : '\nP — скопировать отчёт целиком · B — бенчмарк (12 с на месте, результат в окне; он же в меню паузы)';
