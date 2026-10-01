@@ -1611,6 +1611,8 @@ const STRUCTURE_SETS = [
   { salt: 14357618, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.iglooStart(x, z); } },
   { salt: 165745295, spacing: 24, separation: 4, reach: 2, start: function (x, z) { return this.shipwreckStart(x, z); } },
   { salt: 14357621, spacing: 20, separation: 8, reach: 3, start: function (x, z) { return this.oceanRuinStart(x, z); } },
+  { salt: 14357617, spacing: 32, separation: 8, reach: 2, start: function (x, z) { return this.desertPyramidStart(x, z); } },
+  { salt: 14357620, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.swampHutStart(x, z); } },
 ];
 // block meta turned with a template rotation (0..3 clockwise quarter turns)
 function rotMeta(id, m, r) {
@@ -2320,7 +2322,9 @@ class WorldGen {
     return [p.x + Math.min(a[0], b[0]), p.z + Math.min(a[1], b[1]), p.x + Math.max(a[0], b[0]), p.z + Math.max(a[1], b[1])];
   }
   placePiece(p) {
-    const x0 = this.x0, z0 = this.z0, bx = p.box || (p.box = this.pieceBox(p));
+    const x0 = this.x0, z0 = this.z0;
+    if (p.build) { const b = p.box; if (b[0] <= x0 + 15 && b[3] >= x0 && b[2] <= z0 + 15 && b[5] >= z0) p.build.call(this, p); return; }
+    const bx = p.box || (p.box = this.pieceBox(p));
     if (bx[0] > x0 + 15 || bx[2] < x0 || bx[1] > z0 + 15 || bx[3] < z0) return;
     const T = this.tpl(p.name), pal = T.pals[p.pal || 0], ids = this.ids, meta = this.meta, g = T.g, seed = this.seed;
     const { sx, sy, sz } = T, rot = p.rot, px = p.px, pz = p.pz;
@@ -2463,6 +2467,134 @@ class WorldGen {
       }
     }
     return out;
+  }
+
+  // ScatteredFeaturePiece: a box built in piece coordinates with an orientation (0 north, 1 east,
+  // 2 south, 3 west): x/z mapped as StructurePiece.getWorldX/Z, block states mirrored / turned like
+  // its setOrientation (south: mirror, west: mirror + clockwise, east: clockwise).
+  pieceBuilder(p) {
+    const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0, b = p.box, d = p.dir;
+    const wx = (x, z) => d === 0 || d === 2 ? b[0] + x : d === 3 ? b[3] - z : b[0] + z;
+    const wz = (x, z) => d === 0 ? b[5] - z : d === 2 ? b[2] + z : b[2] + x;
+    const turn = (id, m) => {
+      if (!id) return 0;
+      let r = d === 1 || d === 3 ? 1 : 0;
+      const mir = d === 2 || d === 3, sh = SHAPE[id];
+      const dirS = sh === SH.STAIRS || sh === SH.DOOR || sh === SH.TRAPDOOR || sh === SH.LADDER || sh === SH.CHEST || sh === SH.GATE || (FLAGS[id] & BF_FACING);
+      if (dirS) { let f = m & 3; if (mir && !(f & 1)) f ^= 2; return (m & ~3) | ((f + r) & 3); }
+      if (sh === SH.TORCH && m) { let f = m - 1; if (mir && !(f & 1)) f ^= 2; return 1 + ((f + r) & 3); }
+      return rotMeta(id, m, r);
+    };
+    const at = (x, y, z) => { const X = wx(x, z), Z = wz(x, z), Y = b[1] + y; return X >= x0 && X < x0 + 16 && Z >= z0 && Z < z0 + 16 && Y > WORLD_MIN_Y && Y < WORLD_MAX_Y ? CI(X - x0, Y, Z - z0) : -1; };
+    const set = (x, y, z, id, m) => { const i = at(x, y, z); if (i >= 0) { ids[i] = id; meta[i] = turn(id, m || 0); } };
+    const get = (x, y, z) => { const i = at(x, y, z); return i >= 0 ? ids[i] : 0; };
+    return {
+      set, get,
+      fill(ax, ay, az, bx, by, bz, edge, em, inner, im) {
+        for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) {
+          const e = y === ay || y === by || x === ax || x === bx || z === az || z === bz;
+          set(x, y, z, e ? edge : inner === undefined ? edge : inner, e ? em : inner === undefined ? em : im);
+        }
+      },
+      // StructurePiece.fillColumnDown: replace air and liquid downwards until something solid
+      down(id, m, x, y, z) {
+        for (let yy = y; b[1] + yy > WORLD_MIN_Y + 1; yy--) {
+          const i = at(x, yy, z); if (i < 0) return;
+          const c = ids[i];
+          if (c && !isLiquidId(c) && !(FLAGS[c] & BF_REPLACE)) return;
+          ids[i] = id; meta[i] = turn(id, m || 0);
+        }
+      },
+      // createChest: faces away from the single solid neighbour (StructurePiece.reorient)
+      chest(x, y, z, table) {
+        const i = at(x, y, z); if (i < 0 || ids[i] === B.CHEST) return;
+        let f = 2, solid = null;
+        for (let k = 0; k < 4; k++) {
+          const X = wx(x, z) + HDX[k], Z = wz(x, z) + HDZ[k], Y = b[1] + y;
+          if (X < x0 || X > x0 + 15 || Z < z0 || Z > z0 + 15) continue;
+          const n = ids[CI(X - x0, Y, Z - z0)];
+          if (OPAQUE[n]) { if (solid !== null) { solid = -1; break; } solid = k; }
+        }
+        if (solid !== null && solid >= 0) f = (solid + 2) & 3;
+        ids[i] = B.CHEST; meta[i] = f | (table << 2);
+      },
+    };
+  }
+  // DesertPyramidStructure / DesertPyramidPiece (21 x 15 x 21): sandstone pyramid with two towers,
+  // a terracotta-patterned hall and the hidden chamber with 4 loot chests over a TNT trap
+  desertPyramidStart(cx, cz) {
+    if (this.biomeAt(cx * 16 + 8, cz * 16 + 8) !== BI.DESERT) return null;
+    const rnd = mulberry(hash2i(this.seed + 14357617 * 3, cx, cz));
+    const dir = (rnd() * 4) | 0, X = cx * 16, Z = cz * 16, box = [X, 64, Z, X + 20, 78, Z + 20];
+    let low = 1e9;
+    for (let z = box[2]; z <= box[5]; z++) for (let x = box[0]; x <= box[3]; x++) low = Math.min(low, this.surfH(x, z));
+    const dy = low - box[1] - ((rnd() * 3) | 0);
+    box[1] += dy; box[4] += dy;
+    return [{ build: this.desertPyramid, box, dir }];
+  }
+  desertPyramid(p) {
+    const P = this.pieceBuilder(p), f = P.fill.bind(P), s = P.set, W = 21, D = 21;
+    const SS = B.SANDSTONE, CUT = B.CUT_SANDSTONE, CH = B.CHISELED_SANDSTONE, OR = B.TERRA_ORANGE, ST = B.SANDSTONE_STAIRS;
+    const N = 2, S = 0, E = 3, Wd = 1;
+    f(0, -4, 0, W - 1, 0, D - 1, SS, 0);
+    for (let i = 1; i <= 9; i++) { f(i, i, i, W - 1 - i, i, D - 1 - i, SS, 0); f(i + 1, i, i + 1, W - 2 - i, i, D - 2 - i, 0, 0); }
+    for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) P.down(SS, 0, x, -5, z);
+    f(0, 0, 0, 4, 9, 4, SS, 0, 0, 0); f(1, 10, 1, 3, 10, 3, SS, 0);
+    s(2, 10, 0, ST, N); s(2, 10, 4, ST, S); s(0, 10, 2, ST, E); s(4, 10, 2, ST, Wd);
+    f(W - 5, 0, 0, W - 1, 9, 4, SS, 0, 0, 0); f(W - 4, 10, 1, W - 2, 10, 3, SS, 0);
+    s(W - 3, 10, 0, ST, N); s(W - 3, 10, 4, ST, S); s(W - 5, 10, 2, ST, E); s(W - 1, 10, 2, ST, Wd);
+    f(8, 0, 0, 12, 4, 4, SS, 0, 0, 0); f(9, 1, 0, 11, 3, 4, 0, 0);
+    for (const [x, y] of [[9, 1], [9, 2], [9, 3], [10, 3], [11, 3], [11, 2], [11, 1]]) s(x, y, 1, CUT, 0);
+    f(4, 1, 1, 8, 3, 3, SS, 0, 0, 0); f(4, 1, 2, 8, 2, 2, 0, 0);
+    f(12, 1, 1, 16, 3, 3, SS, 0, 0, 0); f(12, 1, 2, 16, 2, 2, 0, 0);
+    f(5, 4, 5, W - 6, 4, D - 6, SS, 0); f(9, 4, 9, 11, 4, 11, 0, 0);
+    f(8, 1, 8, 8, 3, 8, CUT, 0); f(12, 1, 8, 12, 3, 8, CUT, 0); f(8, 1, 12, 8, 3, 12, CUT, 0); f(12, 1, 12, 12, 3, 12, CUT, 0);
+    f(1, 1, 5, 4, 4, 11, SS, 0); f(W - 5, 1, 5, W - 2, 4, 11, SS, 0);
+    f(6, 7, 9, 6, 7, 11, SS, 0); f(W - 7, 7, 9, W - 7, 7, 11, SS, 0);
+    f(5, 5, 9, 5, 7, 11, CUT, 0); f(W - 6, 5, 9, W - 6, 7, 11, CUT, 0);
+    s(5, 5, 10, 0); s(5, 6, 10, 0); s(6, 6, 10, 0); s(W - 6, 5, 10, 0); s(W - 6, 6, 10, 0); s(W - 7, 6, 10, 0);
+    f(2, 4, 4, 2, 6, 4, 0, 0); f(W - 3, 4, 4, W - 3, 6, 4, 0, 0);
+    s(2, 4, 5, ST, N); s(2, 3, 4, ST, N); s(W - 3, 4, 5, ST, N); s(W - 3, 3, 4, ST, N);
+    f(1, 1, 3, 2, 2, 3, SS, 0); f(W - 3, 1, 3, W - 2, 2, 3, SS, 0);
+    s(1, 1, 2, SS); s(W - 2, 1, 2, SS); s(1, 2, 2, B.SANDSTONE_SLAB, 0); s(W - 2, 2, 2, B.SANDSTONE_SLAB, 0);
+    s(2, 1, 2, ST, Wd); s(W - 3, 1, 2, ST, E);
+    f(4, 3, 5, 4, 3, 17, SS, 0); f(W - 5, 3, 5, W - 5, 3, 17, SS, 0);
+    f(3, 1, 5, 4, 2, 16, 0, 0); f(W - 6, 1, 5, W - 5, 2, 16, 0, 0);
+    for (let k = 5; k <= 17; k += 2) { s(4, 1, k, CUT); s(4, 2, k, CH); s(W - 5, 1, k, CUT); s(W - 5, 2, k, CH); }
+    for (const [x, z] of [[10, 7], [10, 8], [9, 9], [11, 9], [8, 10], [12, 10], [7, 10], [13, 10], [9, 11], [11, 11], [10, 12], [10, 13]]) s(x, 0, z, OR);
+    s(10, 0, 10, B.BLUE_TERRACOTTA);
+    const col = [[CUT, OR, CUT], [CUT, OR, CUT], [OR, CH, OR], [CUT, OR, CUT], [OR, CH, OR], [OR, OR, OR], [CUT, CUT, CUT]];
+    for (const l of [0, W - 1]) col.forEach((r, k) => { s(l, 2 + k, 1, r[0]); s(l, 2 + k, 2, r[1]); s(l, 2 + k, 3, r[2]); });
+    for (const i of [2, W - 3]) col.forEach((r, k) => { s(i - 1, 2 + k, 0, r[0]); s(i, 2 + k, 0, r[1]); s(i + 1, 2 + k, 0, r[2]); });
+    f(8, 4, 0, 12, 6, 0, CUT, 0); s(8, 6, 0, 0); s(12, 6, 0, 0);
+    s(9, 5, 0, OR); s(10, 5, 0, CH); s(11, 5, 0, OR);
+    f(8, -14, 8, 12, -11, 12, CUT, 0); f(8, -10, 8, 12, -10, 12, CH, 0); f(8, -9, 8, 12, -9, 12, CUT, 0);
+    f(8, -8, 8, 12, -1, 12, SS, 0); f(9, -11, 9, 11, -1, 11, 0, 0);
+    s(10, -11, 10, B.STONE_PRESSURE_PLATE); f(9, -13, 9, 11, -13, 11, B.TNT, 0);
+    for (const [x, z, ox, oz] of [[8, 10, 7, 10], [12, 10, 13, 10], [10, 8, 10, 7], [10, 12, 10, 13]]) { s(x, -11, z, 0); s(x, -10, z, 0); s(ox, -10, oz, CH); s(ox, -11, oz, CUT); }
+    for (let k = 0; k < 4; k++) P.chest(10 + HDX[k] * 2, -11, 10 + HDZ[k] * 2, LOOT.DESERT_PYRAMID);
+  }
+  // SwampHutStructure / SwampHutPiece (7 x 7 x 9): spruce hut on oak log stilts at the average
+  // ground level, crafting table and a potted mushroom inside
+  swampHutStart(cx, cz) {
+    if (this.biomeAt(cx * 16 + 8, cz * 16 + 8) !== BI.SWAMP) return null;
+    const rnd = mulberry(hash2i(this.seed + 14357620 * 3, cx, cz));
+    const dir = (rnd() * 4) | 0, X = cx * 16, Z = cz * 16, box = [X, 64, Z, X + 6, 70, Z + 8];
+    let sum = 0, n = 0;
+    for (let z = box[2]; z <= box[5]; z++) for (let x = box[0]; x <= box[3]; x++) { sum += this.surfH(x, z); n++; }
+    const dy = Math.floor(sum / n) - box[1];
+    box[1] += dy; box[4] += dy;
+    return [{ build: this.swampHut, box, dir }];
+  }
+  swampHut(p) {
+    const P = this.pieceBuilder(p), f = P.fill.bind(P), s = P.set, PL = B.SPRUCE_PLANKS, LG = B.LOG, FE = B.OAK_FENCE, ST = B.SPRUCE_STAIRS;
+    f(1, 1, 1, 5, 1, 7, PL, 0); f(1, 4, 2, 5, 4, 7, PL, 0); f(2, 1, 0, 4, 1, 0, PL, 0);
+    f(2, 2, 2, 3, 3, 2, PL, 0); f(1, 2, 3, 1, 3, 6, PL, 0); f(5, 2, 3, 5, 3, 6, PL, 0); f(2, 2, 7, 4, 3, 7, PL, 0);
+    f(1, 0, 2, 1, 3, 2, LG, 0); f(5, 0, 2, 5, 3, 2, LG, 0); f(1, 0, 7, 1, 3, 7, LG, 0); f(5, 0, 7, 5, 3, 7, LG, 0);
+    s(2, 3, 2, FE); s(3, 3, 7, FE); s(1, 3, 4, 0); s(5, 3, 4, 0); s(5, 3, 5, 0);
+    s(1, 3, 5, B.FLOWER_POT); s(3, 2, 6, B.CRAFTING_TABLE); s(1, 2, 1, FE); s(5, 2, 1, FE);
+    f(0, 4, 1, 6, 4, 1, ST, 2); f(0, 4, 2, 0, 4, 7, ST, 3); f(6, 4, 2, 6, 4, 7, ST, 1); f(0, 4, 8, 6, 4, 8, ST, 0);
+    for (const z of [2, 7]) for (const x of [1, 5]) P.down(LG, 0, x, -1, z);
   }
 
   // ---------------------------------------------------------------- mineshafts
@@ -6042,6 +6174,8 @@ const STRUCTURE_SETS = [
   { salt: 14357618, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.iglooStart(x, z); } },
   { salt: 165745295, spacing: 24, separation: 4, reach: 2, start: function (x, z) { return this.shipwreckStart(x, z); } },
   { salt: 14357621, spacing: 20, separation: 8, reach: 3, start: function (x, z) { return this.oceanRuinStart(x, z); } },
+  { salt: 14357617, spacing: 32, separation: 8, reach: 2, start: function (x, z) { return this.desertPyramidStart(x, z); } },
+  { salt: 14357620, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.swampHutStart(x, z); } },
 ];
 // block meta turned with a template rotation (0..3 clockwise quarter turns)
 function rotMeta(id, m, r) {
@@ -6751,7 +6885,9 @@ class WorldGen {
     return [p.x + Math.min(a[0], b[0]), p.z + Math.min(a[1], b[1]), p.x + Math.max(a[0], b[0]), p.z + Math.max(a[1], b[1])];
   }
   placePiece(p) {
-    const x0 = this.x0, z0 = this.z0, bx = p.box || (p.box = this.pieceBox(p));
+    const x0 = this.x0, z0 = this.z0;
+    if (p.build) { const b = p.box; if (b[0] <= x0 + 15 && b[3] >= x0 && b[2] <= z0 + 15 && b[5] >= z0) p.build.call(this, p); return; }
+    const bx = p.box || (p.box = this.pieceBox(p));
     if (bx[0] > x0 + 15 || bx[2] < x0 || bx[1] > z0 + 15 || bx[3] < z0) return;
     const T = this.tpl(p.name), pal = T.pals[p.pal || 0], ids = this.ids, meta = this.meta, g = T.g, seed = this.seed;
     const { sx, sy, sz } = T, rot = p.rot, px = p.px, pz = p.pz;
@@ -6894,6 +7030,134 @@ class WorldGen {
       }
     }
     return out;
+  }
+
+  // ScatteredFeaturePiece: a box built in piece coordinates with an orientation (0 north, 1 east,
+  // 2 south, 3 west): x/z mapped as StructurePiece.getWorldX/Z, block states mirrored / turned like
+  // its setOrientation (south: mirror, west: mirror + clockwise, east: clockwise).
+  pieceBuilder(p) {
+    const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0, b = p.box, d = p.dir;
+    const wx = (x, z) => d === 0 || d === 2 ? b[0] + x : d === 3 ? b[3] - z : b[0] + z;
+    const wz = (x, z) => d === 0 ? b[5] - z : d === 2 ? b[2] + z : b[2] + x;
+    const turn = (id, m) => {
+      if (!id) return 0;
+      let r = d === 1 || d === 3 ? 1 : 0;
+      const mir = d === 2 || d === 3, sh = SHAPE[id];
+      const dirS = sh === SH.STAIRS || sh === SH.DOOR || sh === SH.TRAPDOOR || sh === SH.LADDER || sh === SH.CHEST || sh === SH.GATE || (FLAGS[id] & BF_FACING);
+      if (dirS) { let f = m & 3; if (mir && !(f & 1)) f ^= 2; return (m & ~3) | ((f + r) & 3); }
+      if (sh === SH.TORCH && m) { let f = m - 1; if (mir && !(f & 1)) f ^= 2; return 1 + ((f + r) & 3); }
+      return rotMeta(id, m, r);
+    };
+    const at = (x, y, z) => { const X = wx(x, z), Z = wz(x, z), Y = b[1] + y; return X >= x0 && X < x0 + 16 && Z >= z0 && Z < z0 + 16 && Y > WORLD_MIN_Y && Y < WORLD_MAX_Y ? CI(X - x0, Y, Z - z0) : -1; };
+    const set = (x, y, z, id, m) => { const i = at(x, y, z); if (i >= 0) { ids[i] = id; meta[i] = turn(id, m || 0); } };
+    const get = (x, y, z) => { const i = at(x, y, z); return i >= 0 ? ids[i] : 0; };
+    return {
+      set, get,
+      fill(ax, ay, az, bx, by, bz, edge, em, inner, im) {
+        for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) {
+          const e = y === ay || y === by || x === ax || x === bx || z === az || z === bz;
+          set(x, y, z, e ? edge : inner === undefined ? edge : inner, e ? em : inner === undefined ? em : im);
+        }
+      },
+      // StructurePiece.fillColumnDown: replace air and liquid downwards until something solid
+      down(id, m, x, y, z) {
+        for (let yy = y; b[1] + yy > WORLD_MIN_Y + 1; yy--) {
+          const i = at(x, yy, z); if (i < 0) return;
+          const c = ids[i];
+          if (c && !isLiquidId(c) && !(FLAGS[c] & BF_REPLACE)) return;
+          ids[i] = id; meta[i] = turn(id, m || 0);
+        }
+      },
+      // createChest: faces away from the single solid neighbour (StructurePiece.reorient)
+      chest(x, y, z, table) {
+        const i = at(x, y, z); if (i < 0 || ids[i] === B.CHEST) return;
+        let f = 2, solid = null;
+        for (let k = 0; k < 4; k++) {
+          const X = wx(x, z) + HDX[k], Z = wz(x, z) + HDZ[k], Y = b[1] + y;
+          if (X < x0 || X > x0 + 15 || Z < z0 || Z > z0 + 15) continue;
+          const n = ids[CI(X - x0, Y, Z - z0)];
+          if (OPAQUE[n]) { if (solid !== null) { solid = -1; break; } solid = k; }
+        }
+        if (solid !== null && solid >= 0) f = (solid + 2) & 3;
+        ids[i] = B.CHEST; meta[i] = f | (table << 2);
+      },
+    };
+  }
+  // DesertPyramidStructure / DesertPyramidPiece (21 x 15 x 21): sandstone pyramid with two towers,
+  // a terracotta-patterned hall and the hidden chamber with 4 loot chests over a TNT trap
+  desertPyramidStart(cx, cz) {
+    if (this.biomeAt(cx * 16 + 8, cz * 16 + 8) !== BI.DESERT) return null;
+    const rnd = mulberry(hash2i(this.seed + 14357617 * 3, cx, cz));
+    const dir = (rnd() * 4) | 0, X = cx * 16, Z = cz * 16, box = [X, 64, Z, X + 20, 78, Z + 20];
+    let low = 1e9;
+    for (let z = box[2]; z <= box[5]; z++) for (let x = box[0]; x <= box[3]; x++) low = Math.min(low, this.surfH(x, z));
+    const dy = low - box[1] - ((rnd() * 3) | 0);
+    box[1] += dy; box[4] += dy;
+    return [{ build: this.desertPyramid, box, dir }];
+  }
+  desertPyramid(p) {
+    const P = this.pieceBuilder(p), f = P.fill.bind(P), s = P.set, W = 21, D = 21;
+    const SS = B.SANDSTONE, CUT = B.CUT_SANDSTONE, CH = B.CHISELED_SANDSTONE, OR = B.TERRA_ORANGE, ST = B.SANDSTONE_STAIRS;
+    const N = 2, S = 0, E = 3, Wd = 1;
+    f(0, -4, 0, W - 1, 0, D - 1, SS, 0);
+    for (let i = 1; i <= 9; i++) { f(i, i, i, W - 1 - i, i, D - 1 - i, SS, 0); f(i + 1, i, i + 1, W - 2 - i, i, D - 2 - i, 0, 0); }
+    for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) P.down(SS, 0, x, -5, z);
+    f(0, 0, 0, 4, 9, 4, SS, 0, 0, 0); f(1, 10, 1, 3, 10, 3, SS, 0);
+    s(2, 10, 0, ST, N); s(2, 10, 4, ST, S); s(0, 10, 2, ST, E); s(4, 10, 2, ST, Wd);
+    f(W - 5, 0, 0, W - 1, 9, 4, SS, 0, 0, 0); f(W - 4, 10, 1, W - 2, 10, 3, SS, 0);
+    s(W - 3, 10, 0, ST, N); s(W - 3, 10, 4, ST, S); s(W - 5, 10, 2, ST, E); s(W - 1, 10, 2, ST, Wd);
+    f(8, 0, 0, 12, 4, 4, SS, 0, 0, 0); f(9, 1, 0, 11, 3, 4, 0, 0);
+    for (const [x, y] of [[9, 1], [9, 2], [9, 3], [10, 3], [11, 3], [11, 2], [11, 1]]) s(x, y, 1, CUT, 0);
+    f(4, 1, 1, 8, 3, 3, SS, 0, 0, 0); f(4, 1, 2, 8, 2, 2, 0, 0);
+    f(12, 1, 1, 16, 3, 3, SS, 0, 0, 0); f(12, 1, 2, 16, 2, 2, 0, 0);
+    f(5, 4, 5, W - 6, 4, D - 6, SS, 0); f(9, 4, 9, 11, 4, 11, 0, 0);
+    f(8, 1, 8, 8, 3, 8, CUT, 0); f(12, 1, 8, 12, 3, 8, CUT, 0); f(8, 1, 12, 8, 3, 12, CUT, 0); f(12, 1, 12, 12, 3, 12, CUT, 0);
+    f(1, 1, 5, 4, 4, 11, SS, 0); f(W - 5, 1, 5, W - 2, 4, 11, SS, 0);
+    f(6, 7, 9, 6, 7, 11, SS, 0); f(W - 7, 7, 9, W - 7, 7, 11, SS, 0);
+    f(5, 5, 9, 5, 7, 11, CUT, 0); f(W - 6, 5, 9, W - 6, 7, 11, CUT, 0);
+    s(5, 5, 10, 0); s(5, 6, 10, 0); s(6, 6, 10, 0); s(W - 6, 5, 10, 0); s(W - 6, 6, 10, 0); s(W - 7, 6, 10, 0);
+    f(2, 4, 4, 2, 6, 4, 0, 0); f(W - 3, 4, 4, W - 3, 6, 4, 0, 0);
+    s(2, 4, 5, ST, N); s(2, 3, 4, ST, N); s(W - 3, 4, 5, ST, N); s(W - 3, 3, 4, ST, N);
+    f(1, 1, 3, 2, 2, 3, SS, 0); f(W - 3, 1, 3, W - 2, 2, 3, SS, 0);
+    s(1, 1, 2, SS); s(W - 2, 1, 2, SS); s(1, 2, 2, B.SANDSTONE_SLAB, 0); s(W - 2, 2, 2, B.SANDSTONE_SLAB, 0);
+    s(2, 1, 2, ST, Wd); s(W - 3, 1, 2, ST, E);
+    f(4, 3, 5, 4, 3, 17, SS, 0); f(W - 5, 3, 5, W - 5, 3, 17, SS, 0);
+    f(3, 1, 5, 4, 2, 16, 0, 0); f(W - 6, 1, 5, W - 5, 2, 16, 0, 0);
+    for (let k = 5; k <= 17; k += 2) { s(4, 1, k, CUT); s(4, 2, k, CH); s(W - 5, 1, k, CUT); s(W - 5, 2, k, CH); }
+    for (const [x, z] of [[10, 7], [10, 8], [9, 9], [11, 9], [8, 10], [12, 10], [7, 10], [13, 10], [9, 11], [11, 11], [10, 12], [10, 13]]) s(x, 0, z, OR);
+    s(10, 0, 10, B.BLUE_TERRACOTTA);
+    const col = [[CUT, OR, CUT], [CUT, OR, CUT], [OR, CH, OR], [CUT, OR, CUT], [OR, CH, OR], [OR, OR, OR], [CUT, CUT, CUT]];
+    for (const l of [0, W - 1]) col.forEach((r, k) => { s(l, 2 + k, 1, r[0]); s(l, 2 + k, 2, r[1]); s(l, 2 + k, 3, r[2]); });
+    for (const i of [2, W - 3]) col.forEach((r, k) => { s(i - 1, 2 + k, 0, r[0]); s(i, 2 + k, 0, r[1]); s(i + 1, 2 + k, 0, r[2]); });
+    f(8, 4, 0, 12, 6, 0, CUT, 0); s(8, 6, 0, 0); s(12, 6, 0, 0);
+    s(9, 5, 0, OR); s(10, 5, 0, CH); s(11, 5, 0, OR);
+    f(8, -14, 8, 12, -11, 12, CUT, 0); f(8, -10, 8, 12, -10, 12, CH, 0); f(8, -9, 8, 12, -9, 12, CUT, 0);
+    f(8, -8, 8, 12, -1, 12, SS, 0); f(9, -11, 9, 11, -1, 11, 0, 0);
+    s(10, -11, 10, B.STONE_PRESSURE_PLATE); f(9, -13, 9, 11, -13, 11, B.TNT, 0);
+    for (const [x, z, ox, oz] of [[8, 10, 7, 10], [12, 10, 13, 10], [10, 8, 10, 7], [10, 12, 10, 13]]) { s(x, -11, z, 0); s(x, -10, z, 0); s(ox, -10, oz, CH); s(ox, -11, oz, CUT); }
+    for (let k = 0; k < 4; k++) P.chest(10 + HDX[k] * 2, -11, 10 + HDZ[k] * 2, LOOT.DESERT_PYRAMID);
+  }
+  // SwampHutStructure / SwampHutPiece (7 x 7 x 9): spruce hut on oak log stilts at the average
+  // ground level, crafting table and a potted mushroom inside
+  swampHutStart(cx, cz) {
+    if (this.biomeAt(cx * 16 + 8, cz * 16 + 8) !== BI.SWAMP) return null;
+    const rnd = mulberry(hash2i(this.seed + 14357620 * 3, cx, cz));
+    const dir = (rnd() * 4) | 0, X = cx * 16, Z = cz * 16, box = [X, 64, Z, X + 6, 70, Z + 8];
+    let sum = 0, n = 0;
+    for (let z = box[2]; z <= box[5]; z++) for (let x = box[0]; x <= box[3]; x++) { sum += this.surfH(x, z); n++; }
+    const dy = Math.floor(sum / n) - box[1];
+    box[1] += dy; box[4] += dy;
+    return [{ build: this.swampHut, box, dir }];
+  }
+  swampHut(p) {
+    const P = this.pieceBuilder(p), f = P.fill.bind(P), s = P.set, PL = B.SPRUCE_PLANKS, LG = B.LOG, FE = B.OAK_FENCE, ST = B.SPRUCE_STAIRS;
+    f(1, 1, 1, 5, 1, 7, PL, 0); f(1, 4, 2, 5, 4, 7, PL, 0); f(2, 1, 0, 4, 1, 0, PL, 0);
+    f(2, 2, 2, 3, 3, 2, PL, 0); f(1, 2, 3, 1, 3, 6, PL, 0); f(5, 2, 3, 5, 3, 6, PL, 0); f(2, 2, 7, 4, 3, 7, PL, 0);
+    f(1, 0, 2, 1, 3, 2, LG, 0); f(5, 0, 2, 5, 3, 2, LG, 0); f(1, 0, 7, 1, 3, 7, LG, 0); f(5, 0, 7, 5, 3, 7, LG, 0);
+    s(2, 3, 2, FE); s(3, 3, 7, FE); s(1, 3, 4, 0); s(5, 3, 4, 0); s(5, 3, 5, 0);
+    s(1, 3, 5, B.FLOWER_POT); s(3, 2, 6, B.CRAFTING_TABLE); s(1, 2, 1, FE); s(5, 2, 1, FE);
+    f(0, 4, 1, 6, 4, 1, ST, 2); f(0, 4, 2, 0, 4, 7, ST, 3); f(6, 4, 2, 6, 4, 7, ST, 1); f(0, 4, 8, 6, 4, 8, ST, 0);
+    for (const z of [2, 7]) for (const x of [1, 5]) P.down(LG, 0, x, -1, z);
   }
 
   // ---------------------------------------------------------------- mineshafts
