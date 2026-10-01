@@ -15,7 +15,7 @@ TABLES = [('SIMPLE_DUNGEON', 'chests/simple_dungeon'), ('ABANDONED_MINESHAFT', '
           ('DESERT_PYRAMID', 'chests/desert_pyramid'), ('JUNGLE_TEMPLE', 'chests/jungle_temple'),
           ('SHIPWRECK_SUPPLY', 'chests/shipwreck_supply'), ('SHIPWRECK_TREASURE', 'chests/shipwreck_treasure'),
           ('SHIPWRECK_MAP', 'chests/shipwreck_map'), ('UNDERWATER_RUIN_SMALL', 'chests/underwater_ruin_small'),
-          ('UNDERWATER_RUIN_BIG', 'chests/underwater_ruin_big'), ('IGLOO', 'chests/igloo_chest')]
+          ('UNDERWATER_RUIN_BIG', 'chests/underwater_ruin_big'), ('IGLOO', 'chests/igloo_chest'), ('PILLAGER_OUTPOST', 'chests/pillager_outpost')]
 for v in ('armorer', 'butcher', 'cartographer', 'desert_house', 'fisher', 'fletcher', 'mason', 'plains_house', 'savanna_house',
           'shepherd', 'snowy_house', 'taiga_house', 'tannery', 'temple', 'toolsmith', 'weaponsmith'):
     TABLES.append(('VILLAGE_' + v.upper(), 'chests/village/village_' + v))

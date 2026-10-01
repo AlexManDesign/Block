@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Converts Minecraft's villages (jigsaw structures) into src/villages.js.
+"""Converts Minecraft's jigsaw structures (villages, pillager outposts) into src/jigsaw.js.
 
-Reads the vanilla data pack (misode/mcmeta "data" branch, cached in tools/.nbt_cache): the five
-village start pools, every template pool reachable from them through jigsaw blocks, their
-templates and processor lists. Output:
-  VIL_POOLS[name] = {e: [[kind, template or feature, weight, projection, processors]], f: fallback}
-      kind 0 template, 1 feature, 2 empty; projection 0 rigid, 1 terrain matching
-  VIL_TPL[name] = template as in structures.js plus
+Reads the vanilla data pack (misode/mcmeta "data" branch, cached in tools/.nbt_cache): the start
+pools, every template pool reachable from them through jigsaw blocks, their templates and
+processor lists. Output:
+  JIG_POOLS[name] = {e: [[kind, template or feature, weight, projection, processors]], f: fallback}
+      kind 0 template, 1 feature, 2 empty, 3 list (templates / processors as arrays); projection 0 rigid, 1 terrain matching
+  JIG_TPL[name] = template as in structures.js plus
       j: jigsaw blocks [x, y, z, front, top, name, target, pool, final state palette index, rollable]
-         (directions 0 south, 1 west, 2 north, 3 east, 4 up, 5 down; names index VIL_STR)
-      r: {processor list: {state: [[probability, spot must hold (0 anything, 1 water, 2 ice), palette index or 0 for air], ...]}}
+         (directions 0 south, 1 west, 2 north, 3 east, 4 up, 5 down; names index JIG_STR)
+      r: {processor list: {state: [[probability, spot must hold (0 anything, 1 water, 2 ice), palette index or 0 for air], ...], rot: integrity}}
       l: chests with a loot table [x, y, z, table name]
 
-    python3 tools/villages.py
+    python3 tools/jigsaw.py
 """
 import base64, json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -57,7 +57,7 @@ def main():
         if v not in sidx: sidx[v] = len(strs); strs.append(v)
         return sidx[v]
     pools, tpls, procs = {}, {}, {}
-    queue = ['minecraft:village/%s/town_centers' % t for t in TYPES]
+    queue = ['minecraft:village/%s/town_centers' % t for t in TYPES] + ['minecraft:pillager_outpost/base_plates']
     seen = set()
     while queue:
         pn = queue.pop()
@@ -71,6 +71,20 @@ def main():
             if et == 'minecraft:empty_pool_element': out.append([2, '', w, 0, '']); continue
             proj = 1 if el.get('projection') == 'terrain_matching' else 0
             if et == 'minecraft:feature_pool_element': out.append([1, strip(el['feature']), w, proj, '']); continue
+            if et == 'minecraft:list_pool_element':
+                # ListPoolElement: its elements placed together (jigsaws of the first)
+                locs, prs = [], []
+                for sub in el['elements']:
+                    if sub['element_type'] != 'minecraft:legacy_single_pool_element': raise SystemExit('list element ' + sub['element_type'])
+                    spr = sub.get('processors')
+                    if isinstance(spr, dict):
+                        if spr.get('processors'): raise SystemExit('inline processors in ' + pn)
+                        spr = ''
+                    spr = strip(spr or '');  spr = '' if spr == 'empty' else spr
+                    loc = strip(sub['location']); locs.append(loc); prs.append(spr)
+                    tpls.setdefault(loc, set()).add(spr)
+                    if spr and spr not in procs: procs[spr] = jfetch('worldgen/processor_list', spr)
+                out.append([3, locs, w, proj, prs]); continue
             if et not in ('minecraft:legacy_single_pool_element', 'minecraft:single_pool_element'): raise SystemExit('element ' + et)
             pr = el.get('processors')
             if isinstance(pr, dict):
@@ -134,6 +148,9 @@ def main():
             if not pr: continue
             rm = {}
             for proc in procs[pr]['processors']:
+                if proc['processor_type'] == 'minecraft:block_rot':
+                    if proc.get('rottable_blocks'): raise SystemExit('rottable_blocks')
+                    rm['rot'] = proc['integrity']; continue
                 if proc['processor_type'] != 'minecraft:rule': raise SystemExit('processor ' + proc['processor_type'])
                 for si_, (name, props) in enumerate(mc):
                     if states[si_] <= 0: continue
@@ -159,11 +176,11 @@ def main():
             rle += bytes([g[i], j - i]); i = j
         out_t[loc] = {'s': [sx, sy, sz], 'p': palette[1:], 'm': [[max(0, v) for v in states]], 'g': base64.b64encode(bytes(rle)).decode(),
                       'd': [], 'j': jig, 'r': rules, 'l': loot}
-    js = ('\'use strict\';\n// Minecraft villages (vanilla data pack: template pools, templates, processor lists), converted by tools/villages.py.\n'
-          'const VIL_STR = ' + json.dumps(strs, separators=(',', ':')) + ';\n'
-          'const VIL_POOLS = ' + json.dumps(pools, separators=(',', ':')) + ';\n'
-          'const VIL_TPL = ' + json.dumps(out_t, separators=(',', ':')) + ';\n')
-    open(os.path.join(S.ROOT, 'src', 'villages.js'), 'w').write(js)
+    js = ('\'use strict\';\n// Minecraft jigsaw structures (vanilla data pack: template pools, templates, processor lists), converted by tools/jigsaw.py.\n'
+          'const JIG_STR = ' + json.dumps(strs, separators=(',', ':')) + ';\n'
+          'const JIG_POOLS = ' + json.dumps(pools, separators=(',', ':')) + ';\n'
+          'const JIG_TPL = ' + json.dumps(out_t, separators=(',', ':')) + ';\n')
+    open(os.path.join(S.ROOT, 'src', 'jigsaw.js'), 'w').write(js)
     print('pools', len(pools), 'templates', len(out_t), len(js) // 1024, 'KB')
 
 

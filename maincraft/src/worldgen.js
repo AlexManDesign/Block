@@ -358,8 +358,26 @@ const STRUCTURE_SETS = [
   { salt: 14357617, spacing: 32, separation: 8, reach: 2, start: function (x, z) { return this.desertPyramidStart(x, z); } },
   { salt: 14357620, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.swampHutStart(x, z); } },
 ];
-const STRUCTURE_SETS_VIL = { salt: 10387312, spacing: 34, separation: 8, reach: 7, start: function (x, z) { return this.villageStart(x, z); } };
-STRUCTURE_SETS.unshift(STRUCTURE_SETS_VIL);
+// jigsaw structures (worldgen/structure + structure_set): start pools by biome, depth, placement
+const STRUCTURE_SETS_VIL = { salt: 10387312, spacing: 34, separation: 8, reach: 7, depth: 6, types: [
+  { pool: 'village/plains/town_centers', biomes: [BI.PLAINS, BI.MEADOW] }, { pool: 'village/desert/town_centers', biomes: [BI.DESERT] },
+  { pool: 'village/savanna/town_centers', biomes: [BI.SAVANNA] }, { pool: 'village/snowy/town_centers', biomes: [BI.SNOWY_PLAINS] },
+  { pool: 'village/taiga/town_centers', biomes: [BI.TAIGA] }], start: function (x, z) { return this.jigsawStart(STRUCTURE_SETS_VIL, x, z); } };
+// pillager outposts: frequency 0.2, never within 10 chunks of a village placement chunk
+const STRUCTURE_SETS_OUTPOST = { salt: 165745296, spacing: 32, separation: 8, reach: 7, depth: 7, types: [{ pool: 'pillager_outpost/base_plates',
+  biomes: [BI.DESERT, BI.PLAINS, BI.SAVANNA, BI.SNOWY_PLAINS, BI.TAIGA, BI.MEADOW, BI.FROZEN_PEAKS, BI.JAGGED_PEAKS, BI.STONY_PEAKS, BI.SNOWY_SLOPES, BI.CHERRY_GROVE, BI.GROVE] }],
+  start: function (x, z) {
+    if (hash2(this.seed + 165745296 * 7, x, z) >= 0.2) return null;
+    const V = STRUCTURE_SETS_VIL;
+    for (let rz = Math.floor((z - 10) / V.spacing); rz <= Math.floor((z + 10) / V.spacing); rz++)
+      for (let rx = Math.floor((x - 10) / V.spacing); rx <= Math.floor((x + 10) / V.spacing); rx++) {
+        const [vx, vz] = this.spreadStart(V, rx, rz);
+        if (Math.abs(vx - x) <= 10 && Math.abs(vz - z) <= 10) return null;
+      }
+    return this.jigsawStart(STRUCTURE_SETS_OUTPOST, x, z);
+  } };
+const JIGSAW_SETS = [STRUCTURE_SETS_VIL, STRUCTURE_SETS_OUTPOST];
+STRUCTURE_SETS.unshift(STRUCTURE_SETS_VIL, STRUCTURE_SETS_OUTPOST);
 // Beardifier kernel (24^3): [z][x][y], value at offset (x, y, z) from a piece's ground / a junction
 const BEARD_KERNEL = (function () {
   const K = new Float32Array(13824);
@@ -1388,12 +1406,12 @@ class WorldGen {
   // space (80 blocks around the centre minus the pieces placed; inside its parent for jigsaws
   // facing inward). Rigid pieces keep the parent's height, terrain-matching ones (streets) follow
   // the ground. Pieces and junctions also shape the terrain (Beardifier).
-  vilPool(name) { return VIL_POOLS[name]; }
+  vilPool(name) { return JIG_POOLS[name]; }
   vilTpl(name) {
     let T = TPL_CACHE.get(name);
     if (T) return T;
-    T = this.tpl(name, VIL_TPL[name]);
-    const S = VIL_TPL[name];
+    T = this.tpl(name, JIG_TPL[name]);
+    const S = JIG_TPL[name];
     T.jig = S.j; T.rules = S.r; T.loot = S.l;
     return T;
   }
@@ -1414,41 +1432,56 @@ class WorldGen {
   vilMaxY(name) {
     const P = this.vilPool(name);
     if (!P) return 0;
-    if (P.maxY === undefined) { P.maxY = 0; for (const e of P.e) if (e[0] === 0) P.maxY = Math.max(P.maxY, this.vilTpl(e[1]).sy); else if (e[0] === 1) P.maxY = Math.max(P.maxY, 1); }
+    if (P.maxY === undefined) {
+      P.maxY = 0;
+      for (const e of P.e) {
+        if (e[0] === 0 || e[0] === 3) { const b = WorldGen.vilElBox(this, e, 0, 0, 0, 0); P.maxY = Math.max(P.maxY, b[4] - b[1] + 1); }
+        else if (e[0] === 1) P.maxY = Math.max(P.maxY, 1);
+      }
+    }
     return P.maxY;
   }
   // jigsaws of an element placed at (x, y, z) with rotation r: [x, y, z, front, top, name, target, pool, final, rollable] in world space, shuffled
   vilJigsaws(e, x, y, z, r, rnd) {
     // FeaturePoolElement: one jigsaw facing down named "bottom"
-    if (e[0] !== 0) return e[0] === 1 ? [[x, y, z, 5, 0, 'bottom', 'empty', 'empty', 0, 1]] : [];
-    const T = this.vilTpl(e[1]), out = [];
-    for (const j of T.jig) { const o = WorldGen.tplPos(j[0], j[2], r, 0, 0); out.push([x + o[0], y + j[1], z + o[1], WorldGen.rotDir(j[3], r), WorldGen.rotDir(j[4], r), VIL_STR[j[5]], VIL_STR[j[6]], VIL_STR[j[7]], j[8], j[9]]); }
+    if (e[0] === 1) return [[x, y, z, 5, 0, 'bottom', 'empty', 'empty', 0, 1]];
+    if (e[0] !== 0 && e[0] !== 3) return [];
+    const T = this.vilTpl(e[0] === 3 ? e[1][0] : e[1]), out = [];
+    for (const j of T.jig) { const o = WorldGen.tplPos(j[0], j[2], r, 0, 0); out.push([x + o[0], y + j[1], z + o[1], WorldGen.rotDir(j[3], r), WorldGen.rotDir(j[4], r), JIG_STR[j[5]], JIG_STR[j[6]], JIG_STR[j[7]], j[8], j[9]]); }
     for (let i = out.length - 1; i > 0; i--) { const k = (rnd() * (i + 1)) | 0, t = out[i]; out[i] = out[k]; out[k] = t; }
     return out;
   }
-  static vilElBox(gen, e, x, y, z, r) { return e[0] === 0 ? WorldGen.tplBox(gen.vilTpl(e[1]), x, y, z, r) : [x, y, z, x, y, z]; }
-  villageStart(cx, cz) {
-    const types = ['plains', 'desert', 'savanna', 'snowy', 'taiga'];
-    const BIO = { plains: [BI.PLAINS, BI.MEADOW], desert: [BI.DESERT], savanna: [BI.SAVANNA], snowy: [BI.SNOWY_PLAINS], taiga: [BI.TAIGA] };
-    const order = types.slice(), r0 = mulberry(hash2i(this.seed + 10387312 * 5, cx, cz));
+  static vilElBox(gen, e, x, y, z, r) {
+    if (e[0] === 0) return WorldGen.tplBox(gen.vilTpl(e[1]), x, y, z, r);
+    if (e[0] === 3) {   // ListPoolElement: the union of its elements
+      const b = WorldGen.tplBox(gen.vilTpl(e[1][0]), x, y, z, r);
+      for (let i = 1; i < e[1].length; i++) { const c = WorldGen.tplBox(gen.vilTpl(e[1][i]), x, y, z, r); for (let k = 0; k < 3; k++) { b[k] = Math.min(b[k], c[k]); b[k + 3] = Math.max(b[k + 3], c[k + 3]); } }
+      return b;
+    }
+    return [x, y, z, x, y, z];
+  }
+  // JigsawStructure start: for structure sets with several structures (the village types) they are
+  // tried in a random order and the first whose biome holds at the start's centre generates
+  jigsawStart(set, cx, cz) {
+    const order = set.types.slice(), r0 = mulberry(hash2i(this.seed + set.salt * 5, cx, cz));
     for (let i = order.length - 1; i > 0; i--) { const j = (r0() * (i + 1)) | 0, t = order[i]; order[i] = order[j]; order[j] = t; }
     for (const type of order) {
-      const rnd = mulberry(hash2i(this.seed + 10387312 * 3, cx, cz));
-      const rot = (rnd() * 4) | 0, start = this.vilPool('village/' + type + '/town_centers');
+      const rnd = mulberry(hash2i(this.seed + set.salt * 3, cx, cz));
+      const rot = (rnd() * 4) | 0, start = this.vilPool(type.pool);
       const list = this.vilShuffled(start, rnd), e = list[(rnd() * list.length) | 0];
       if (!e || e[0] === 2) continue;
       const X = cx * 16, Z = cz * 16, box = WorldGen.vilElBox(this, e, X, 0, Z, rot);
       const mx = (box[0] + box[3]) >> 1, mz = (box[2] + box[5]) >> 1;
-      if (!BIO[type].includes(this.biomeAt(mx, mz))) continue;
+      if (!type.biomes.includes(this.biomeAt(mx, mz))) continue;
       // projected to WORLD_SURFACE_WG at the centre, the floor (ground level delta 1) one below
       const k = this.surfH(mx, mz);
       const first = { e, x: X, y: k - 1, z: Z, rot, box: WorldGen.vilElBox(this, e, X, k - 1, Z, rot), gd: 1, junctions: [] };
-      return this.vilAssemble(first, mx, k, mz, rnd);
+      return this.vilAssemble(first, mx, k, mz, rnd, set.depth);
     }
     return null;
   }
-  vilAssemble(first, cx, cy, cz, rnd) {
-    const D = 80, MAXD = 6, pieces = [first];
+  vilAssemble(first, cx, cy, cz, rnd, MAXD) {
+    const D = 80, pieces = [first];
     // free space: an outer box minus placed boxes (VoxelShape ONLY_FIRST joins), shared as in Minecraft
     const outer = { o: [cx - D, cy - D, cz - D, cx + D + 1, cy + D + 1, cz + D + 1], holes: [box6(first.box)] };
     const fits = (sh, b) => {
@@ -1481,7 +1514,7 @@ class WorldGen {
           for (const r1 of rots) {
             const js1 = this.vilJigsaws(e1, 0, 0, 0, r1, rnd), b1 = WorldGen.vilElBox(this, e1, 0, 0, 0, r1);
             let exp = 0;
-            if (e1[0] === 0 && b1[4] - b1[1] + 1 <= 16) {
+            if ((e1[0] === 0 || e1[0] === 3) && b1[4] - b1[1] + 1 <= 16) {
               for (const q of js1) {
                 const f2 = q[3], qx = q[0] + (f2 === 3 ? 1 : f2 === 1 ? -1 : 0), qy = q[1] + (f2 === 4 ? 1 : f2 === 5 ? -1 : 0), qz = q[2] + (f2 === 0 ? 1 : f2 === 2 ? -1 : 0);
                 if (!(qx >= b1[0] && qx <= b1[3] && qy >= b1[1] && qy <= b1[4] && qz >= b1[2] && qz <= b1[5])) continue;
@@ -1530,16 +1563,22 @@ class WorldGen {
   placeVillagePiece(p) {
     const v = p.vil, e = v.e, x0 = this.x0, z0 = this.z0, ids = this.ids, meta = this.meta, seed = this.seed;
     if (e[0] === 1) { this.villageFeature(e[1], v.x, v.y, v.z); return; }
-    if (e[0] !== 0) return;
-    const T = this.vilTpl(e[1]), pal = T.pals[0], rules = e[4] ? T.rules[e[4]] : null, terrain = e[3] === 1;
+    if (e[0] === 3) { for (let i = 0; i < e[1].length; i++) this.placeJigsawTemplate(v, e[1][i], e[4][i], e[3] === 1); return; }
+    if (e[0] === 0) this.placeJigsawTemplate(v, e[1], e[4], e[3] === 1);
+  }
+  placeJigsawTemplate(v, name, proc, terrain) {
+    const x0 = this.x0, z0 = this.z0, ids = this.ids, meta = this.meta, seed = this.seed;
+    const T = this.vilTpl(name), pal = T.pals[0], rules = proc ? T.rules[proc] : null, rot = rules ? rules.rot : undefined;
     const G = this.vilGround;
     const put = (wx, wy, wz, pi, state) => {
       if (wx < x0 || wx > x0 + 15 || wz < z0 || wz > z0 + 15) return;
       if (terrain) wy = G[(wz - z0) * 16 + wx - x0] + (wy - v.y);
       if (wy <= WORLD_MIN_Y || wy >= WORLD_MAX_Y) return;
+      // BlockRotProcessor: each block kept with the list's integrity
+      if (rot !== undefined && hash3(seed + 4417, wx, wy, wz) >= rot) return;
       const i = CI(wx - x0, wy, wz - z0), cur = ids[i];
       let ent = pi;
-      const R = rules && state >= 0 ? rules[state] : null;
+      const R = rules && state >= 0 ? rules[state + ''] : null;
       if (R) {
         const rnd = mulberry(hash3(seed + 4409, wx, wy, wz) * 4294967296 | 0);
         for (const [prob, loc, out] of R) {
@@ -1637,19 +1676,20 @@ class WorldGen {
   // ground level and around junctions, with Minecraft's kernel (radius 12)
   villageBeard() {
     const cx = this.cx, cz = this.cz, x0 = this.x0, z0 = this.z0, near = [], junc = [], all = this.vilBoxes = [];
-    const set = STRUCTURE_SETS_VIL;
-    const r0x = Math.floor((cx - 7) / set.spacing), r1x = Math.floor((cx + 7) / set.spacing), r0z = Math.floor((cz - 7) / set.spacing), r1z = Math.floor((cz + 7) / set.spacing);
-    for (let rz = r0z; rz <= r1z; rz++) for (let rx = r0x; rx <= r1x; rx++) {
-      const [sx, sz] = this.spreadStart(set, rx, rz);
-      if (Math.abs(sx - cx) > 7 || Math.abs(sz - cz) > 7) continue;
-      const st = this.structStart(set, sx, sz);
-      if (!st) continue;
-      for (const p of st) {
-        const b = p.box;
-        if (b[0] > x0 + 27 || b[3] < x0 - 12 || b[2] > z0 + 27 || b[5] < z0 - 12) continue;
-        all.push(b);
-        if (p.vil.e[3] === 0) near.push(p);
-        for (const j of p.vil.junctions) if (j[0] >= x0 - 12 && j[0] <= x0 + 27 && j[2] >= z0 - 12 && j[2] <= z0 + 27) junc.push(j);
+    for (const set of JIGSAW_SETS) {
+      const r0x = Math.floor((cx - 7) / set.spacing), r1x = Math.floor((cx + 7) / set.spacing), r0z = Math.floor((cz - 7) / set.spacing), r1z = Math.floor((cz + 7) / set.spacing);
+      for (let rz = r0z; rz <= r1z; rz++) for (let rx = r0x; rx <= r1x; rx++) {
+        const [sx, sz] = this.spreadStart(set, rx, rz);
+        if (Math.abs(sx - cx) > 7 || Math.abs(sz - cz) > 7) continue;
+        const st = this.structStart(set, sx, sz);
+        if (!st) continue;
+        for (const p of st) {
+          const b = p.box;
+          if (b[0] > x0 + 27 || b[3] < x0 - 12 || b[2] > z0 + 27 || b[5] < z0 - 12) continue;
+          all.push(b);
+          if (p.vil.e[3] === 0) near.push(p);
+          for (const j of p.vil.junctions) if (j[0] >= x0 - 12 && j[0] <= x0 + 27 && j[2] >= z0 - 12 && j[2] <= z0 + 27) junc.push(j);
+        }
       }
     }
     this.beardPieces = near;

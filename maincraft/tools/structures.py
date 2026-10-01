@@ -97,7 +97,7 @@ SIMPLE = {'bricks': 'BRICK', 'chiseled_sandstone': 'CHISELED_SANDSTONE', 'chisel
           'stripped_acacia_log': 'STRIPPED_ACACIA_LOG', 'stripped_oak_log': 'STRIPPED_OAK_LOG', 'stripped_oak_wood': 'STRIPPED_OAK_WOOD',
           'stripped_spruce_log': 'STRIPPED_SPRUCE_LOG', 'stripped_spruce_wood': 'STRIPPED_SPRUCE_WOOD', 'large_fern': 'LARGE_FERN', 'tall_grass': 'TALL_GRASS_PLANT',
           'water': 'WATER', 'lava': 'LAVA', 'sea_pickle': 'SEA_PICKLE', 'snow': 'SNOW_LAYER', 'farmland': 'FARMLAND', 'cave_air': 'AIR', 'air': 'AIR',
-          'flower_pot': 'FLOWER_POT', 'tnt': 'TNT'}
+          'flower_pot': 'FLOWER_POT', 'tnt': 'TNT', 'carved_pumpkin': 'CARVED_PUMPKIN', 'jack_o_lantern': 'JACK_O_LANTERN'}
 for c in COLORS:
     SIMPLE[c + '_carpet'] = c.upper() + '_CARPET'
     SIMPLE[c + '_stained_glass_pane'] = c.upper() + '_STAINED_GLASS_PANE'
@@ -128,7 +128,7 @@ def convert(name, props):
     wet = 1 if pr.get('waterlogged') == 'true' else 0
     f = DIR.get(pr.get('facing'), 0)
     half_top = pr.get('half') == 'top'
-    if n in MISSING: return None
+    if n in MISSING or n.endswith('_banner') or n.endswith('_sign'): return None   # banners / signs: not in this game
     if n.startswith('potted_'): return ['FLOWER_POT', 0, 0]
     if n in MODEL_BLOCKS:
         # meta as models.js / blockdata.js encode them
@@ -144,6 +144,8 @@ def convert(name, props):
         elif n == 'composter': m = int(pr.get('level', 0))
         else: m = 0
         return [k, m, 0]
+    if n == 'vine':   # bit per wall the vine hangs on (S W N E)
+        return ['VINE', sum(1 << d for k, d in DIR.items() if pr.get(k) == 'true'), 0]
     if n == 'beetroots': return ['BEETROOTS_%d' % min(3, int(pr.get('age', 0))), 0, 0]
     key = None
     for w, keys in WOODS.items():
@@ -151,6 +153,12 @@ def convert(name, props):
             kind = n[len(w) + 1:]
             if kind in WOOD_KIND: key = keys[WOOD_KIND.index(kind)]; break
     if key is None: key = SIMPLE.get(n)
+    if key is None and KEYS is not None:
+        # same name in this game, or its naming of the stone families' stairs / slabs / walls
+        u = n.upper()
+        for c in (u, u.replace('MOSSY_COBBLESTONE', 'MOSSY'), u.replace('COBBLESTONE', 'COBBLE'), u.replace('STONE_BRICK_', 'STONEBRICK_'),
+                  u.replace('STONE_BRICK_WALL', 'STONE_BRICKS_WALL'), u.replace('MOSSY_STONE_BRICK_', 'MOSSY_STONE_BRICKS_'), u.replace('BRICK_', 'BRICK_')):
+            if c in KEYS: key = c; break
     for crop, k in (('wheat', 'WHEAT'), ('carrots', 'CARROTS'), ('potatoes', 'POTATOES'), ('melon_stem', 'MELON_STEM'), ('pumpkin_stem', 'PUMPKIN_STEM')):
         if n == crop:
             a = int(pr.get('age', 0)); mx = 7
@@ -172,7 +180,7 @@ def convert(name, props):
     elif n.endswith('_trapdoor'): m = f | (4 if half_top else 0) | (8 if pr.get('open') == 'true' else 0)
     elif n.endswith('_fence_gate'): m = f | (4 if pr.get('open') == 'true' else 0)
     elif n.endswith('_button'): m = (f + 2) & 3
-    elif n in ('chest', 'furnace', 'ladder'): m = f
+    elif n in ('chest', 'furnace', 'ladder', 'carved_pumpkin', 'jack_o_lantern'): m = f
     elif n.endswith('_bed'): m = f | (4 if pr.get('part') == 'head' else 0)
     elif n.endswith('wall_torch'): m = 1 + ((f + 2) & 3)
     elif 'axis' in pr: m = {'y': 0, 'x': 1, 'z': 2}[pr['axis']]
