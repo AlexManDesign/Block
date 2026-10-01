@@ -123,8 +123,6 @@ function dryId(id) { return id >= WET_BASE ? id - WET_BASE : id; }
 
 // horizontal directions (same order as the main thread's DIRX_W / DIRZ_W: +z, -x, -z, +x)
 const HDX = [0, -1, 0, 1], HDZ = [1, 0, -1, 0];
-// loot tables of generated chests (chest meta bits 2+, rolled when first opened or broken)
-const LOOT = { SIMPLE_DUNGEON: 1, ABANDONED_MINESHAFT: 2, DESERT_PYRAMID: 3, JUNGLE_TEMPLE: 4, SHIPWRECK_SUPPLY: 5, SHIPWRECK_TREASURE: 6, SHIPWRECK_MAP: 7, UNDERWATER_RUIN_SMALL: 8, UNDERWATER_RUIN_BIG: 9, IGLOO: 10, VILLAGE: 11 };
 // mob of a spawner (spawner meta)
 const SPAWNER_MOB = { pig: 0, zombie: 1, skeleton: 2, spider: 3, cave_spider: 4 };
 const SPAWNER_TYPES = ['pig', 'zombie', 'skeleton', 'spider', 'cave_spider'];

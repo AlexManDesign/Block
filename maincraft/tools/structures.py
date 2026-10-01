@@ -29,11 +29,12 @@ def names():
     return out   # (name, places air)
 
 
-def fetch(name):
-    path = os.path.join(CACHE, name.replace('/', '_') + '.nbt')
+def fetch(name, kind='structure', ext='.nbt'):
+    path = os.path.join(CACHE, (kind + '_' if kind != 'structure' else '') + name.replace('/', '_') + ext)
     if not os.path.exists(path):
         os.makedirs(CACHE, exist_ok=True)
-        with urllib.request.urlopen(URL + name + '.nbt') as r:
+        url = URL.replace('/structure/', '/' + kind + '/') + name + ext
+        with urllib.request.urlopen(url) as r:
             open(path, 'wb').write(r.read())
     return open(path, 'rb').read()
 
@@ -67,57 +68,114 @@ def read_nbt(raw):
 
 
 DIR = {'south': 0, 'west': 1, 'north': 2, 'east': 3}
-WOOD = {'oak': ('PLANKS', 'OAK_SLAB', 'OAK_STAIRS', 'OAK_FENCE', 'LOG', 'OAK_DOOR', 'OAK_TRAPDOOR'),
-        'spruce': ('SPRUCE_PLANKS', 'SPRUCE_SLAB', 'SPRUCE_STAIRS', 'SPRUCE_FENCE', 'SPRUCE_LOG', 'SPRUCE_DOOR', 'SPRUCE_TRAPDOOR'),
-        'birch': ('BIRCH_PLANKS', 'BIRCH_SLAB', 'BIRCH_STAIRS', 'BIRCH_FENCE', 'BIRCH_LOG', 'BIRCH_DOOR', 'BIRCH_TRAPDOOR'),
-        'jungle': ('JUNGLE_PLANKS', 'JUNGLE_PLANKS_SLAB', 'JUNGLE_PLANKS_STAIRS', 'JUNGLE_PLANKS_FENCE', 'JUNGLE_LOG', 'JUNGLE_DOOR', 'JUNGLE_TRAPDOOR'),
-        'dark_oak': ('DARK_PLANKS', 'DARK_PLANKS_SLAB', 'DARK_PLANKS_STAIRS', 'DARK_PLANKS_FENCE', 'DARK_LOG', 'DARK_OAK_DOOR', 'DARK_OAK_TRAPDOOR'),
-        'acacia': ('ACACIA_PLANKS', 'ACACIA_PLANKS_SLAB', 'ACACIA_PLANKS_STAIRS', 'ACACIA_PLANKS_FENCE', 'ACACIA_LOG', 'ACACIA_DOOR', 'ACACIA_TRAPDOOR')}
+WOODS = {'oak': ('PLANKS', 'OAK_SLAB', 'OAK_STAIRS', 'OAK_FENCE', 'LOG', 'OAK_DOOR', 'OAK_TRAPDOOR', 'OAK_GATE', 'OAK_WOOD', 'PLANKS_PRESSURE_PLATE', 'PLANKS_BUTTON', 'LEAVES', 'OAK_SAPLING'),
+         'spruce': ('SPRUCE_PLANKS', 'SPRUCE_SLAB', 'SPRUCE_STAIRS', 'SPRUCE_FENCE', 'SPRUCE_LOG', 'SPRUCE_DOOR', 'SPRUCE_TRAPDOOR', 'SPRUCE_GATE', 'SPRUCE_WOOD', 'SPRUCE_PLANKS_PRESSURE_PLATE', 'SPRUCE_PLANKS_BUTTON', 'SPRUCE_LEAVES', 'SPRUCE_SAPLING'),
+         'birch': ('BIRCH_PLANKS', 'BIRCH_SLAB', 'BIRCH_STAIRS', 'BIRCH_FENCE', 'BIRCH_LOG', 'BIRCH_DOOR', 'BIRCH_TRAPDOOR', 'BIRCH_GATE', 'BIRCH_WOOD', 'BIRCH_PLANKS_PRESSURE_PLATE', 'BIRCH_PLANKS_BUTTON', 'BIRCH_LEAVES', 'BIRCH_SAPLING'),
+         'jungle': ('JUNGLE_PLANKS', 'JUNGLE_PLANKS_SLAB', 'JUNGLE_PLANKS_STAIRS', 'JUNGLE_PLANKS_FENCE', 'JUNGLE_LOG', 'JUNGLE_DOOR', 'JUNGLE_TRAPDOOR', 'JUNGLE_PLANKS_GATE', 'JUNGLE_WOOD', 'JUNGLE_PLANKS_PRESSURE_PLATE', 'JUNGLE_PLANKS_BUTTON', 'JUNGLE_LEAVES', 'JUNGLE_SAPLING'),
+         'dark_oak': ('DARK_PLANKS', 'DARK_PLANKS_SLAB', 'DARK_PLANKS_STAIRS', 'DARK_PLANKS_FENCE', 'DARK_LOG', 'DARK_OAK_DOOR', 'DARK_OAK_TRAPDOOR', 'DARK_PLANKS_GATE', 'DARK_OAK_WOOD', 'DARK_PLANKS_PRESSURE_PLATE', 'DARK_PLANKS_BUTTON', 'DARK_LEAVES', 'DARK_OAK_SAPLING'),
+         'acacia': ('ACACIA_PLANKS', 'ACACIA_PLANKS_SLAB', 'ACACIA_PLANKS_STAIRS', 'ACACIA_PLANKS_FENCE', 'ACACIA_LOG', 'ACACIA_DOOR', 'ACACIA_TRAPDOOR', 'ACACIA_PLANKS_GATE', 'ACACIA_WOOD', 'ACACIA_PLANKS_PRESSURE_PLATE', 'ACACIA_PLANKS_BUTTON', 'ACACIA_LEAVES', 'ACACIA_SAPLING')}
+WOOD_KIND = ['planks', 'slab', 'stairs', 'fence', 'log', 'door', 'trapdoor', 'fence_gate', 'wood', 'pressure_plate', 'button', 'leaves', 'sapling']
+COLORS = ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black']
 SIMPLE = {'bricks': 'BRICK', 'chiseled_sandstone': 'CHISELED_SANDSTONE', 'chiseled_stone_bricks': 'CHISELED_STONE_BRICKS',
           'cobblestone': 'COBBLE', 'cobweb': 'COBWEB', 'cracked_stone_bricks': 'CRACKED_STONE_BRICKS', 'crafting_table': 'CRAFTING_TABLE',
-          'cut_sandstone': 'CUT_SANDSTONE', 'gravel': 'GRAVEL', 'ice': 'ICE', 'iron_bars': 'IRON_BARS', 'light_blue_terracotta': 'LIGHT_BLUE_TERRACOTTA',
-          'light_gray_carpet': 'LIGHT_GRAY_CARPET', 'magma_block': 'MAGMA_BLOCK', 'mossy_cobblestone': 'MOSSY', 'mossy_stone_bricks': 'MOSSY_STONE_BRICKS',
-          'obsidian': 'OBSIDIAN', 'polished_andesite': 'POLISHED_ANDESITE', 'polished_diorite': 'POLISHED_DIORITE', 'polished_granite': 'POLISHED_GRANITE',
-          'potted_cactus': 'FLOWER_POT', 'prismarine': 'PRISMARINE', 'purple_glazed_terracotta': 'PURPLE_GLAZED', 'red_carpet': 'RED_CARPET',
-          'sand': 'SAND', 'sandstone': 'SANDSTONE', 'sea_lantern': 'SEA_LANTERN', 'snow_block': 'SNOW', 'stone': 'STONE', 'stone_bricks': 'STONE_BRICKS',
-          'white_carpet': 'WHITE_CARPET', 'infested_chiseled_stone_bricks': 'CHISELED_STONE_BRICKS', 'infested_mossy_stone_bricks': 'MOSSY_STONE_BRICKS',
-          'infested_stone_bricks': 'STONE_BRICKS', 'chest': 'CHEST', 'furnace': 'FURNACE', 'ladder': 'LADDER', 'red_bed': 'BED',
-          'redstone_torch': 'REDSTONE_TORCH', 'wall_torch': 'TORCH', 'redstone_wall_torch': 'REDSTONE_TORCH', 'torch': 'TORCH',
-          'sandstone_stairs': 'SANDSTONE_STAIRS', 'stone_brick_stairs': 'STONEBRICK_STAIRS'}
+          'cut_sandstone': 'CUT_SANDSTONE', 'gravel': 'GRAVEL', 'ice': 'ICE', 'iron_bars': 'IRON_BARS', 'magma_block': 'MAGMA_BLOCK',
+          'mossy_cobblestone': 'MOSSY', 'mossy_stone_bricks': 'MOSSY_STONE_BRICKS', 'obsidian': 'OBSIDIAN', 'polished_andesite': 'POLISHED_ANDESITE',
+          'polished_diorite': 'POLISHED_DIORITE', 'polished_granite': 'POLISHED_GRANITE', 'prismarine': 'PRISMARINE', 'sand': 'SAND',
+          'sandstone': 'SANDSTONE', 'sea_lantern': 'SEA_LANTERN', 'snow_block': 'SNOW', 'stone': 'STONE', 'stone_bricks': 'STONE_BRICKS',
+          'infested_chiseled_stone_bricks': 'CHISELED_STONE_BRICKS', 'infested_mossy_stone_bricks': 'MOSSY_STONE_BRICKS', 'infested_stone_bricks': 'STONE_BRICKS',
+          'chest': 'CHEST', 'furnace': 'FURNACE', 'ladder': 'LADDER', 'redstone_torch': 'REDSTONE_TORCH', 'wall_torch': 'TORCH',
+          'redstone_wall_torch': 'REDSTONE_TORCH', 'torch': 'TORCH', 'sandstone_stairs': 'SANDSTONE_STAIRS', 'stone_brick_stairs': 'STONEBRICK_STAIRS',
+          'blue_ice': 'BLUE_ICE', 'packed_ice': 'PACKED_ICE', 'bookshelf': 'BOOKSHELF', 'cactus': 'CACTUS', 'clay': 'CLAY', 'dandelion': 'DANDELION',
+          'dead_bush': 'DEAD_BUSH', 'diorite': 'DIORITE', 'granite': 'GRANITE', 'dirt': 'DIRT', 'dirt_path': 'DIRT_PATH', 'fern': 'FERN',
+          'glass_pane': 'GLASS_PANE', 'grass_block': 'GRASS', 'hay_block': 'HAY_BLOCK', 'melon': 'MELON', 'oxeye_daisy': 'OXEYE_DAISY', 'poppy': 'POPPY',
+          'pumpkin': 'PUMPKIN', 'short_grass': 'TALL_GRASS', 'grass': 'TALL_GRASS', 'smooth_sandstone': 'SMOOTH_SANDSTONE', 'smooth_stone': 'SMOOTH_STONE',
+          'terracotta': 'TERRACOTTA', 'orange_terracotta': 'TERRA_ORANGE', 'white_terracotta': 'TERRA_WHITE', 'cobblestone_stairs': 'COBBLE_STAIRS',
+          'cobblestone_slab': 'COBBLE_SLAB', 'cobblestone_wall': 'COBBLE_WALL', 'diorite_slab': 'DIORITE_SLAB', 'diorite_stairs': 'DIORITE_STAIRS',
+          'diorite_wall': 'DIORITE_WALL', 'granite_stairs': 'GRANITE_STAIRS', 'granite_wall': 'GRANITE_WALL', 'sandstone_slab': 'SANDSTONE_SLAB',
+          'sandstone_wall': 'SANDSTONE_WALL', 'smooth_sandstone_slab': 'SMOOTH_SANDSTONE_SLAB', 'smooth_sandstone_stairs': 'SMOOTH_SANDSTONE_STAIRS',
+          'smooth_stone_slab': 'SMOOTH_STONE_SLAB', 'stone_button': 'STONE_BUTTON', 'stone_pressure_plate': 'STONE_PRESSURE_PLATE',
+          'stripped_acacia_log': 'STRIPPED_ACACIA_LOG', 'stripped_oak_log': 'STRIPPED_OAK_LOG', 'stripped_oak_wood': 'STRIPPED_OAK_WOOD',
+          'stripped_spruce_log': 'STRIPPED_SPRUCE_LOG', 'stripped_spruce_wood': 'STRIPPED_SPRUCE_WOOD', 'large_fern': 'LARGE_FERN', 'tall_grass': 'TALL_GRASS_PLANT',
+          'water': 'WATER', 'lava': 'LAVA', 'sea_pickle': 'SEA_PICKLE', 'snow': 'SNOW_LAYER', 'farmland': 'FARMLAND', 'cave_air': 'AIR', 'air': 'AIR',
+          'flower_pot': 'FLOWER_POT', 'tnt': 'TNT'}
+for c in COLORS:
+    SIMPLE[c + '_carpet'] = c.upper() + '_CARPET'
+    SIMPLE[c + '_stained_glass_pane'] = c.upper() + '_STAINED_GLASS_PANE'
+    SIMPLE[c + '_wool'] = 'WOOL_' + c.upper()
+    SIMPLE[c + '_glazed_terracotta'] = c.upper() + '_GLAZED'
+    SIMPLE.setdefault(c + '_terracotta', c.upper() + '_TERRACOTTA')
+    SIMPLE[c + '_bed'] = 'BED' if c == 'red' else 'BED_' + c.upper()
 # blocks this game does not have yet: left out (Minecraft places them, we place nothing)
-MISSING = {'brewing_stand', 'water_cauldron', 'oak_wall_sign'}
+MISSING = {'brewing_stand', 'water_cauldron', 'cauldron', 'oak_wall_sign', 'spruce_wall_sign', 'barrel', 'bell', 'blast_furnace', 'brown_wall_banner',
+           'campfire', 'cartography_table', 'composter', 'fletching_table', 'grindstone', 'lantern', 'lectern', 'loom', 'smithing_table', 'smoker',
+           'stonecutter', 'beetroots'}
+KEYS = None   # block keys of this game (checked when set)
+
+
+def parse_state(st):
+    """'minecraft:oak_stairs[facing=east,half=bottom]' -> (name, props)"""
+    if '[' not in st: return st, {}
+    n, rest = st.split('[', 1)
+    return n, dict(kv.split('=') for kv in rest.rstrip(']').split(',') if kv)
 
 
 def convert(name, props):
+    """Minecraft block state -> [key, meta, waterlogged] of this game, or None when it has no such block."""
     n = name.split(':')[1]
     pr = props or {}
     wet = 1 if pr.get('waterlogged') == 'true' else 0
     f = DIR.get(pr.get('facing'), 0)
-    if n == 'air': return ['AIR', 0, 0]
+    half_top = pr.get('half') == 'top'
     if n in MISSING: return None
-    for w, keys in WOOD.items():
-        if n == w + '_planks': return [keys[0], 0, 0]
-        if n == w + '_slab':
-            t = pr.get('type', 'bottom')
-            return [keys[0], 0, 0] if t == 'double' else [keys[1], 1 if t == 'top' else 0, wet]
-        if n == w + '_stairs': return [keys[2], f | (4 if pr.get('half') == 'top' else 0), wet]
-        if n == w + '_fence': return [keys[3], 0, wet]
-        if n == w + '_log': return [keys[4], {'y': 0, 'x': 1, 'z': 2}[pr.get('axis', 'y')], 0]
-        if n == w + '_door':
-            return [keys[5], f | (4 if pr.get('half') == 'upper' else 0) | (8 if pr.get('open') == 'true' else 0) | (16 if pr.get('hinge') == 'right' else 0), 0]
-        if n == w + '_trapdoor':
-            return [keys[6], f | (4 if pr.get('half') == 'top' else 0) | (8 if pr.get('open') == 'true' else 0), wet]
-    k = SIMPLE.get(n)
-    if k is None: raise SystemExit('unmapped block ' + name + ' ' + json.dumps(pr))
+    if n.startswith('potted_'): return ['FLOWER_POT', 0, 0]
+    key = None
+    for w, keys in WOODS.items():
+        if n.startswith(w + '_'):
+            kind = n[len(w) + 1:]
+            if kind in WOOD_KIND: key = keys[WOOD_KIND.index(kind)]; break
+    if key is None: key = SIMPLE.get(n)
+    for crop, k in (('wheat', 'WHEAT'), ('carrots', 'CARROTS'), ('potatoes', 'POTATOES'), ('melon_stem', 'MELON_STEM'), ('pumpkin_stem', 'PUMPKIN_STEM')):
+        if n == crop:
+            a = int(pr.get('age', 0)); mx = 7
+            return ['%s_%d' % (k, 3 if a >= mx else min(2, a * 3 // mx)), 0, 0]
+    if key is None: raise SystemExit('unmapped block ' + name + ' ' + json.dumps(pr))
+    if KEYS is not None and key not in KEYS and key != 'AIR': raise SystemExit('no block ' + key + ' for ' + name)
     m = 0
-    if n.endswith('_stairs'): m = f | (4 if pr.get('half') == 'top' else 0)
+    if n.endswith('_stairs'): m = f | (4 if half_top else 0)
+    elif n.endswith('_slab'):
+        t = pr.get('type', 'bottom')
+        if t == 'double':
+            base = {'COBBLE_SLAB': 'COBBLE', 'SANDSTONE_SLAB': 'SANDSTONE', 'SMOOTH_STONE_SLAB': 'SMOOTH_STONE', 'DIORITE_SLAB': 'DIORITE',
+                    'SMOOTH_SANDSTONE_SLAB': 'SMOOTH_SANDSTONE'}.get(key)
+            for w, keys in WOODS.items():
+                if key == keys[1]: base = keys[0]
+            return [base, 0, 0]
+        m = 1 if t == 'top' else 0
+    elif n.endswith('_door'): m = f | (4 if pr.get('half') == 'upper' else 0) | (8 if pr.get('open') == 'true' else 0) | (16 if pr.get('hinge') == 'right' else 0); wet = 0
+    elif n.endswith('_trapdoor'): m = f | (4 if half_top else 0) | (8 if pr.get('open') == 'true' else 0)
+    elif n.endswith('_fence_gate'): m = f | (4 if pr.get('open') == 'true' else 0)
+    elif n.endswith('_button'): m = (f + 2) & 3
     elif n in ('chest', 'furnace', 'ladder'): m = f
-    elif n == 'red_bed': m = f | (4 if pr.get('part') == 'head' else 0)
+    elif n.endswith('_bed'): m = f | (4 if pr.get('part') == 'head' else 0)
     elif n.endswith('wall_torch'): m = 1 + ((f + 2) & 3)
-    return [k, m, wet if n in ('chest', 'ladder', 'iron_bars') or n.endswith('_stairs') else 0]
+    elif 'axis' in pr: m = {'y': 0, 'x': 1, 'z': 2}[pr['axis']]
+    elif n in ('large_fern', 'tall_grass'): m = 1 if pr.get('half') == 'upper' else 0
+    elif n in ('water', 'lava'): m = int(pr.get('level', 0)) & 15
+    elif n == 'snow': m = int(pr.get('layers', 1)) - 1
+    elif n == 'sea_pickle': m = int(pr.get('pickles', 1)) - 1; wet = 0
+    elif n == 'farmland' and int(pr.get('moisture', 0)) == 7: key = 'FARMLAND_MOIST'
+    if n in ('water', 'lava', 'sea_pickle'): wet = 0
+    return [key, m, wet]
+
+
+def load_keys():
+    global KEYS
+    import re
+    KEYS = set(re.findall(r'^\s*\["([A-Z_0-9]+)"', open(os.path.join(ROOT, 'src', 'blockdata.js')).read(), re.M))
 
 
 def main():
+    load_keys()
     out = {}
     for name, keep_air in names():
         n = read_nbt(fetch(name))

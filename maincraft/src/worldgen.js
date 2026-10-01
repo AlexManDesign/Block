@@ -358,6 +358,18 @@ const STRUCTURE_SETS = [
   { salt: 14357617, spacing: 32, separation: 8, reach: 2, start: function (x, z) { return this.desertPyramidStart(x, z); } },
   { salt: 14357620, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.swampHutStart(x, z); } },
 ];
+const STRUCTURE_SETS_VIL = { salt: 10387312, spacing: 34, separation: 8, reach: 7, start: function (x, z) { return this.villageStart(x, z); } };
+STRUCTURE_SETS.unshift(STRUCTURE_SETS_VIL);
+// Beardifier kernel (24^3): [z][x][y], value at offset (x, y, z) from a piece's ground / a junction
+const BEARD_KERNEL = (function () {
+  const K = new Float32Array(13824);
+  for (let zi = 0; zi < 24; zi++) for (let xi = 0; xi < 24; xi++) for (let yi = 0; yi < 24; yi++) {
+    const x = xi - 12, y = yi - 12, z = zi - 12, d0 = x * x + z * z, d1 = y + 0.5, d2 = d1 * d1;
+    K[zi * 576 + xi * 24 + yi] = -d1 / Math.sqrt(d2 / 2 + d0 / 2) / 2 * Math.exp(-(d2 / 16 + d0 / 16));
+  }
+  return K;
+})();
+const box6 = (b) => [b[0], b[1], b[2], b[3] + 1, b[4] + 1, b[5] + 1];
 // block meta turned with a template rotation (0..3 clockwise quarter turns)
 function rotMeta(id, m, r) {
   if (!r) return m;
@@ -604,6 +616,8 @@ class WorldGen {
     }
     this.prepQuartGrid(x0, z0);
     for (let dz = 0; dz < 16; dz++) for (let dx = 0; dx < 16; dx++) BIO[dz * 16 + dx] = this.biomeAtBlock(x0 + dx, z0 + dz);
+    this.vilGround = null;
+    this.beard = this.villageBeard();
     this.fillTerrain();
     this.surface();
     this.caves();
@@ -647,6 +661,8 @@ class WorldGen {
       if (t > hmax) hmax = t;
     }
     // rows to evaluate: up to the terrain top, but always to sea level so oceans are filled with water
+    const BD = this.beard;
+    if (BD) hmax = Math.max(hmax, BD.y1);
     const rows = Math.min(47, Math.max(Math.floor((hmax - WORLD_MIN_Y) / 8) + 1, Math.ceil((SEA + 1 - WORLD_MIN_Y) / 8)));
     const D = new Float32Array(25 * 49);
     for (let k = 0; k < 5; k++) for (let i = 0; i < 5; i++) {
@@ -663,8 +679,12 @@ class WorldGen {
         const d000 = D[a + cj], d100 = D[b + cj], d001 = D[c + cj], d101 = D[d + cj];
         const d010 = D[a + cj + 1], d110 = D[b + cj + 1], d011 = D[c + cj + 1], d111 = D[d + cj + 1];
         const yb = WORLD_MIN_Y + cj * 8;
-        const allS = d000 > 0 && d100 > 0 && d001 > 0 && d101 > 0 && d010 > 0 && d110 > 0 && d011 > 0 && d111 > 0;
-        const allA = d000 <= 0 && d100 <= 0 && d001 <= 0 && d101 <= 0 && d010 <= 0 && d110 <= 0 && d011 <= 0 && d111 <= 0;
+        // Beardifier near village pieces: added per block, in this terrain's units (Minecraft's
+        // density changes ~0.05 per block inside the ground and ~0.0125 in the air)
+        const bd = BD && yb + 7 >= BD.y0 && yb <= BD.y1;
+        const g = bd ? (cinfo[ck * 5 + ci].factor + cinfo[ck * 5 + ci + 1].factor + cinfo[(ck + 1) * 5 + ci].factor + cinfo[(ck + 1) * 5 + ci + 1].factor) / 96 : 0;
+        const allS = !bd && d000 > 0 && d100 > 0 && d001 > 0 && d101 > 0 && d010 > 0 && d110 > 0 && d011 > 0 && d111 > 0;
+        const allA = !bd && d000 <= 0 && d100 <= 0 && d001 <= 0 && d101 <= 0 && d010 <= 0 && d110 <= 0 && d011 <= 0 && d111 <= 0;
         if (allA && yb > SEA) continue;
         for (let ly = 0; ly < 8; ly++) {
           const y = yb + ly, ty = ly / 8;
@@ -678,7 +698,8 @@ class WorldGen {
             const z = ck * 4 + lz;
             for (let lx = 0; lx < 4; lx++) {
               const x = ci * 4 + lx;
-              const v = allS ? 1 : allA ? -1 : f0 + (f1 - f0) * (lx / 4);
+              let v = allS ? 1 : allA ? -1 : f0 + (f1 - f0) * (lx / 4);
+              if (bd && y >= BD.y0 && y <= BD.y1) { const b = BD.A[(y - BD.y0) * 256 + z * 16 + x]; if (b) v += b * g / (v > 0 ? 0.05 : 0.0125); }
               let id;
               if (v > 0) {
                 id = stone;
@@ -804,7 +825,7 @@ class WorldGen {
   }
 
   caves() {
-    const ids = this.ids, x0 = this.x0, z0 = this.z0, TOP = this.TOP;
+    const ids = this.ids, x0 = this.x0, z0 = this.z0, TOP = this.TOP, BD = this.beard;
     let maxTop = WORLD_MIN_Y;
     for (let i = 0; i < 256; i++) if (TOP[i] > maxTop) maxTop = TOP[i];
     const rowsN = Math.min(96, Math.floor((maxTop + 4 - WORLD_MIN_Y) / 4) + 1);
@@ -836,6 +857,8 @@ class WorldGen {
         if (id === 0 || id === B.WATER || id === B.BEDROCK || id === B.ICE || id === B.PACKED_ICE) continue;
         const depth = top - y;
         if (wet && depth < 7) continue;
+        // the beard of a village piece fills caves under it (it is added after the carvers in Minecraft)
+        if (BD && y >= BD.y0 && y <= BD.y1 && BD.A[(y - BD.y0) * 256 + z * 16 + x] > 0.05) continue;
         const j = (y - WORLD_MIN_Y) >> 2, fy = ((y - WORLD_MIN_Y) & 3) / 4;
         for (let c = 0; c < 5; c++) {
           const a0 = G[b00 + j * 5 + c], a1 = G[b10 + j * 5 + c], a2 = G[b01 + j * 5 + c], a3 = G[b11 + j * 5 + c];
@@ -1028,18 +1051,22 @@ class WorldGen {
       for (let rz = r0z; rz <= r1z; rz++) for (let rx = r0x; rx <= r1x; rx++) {
         const [sx, sz] = this.spreadStart(set, rx, rz);
         if (Math.abs(sx - cx) > R || Math.abs(sz - cz) > R) continue;
-        const key = set.salt + ':' + sx + ':' + sz, C = this.structCache;
-        let st = C.get(key);
-        if (st === undefined) { st = set.start.call(this, sx, sz); if (C.size > 4000) C.clear(); C.set(key, st); }
+        const st = this.structStart(set, sx, sz);
         if (st) for (const p of st) this.placePiece(p);
       }
     }
   }
+  structStart(set, sx, sz) {
+    const key = set.salt + ':' + sx + ':' + sz, C = this.structCache;
+    let st = C.get(key);
+    if (st === undefined) { st = set.start.call(this, sx, sz); if (C.size > 4000) C.clear(); C.set(key, st); }
+    return st;
+  }
   // decoded template: grid of state + 1, per palette the block id / meta of each state (-1 nothing)
-  tpl(name) {
+  tpl(name, data) {
     let T = TPL_CACHE.get(name);
     if (T) return T;
-    const S = STRUCT_TPL[name], [sx, sy, sz] = S.s, g = new Uint8Array(sx * sy * sz);
+    const S = data || STRUCT_TPL[name], [sx, sy, sz] = S.s, g = new Uint8Array(sx * sy * sz);
     const raw = atob(S.g);
     for (let i = 0, o = 0; i < raw.length; i += 2) { const v = raw.charCodeAt(i), n = raw.charCodeAt(i + 1); g.fill(v, o, o + n); o += n; }
     const pals = S.m.map((m) => m.map((e) => {
@@ -1047,7 +1074,8 @@ class WorldGen {
       const [key, meta, wet] = S.p[e - 1], id = key === 'AIR' ? 0 : B[key];
       return [wet && WET[id] ? WET[id] : id, meta];
     }));
-    T = { sx, sy, sz, g, pals, marks: S.d };
+    const palIds = S.p.map(([key, meta, wet]) => { const id = key === 'AIR' ? 0 : B[key]; return [wet && WET[id] ? WET[id] : id, meta]; });
+    T = { sx, sy, sz, g, pals, palIds, marks: S.d };
     TPL_CACHE.set(name, T);
     return T;
   }
@@ -1067,6 +1095,17 @@ class WorldGen {
   }
   placePiece(p) {
     const x0 = this.x0, z0 = this.z0;
+    if (p.vil) {
+      const b = p.box;
+      if (b[0] > x0 + 15 || b[3] < x0 || b[2] > z0 + 15 || b[5] < z0) return;
+      if (!this.vilGround) {
+        // WORLD_SURFACE_WG of this chunk's columns before any piece is placed
+        const G = this.vilGround = new Int16Array(256);
+        for (let i = 0; i < 256; i++) { let y = WORLD_MAX_Y - 1; while (y > WORLD_MIN_Y && !this.ids[CI(i & 15, y, i >> 4)]) y--; G[i] = y; }
+      }
+      this.placeVillagePiece(p);
+      return;
+    }
     if (p.build) { const b = p.box; if (b[0] <= x0 + 15 && b[3] >= x0 && b[2] <= z0 + 15 && b[5] >= z0) p.build.call(this, p); return; }
     const bx = p.box || (p.box = this.pieceBox(p));
     if (bx[0] > x0 + 15 || bx[2] < x0 || bx[1] > z0 + 15 || bx[3] < z0) return;
@@ -1339,6 +1378,313 @@ class WorldGen {
     s(1, 3, 5, B.FLOWER_POT); s(3, 2, 6, B.CRAFTING_TABLE); s(1, 2, 1, FE); s(5, 2, 1, FE);
     f(0, 4, 1, 6, 4, 1, ST, 2); f(0, 4, 2, 0, 4, 7, ST, 3); f(6, 4, 2, 6, 4, 7, ST, 1); f(0, 4, 8, 6, 4, 8, ST, 0);
     for (const z of [2, 7]) for (const x of [1, 5]) P.down(LG, 0, x, -1, z);
+  }
+
+  // ---------------------------------------------------------------- villages (jigsaw structures)
+  // JigsawPlacement as in Minecraft: a random town centre from the village type's start pool, its
+  // centre projected to the surface, then breadth-first up to 6 levels: every jigsaw block of a
+  // piece tries the templates of its pool (shuffled by weight, the fallback pool last / alone at the
+  // last level) in shuffled rotations until one whose matching jigsaw joins it fits in the free
+  // space (80 blocks around the centre minus the pieces placed; inside its parent for jigsaws
+  // facing inward). Rigid pieces keep the parent's height, terrain-matching ones (streets) follow
+  // the ground. Pieces and junctions also shape the terrain (Beardifier).
+  vilPool(name) { return VIL_POOLS[name]; }
+  vilTpl(name) {
+    let T = TPL_CACHE.get(name);
+    if (T) return T;
+    T = this.tpl(name, VIL_TPL[name]);
+    const S = VIL_TPL[name];
+    T.jig = S.j; T.rules = S.r; T.loot = S.l;
+    return T;
+  }
+  // template's box when placed at (x, y, z) with a rotation about its origin
+  static tplBox(T, x, y, z, rot) {
+    const a = WorldGen.tplPos(0, 0, rot, 0, 0), b = WorldGen.tplPos(T.sx - 1, T.sz - 1, rot, 0, 0);
+    return [x + Math.min(a[0], b[0]), y, z + Math.min(a[1], b[1]), x + Math.max(a[0], b[0]), y + T.sy - 1, z + Math.max(a[1], b[1])];
+  }
+  static rotDir(d, r) { return d < 4 ? (d + r) & 3 : d; }
+  // the pool's elements, each repeated by its weight, shuffled
+  vilShuffled(pool, rnd) {
+    const out = [];
+    if (!pool) return out;
+    for (const e of pool.e) for (let k = 0; k < e[2]; k++) out.push(e);
+    for (let i = out.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0, t = out[i]; out[i] = out[j]; out[j] = t; }
+    return out;
+  }
+  vilMaxY(name) {
+    const P = this.vilPool(name);
+    if (!P) return 0;
+    if (P.maxY === undefined) { P.maxY = 0; for (const e of P.e) if (e[0] === 0) P.maxY = Math.max(P.maxY, this.vilTpl(e[1]).sy); else if (e[0] === 1) P.maxY = Math.max(P.maxY, 1); }
+    return P.maxY;
+  }
+  // jigsaws of an element placed at (x, y, z) with rotation r: [x, y, z, front, top, name, target, pool, final, rollable] in world space, shuffled
+  vilJigsaws(e, x, y, z, r, rnd) {
+    // FeaturePoolElement: one jigsaw facing down named "bottom"
+    if (e[0] !== 0) return e[0] === 1 ? [[x, y, z, 5, 0, 'bottom', 'empty', 'empty', 0, 1]] : [];
+    const T = this.vilTpl(e[1]), out = [];
+    for (const j of T.jig) { const o = WorldGen.tplPos(j[0], j[2], r, 0, 0); out.push([x + o[0], y + j[1], z + o[1], WorldGen.rotDir(j[3], r), WorldGen.rotDir(j[4], r), VIL_STR[j[5]], VIL_STR[j[6]], VIL_STR[j[7]], j[8], j[9]]); }
+    for (let i = out.length - 1; i > 0; i--) { const k = (rnd() * (i + 1)) | 0, t = out[i]; out[i] = out[k]; out[k] = t; }
+    return out;
+  }
+  static vilElBox(gen, e, x, y, z, r) { return e[0] === 0 ? WorldGen.tplBox(gen.vilTpl(e[1]), x, y, z, r) : [x, y, z, x, y, z]; }
+  villageStart(cx, cz) {
+    const types = ['plains', 'desert', 'savanna', 'snowy', 'taiga'];
+    const BIO = { plains: [BI.PLAINS, BI.MEADOW], desert: [BI.DESERT], savanna: [BI.SAVANNA], snowy: [BI.SNOWY_PLAINS], taiga: [BI.TAIGA] };
+    const order = types.slice(), r0 = mulberry(hash2i(this.seed + 10387312 * 5, cx, cz));
+    for (let i = order.length - 1; i > 0; i--) { const j = (r0() * (i + 1)) | 0, t = order[i]; order[i] = order[j]; order[j] = t; }
+    for (const type of order) {
+      const rnd = mulberry(hash2i(this.seed + 10387312 * 3, cx, cz));
+      const rot = (rnd() * 4) | 0, start = this.vilPool('village/' + type + '/town_centers');
+      const list = this.vilShuffled(start, rnd), e = list[(rnd() * list.length) | 0];
+      if (!e || e[0] === 2) continue;
+      const X = cx * 16, Z = cz * 16, box = WorldGen.vilElBox(this, e, X, 0, Z, rot);
+      const mx = (box[0] + box[3]) >> 1, mz = (box[2] + box[5]) >> 1;
+      if (!BIO[type].includes(this.biomeAt(mx, mz))) continue;
+      // projected to WORLD_SURFACE_WG at the centre, the floor (ground level delta 1) one below
+      const k = this.surfH(mx, mz);
+      const first = { e, x: X, y: k - 1, z: Z, rot, box: WorldGen.vilElBox(this, e, X, k - 1, Z, rot), gd: 1, junctions: [] };
+      return this.vilAssemble(first, mx, k, mz, rnd);
+    }
+    return null;
+  }
+  vilAssemble(first, cx, cy, cz, rnd) {
+    const D = 80, MAXD = 6, pieces = [first];
+    // free space: an outer box minus placed boxes (VoxelShape ONLY_FIRST joins), shared as in Minecraft
+    const outer = { o: [cx - D, cy - D, cz - D, cx + D + 1, cy + D + 1, cz + D + 1], holes: [box6(first.box)] };
+    const fits = (sh, b) => {
+      const a = [b[0] + 0.25, b[1] + 0.25, b[2] + 0.25, b[3] + 0.75, b[4] + 0.75, b[5] + 0.75], o = sh.o;
+      if (a[0] < o[0] || a[1] < o[1] || a[2] < o[2] || a[3] > o[3] || a[4] > o[4] || a[5] > o[5]) return false;
+      for (const h of sh.holes) if (a[0] < h[3] && a[3] > h[0] && a[1] < h[4] && a[4] > h[1] && a[2] < h[5] && a[5] > h[2]) return false;
+      return true;
+    };
+    const queue = [[first, outer, 0]];
+    while (queue.length) {
+      const [piece, free, depth] = queue.shift();
+      const rigid = piece.e[3] === 0, box = piece.box, i0 = box[1];
+      let inner = null;
+      for (const jg of this.vilJigsaws(piece.e, piece.x, piece.y, piece.z, piece.rot, rnd)) {
+        const fd = jg[3], tx = jg[0] + (fd === 3 ? 1 : fd === 1 ? -1 : 0), ty = jg[1] + (fd === 4 ? 1 : fd === 5 ? -1 : 0), tz = jg[2] + (fd === 0 ? 1 : fd === 2 ? -1 : 0);
+        const j = jg[1] - i0;
+        let k = -1;
+        const poolName = jg[7], pool = this.vilPool(poolName);
+        if (!pool && poolName !== 'empty') continue;
+        const fb = pool ? this.vilPool(pool.f) : null;
+        const inside = tx >= box[0] && tx <= box[3] && ty >= box[1] && ty <= box[4] && tz >= box[2] && tz <= box[5];
+        let sh;
+        if (inside) { if (!inner) inner = { o: box6(box), holes: [] }; sh = inner; } else sh = free;
+        const cands = (depth !== MAXD ? this.vilShuffled(pool, rnd) : []).concat(this.vilShuffled(fb, rnd));
+        let placed = false;
+        for (const e1 of cands) {
+          if (e1[0] === 2) break;
+          const rots = [0, 1, 2, 3];
+          for (let i = 3; i > 0; i--) { const q = (rnd() * (i + 1)) | 0, t = rots[i]; rots[i] = rots[q]; rots[q] = t; }
+          for (const r1 of rots) {
+            const js1 = this.vilJigsaws(e1, 0, 0, 0, r1, rnd), b1 = WorldGen.vilElBox(this, e1, 0, 0, 0, r1);
+            let exp = 0;
+            if (e1[0] === 0 && b1[4] - b1[1] + 1 <= 16) {
+              for (const q of js1) {
+                const f2 = q[3], qx = q[0] + (f2 === 3 ? 1 : f2 === 1 ? -1 : 0), qy = q[1] + (f2 === 4 ? 1 : f2 === 5 ? -1 : 0), qz = q[2] + (f2 === 0 ? 1 : f2 === 2 ? -1 : 0);
+                if (!(qx >= b1[0] && qx <= b1[3] && qy >= b1[1] && qy <= b1[4] && qz >= b1[2] && qz <= b1[5])) continue;
+                const pn = q[7], P = this.vilPool(pn);
+                exp = Math.max(exp, this.vilMaxY(pn), P ? this.vilMaxY(P.f) : 0);
+              }
+            }
+            for (const j1 of js1) {
+              // JigsawBlock.canAttach: facing each other, same top unless rollable, target -> name
+              if (j1[3] !== ((fd < 4) ? (fd + 2) & 3 : fd === 4 ? 5 : 4)) continue;
+              if (!jg[9] && jg[4] !== j1[4]) continue;
+              if (jg[6] !== j1[5]) continue;
+              const ox = tx - j1[0], oz = tz - j1[2];
+              const rigid1 = e1[3] === 0, k1 = j1[1], l1 = j - k1 + (fd === 4 ? 1 : fd === 5 ? -1 : 0);
+              let i2;
+              if (rigid && rigid1) i2 = i0 + l1;
+              else { if (k === -1) k = this.surfH(jg[0], jg[2]); i2 = k - k1; }
+              const y1 = i2;      // template minY is its origin: box minY = position y
+              const b3 = WorldGen.vilElBox(this, e1, ox, y1, oz, r1);
+              const bt = b3.slice();
+              if (exp > 0) bt[4] = Math.max(bt[4], bt[1] + Math.max(exp + 1, b3[4] - b3[1]));
+              if (!fits(sh, bt)) continue;
+              sh.holes.push(box6(bt));
+              const gd = rigid1 ? piece.gd - l1 : 1;   // StructurePoolElement.getGroundLevelDelta() is 1
+              const p1 = { e: e1, x: ox, y: y1, z: oz, rot: r1, box: bt, gd, junctions: [] };
+              let i3;
+              if (rigid) i3 = i0 + j;
+              else if (rigid1) i3 = i2 + k1;
+              else { if (k === -1) k = this.surfH(jg[0], jg[2]); i3 = k + Math.trunc(l1 / 2); }
+              piece.junctions.push([tx, i3 - j + piece.gd, tz]);
+              p1.junctions.push([jg[0], i3 - k1 + gd, jg[2]]);
+              pieces.push(p1);
+              if (depth + 1 <= MAXD) queue.push([p1, sh, depth + 1]);
+              placed = true; break;
+            }
+            if (placed) break;
+          }
+          if (placed) break;
+        }
+      }
+    }
+    return pieces.map((p) => ({ vil: p, box: p.box }));
+  }
+  // blocks of a village piece inside this chunk: template states through the element's processors,
+  // jigsaws replaced by their final state, streets laid on the ground (GravityProcessor -1)
+  placeVillagePiece(p) {
+    const v = p.vil, e = v.e, x0 = this.x0, z0 = this.z0, ids = this.ids, meta = this.meta, seed = this.seed;
+    if (e[0] === 1) { this.villageFeature(e[1], v.x, v.y, v.z); return; }
+    if (e[0] !== 0) return;
+    const T = this.vilTpl(e[1]), pal = T.pals[0], rules = e[4] ? T.rules[e[4]] : null, terrain = e[3] === 1;
+    const G = this.vilGround;
+    const put = (wx, wy, wz, pi, state) => {
+      if (wx < x0 || wx > x0 + 15 || wz < z0 || wz > z0 + 15) return;
+      if (terrain) wy = G[(wz - z0) * 16 + wx - x0] + (wy - v.y);
+      if (wy <= WORLD_MIN_Y || wy >= WORLD_MAX_Y) return;
+      const i = CI(wx - x0, wy, wz - z0), cur = ids[i];
+      let ent = pi;
+      const R = rules && state >= 0 ? rules[state] : null;
+      if (R) {
+        const rnd = mulberry(hash3(seed + 4409, wx, wy, wz) * 4294967296 | 0);
+        for (const [prob, loc, out] of R) {
+          if (prob < 1 && rnd() >= prob) continue;
+          if (loc === 1 && !isWaterId(cur)) continue;
+          if (loc === 2 && cur !== B.ICE) continue;
+          ent = out ? T.palIds[out - 1] : [0, 0]; break;
+        }
+      }
+      let id = ent[0];
+      if (id < 0) return;
+      if (id && WET[id] && (cur === B.WATER && meta[i] === 0 || isWaterId(cur))) id = WET[id];
+      ids[i] = id; meta[i] = id ? rotMeta(id, ent[1], v.rot) : 0;
+    };
+    const { sx, sy, sz, g } = T;
+    for (let y = 0; y < sy; y++) for (let z = 0; z < sz; z++) for (let x = 0; x < sx; x++) {
+      const st = g[(y * sz + z) * sx + x];
+      if (!st) continue;
+      const ent = pal[st - 1];
+      if (ent[0] < 0) continue;
+      const o = WorldGen.tplPos(x, z, v.rot, 0, 0);
+      put(v.x + o[0], v.y + y, v.z + o[1], ent, st - 1);
+    }
+    for (const j of T.jig) {
+      if (!j[8]) continue;
+      const o = WorldGen.tplPos(j[0], j[2], v.rot, 0, 0);
+      put(v.x + o[0], v.y + j[1], v.z + o[1], T.palIds[j[8] - 1], -1);
+    }
+    for (const [x, y, z, table] of T.loot) {
+      const o = WorldGen.tplPos(x, z, v.rot, 0, 0), wx = v.x + o[0], wz = v.z + o[1];
+      if (wx < x0 || wx > x0 + 15 || wz < z0 || wz > z0 + 15) continue;
+      const wy = terrain ? this.vilGround[(wz - z0) * 16 + wx - x0] + y : v.y + y, t = LOOT[table.split('/').pop().toUpperCase()];
+      if (t && wy > WORLD_MIN_Y && wy < WORLD_MAX_Y) this.lootChest(CI(wx - x0, wy, wz - z0), t);
+    }
+  }
+  // the features village decor pools place: trees, flower / grass / berry / cactus patches and
+  // block piles (BlockPileFeature), each from its own position's random
+  villageFeature(name, x, y, z) {
+    const tree = { oak: 'oak', acacia: 'acacia', spruce: 'spruce', pine: 'pine' }[name];
+    if (tree) {
+      // placed with the sapling's would_survive filter: soil under it (known only inside this chunk,
+      // the tree itself is built from its position alone, so the neighbours agree)
+      const g = this.floorH(x, z) - 1;
+      if (g === y - 1) this.placeTree(this.buildTree(tree, x, y - 1, z));
+      return;
+    }
+    const rnd = mulberry(hash3(this.seed + 4421, x, y, z) * 4294967296 | 0), ri = (n) => (rnd() * n) | 0;
+    const x0 = this.x0, z0 = this.z0, ids = this.ids, meta = this.meta;
+    const at = (X, Y, Z) => X >= x0 && X < x0 + 16 && Z >= z0 && Z < z0 + 16 && Y > WORLD_MIN_Y && Y < WORLD_MAX_Y ? CI(X - x0, Y, Z - z0) : -1;
+    if (name.startsWith('pile_')) {
+      const pick = {
+        pile_hay: () => [B.HAY_BLOCK, ri(3)], pile_melon: () => [B.MELON, 0], pile_snow: () => [B.SNOW_LAYER, 0],
+        pile_ice: () => [rnd() < 1 / 6 ? B.BLUE_ICE : B.PACKED_ICE, 0], pile_pumpkin: () => [rnd() < 0.95 ? B.PUMPKIN : B.JACK_O_LANTERN, ri(4)],
+      }[name];
+      if (!pick || y < WORLD_MIN_Y + 5) return;
+      const i0 = 2 + ri(2), j0 = 2 + ri(2);
+      for (let yy = y; yy <= y + 1; yy++) for (let zz = z - j0; zz <= z + j0; zz++) for (let xx = x - i0; xx <= x + i0; xx++) {
+        const dx = x - xx, dz = z - zz;
+        const ok = dx * dx + dz * dz <= rnd() * 10 - rnd() * 6 || rnd() < 0.031;
+        if (!ok) continue;
+        const i = at(xx, yy, zz), below = at(xx, yy - 1, zz);
+        if (i < 0 || below < 0) { pick(); continue; }
+        const b = ids[below];
+        if (b === B.DIRT_PATH ? rnd() < 0.5 : OPAQUE[b]) { const [id, m] = pick(); if (!ids[i] || (FLAGS[ids[i]] & BF_REPLACE)) { ids[i] = id; meta[i] = m; } }
+      }
+      return;
+    }
+    // RandomPatchFeature: tries at trapezoid offsets (xz -7..7 / -6..6, y -3..3 / -2..2) onto suitable ground
+    const P = { flower_plain: [64, 6, 2], patch_taiga_grass: [32, 7, 3], patch_berry_bush: [96, 7, 3], patch_cactus: [10, 7, 3] }[name];
+    if (!P) return;
+    const tz = (n) => ri(n + 1) - ri(n + 1);
+    for (let t = 0; t < P[0]; t++) {
+      const X = x + tz(P[1]), Y = y + tz(P[2]), Z = z + tz(P[1]);
+      const i = at(X, Y, Z);
+      if (i < 0 || ids[i]) continue;
+      const below = ids[i - 256];
+      if (name === 'patch_cactus') {
+        if (below !== B.SAND && below !== B.RED_SAND) continue;
+        const h = 1 + ri(ri(3) + 1);
+        for (let k = 0; k < h; k++) { const q = at(X, Y + k, Z); if (q < 0 || ids[q]) break; ids[q] = B.CACTUS; meta[q] = 0; }
+        continue;
+      }
+      if (below !== B.GRASS && below !== B.DIRT && below !== B.PODZOL && below !== B.COARSE_DIRT) continue;
+      if (name === 'patch_berry_bush') { if (below === B.GRASS) { ids[i] = B.SWEET_BERRY_BUSH; meta[i] = 3; } continue; }
+      if (name === 'patch_taiga_grass') { ids[i] = ri(5) === 0 ? B.TALL_GRASS : B.FERN; meta[i] = 0; continue; }
+      if (below === B.GRASS) { ids[i] = [B.DANDELION, B.POPPY, B.AZURE_BLUET, B.OXEYE_DAISY, B.RED_TULIP, B.ORANGE_TULIP, B.WHITE_TULIP, B.PINK_TULIP][ri(8)]; meta[i] = 0; }
+    }
+  }
+  // Beardifier: terrain pushed toward the village: filled below and cleared above each rigid piece's
+  // ground level and around junctions, with Minecraft's kernel (radius 12)
+  villageBeard() {
+    const cx = this.cx, cz = this.cz, x0 = this.x0, z0 = this.z0, near = [], junc = [];
+    const set = STRUCTURE_SETS_VIL;
+    const r0x = Math.floor((cx - 7) / set.spacing), r1x = Math.floor((cx + 7) / set.spacing), r0z = Math.floor((cz - 7) / set.spacing), r1z = Math.floor((cz + 7) / set.spacing);
+    for (let rz = r0z; rz <= r1z; rz++) for (let rx = r0x; rx <= r1x; rx++) {
+      const [sx, sz] = this.spreadStart(set, rx, rz);
+      if (Math.abs(sx - cx) > 7 || Math.abs(sz - cz) > 7) continue;
+      const st = this.structStart(set, sx, sz);
+      if (!st) continue;
+      for (const p of st) {
+        const b = p.box;
+        if (b[0] > x0 + 27 || b[3] < x0 - 12 || b[2] > z0 + 27 || b[5] < z0 - 12) continue;
+        if (p.vil.e[3] === 0) near.push(p);
+        for (const j of p.vil.junctions) if (j[0] >= x0 - 12 && j[0] <= x0 + 27 && j[2] >= z0 - 12 && j[2] <= z0 + 27) junc.push(j);
+      }
+    }
+    this.beardPieces = near;
+    if (!near.length && !junc.length) return null;
+    let y0 = 1e9, y1 = -1e9;
+    for (const p of near) { y0 = Math.min(y0, p.box[1] - 12); y1 = Math.max(y1, p.box[4] + 12); }
+    for (const j of junc) { y0 = Math.min(y0, j[1] - 12); y1 = Math.max(y1, j[1] + 12); }
+    y0 = Math.max(y0, WORLD_MIN_Y + 1); y1 = Math.min(y1, WORLD_MAX_Y - 1);
+    const H = y1 - y0 + 1, A = new Float32Array(256 * H);
+    for (const p of near) {
+      const b = p.box, gy = b[1] + p.vil.gd;
+      for (let z = 0; z < 16; z++) {
+        const dz = Math.max(0, b[2] - (z0 + z), z0 + z - b[5]);
+        if (dz >= 12) continue;
+        for (let x = 0; x < 16; x++) {
+          const dx = Math.max(0, b[0] - (x0 + x), x0 + x - b[3]);
+          if (dx >= 12) continue;
+          for (let dy = -12; dy < 12; dy++) {
+            const y = gy + dy;
+            if (y < y0 || y > y1) continue;
+            A[(y - y0) * 256 + z * 16 + x] += BEARD_KERNEL[(dz + 12) * 576 + (dx + 12) * 24 + dy + 12] * 0.8;
+          }
+        }
+      }
+    }
+    for (const j of junc) {
+      for (let z = 0; z < 16; z++) {
+        const dz = z0 + z - j[2];
+        if (dz < -12 || dz >= 12) continue;
+        for (let x = 0; x < 16; x++) {
+          const dx = x0 + x - j[0];
+          if (dx < -12 || dx >= 12) continue;
+          for (let dy = -12; dy < 12; dy++) {
+            const y = j[1] + dy;
+            if (y < y0 || y > y1) continue;
+            A[(y - y0) * 256 + z * 16 + x] += BEARD_KERNEL[(dz + 12) * 576 + (dx + 12) * 24 + dy + 12] * 0.4;
+          }
+        }
+      }
+    }
+    return { y0, y1, A };
   }
 
   // ---------------------------------------------------------------- mineshafts
