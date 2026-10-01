@@ -713,7 +713,9 @@ class Renderer {
     const RC = this.rangeCnt, RO = this.rangeOff;
     let draws = 0, quads = 0;
     const back = pass === 2;
+    if (this.diagSkip & (1 << pass)) return;   // benchmark diagnosis only
     for (let k = 0; k < n; k++) {
+      if (this.diagHalf && (k & 1)) continue;
       const m = list[back ? n - 1 - k : k];
       const cnt = m.counts[pass];
       if (!cnt) continue;

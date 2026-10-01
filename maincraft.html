@@ -8651,7 +8651,9 @@ class Renderer {
     const RC = this.rangeCnt, RO = this.rangeOff;
     let draws = 0, quads = 0;
     const back = pass === 2;
+    if (this.diagSkip & (1 << pass)) return;   // benchmark diagnosis only
     for (let k = 0; k < n; k++) {
+      if (this.diagHalf && (k & 1)) continue;
       const m = list[back ? n - 1 - k : k];
       const cnt = m.counts[pass];
       if (!cnt) continue;
@@ -11437,7 +11439,7 @@ class Game {
   }
 
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2) * Settings.scale * (Settings.autoScale ? this.dynScale || 1 : 1) * (this.benchRes || 1);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2) * Settings.scale * (Settings.autoScale ? this.dynScale || 1 : 1);
     const w = Math.max(1, Math.round(window.innerWidth * dpr)), h = Math.max(1, Math.round(window.innerHeight * dpr));
     if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; }
   }
@@ -11861,21 +11863,21 @@ class Game {
     if (b.t >= 12) { b.acc = r.gpuAcc; b.phase = 'diag'; b.vi = -1; b.t = 0; this.benchVariant(0); }
   }
   // Diagnosis after the main run: the same circle (6 s each) with one thing changed at a time, to
-  // see what the GPU time depends on on this machine: pixels (half resolution) or triangles
-  // (directional culling off: more triangles, fewer draw ranges). The first 0.5 s of each variant is not measured, so GPU
-  // timings still in flight from the previous variant are not mixed in.
+  // find what the GPU time is spent on on this machine: every other visible section skipped (half
+  // the geometry and draws at nearly the same pixels), the cutout pass skipped, or both terrain
+  // passes skipped (what is left is the cost of the pass setup itself).
   benchVariants() {
     const r = this.r;
     return [
       { name: 'как есть', set: () => { } },
-      { name: 'разрешение ×½ (пиксели ¼)', set: () => { this.benchRes = 0.5; this.resize(); } },
-      { name: 'без отсечения граней по направлению (больше треугольников, меньше диапазонов)', set: () => { r.dirCull = false; } },
+      { name: 'каждая вторая секция', set: () => { r.diagHalf = true; } },
+      { name: 'без прохода листвы', set: () => { r.diagSkip = 2; } },
+      { name: 'без рельефа и листвы', set: () => { r.diagSkip = 3; } },
     ];
   }
   benchRestore() {
     const r = this.r;
-    r.dirCull = true;
-    if (this.benchRes !== 1 && this.benchRes !== undefined) { this.benchRes = 1; this.resize(); }
+    r.diagHalf = false; r.diagSkip = 0;
   }
   benchVariant(i) {
     const b = this.bench, V = this.benchVariants();
@@ -11921,7 +11923,7 @@ class Game {
     let gsum = 0; for (const k of names) gsum += Gv(k);
     const cv = r.canvas, w = this.world, pb = w.biomeAt(Math.floor(b.pos[0]), Math.floor(b.pos[2]));
     const L = [];
-    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры, затем диагностика 3 × 6 с) ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
+    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры, затем диагностика 4 × 6 с) ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
     L.push(`Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${b.pos.map(v => v.toFixed(1)).join(' ')} · pitch ${b.pitch.toFixed(2)} · биом ${BIOME_LIST[pb] ? BIOME_LIST[pb][0] : '?'}`);
     L.push(`GPU: ${r.gpuName || '?'}`);
     L.push(`${navigator.userAgent}`);
@@ -12818,7 +12820,7 @@ class Game {
     t += `Sections: ${r.stats.sections}  draws ${r.stats.draws}  quads ${r.stats.quads}\n`;
     t += `Time: ${Math.floor((this.time * 24 + 6) % 24)}:${String(Math.floor((this.time * 1440) % 60)).padStart(2, '0')}  Day ${this.days || 0}\n`;
     if (this.target) t += `Target: ${B_KEY[this.target.id]} [${this.target.meta}] @ ${this.target.x} ${this.target.y} ${this.target.z}\n`;
-    if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : this.bench.phase === 'diag' ? 'диагностика ' + (this.bench.vi + 1) + '/3' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
+    if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : this.bench.phase === 'diag' ? 'диагностика ' + (this.bench.vi + 1) + '/4' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
     else if (this.benchText) t += '\n' + this.benchText + '\n';
     t += '\n' + this.perfReport();
     t += this.copiedT > performance.now() ? '\n>>> отчёт скопирован в буфер обмена' : '\nP — скопировать отчёт целиком · B — бенчмарк (12 с на месте, результат в окне; он же в меню паузы)';
