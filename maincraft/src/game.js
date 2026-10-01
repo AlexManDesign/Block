@@ -357,15 +357,20 @@ class Game {
       if (ready < need) { this.renderFrame(0); return; }
       if (this.needSpawnDrop) {
         const sx = Math.floor(p.pos[0]), sz = Math.floor(p.pos[2]);
+        // nearest column whose top solid block is natural ground (not leaves, water or a tree)
+        // under open sky, where the player's box is free: spawn on dry land, never in a tree
         let best = null;
-        for (let r = 0; r <= 12 && !best; r++) for (let dx = -r; dx <= r && !best; dx++) for (let dz = -r; dz <= r && !best; dz++) {
+        const ground = (g) => g === B.GRASS || g === B.SNOWY_GRASS || g === B.SAND || g === B.SNOW || g === B.DIRT || g === B.PODZOL ||
+          g === B.MYCELIUM || g === B.RED_SAND || g === B.STONE || g === B.COARSE_DIRT || g === B.GRAVEL || g === B.MUD;
+        for (let r = 0; r <= 32 && !best; r++) for (let dx = -r; dx <= r && !best; dx++) for (let dz = -r; dz <= r && !best; dz++) {
           if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
           const x = sx + dx, z = sz + dz;
+          if (!w.isLoaded(x, z)) continue;
           let y = WORLD_MAX_Y - 1;
-          while (y > WORLD_MIN_Y && !w.getBlock(x, y, z)) y--;
-          const g = w.getBlock(x, y, z);
-          if ((g === B.GRASS || g === B.SAND || g === B.SNOW || g === B.DIRT || g === B.PODZOL || g === B.MYCELIUM || g === B.RED_SAND || g === B.STONE) &&
-            (w.getLight(x, y + 1, z) >> 4) === 15) best = [x, y + 1, z];
+          while (y > WORLD_MIN_Y && !SOLID[w.getBlock(x, y, z)] && !isWaterId(w.getBlock(x, y, z))) y--;
+          if (!ground(w.getBlock(x, y, z)) || (w.getLight(x, y + 1, z) >> 4) !== 15) continue;
+          if (p.collides(w, x + 0.5, y + 1.01, z + 0.5, PLAYER_H)) continue;
+          best = [x, y + 1, z];
         }
         if (!best) {
           let y = WORLD_MAX_Y - 1;
