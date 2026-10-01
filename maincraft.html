@@ -9000,9 +9000,9 @@ const DX6 = [1, -1, 0, 0, 0, 0], DY6 = [0, 0, 1, -1, 0, 0], DZ6 = [0, 0, 0, 0, 1
 
 // ---- player.js ----
 'use strict';
-// Player physics (main thread). Units: blocks, seconds.
+// Player physics (main thread): Minecraft's movement, one step per game tick (1/20 s).
 
-const PLAYER_W = 0.6, PLAYER_H = 1.8, PLAYER_SNEAK_H = 1.5, SWIM_H = 0.85, EYE = 1.62;
+const PLAYER_W = 0.6, PLAYER_H = 1.8, PLAYER_SNEAK_H = 1.5, SWIM_H = 0.6, EYE = 1.62;
 
 class Player {
   constructor() {
@@ -9013,15 +9013,14 @@ class Player {
     this.onGround = false; this.flying = false; this.sneaking = false; this.sprinting = false;
     this.inWater = false; this.headInWater = false; this.inLava = false; this.onLadder = false; this.inWeb = false;
     this.swimming = false;
-    this.fallStart = null;
-    this.stepAcc = 0;
-    this.bob = 0; this.bobAmt = 0;          // limb swing of the player model
+    this.bob = 0; this.bobAmt = 0;          // limb swing of the player model (position, amount)
     this.walkDist = 0; this.bobA = 0;       // Minecraft view bobbing: distance walked x0.6, amplitude
     this.hitWall = false;
-    this.fallDamage = 0;
+    this.fallDamage = 0; this.fallDist = 0; this.noJumpDelay = 0; this.crouching = false;
     this.eyeOffset = EYE;
   }
-  eye() { return [this.pos[0], this.pos[1] + this.eyeOffset, this.pos[2]]; }
+  // eye at the drawn (interpolated) position, as Minecraft's camera and block picking use
+  eye() { const r = this.rpos || this.pos; return [r[0], r[1] + (this.reye ?? this.eyeOffset), r[2]]; }
   look() {
     const cp = Math.cos(this.pitch);
     return [Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp];
@@ -9073,152 +9072,203 @@ class Player {
     return 0;
   }
 
-  update(world, dt, input, mode) {
-    const p = this.pos, v = this.vel, px0 = p[0], pz0 = p[2];
-    // stand back up (from sneak / swim pose) when there is room
-    if (this.h < PLAYER_H && !this.collides(world, p[0], p[1], p[2], PLAYER_H)) this.h = PLAYER_H;
+  // One game tick (1/20 s) of Minecraft's player movement, following LocalPlayer.aiStep,
+  // LivingEntity.aiStep / travel / move and Player.travel. Inside, velocity is in blocks per tick
+  // as in Minecraft; this.vel keeps blocks per second for the rest of the game. The camera and the
+  // model are drawn between the last two ticks (interp).
+  tick(world, input, mode) {
+    const p = this.pos;
+    this.prev = [p[0], p[1], p[2]]; this.prevOf = p;
+    this.eyePrev = this.eyeOffset; this.walkPrev = this.walkDist; this.bobAPrev = this.bobA; this.limbPrev = this.bob;
+    const v = [this.vel[0] / 20, this.vel[1] / 20, this.vel[2] / 20];
     const bAt = (x, y, z) => world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z));
     const k = input.keys;
+    // ---- input (LocalPlayer): forward / strafe impulses
     let fx = 0, fz = 0;
     if (k.forward) fz -= 1; if (k.back) fz += 1; if (k.left) fx -= 1; if (k.right) fx += 1;
     if (input.joy) { fx += input.joy[0]; fz += input.joy[1]; }
     const len = Math.hypot(fx, fz);
     if (len > 1) { fx /= len; fz /= len; }
-    const moving = len > 0.01;
-    const sneakKey = !!k.sneak;
-    const sneakPose = sneakKey && this.onGround && !this.flying;
-    let sprint = moving && fz < -0.3 && !!(k.sprint || this.sprintLatch) && !sneakPose;   // Minecraft: sprint only forward
-    if (mode === 'survival' && input.hunger !== undefined && input.hunger <= 6) sprint = false;
-    this.sprinting = sprint;
-    // Minecraft speeds (blocks/s): walk 4.317, sprint 5.612, sneak 1.295, creative flight 10.92 / 21.6
-    let speed = this.flying ? (sprint ? 21.6 : 10.92) : sprint ? 5.612 : 4.317;
-    if (sneakPose) speed = 1.3;
-    const ground = this.onGround && !this.flying ? bAt(p[0], p[1] - 0.01, p[2]) : 0;
-    if (ground === B.SOUL_SAND) speed *= 0.4;
-    const feetB = bAt(p[0], p[1] + 0.2, p[2]), midB = bAt(p[0], p[1] + 1.1, p[2]);
-    this.inWeb = !this.flying && (feetB === B.COBWEB || midB === B.COBWEB);
-    if (this.inWeb) speed *= 0.22;
-    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
-    const wx = -fz * sy + fx * cy, wz = fz * cy + fx * sy;
-    let accel = 12;
-    if (ground === B.ICE || ground === B.PACKED_ICE) accel = 2.2; else if (ground === B.BLUE_ICE) accel = 1.3;
-    // velocity follows the input at Minecraft's rates: ground friction 0.546/tick (~12/s),
-    // air drag 0.91/tick (~1.9/s, momentum is kept in jumps), creative flight ~12/s
-    const a = Math.min(1, dt * (this.onGround || this.flying ? (this.flying ? 12 : accel) : 1.9));
-    v[0] += (wx * speed - v[0]) * a; v[2] += (wz * speed - v[2]) * a;
-    // fluids: head probe (top - 0.4) and body probe (+0.5)
-    const head = bAt(p[0], p[1] + this.h - 0.4, p[2]), body = bAt(p[0], p[1] + 0.5, p[2]), foot = bAt(p[0], p[1], p[2]);
-    const isL = id => id === B.LAVA;
-    const fl = id => isWaterId(id) || isL(id);
-    const headIn = fl(head);
-    this.inWater = headIn || fl(body);
+    const jump = !!k.jump, shift = !!k.sneak;
+    // ---- fluids and blocks around the body
+    const fluid = this.fluidDepth(world);
+    this.inWater = fluid.water > 0; this.inLava = fluid.lava > 0;
     this.headInWater = isWaterId(bAt(p[0], p[1] + this.eyeOffset, p[2]));
-    this.inLava = isL(head) || isL(body) || isL(foot);
-    let ladder = false;
-    if (!this.flying) {
-      const y0 = Math.floor(p[1]), hw = PLAYER_W / 2;
-      for (let x = Math.floor(p[0] - hw); x <= Math.floor(p[0] + hw) && !ladder; x++)
-        for (let z = Math.floor(p[2] - hw); z <= Math.floor(p[2] + hw); z++) {
-          const id = world.getBlock(x, y0, z);
-          if ((FLAGS[id] & BF_CLIMB) || SHAPE[id] === SH.LADDER || SHAPE[id] === SH.VINE) { ladder = true; break; }
-        }
-    }
-    this.onLadder = ladder;
-    const jump = !!k.jump, down = sneakKey;
-    this.swimming = false;
-    if (this.flying) {
-      let vy = 0; if (jump) vy += 1; if (down) vy -= 1;
-      v[1] += (vy * 8 - v[1]) * Math.min(1, dt * 10);
-    } else if (this.inWater) {
-      const sw = sprint && headIn;
-      this.swimming = sw;
-      if (sw) {
-        if (this.h > SWIM_H) this.h = SWIM_H;
-        const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
-        const tx = (-fz * sy * cp + fx * cy) * speed, tz = (fz * cy * cp + fx * sy) * speed, ty = -fz * sp * speed;
-        const aa = Math.min(1, dt * 5);
-        v[0] += (tx - v[0]) * aa; v[2] += (tz - v[2]) * aa; v[1] += (ty - v[1]) * aa;
-        if (jump) v[1] += 10 * dt; if (down) v[1] -= 14 * dt;
-        if (v[1] > speed) v[1] = speed; if (v[1] < -speed) v[1] = -speed;
-      } else {
-        v[1] -= 5.5 * dt; if (jump) v[1] += 16 * dt; if (down) v[1] -= 22 * dt;
-        const minV = down ? -5 : -3.2;
-        if (v[1] < minV) v[1] = minV;
-        if (v[1] > 3.4 && performance.now() > (this.boostUntil || 0)) v[1] = 3.4;
-        const damp = Math.min(1, dt * (sprint ? 0.8 : 2));
-        v[0] *= 1 - damp; v[2] *= 1 - damp;
+    const feet = bAt(p[0], p[1], p[2]);
+    this.onLadder = !this.flying && ((FLAGS[feet] & BF_CLIMB) !== 0 || SHAPE[feet] === SH.LADDER || SHAPE[feet] === SH.VINE);
+    this.inWeb = !this.flying && (feet === B.COBWEB || bAt(p[0], p[1] + 1.1, p[2]) === B.COBWEB);
+    // ---- sprinting and swimming (LocalPlayer.aiStep / Player.updateSwimming)
+    const forward = -fz >= 0.8;
+    const canSprint = mode !== 'survival' || this.flying || input.hunger === undefined || input.hunger > 6;
+    if (!this.sprinting && forward && canSprint && (k.sprint || this.sprintLatch) && !this.crouching && (!this.inWater || this.headInWater)) this.sprinting = true;
+    if (this.sprinting && (!forward || !canSprint || (this.hitWall && !this.swimming) || (this.inWater && !this.headInWater && !this.swimming))) this.sprinting = false;
+    this.swimming = !this.flying && this.sprinting && (this.swimming ? this.inWater : this.headInWater);
+    if (this.swimming && !this.inWater) this.swimming = false;
+    // pose: swimming 0.6 high, crouching 1.5, standing 1.8 (when there is room)
+    this.crouching = shift && !this.flying && !this.swimming;
+    const wantH = this.swimming ? SWIM_H : this.crouching ? PLAYER_SNEAK_H : PLAYER_H;
+    if (wantH < this.h || !this.collides(world, p[0], p[1], p[2], wantH)) this.h = wantH;
+    else if (this.h < PLAYER_SNEAK_H && wantH > PLAYER_SNEAK_H && !this.collides(world, p[0], p[1], p[2], PLAYER_SNEAK_H)) this.h = PLAYER_SNEAK_H;
+    this.sneaking = this.h === PLAYER_SNEAK_H && !this.flying && this.onGround;
+    // impulses: x0.3 while crouching (or squeezed into the crawl pose), x0.98 always
+    const slow = this.crouching || (this.h < PLAYER_SNEAK_H && !this.swimming) ? 0.3 : 1;
+    const ix = fx * slow * 0.98, iz = fz * slow * 0.98;
+    // creative flight: jump / shift move up and down by 3 x flying speed per tick
+    if (this.flying) v[1] += ((jump ? 1 : 0) - (shift ? 1 : 0)) * 0.15;
+    // ---- LivingEntity.aiStep
+    if (this.noJumpDelay > 0) this.noJumpDelay--;
+    for (let i = 0; i < 3; i++) if (Math.abs(v[i]) < 0.003) v[i] = 0;
+    if (jump && !this.flying) {
+      const depth = Math.max(fluid.water, fluid.lava), thr = this.eyeOffset < 0.4 ? 0 : 0.4;
+      if (depth > 0 && !(this.onGround && depth <= thr)) v[1] += 0.04;            // swim up
+      else if (this.onGround && this.noJumpDelay === 0) {
+        v[1] = 0.42;
+        if (this.sprinting) { v[0] += Math.sin(this.yaw) * 0.2; v[2] -= Math.cos(this.yaw) * 0.2; }
+        this.noJumpDelay = 10;
       }
-    } else if (ladder) {
-      v[1] = jump ? 4 : (down || k.back) ? -4 : moving ? 2.6 : -1.4;
+    } else this.noJumpDelay = 0;
+    // ---- travel
+    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+    const moveRelative = (speed) => {
+      let ax = ix, az = iz;
+      const l2 = ax * ax + az * az;
+      if (l2 < 1e-7) return;
+      if (l2 > 1) { const l = Math.sqrt(l2); ax /= l; az /= l; }
+      ax *= speed; az *= speed;
+      v[0] += -az * sy + ax * cy; v[2] += az * cy + ax * sy;
+    };
+    if (this.swimming) {
+      // Player.travel: swimming steers vertically toward the look direction
+      const ly = Math.sin(this.pitch), d4 = ly < -0.2 ? 0.085 : 0.06;
+      if (ly <= 0 || jump || isWaterId(bAt(p[0], p[1] + 0.9, p[2]))) v[1] += (ly - v[1]) * d4;
+    }
+    const vy0 = v[1], falling = v[1] <= 0, wasGround = this.onGround;
+    const fluidFall = () => {
+      if (this.sprinting) return;
+      v[1] = falling && Math.abs(v[1] - 0.005) >= 0.003 && Math.abs(v[1] - 0.005) < 0.003 ? -0.003 : v[1] - 0.005;
+    };
+    if (this.inWater && !this.flying) {
+      const f = this.sprinting ? 0.9 : 0.8;
+      moveRelative(0.02);
+      const y0 = p[1];
+      this.move(world, v, shift, wasGround);
+      if (this.hitWall && this.onLadder) v[1] = 0.2;
+      v[0] *= f; v[1] *= 0.8; v[2] *= f;
+      fluidFall();
+      if (this.hitWall && !this.collidesAt(world, p[0] + v[0], p[1] + v[1] + 0.6 - p[1] + y0, p[2] + v[2])) v[1] = 0.3;
+    } else if (this.inLava && !this.flying) {
+      moveRelative(0.02);
+      const y0 = p[1];
+      this.move(world, v, shift, wasGround);
+      if (fluid.lava <= 0.4) { v[0] *= 0.5; v[1] *= 0.8; v[2] *= 0.5; fluidFall(); }
+      else { v[0] *= 0.5; v[1] *= 0.5; v[2] *= 0.5; }
+      v[1] -= 0.02;
+      if (this.hitWall && !this.collidesAt(world, p[0] + v[0], p[1] + v[1] + 0.6 - p[1] + y0, p[2] + v[2])) v[1] = 0.3;
     } else {
-      v[1] -= 23 * dt;
-      if (this.inWeb && v[1] < -1.2) v[1] = -1.2;
-      if (v[1] < -78.4) v[1] = -78.4;   // Minecraft terminal velocity
-      if (jump && this.onGround) {
-        v[1] = 7.6; this.onGround = false;
-        // sprint jump boost. Minecraft adds 0.2 blocks/tick, part of which its landing tick's friction
-        // takes back; with this continuous model 1.9 blocks/s gives Minecraft's ~7.1 blocks/s average
-        // for sprint jumping (steady state: 5.612 + 0.8 * boost)
-        if (sprint) { v[0] += Math.sin(this.yaw) * 1.9; v[2] -= Math.cos(this.yaw) * 1.9; }
+      const below = bAt(p[0], p[1] - 0.5, p[2]);
+      const bf = below === B.ICE || below === B.PACKED_ICE ? 0.98 : below === B.BLUE_ICE ? 0.989 : below === B.SLIME_BLOCK ? 0.8 : 0.6;
+      const f3 = this.onGround ? bf * 0.91 : 0.91;
+      const base = this.sprinting ? 0.13 : 0.1;
+      const air = this.flying ? (this.sprinting ? 0.1 : 0.05) : this.sprinting ? 0.026 : 0.02;
+      moveRelative(this.onGround ? base * (0.216 / (bf * bf * bf)) : air);
+      if (this.onLadder) {
+        // LivingEntity.handleOnClimbable
+        v[0] = Math.max(-0.15, Math.min(0.15, v[0])); v[2] = Math.max(-0.15, Math.min(0.15, v[2]));
+        v[1] = Math.max(v[1], -0.15);
+        if (v[1] < 0 && shift) v[1] = 0;
+        this.fallDist = 0;
       }
+      this.move(world, v, shift, wasGround);
+      if ((this.hitWall || jump) && this.onLadder) v[1] = 0.2;
+      if (!this.flying) v[1] -= 0.08;
+      v[0] *= f3; v[1] *= 0.98; v[2] *= f3;
     }
-    const sneaking = sneakKey && this.onGround && !this.flying && !this.inWater && !ladder;
-    this.sneaking = sneaking;
-    // ground contact is only established by an actual collision below during this frame's movement
-    this.onGround = false; this.hitWall = false;
-    let dx = v[0] * dt, dz = v[2] * dt;
-    if (sneaking) {
-      // don't walk off edges: shrink the step until there's support 0.6 below
+    if (this.flying) v[1] = vy0 * 0.6;
+    // creative flight ends on touching the ground
+    if (this.flying && this.onGround) this.flying = false;
+    // ---- fall damage (Minecraft: ceil(fall distance - 3) on landing)
+    if (this.flying || this.inWater || this.onLadder || this.inWeb) this.fallDist = 0;
+    else if (this.onGround) { if (this.fallDist > 3) this.fallDamage += Math.ceil(this.fallDist - 3); this.fallDist = 0; }
+    else if (p[1] < this.prev[1]) this.fallDist += this.prev[1] - p[1];
+    this.vel[0] = v[0] * 20; this.vel[1] = v[1] * 20; this.vel[2] = v[2] * 20;
+    // ---- camera eye height eases toward the pose (Camera: 0.5 per tick); view bobbing
+    const eyeT = this.h === SWIM_H ? 0.4 : this.h === PLAYER_SNEAK_H ? 1.27 : EYE;
+    this.eyeOffset += (eyeT - this.eyeOffset) * 0.5;
+    const moved = Math.hypot(p[0] - this.prev[0], p[2] - this.prev[2]);
+    this.walkDist += moved * 0.6;
+    this.bobA += ((this.onGround && !this.swimming ? Math.min(0.1, moved) : 0) - this.bobA) * 0.4;
+    // limb swing of the player model (LivingEntity.calculateEntityAnimation)
+    this.bobAmt += (Math.min(1, moved * 4) - this.bobAmt) * 0.4;
+    this.bob += this.bobAmt;
+    if (p[1] < WORLD_MIN_Y - 64) { p[1] = WORLD_MIN_Y - 64; this.vel[1] = 0; }
+  }
+  // Fluid heights at the body (Minecraft's updateFluidHeightAndDoFluidPushing, along the centre
+  // column): how deep the feet are in water / lava, 8/9 of a block for a full source block.
+  fluidDepth(world) {
+    const p = this.pos, x = Math.floor(p[0]), z = Math.floor(p[2]);
+    let water = 0, lava = 0;
+    for (let y = Math.floor(p[1]); y <= Math.floor(p[1] + this.h - 0.001); y++) {
+      const id = world.getBlock(x, y, z), w = isWaterId(id), l = id === B.LAVA;
+      if (!w && !l) continue;
+      let top = 8 / 9;
+      if (!(FLAGS[id] & BF_AQUATIC)) { const m = world.getMeta(x, y, z); if (!(m & 8)) top = (8 - (m & 7)) / 9; }
+      const up = world.getBlock(x, y + 1, z);
+      if ((w && isWaterId(up)) || (l && up === B.LAVA)) top = 1;
+      const d = y + top - p[1];
+      if (d <= 0) continue;
+      if (w) water = Math.max(water, d); else lava = Math.max(lava, d);
+    }
+    return { water, lava };
+  }
+  collidesAt(world, x, y, z) { return this.collides(world, x, y, z, this.h); }
+  // Entity.move: cobweb slow-down, sneaking stops at edges, collision Y first then X and Z, step
+  // up to 0.6 blocks, collided velocity components cleared, soul sand speed factor.
+  move(world, v, shift, wasGround) {
+    const p = this.pos;
+    let dx = v[0], dy = v[1], dz = v[2];
+    if (this.inWeb) { dx *= 0.25; dy *= 0.05; dz *= 0.25; v[0] = v[1] = v[2] = 0; this.fallDist = 0; }
+    if (shift && !this.flying && dy <= 0 && wasGround) {
       const st = 0.05, sup = (ox, oz) => this.collides(world, p[0] + ox, p[1] - 0.6, p[2] + oz, this.h);
       const dec = d => Math.abs(d) <= st ? 0 : d - Math.sign(d) * st;
       while (dx !== 0 && !sup(dx, 0)) dx = dec(dx);
       while (dz !== 0 && !sup(0, dz)) dz = dec(dz);
       while (dx !== 0 && dz !== 0 && !sup(dx, dz)) { dx = dec(dx); dz = dec(dz); }
-      if (dx === 0) v[0] = 0; if (dz === 0) v[2] = 0;
     }
-    for (const [ax, d] of [[0, dx], [2, dz]]) {
+    this.hitWall = false;
+    const restY = this.moveAxis(world, 1, dy);
+    this.onGround = restY !== 0 && dy < 0;
+    if (restY !== 0) v[1] = 0;
+    const order = Math.abs(dz) > Math.abs(dx) ? [[2, dz], [0, dx]] : [[0, dx], [2, dz]];
+    for (const [ax, d] of order) {
       if (!d) continue;
       const rest = this.moveAxis(world, ax, d);
       if (rest === 0) continue;
-      let stepped = false;
-      if (!this.flying && v[1] <= 0.08) {
-        const tp = [p[0], p[1] + 0.6, p[2]]; tp[ax] -= rest;
-        if (!this.collides(world, tp[0], tp[1], tp[2], this.h)) {
+      // step up (maxUpStep 0.6) when standing or landing
+      if (!this.flying && (this.onGround || wasGround)) {
+        const tp = [p[0], p[1] + 0.6, p[2]]; tp[ax] += rest * -1;
+        if (!this.collides(world, p[0], p[1] + 0.6, p[2], this.h) && !this.collides(world, tp[0], tp[1], tp[2], this.h)) {
           let y = tp[1];
-          while (y - 0.05 > p[1] && !this.collides(world, tp[0], y - 0.05, tp[2], this.h)) y -= 0.05;
-          p[ax] = tp[ax]; p[1] = y; this.moveAxis(world, 1, -0.06); this.onGround = true; stepped = true;
+          while (y - 0.01 > p[1] && !this.collides(world, tp[0], y - 0.01, tp[2], this.h)) y -= 0.01;
+          p[ax] = tp[ax]; p[1] = y; this.onGround = true;
+          continue;
         }
       }
-      if (!stepped) { v[ax] = 0; this.hitWall = true; }
+      v[ax] = 0; this.hitWall = true;
     }
-    const vd = v[1] * dt;
-    if (this.moveAxis(world, 1, vd) !== 0) { if (vd < 0) this.onGround = true; v[1] = 0; }
-    if (sneaking && this.h > PLAYER_SNEAK_H && !this.collides(world, p[0], p[1], p[2], PLAYER_SNEAK_H)) this.h = PLAYER_SNEAK_H;
-    // climb out of water onto a ledge
-    if (this.inWater && this.hitWall && moving && !this.flying && !down) {
-      const hl = Math.hypot(wx, wz) || 1, qx = p[0] + wx / hl * 0.4, qz = p[2] + wz / hl * 0.4;
-      for (let y = 0.6; y <= 1.5 + 1e-6; y += 0.45) {
-        if (!this.collides(world, qx, p[1] + y, qz, this.h)) { v[1] = Math.max(v[1], headIn ? 4.5 : 7); this.boostUntil = performance.now() + 350; break; }
-      }
+    if (this.onGround && !this.flying) {
+      const b = world.getBlock(Math.floor(p[0]), Math.floor(p[1] - 0.5), Math.floor(p[2]));
+      if (b === B.SOUL_SAND) { v[0] *= 0.4; v[2] *= 0.4; }
     }
-    if (this.flying && this.onGround) this.flying = false;
-    this.eyeOffset += (this.h - 0.18 - this.eyeOffset) * Math.min(1, dt * 14);
-    // fall tracking
-    this.fallDamage = 0;
-    if (this.flying || this.inWater || ladder || this.inWeb) this.fallStart = null;
-    else if (!this.onGround) { if (this.fallStart === null || p[1] > this.fallStart) this.fallStart = p[1]; }
-    else if (this.fallStart !== null) { const d = this.fallStart - p[1]; if (d > 3.5) this.fallDamage = Math.floor(d - 3); this.fallStart = null; }
-    // view bobbing as in Minecraft: amplitude eases (0.4 per tick) toward min(0.1, blocks moved per
-    // tick) while on the ground, walk distance grows by 0.6 per block
-    const moved = Math.hypot(p[0] - px0, p[2] - pz0);
-    this.walkDist += moved * 0.6;
-    const bobT = this.onGround && !this.flying && dt > 0 ? Math.min(0.1, moved / dt / 20) : 0;
-    this.bobA += (bobT - this.bobA) * (1 - Math.pow(0.6, dt * 20));
-    // limb swing for the third-person model
-    const hs = Math.hypot(v[0], v[2]);
-    if (this.onGround && !this.flying && hs > 0.1) { this.bob += dt * hs * 1.9; this.bobAmt += (Math.min(1, hs / 5) - this.bobAmt) * Math.min(1, dt * 8); }
-    else this.bobAmt += (0 - this.bobAmt) * Math.min(1, dt * 6);
-    if (p[1] < WORLD_MIN_Y - 64) { p[1] = WORLD_MIN_Y - 64; v[1] = 0; }
+  }
+  // drawn position between the last two ticks (alpha 0..1); a teleport (pos replaced) snaps
+  interp(alpha) {
+    const p = this.pos, q = this.prevOf === p ? this.prev : null, r = this.rpos || (this.rpos = [0, 0, 0]);
+    for (let i = 0; i < 3; i++) r[i] = q ? q[i] + (p[i] - q[i]) * alpha : p[i];
+    const L = (a, b) => a === undefined || !q ? b : a + (b - a) * alpha;
+    this.reye = L(this.eyePrev, this.eyeOffset);
+    this.rwalk = L(this.walkPrev, this.walkDist);
+    this.rbobA = L(this.bobAPrev, this.bobA);
+    this.rlimb = L(this.limbPrev, this.bob);
   }
 }
 
@@ -9378,9 +9428,11 @@ const MOB_DEFS = {
 };
 // Ground mobs move like Minecraft's: MoveControl sets both the speed and the forward input to
 // modifier * movement-speed attribute, ground drag is 0.546 per tick, so the steady speed is
-// (modifier * attribute)^2 * 44.05 blocks/s. speed = that at modifier 1; a goal's modifier m
-// therefore scales it by m * m (panic, tempt, wander, follow parent).
-for (const k in MOB_DEFS) { const d = MOB_DEFS[k]; if (d.attr) d.speed = 44.05 * d.attr * d.attr; }
+// (modifier * attribute)^2 * 0.98 / (1 - 0.546) * 20 = 43.17 (modifier * attribute)^2 blocks/s.
+// speed = that at modifier 1; a goal's modifier m therefore scales it by m * m (panic, tempt,
+// wander, follow parent).
+const MOB_SPEED_K = 0.98 / (1 - 0.546) * 20;
+for (const k in MOB_DEFS) { const d = MOB_DEFS[k]; if (d.attr) d.speed = MOB_SPEED_K * d.attr * d.attr; }
 const goalSpeed = (speed, m) => speed * m * m;
 // slime sizes as in the original: [size, hp, contact damage, speed]
 const SLIME_SIZES = { 4: [16, 4, 2.1], 2: [4, 2, 2.7], 1: [1, 0, 3.2] };
@@ -9519,7 +9571,7 @@ class Entities {
     const e = { type, pos: [x, y, z], vel: [0, 0, 0], wish: [0, 0, 0], bodyYaw: yaw, tgtYaw: yaw, headYaw: yaw, hp: d.hp, w: d.w, h: d.h,
       onGround: false, walk: 0, walkAmt: 0, hurtT: 0, deathT: 0, age: 0, fire: 0,
       // behaviour state (see ai / aiFish)
-      aiT: Math.random() * 2, tgt: null, fleeT: 0, angryT: 0, kbT: 0, jumpT: 0, atkT: 0, shootT: Math.random(), fuse: -1,
+      aiT: Math.random() * 2, tgt: null, fleeT: 0, angryT: 0, noJump: 0, wantJump: false, atkT: 0, shootT: Math.random(), fuse: -1,
       leapT: 1.5 + Math.random() * 1.5, hopT: Math.random() * 0.8, stuckT: 0, detourT: 0, detX: 0, detZ: 0,
       path: null, pathI: 0, pathT: Math.random() * 0.6, pathTx: 0, pathTz: 0, tpT: 0, stareT: 0, burnT: 0, wetT: 0, lavaT: 0,
       dryT: 0, swimT: 0, huntT: 0, prey: null, esc: null, escT: 0, escD: null, fleeing: false, aggro: false,
@@ -9718,7 +9770,7 @@ class Entities {
       this.walkPhysics(e, d, dt, inW);
       if (d.slime && e.onGround && !wasGround) e.tsq = -0.5;
       if (d.slime) { e.squish += (e.tsq - e.squish) * 0.5; e.tsq *= 0.6; }
-      if (e.onGround) { const fh = e.fallY - e.pos[1]; if (fh > 3.5 && e.type !== 'chicken' && !d.slime && !inW) this.damageMob(e, Math.floor(fh - 3), null); e.fallY = e.pos[1]; }
+      if (e.onGround) { const fh = e.fallY - e.pos[1]; if (fh > 3 && e.type !== 'chicken' && !d.slime && !inW) this.damageMob(e, Math.ceil(fh - 3), null); e.fallY = e.pos[1]; }
       // stuck against something: take a short detour sideways
       if (wl > 0.5) {
         const moved = Math.hypot(e.pos[0] - ox, e.pos[2] - oz);
@@ -9729,9 +9781,10 @@ class Entities {
           e.detX = e.pos[0] + e.wish[2] / wl * 5 * sgn; e.detZ = e.pos[2] - e.wish[0] / wl * 5 * sgn;
         }
       } else e.stuckT = 0;
-      const hs = Math.hypot(e.vel[0], e.vel[2]);
-      e.walk += hs * dt * 1.9;
-      e.walkAmt += ((hs > 0.3 ? Math.min(1, hs / 2.2) : 0) - e.walkAmt) * Math.min(1, dt * 8);
+      // limb swing (LivingEntity.calculateEntityAnimation): amount eases 0.4 a tick toward
+      // min(4 x distance moved, 1), the swing position advances by the amount
+      e.walkAmt += (Math.min(1, Math.hypot(e.pos[0] - ox, e.pos[2] - oz) * 4) - e.walkAmt) * 0.4;
+      e.walk += e.walkAmt;
     }
   }
 
@@ -9779,7 +9832,8 @@ class Entities {
         const hd = Math.hypot(dx, dz);
         if (e.onGround && hd >= 2 && hd <= 4 && Math.random() < 1 - Math.pow(0.8, dt * 20)) {
           const l = hd || 1;
-          e.vel[0] = dx / l * 7; e.vel[2] = dz / l * 7; e.vel[1] = 6.5; e.kbT = 0.45;
+          // LeapAtTargetGoal(0.4): 0.4 toward the target plus 0.2 x velocity, 0.4 up (blocks/tick)
+          e.vel[0] = dx / l * 8 + e.vel[0] * 0.2; e.vel[2] = dz / l * 8 + e.vel[2] * 0.2; e.vel[1] = 8;
         }
         if (h < 1.6 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
         return;
@@ -9961,14 +10015,16 @@ class Entities {
   hop(e, dx, dz, speed) {
     const l = Math.hypot(dx, dz) || 1;
     e.wish[0] = dx / l * speed; e.wish[2] = dz / l * speed;
-    e.vel[0] = e.wish[0]; e.vel[2] = e.wish[2]; e.vel[1] = 7.4; e.kbT = 0.4;
+    e.vel[0] = e.wish[0]; e.vel[2] = e.wish[2]; e.vel[1] = 8.4;   // slime jump power 0.42
     e.bodyYaw = e.tgtYaw = Math.atan2(dx, -dz);
     e.tsq = 1; e.onGround = false;
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
     g.hurt(dmg);
-    p.vel[0] += dx / l * 4; p.vel[2] += dz / l * 4; p.vel[1] = Math.max(p.vel[1], 4);
+    // LivingEntity.knockback(0.4) on the player
+    p.vel[0] = p.vel[0] / 2 + dx / l * 8; p.vel[2] = p.vel[2] / 2 + dz / l * 8;
+    if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
   }
   lightAt(e) {
     const lt = this.game.world.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.5), Math.floor(e.pos[2]));
@@ -10110,43 +10166,90 @@ class Entities {
     }
     return false;
   }
-  // walking physics (original): steer velocity toward the wish, gravity, auto jump onto one
-  // block steps, climbing spiders, turning at most 8 rad/s
+  // Walking physics, one game tick, as Minecraft's Mob: MoveControl turns the body toward the wanted
+  // direction by at most 90 degrees a tick and walks along it with speed = modifier x movement
+  // speed attribute (s; the forward input is s too), LivingEntity.travel: ground acceleration
+  // 0.98 s^2, drag 0.546 (0.91 in the air, where the acceleration is 0.02 x input), gravity 0.08
+  // and x0.98; water: acceleration 0.02 x input, drag 0.8, sinking 0.005, FloatGoal swims up
+  // (+0.04, 80% of ticks) when deeper than 0.4; jump 0.42 when a full block is in the way, steps up
+  // to 0.6 without jumping; spiders climb walls (0.2 up) like a ladder. e.vel is in blocks/s.
   walkPhysics(e, d, dt, inW) {
-    const w = this.game.world;
-    if (e.jumpT > 0) e.jumpT -= dt;
-    if (e.kbT > 0) e.kbT -= dt;
-    if (inW) e.vel[1] += (2.5 - e.vel[1]) * Math.min(1, dt * 3);
-    else {
-      e.vel[1] -= 23 * dt;
-      if (e.vel[1] < -40) e.vel[1] = -40;
-      if (e.type === 'chicken' && e.vel[1] < -2.5) e.vel[1] = -2.5;   // chickens flutter down
-    }
-    const k = e.kbT > 0 ? 1.5 : e.onGround || inW ? 10 : 2.5, a = Math.min(1, dt * k);
-    e.vel[0] += (e.wish[0] - e.vel[0]) * a; e.vel[2] += (e.wish[2] - e.vel[2]) * a;
+    const w = this.game.world, v = [e.vel[0] * 0.05, e.vel[1] * 0.05, e.vel[2] * 0.05];
+    if (e.noJump > 0) e.noJump--;
     const wl = Math.hypot(e.wish[0], e.wish[2]);
-    if (wl > 0.2) e.tgtYaw = Math.atan2(e.wish[0], -e.wish[2]);
-    let dy = e.tgtYaw - e.bodyYaw;
-    while (dy > Math.PI) dy -= 6.2832; while (dy < -Math.PI) dy += 6.2832;
-    const tr = dt * 8; e.bodyYaw += dy > tr ? tr : dy < -tr ? -tr : dy;
-    const vy = e.vel[1] * dt;
-    if (this.moveAxis(e, 1, vy)) { if (vy < 0) e.onGround = true; e.vel[1] = 0; }
-    else if (vy !== 0) e.onGround = false;
-    let blocked = false;
-    for (const ax of [0, 2]) {
-      const dd = e.vel[ax] * dt;
+    let s = 0;
+    if (wl > 0.05) {
+      e.tgtYaw = Math.atan2(e.wish[0], -e.wish[2]);
+      let dy = e.tgtYaw - e.bodyYaw;
+      while (dy > Math.PI) dy -= 6.2832; while (dy < -Math.PI) dy += 6.2832;
+      e.bodyYaw += Math.max(-Math.PI / 2, Math.min(Math.PI / 2, dy));
+      s = Math.min(1, Math.sqrt(wl / MOB_SPEED_K));
+    }
+    const fx = Math.sin(e.bodyYaw), fz = -Math.cos(e.bodyYaw), input = s * 0.98;
+    // jumping (JumpControl acts on the tick after it was asked; FloatGoal in water)
+    const depth = inW ? this.waterDepth(e) : 0;
+    if (depth > (e.h * 0.85 < 0.4 ? 0 : 0.4) && Math.random() < 0.8) v[1] += 0.04;
+    else if (e.wantJump && e.onGround && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
+    e.wantJump = false;
+    if (e.type === 'chicken' && !e.onGround && v[1] < 0) v[1] *= 0.6;   // Chicken.aiStep: flaps down
+    const wasGround = e.onGround, climb = d.climber && e.hitWall && !inW;
+    if (inW) {
+      v[0] += fx * input * 0.02; v[2] += fz * input * 0.02;
+      this.entStep(e, v, wasGround);
+      v[0] *= 0.8; v[1] *= 0.8; v[2] *= 0.8; v[1] -= 0.005;
+      if (e.hitWall && !entCollides(w, e.pos[0] + v[0], e.pos[1] + 0.6 + v[1], e.pos[2] + v[2], e.w, e.h)) v[1] = 0.3;
+    } else {
+      const acc = e.onGround ? s * input : 0.02 * input, f3 = e.onGround ? 0.546 : 0.91;
+      v[0] += fx * acc; v[2] += fz * acc;
+      if (climb) { v[0] = Math.max(-0.15, Math.min(0.15, v[0])); v[2] = Math.max(-0.15, Math.min(0.15, v[2])); v[1] = Math.max(v[1], -0.15); }
+      this.entStep(e, v, wasGround);
+      if (climb && e.hitWall) v[1] = 0.2;
+      v[1] -= 0.08;
+      v[0] *= f3; v[1] *= 0.98; v[2] *= f3;
+    }
+    e.climbing = d.climber && e.hitWall && !inW;
+    // a full block ahead: jump on the next tick
+    if (e.hitWall && e.onGround && wl > 0.05 && !d.climber) e.wantJump = true;
+    e.vel[0] = v[0] * 20; e.vel[1] = v[1] * 20; e.vel[2] = v[2] * 20;
+  }
+  // Entity.move for mobs: Y first, then X and Z (larger first); step up to 0.6 when on the ground;
+  // a collided component of the velocity is cleared.
+  entStep(e, v, wasGround) {
+    const w = this.game.world, p = e.pos;
+    e.hitWall = false;
+    const by = this.moveAxis(e, 1, v[1]);
+    e.onGround = by && v[1] < 0;
+    if (by) v[1] = 0;
+    const order = Math.abs(v[2]) > Math.abs(v[0]) ? [2, 0] : [0, 2];
+    for (const ax of order) {
+      const dd = v[ax];
       if (!dd) continue;
-      const tx = e.pos[0] + (ax === 0 ? dd : 0), tz = e.pos[2] + (ax === 2 ? dd : 0);
+      const o = p[ax];
       if (!this.moveAxis(e, ax, dd)) continue;
-      if (e.onGround && e.jumpT <= 0 && e.vel[1] <= 0 && !entCollides(w, tx, e.pos[1] + 1.01, tz, e.w, e.h)) { e.vel[1] = 8.2; e.jumpT = 0.5; e.onGround = false; }
-      else blocked = true;
+      if (wasGround || e.onGround) {
+        const t = [p[0], p[1], p[2]]; t[ax] = o + dd;
+        if (!entCollides(w, p[0], p[1] + 0.6, p[2], e.w, e.h) && !entCollides(w, t[0], t[1] + 0.6, t[2], e.w, e.h)) {
+          let y = t[1] + 0.6;
+          while (y - 0.01 > p[1] && !entCollides(w, t[0], y - 0.01, t[2], e.w, e.h)) y -= 0.01;
+          if (y - p[1] > 1e-3) { p[ax] = t[ax]; p[1] = y; e.onGround = true; continue; }
+        }
+      }
+      v[ax] = 0; e.hitWall = true;
     }
-    e.climbing = false;
-    if (d.climber && blocked && wl > 0.3 && !inW) {
-      e.climbing = true;
-      if (!this.moveAxis(e, 1, 3.4 * dt)) { e.vel[1] = 0; e.onGround = false; }
+  }
+  // depth of the feet in water along the centre column (8/9 for a full source block)
+  waterDepth(e) {
+    const w = this.game.world, x = Math.floor(e.pos[0]), z = Math.floor(e.pos[2]);
+    let dep = 0;
+    for (let y = Math.floor(e.pos[1]); y <= Math.floor(e.pos[1] + e.h); y++) {
+      const id = w.getBlock(x, y, z);
+      if (!isWaterId(id)) continue;
+      let top = 8 / 9;
+      if (!(FLAGS[id] & BF_AQUATIC)) { const m = w.getMeta(x, y, z); if (!(m & 8)) top = (8 - (m & 7)) / 9; }
+      if (isWaterId(w.getBlock(x, y + 1, z))) top = 1;
+      dep = Math.max(dep, y + top - e.pos[1]);
     }
-    e.hitWall = blocked;
+    return dep;
   }
 
   // ------------------------------------------------------------------ fish (original yp / pf)
@@ -10448,8 +10551,10 @@ class Entities {
     const d = MOB_DEFS[e.type];
     e.hp -= dmg; e.hurtT = 0.4;
     if (from) {
+      // LivingEntity.knockback(0.4): half the velocity plus 0.4 blocks/tick away, 0.4 up from the ground
       const dx = e.pos[0] - from[0], dz = e.pos[2] - from[2], l = Math.hypot(dx, dz) || 1;
-      e.vel[0] += dx / l * 6; e.vel[2] += dz / l * 6; e.vel[1] = 4.5; e.kbT = 0.3; e.onGround = false;
+      e.vel[0] = e.vel[0] / 2 + dx / l * 8; e.vel[2] = e.vel[2] / 2 + dz / l * 8;
+      if (e.onGround) e.vel[1] = Math.min(8, e.vel[1] / 2 + 8);
     }
     if (!d.hostile) e.fleeT = 4;
     if (d.aquatic) { e.esc = null; e.escT = 0; }
@@ -10504,7 +10609,7 @@ class Entities {
     }
     if (g.camMode) {
       const p = g.player;
-      const e = { type: 'player', pos: p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.bob * 2.2, walkAmt: p.bobAmt, sneak: p.sneaking, swing: g.swingT };
+      const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, swing: g.swingT };
       const v = [];
       this.buildModel(v, MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null);
       add('player', v);
@@ -10560,7 +10665,7 @@ class Entities {
     let hy = (e.rhead !== undefined ? e.rhead : e.headYaw !== undefined ? e.headYaw : by) - by;
     while (hy > Math.PI) hy -= 6.2832; while (hy < -Math.PI) hy += 6.2832;
     hy = Math.max(-1.2, Math.min(1.2, hy));
-    let walkA = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 3.3) * 1.2 * e.walkAmt;
+    let walkA = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 0.6662) * 1.4 * e.walkAmt;
     if (m.halfSwing) walkA = Math.max(-0.4, Math.min(0.4, walkA * 0.5));
     // model scale: fixed per model, slime size with MC's squish (wide on landing, tall when jumping)
     let S = (m.scale || 1) * (e.size ? e.size * 0.999 : 1) * (e.baby ? 0.5 : 1), sxz = 1, syy = 1;
@@ -10588,7 +10693,7 @@ class Entities {
       else if (an === 'wingR') rz += e.onGround === false ? Math.sin(t * 30) * 0.8 : 0;
       else if (an === 'wingL') rz -= e.onGround === false ? Math.sin(t * 30) * 0.8 : 0;
       else if (an === 'tail') ry += tail;
-      else if (an && an.startsWith('spider')) { const k = +an.slice(-1); ry += Math.sin(e.walk * 3.3 + k * 1.57) * 0.4 * e.walkAmt; rz += Math.abs(Math.cos(e.walk * 3.3 + k)) * 0.2 * e.walkAmt * (an[6] === 'R' ? 1 : -1); }
+      else if (an && an.startsWith('spider')) { const k = +an.slice(-1); const sw = e.rwalk !== undefined ? e.rwalk : e.walk; ry += Math.cos(sw * 1.3324 + k * 1.5708) * 0.4 * e.walkAmt; rz += Math.abs(Math.sin(sw * 0.6662 + k * 1.5708)) * 0.4 * e.walkAmt * (an[6] === 'R' ? 1 : -1); }
       const inf = part.inflate || 0;
       const [bx, byy, bz, bw, bh, bd] = part.box;
       // y-up space
@@ -11468,7 +11573,7 @@ class Game {
     this.ents = new Entities(this);
     this.r.buildClouds(meta.seed | 0);
     const p = this.player;
-    p.vel = [0, 0, 0]; p.flying = false; p.fallStart = null;
+    p.vel = [0, 0, 0]; p.flying = false; p.fallDist = 0;
     if (meta.player) {
       p.pos = meta.player.pos.slice(); p.yaw = meta.player.yaw; p.pitch = meta.player.pitch; p.flying = !!meta.player.flying;
       this.spawn = meta.spawn || p.pos.slice();
@@ -11918,10 +12023,13 @@ class Game {
     // only simulate when the column under the player is present
     if (!w.isLoaded(Math.floor(p.pos[0]), Math.floor(p.pos[2]))) return;
     const wasWater = p.inWater;
-    // equal substeps (<= 1/60 s); a tiny leftover step would lose ground contact and swallow jumps
-    if (dt < 1e-4) return;
-    const n = Math.max(1, Math.ceil(dt * 60 - 1e-3)), s = dt / n;
-    for (let i = 0; i < n; i++) p.update(w, s, inp, this.mode);
+    // player movement runs in game ticks (20/s) like Minecraft's; drawn between the last two
+    this.pAcc = (this.pAcc || 0) + dt;
+    let n = 0;
+    p.fallDamage = 0;
+    while (this.pAcc >= 0.05 && n < 10) { this.pAcc -= 0.05; p.tick(w, inp, this.mode); n++; }
+    if (n >= 10) this.pAcc = 0;
+    p.interp(this.pAcc / 0.05);
     if (!wasWater && p.inWater && p.vel[1] < -4) Sfx.splash();
     // footsteps
     const hs = Math.hypot(p.vel[0], p.vel[2]);
@@ -11946,7 +12054,7 @@ class Game {
     const e = p.eye();
     // Minecraft bobView: view-space offset (sin(pi f) a / 2, -|cos(pi f) a|), roll sin(pi f) a 3 deg,
     // nod |cos(pi f - 0.2) a| 5 deg, with f = -walkDist and a = bob amplitude
-    const f = -p.walkDist, a = Settings.bobView ? p.bobA : 0, B = this.bobView || (this.bobView = new Float32Array(4));
+    const f = -p.rwalk, a = Settings.bobView ? p.rbobA : 0, B = this.bobView || (this.bobView = new Float32Array(4));
     B[0] = Math.sin(f * Math.PI) * a * 0.5; B[1] = -Math.abs(Math.cos(f * Math.PI) * a);
     B[2] = Math.sin(f * Math.PI) * a * 3 * Math.PI / 180; B[3] = Math.abs(Math.cos(f * Math.PI - 0.2) * a) * 5 * Math.PI / 180;
     this.r.bob = B;
@@ -12343,7 +12451,7 @@ class Game {
     const p = this.player;
     Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false });
     this.inv = this.inv.map(() => null);
-    p.pos = (this.spawn || [0.5, 100, 0.5]).slice(); p.vel = [0, 0, 0]; p.fallStart = null;
+    p.pos = (this.spawn || [0.5, 100, 0.5]).slice(); p.vel = [0, 0, 0]; p.fallDist = 0;
     this.updateHotbar(); this.updateSurvivalHud();
     UI.hideDeath();
   }
@@ -12710,36 +12818,6 @@ class Game {
         out.push(C[c], C[c + 1], C[c + 2], left ? ua : ub, i < 2 ? vb : va, 0, cr, cg, cb, 1);
       }
     }
-  }
-  drawPlayerModel(env) {
-    const r = this.r, p = this.player, cam = this.cam;
-    const tex = r.entityTexture('player');
-    if (!tex) return;
-    const li = this.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env);
-    const v = [];
-    const yaw = p.yaw;
-    const walk = Math.sin(p.bob * Math.PI) * 0.7 * p.bobAmt;
-    const sneak = p.sneaking ? 0.3 : 0;
-    const part = (px, py, pz, rx, fn) => (x, y, z) => {
-      // rotate around pivot (px,py,pz) by rx (pitch-like around x), then body yaw
-      let y1 = y * Math.cos(rx) - z * Math.sin(rx), z1 = y * Math.sin(rx) + z * Math.cos(rx);
-      let X = x + px, Y = y1 + py, Z = z1 + pz;
-      if (fn) [X, Y, Z] = fn(X, Y, Z);
-      const cy = Math.cos(yaw), sy = Math.sin(yaw);
-      const wx = X * cy - Z * sy, wz = X * sy + Z * cy;
-      return [p.pos[0] + wx - cam[0], p.pos[1] + Y - cam[1], p.pos[2] + wz - cam[2]];
-    };
-    const s = 1 / 16;
-    const headPitch = (fn) => part(0, 24 * s - sneak * 0.3, 0, -p.pitch, fn);
-    this.pushModelBox(v, headPitch(), -4 * s, 0, -4 * s, 4 * s, 8 * s, 4 * s, 0, 0, 8, 8, 8, 64, 64, li);
-    this.pushModelBox(v, part(0, 12 * s, 0, sneak), -4 * s, 0, -2 * s, 4 * s, 12 * s, 2 * s, 16, 16, 8, 12, 4, 64, 64, li);
-    this.pushModelBox(v, part(-6 * s, 22 * s, 0, walk), -2 * s, -10 * s, -2 * s, 2 * s, 2 * s, 2 * s, 40, 16, 4, 12, 4, 64, 64, li);
-    this.pushModelBox(v, part(6 * s, 22 * s, 0, -walk), -2 * s, -10 * s, -2 * s, 2 * s, 2 * s, 2 * s, 32, 48, 4, 12, 4, 64, 64, li);
-    this.pushModelBox(v, part(-2 * s, 12 * s, 0, -walk), -2 * s, -12 * s, -2 * s, 2 * s, 0, 2 * s, 0, 16, 4, 12, 4, 64, 64, li);
-    this.pushModelBox(v, part(2 * s, 12 * s, 0, walk), -2 * s, -12 * s, -2 * s, 2 * s, 0, 2 * s, 16, 48, 4, 12, 4, 64, 64, li);
-    r.gl.disable(r.gl.CULL_FACE);
-    r.drawEnt(r.f32(v), v.length / 10, tex, env);
-    r.gl.enable(r.gl.CULL_FACE);
   }
 
   // ------------------------------------------------------------------ HUD

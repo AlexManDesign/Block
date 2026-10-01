@@ -108,7 +108,7 @@ class Game {
     this.ents = new Entities(this);
     this.r.buildClouds(meta.seed | 0);
     const p = this.player;
-    p.vel = [0, 0, 0]; p.flying = false; p.fallStart = null;
+    p.vel = [0, 0, 0]; p.flying = false; p.fallDist = 0;
     if (meta.player) {
       p.pos = meta.player.pos.slice(); p.yaw = meta.player.yaw; p.pitch = meta.player.pitch; p.flying = !!meta.player.flying;
       this.spawn = meta.spawn || p.pos.slice();
@@ -558,10 +558,13 @@ class Game {
     // only simulate when the column under the player is present
     if (!w.isLoaded(Math.floor(p.pos[0]), Math.floor(p.pos[2]))) return;
     const wasWater = p.inWater;
-    // equal substeps (<= 1/60 s); a tiny leftover step would lose ground contact and swallow jumps
-    if (dt < 1e-4) return;
-    const n = Math.max(1, Math.ceil(dt * 60 - 1e-3)), s = dt / n;
-    for (let i = 0; i < n; i++) p.update(w, s, inp, this.mode);
+    // player movement runs in game ticks (20/s) like Minecraft's; drawn between the last two
+    this.pAcc = (this.pAcc || 0) + dt;
+    let n = 0;
+    p.fallDamage = 0;
+    while (this.pAcc >= 0.05 && n < 10) { this.pAcc -= 0.05; p.tick(w, inp, this.mode); n++; }
+    if (n >= 10) this.pAcc = 0;
+    p.interp(this.pAcc / 0.05);
     if (!wasWater && p.inWater && p.vel[1] < -4) Sfx.splash();
     // footsteps
     const hs = Math.hypot(p.vel[0], p.vel[2]);
@@ -586,7 +589,7 @@ class Game {
     const e = p.eye();
     // Minecraft bobView: view-space offset (sin(pi f) a / 2, -|cos(pi f) a|), roll sin(pi f) a 3 deg,
     // nod |cos(pi f - 0.2) a| 5 deg, with f = -walkDist and a = bob amplitude
-    const f = -p.walkDist, a = Settings.bobView ? p.bobA : 0, B = this.bobView || (this.bobView = new Float32Array(4));
+    const f = -p.rwalk, a = Settings.bobView ? p.rbobA : 0, B = this.bobView || (this.bobView = new Float32Array(4));
     B[0] = Math.sin(f * Math.PI) * a * 0.5; B[1] = -Math.abs(Math.cos(f * Math.PI) * a);
     B[2] = Math.sin(f * Math.PI) * a * 3 * Math.PI / 180; B[3] = Math.abs(Math.cos(f * Math.PI - 0.2) * a) * 5 * Math.PI / 180;
     this.r.bob = B;
@@ -983,7 +986,7 @@ class Game {
     const p = this.player;
     Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false });
     this.inv = this.inv.map(() => null);
-    p.pos = (this.spawn || [0.5, 100, 0.5]).slice(); p.vel = [0, 0, 0]; p.fallStart = null;
+    p.pos = (this.spawn || [0.5, 100, 0.5]).slice(); p.vel = [0, 0, 0]; p.fallDist = 0;
     this.updateHotbar(); this.updateSurvivalHud();
     UI.hideDeath();
   }
@@ -1350,36 +1353,6 @@ class Game {
         out.push(C[c], C[c + 1], C[c + 2], left ? ua : ub, i < 2 ? vb : va, 0, cr, cg, cb, 1);
       }
     }
-  }
-  drawPlayerModel(env) {
-    const r = this.r, p = this.player, cam = this.cam;
-    const tex = r.entityTexture('player');
-    if (!tex) return;
-    const li = this.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env);
-    const v = [];
-    const yaw = p.yaw;
-    const walk = Math.sin(p.bob * Math.PI) * 0.7 * p.bobAmt;
-    const sneak = p.sneaking ? 0.3 : 0;
-    const part = (px, py, pz, rx, fn) => (x, y, z) => {
-      // rotate around pivot (px,py,pz) by rx (pitch-like around x), then body yaw
-      let y1 = y * Math.cos(rx) - z * Math.sin(rx), z1 = y * Math.sin(rx) + z * Math.cos(rx);
-      let X = x + px, Y = y1 + py, Z = z1 + pz;
-      if (fn) [X, Y, Z] = fn(X, Y, Z);
-      const cy = Math.cos(yaw), sy = Math.sin(yaw);
-      const wx = X * cy - Z * sy, wz = X * sy + Z * cy;
-      return [p.pos[0] + wx - cam[0], p.pos[1] + Y - cam[1], p.pos[2] + wz - cam[2]];
-    };
-    const s = 1 / 16;
-    const headPitch = (fn) => part(0, 24 * s - sneak * 0.3, 0, -p.pitch, fn);
-    this.pushModelBox(v, headPitch(), -4 * s, 0, -4 * s, 4 * s, 8 * s, 4 * s, 0, 0, 8, 8, 8, 64, 64, li);
-    this.pushModelBox(v, part(0, 12 * s, 0, sneak), -4 * s, 0, -2 * s, 4 * s, 12 * s, 2 * s, 16, 16, 8, 12, 4, 64, 64, li);
-    this.pushModelBox(v, part(-6 * s, 22 * s, 0, walk), -2 * s, -10 * s, -2 * s, 2 * s, 2 * s, 2 * s, 40, 16, 4, 12, 4, 64, 64, li);
-    this.pushModelBox(v, part(6 * s, 22 * s, 0, -walk), -2 * s, -10 * s, -2 * s, 2 * s, 2 * s, 2 * s, 32, 48, 4, 12, 4, 64, 64, li);
-    this.pushModelBox(v, part(-2 * s, 12 * s, 0, -walk), -2 * s, -12 * s, -2 * s, 2 * s, 0, 2 * s, 0, 16, 4, 12, 4, 64, 64, li);
-    this.pushModelBox(v, part(2 * s, 12 * s, 0, walk), -2 * s, -12 * s, -2 * s, 2 * s, 0, 2 * s, 16, 48, 4, 12, 4, 64, 64, li);
-    r.gl.disable(r.gl.CULL_FACE);
-    r.drawEnt(r.f32(v), v.length / 10, tex, env);
-    r.gl.enable(r.gl.CULL_FACE);
   }
 
   // ------------------------------------------------------------------ HUD
