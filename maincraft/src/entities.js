@@ -1320,7 +1320,9 @@ class Entities {
       if (!r.boxVisible(dx - rr, P[1] - cam[1] - 0.5, dz - rr, dx + rr, P[1] - cam[1] + e.h + 0.5, dz + rr)) continue;
       const li = g.lightAt(P[0], P[1] + e.h * 0.6, P[2], env);
       if (e.fire > 0 && !e.inWater) this.flame(fireV, P, e.w, e.h, cam);
-      const tint = e.hurtT > 0 || e.deathT > 0 ? [1, 0.45, 0.45] : e.fuse > 0 && Math.sin(e.fuse * 20) > 0 ? [1.6, 1.6, 1.6] : null;
+      // creeper white flash (CreeperRenderer.getWhiteOverlayProgress): on every other tenth of the fuse
+      const fz = e.fuse > 0 ? Math.min(1, e.fuse / 1.5) : 0, wf = fz && ((fz * 10) | 0) % 2 ? 1 + Math.max(0.5, fz) : 0;
+      const tint = e.hurtT > 0 || e.deathT > 0 ? [1, 0.45, 0.45] : wf ? [wf, wf, wf] : null;
       const m = MODELS[e.type];
       const v = [], tv = [];
       this.buildModel(v, m, e, cam, li, tint, tv, fireV);
@@ -1402,7 +1404,13 @@ class Entities {
     const pitch = e.pitch !== undefined ? e.pitch : 0;
     const sw = e.swing ? Math.sin((1 - e.swing) * Math.PI) : 0;
     const sneak = e.sneak ? 1 : 0;
-    const scaleY = e.type === 'creeper' && e.fuse > 0 ? 1 + e.fuse * 0.08 : 1;
+    // CreeperRenderer.scale: swelling f (0..1 over the 1.5 s fuse), f^4 grows the body x1.4 across
+    // and x1.1 up, with a slight wobble
+    let scaleY = 1, scaleXZ = 1;
+    if (e.type === 'creeper' && e.fuse > 0) {
+      const f = Math.min(1, e.fuse / 1.5), f1 = 1 + Math.sin(f * 100) * f * 0.01, f4 = f * f * f * f;
+      scaleXZ = (1 + f4 * 0.4) * f1; scaleY = (1 + f4 * 0.1) / f1;
+    }
     for (const part of m.parts) {
       const dst = part.trans && transOut ? transOut : out;
       let rx = 0, ry = 0, rz = 0;
@@ -1434,7 +1442,7 @@ class Entities {
         let x1 = x * cry + z * sry; z1 = -x * sry + z * cry; x = x1; z = z1;
         x1 = x * crz - y * srz; y1 = x * srz + y * crz; x = x1; y = y1;
         x += px; y += py; z += pz;
-        let wy = (24 + y) / 16 * scaleY * S * syy, wx = x / 16 * S * sxz, wz = z / 16 * S * sxz;
+        let wy = (24 + y) / 16 * scaleY * S * syy, wx = x / 16 * S * sxz * scaleXZ, wz = z / 16 * S * sxz * scaleXZ;
         if (sp) { const yy = wy - pY; const y2 = yy * cpt - wz * spt; wz = yy * spt + wz * cpt; wy = y2 + pY; }
         if (sneakBody) wy -= 0.12;
         if (death) { const yy = wy * Math.cos(death) - wx * Math.sin(death); wx = wy * Math.sin(death) + wx * Math.cos(death); wy = yy; }
