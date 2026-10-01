@@ -49,18 +49,18 @@ const M4 = {
 const TERRAIN_VS = `#version 300 es
 precision highp float; precision highp int;
 layout(location=0) in uvec3 aV;
-layout(location=1) in vec3 aOrigin;   // render region origin in world blocks, per region (divisor 1)
+layout(location=1) in vec3 aOrigin;   // section origin in world blocks, per section (divisor 1)
 uniform mat4 uVP; uniform vec3 uCamI; uniform vec3 uCamF; uniform float uTime; uniform uint uTick;
 uniform highp usampler2D uAnim; uniform sampler2D uLM; uniform vec2 uFog; uniform float uSway;
 out vec3 vUV; out vec3 vLit; out float vFog;
 flat out vec3 vTint; flat out float vOvl;
 void main(){
   uint w0 = aV.x, w1 = aV.y, w2 = aV.z;
-  vec3 p = vec3(float(w0 & 1023u), float(w0 >> 20), float((w0 >> 10) & 1023u)) * 0.03125;
+  vec3 p = vec3(float(w0 & 1023u), float((w0 >> 10) & 1023u), float((w0 >> 20) & 1023u)) * 0.03125;
   // camera-relative: integer parts first, so the result is exact far from the world origin
   vec3 wp = (aOrigin - uCamI) - uCamF + p;
-  uint fl = w1 >> 29;
-  if ((fl == 1u || fl == 2u) && uSway > 0.0) {
+  uint fl = w0 >> 30;
+  if (fl != 0u && uSway > 0.0) {
     vec3 a = aOrigin + p;
     float t = uTime;
     if (fl == 1u) { wp.x += sin(t * 1.7 + a.x * 0.6 + a.z * 0.35) * 0.065 * uSway; wp.z += cos(t * 1.3 + a.z * 0.5 + a.x * 0.2) * 0.05 * uSway; }
@@ -76,7 +76,7 @@ void main(){
   vLit = textureLod(uLM, vec2(li.y * 0.9375 + 0.03125, li.x * 0.9375 + 0.03125), 0.0).rgb * (float((w1 >> 21) & 255u) / 255.0);
   uint t = w2 >> 16;
   vTint = vec3(float(t >> 11), float((t >> 5) & 63u), float(t & 31u)) * vec3(1.0 / 31.0, 1.0 / 63.0, 1.0 / 31.0);
-  vOvl = fl == 3u ? 1.0 : 0.0;
+  vOvl = float((w1 >> 29) & 1u);
   float d = max(length(wp.xz), abs(wp.y) * 0.5);
   vFog = clamp((d - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0);
 }`;
@@ -359,7 +359,7 @@ class Renderer {
     this.resetPassStats();
   }
   resetPassStats() {
-    const P = () => ({ sec: 0, draws: 0, calls: 0, quads: 0, skipped: 0 });
+    const P = () => ({ sec: 0, draws: 0, quads: 0, skipped: 0 });
     this.pstat = [P(), P(), P()];
     this.stats.fogCulled = 0;
   }
@@ -394,52 +394,33 @@ class Renderer {
   }
   meshMemory(world) {
     let bytes = 0, n = 0;
-    for (const c of world.cols.values()) {
-      if (c.regions) for (const r of c.regions) if (r) bytes += r.bytes;
-      if (c.meshes) for (const m of c.meshes) if (m && m.reg) { bytes += (m.tvcap || 0) + (m.tcap || 0); n++; }
-    }
+    for (const c of world.cols.values()) if (c.meshes) for (const m of c.meshes) if (m && m.vbo) { bytes += m.cap + (m.tcap || 0); n++; }
     return { bytes, n };
   }
 
   initMultiDraw() {
     this.multiDraw = this.gl.getExtension('WEBGL_multi_draw');
-    this.rangeCnt = new Int32Array(REGION_SECS * 8); this.rangeOff = new Int32Array(REGION_SECS * 8);
+    this.rangeCnt = new Int32Array(8); this.rangeOff = new Int32Array(8);
     this.dirCull = true;
-    // two draw ranges closer than this many quads are drawn as one: a draw costs more than
-    // pushing a few hundred quads that back-face or depth testing then discards
-    this.mergeGap = 256;
   }
-  // shared index buffer for quads (0,1,2, 0,2,3 + 4k); grows in place, so every VAO keeps it
   initQuadIndex(maxQuads) {
-    this.quadIbo = this.gl.createBuffer();
-    this.maxQuads = 0;
-    this.ensureQuads(maxQuads);
-  }
-  ensureQuads(n) {
-    if (n <= this.maxQuads) return;
-    let q = Math.max(this.maxQuads, 1 << 16);
-    while (q < n) q *= 2;
-    const gl = this.gl, idx = new Uint32Array(q * 6);
-    for (let k = 0, i = 0; k < q; k++) {
-      const v = k * 4;
+    const gl = this.gl;
+    const idx = new Uint32Array(maxQuads * 6);
+    for (let q = 0, i = 0; q < maxQuads; q++) {
+      const v = q * 4;
       idx[i++] = v; idx[i++] = v + 1; idx[i++] = v + 2; idx[i++] = v; idx[i++] = v + 2; idx[i++] = v + 3;
     }
-    gl.bindVertexArray(null);
+    this.quadIbo = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.quadIbo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
-    this.maxQuads = q;
+    this.maxQuads = maxQuads;
   }
 
   // ---------------------------------------------------------------- section meshes
-  // Opaque and cutout geometry lives in render regions: REGION_SECS vertically adjacent sections
-  // of one column share one vertex buffer, laid out [solid of every member][cutout of every
-  // member] with the members in height order, so the visible sections of a region usually form
-  // one contiguous range and go out as one draw (ANGLE on D3D11 pays per draw, not per quad).
-  // Vertex y is measured from the region bottom (see the mesher), so a region needs one origin.
-  // Every region's origin lives in one buffer, read by the region's VAO as a per-instance
-  // attribute: drawing changes no uniform (ANGLE on D3D11 rewrites a constant buffer for every
-  // draw whose uniforms changed). Translucent quads keep a buffer per section for sorting.
-  originSlot(x, y, z) {
+  // Every section's origin lives in one buffer, read by the section's VAOs as a per-instance
+  // attribute: drawing a section changes no uniform (ANGLE on D3D11 rewrites a constant buffer for
+  // every draw whose uniforms changed, which with thousands of sections starved the GPU).
+  originSlot(c, sy) {
     const gl = this.gl;
     if (!this.originBuf) {
       this.originBuf = gl.createBuffer(); this.originCap = 1 << 16; this.originFree = []; this.originTop = 0;
@@ -447,9 +428,9 @@ class Renderer {
       gl.bufferData(gl.ARRAY_BUFFER, this.originCap * 12, gl.DYNAMIC_DRAW);
     }
     const slot = this.originFree.length ? this.originFree.pop() : this.originTop++;
-    if (slot >= this.originCap) throw new Error('region origin slots exhausted');
+    if (slot >= this.originCap) throw new Error('section origin slots exhausted');
     gl.bindBuffer(gl.ARRAY_BUFFER, this.originBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, slot * 12, new Float32Array([x, y, z]));
+    gl.bufferSubData(gl.ARRAY_BUFFER, slot * 12, new Float32Array([c.cx * 16, WORLD_MIN_Y + sy * 16, c.cz * 16]));
     return slot;
   }
   bindOrigin(slot) {
@@ -459,110 +440,41 @@ class Renderer {
     gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 12, slot * 12);
     gl.vertexAttribDivisor(1, 1);
   }
-  region(c, sy) {
-    const regs = c.regions || (c.regions = []), k = (sy / REGION_SECS) | 0;
-    let r = regs[k];
-    if (!r) {
-      r = regs[k] = { c, k, members: new Array(REGION_SECS).fill(null), vbo: null, vao: null, bytes: 0, n0: 0, n1: 0,
-        dirty: false, dead: false, visFrame: 0, visMask: 0,
-        slot: this.originSlot(c.cx * 16, WORLD_MIN_Y + k * REGION_SECS * 16, c.cz * 16) };
-    }
-    return r;
-  }
-  markRegion(r) {
-    if (r.dirty) return;
-    r.dirty = true;
-    (this.dirtyRegions || (this.dirtyRegions = [])).push(r);
+  freeSectionMesh(m) {
+    const gl = this.gl;
+    if (m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); m.vbo = m.vao = null; }
+    this.freeTrans(m);
+    if (m.slot !== undefined) { this.originFree.push(m.slot); m.slot = undefined; }
   }
   uploadSection(c, sy, d) {
+    const gl = this.gl;
     this.upN = (this.upN || 0) + 1; this.upBytes = (this.upBytes || 0) + d.data.byteLength;
-    const c0 = d.counts[0], c1 = d.counts[1], total = c0 + c1 + d.counts[2];
     let m = c.meshes[sy];
+    const total = d.counts[0] + d.counts[1] + d.counts[2];
     if (!total) {
-      if (m && m.reg) this.freeSection(c, sy);
-      c.meshes[sy] = { reg: null, counts: [0, 0, 0], vis: d.vis };
+      if (m) this.freeSectionMesh(m);
+      c.meshes[sy] = { vbo: null, vao: null, counts: [0, 0, 0], vis: d.vis, cap: 0 };
       return;
     }
-    if (!m || !m.reg) {
-      const r = this.region(c, sy);
-      m = c.meshes[sy] = { reg: r, mi: sy % REGION_SECS, cx: c.cx, cz: c.cz, sy, counts: null, gc: null, vis: null, q0: 0, q1: 0, pend: null };
-      r.members[m.mi] = m;
+    if (!m || !m.vbo) {
+      m = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), counts: null, vis: null, cap: 0 };
+      m.slot = this.originSlot(c, sy);
+      gl.bindVertexArray(m.vao);
+      this.bindOrigin(m.slot);
+      gl.bindBuffer(gl.ARRAY_BUFFER, m.vbo);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribIPointer(0, 3, gl.UNSIGNED_INT, 12, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.quadIbo);
+      gl.bindVertexArray(null);
+      c.meshes[sy] = m;
     }
+    gl.bindBuffer(gl.ARRAY_BUFFER, m.vbo);
+    if (d.data.byteLength > m.cap || d.data.byteLength < m.cap / 3) {
+      gl.bufferData(gl.ARRAY_BUFFER, d.data, gl.STATIC_DRAW);
+      m.cap = d.data.byteLength;
+    } else gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.data);
     m.counts = d.counts; m.gc = d.gc || null; m.vis = d.vis;
-    // solid + cutout part goes into the region buffer at the next flushRegions()
-    m.pend = d.data.subarray(0, (c0 + c1) * 12);
-    this.markRegion(m.reg);
     this.prepareTrans(m, d);
-  }
-  freeSection(c, sy) {
-    const m = c.meshes[sy];
-    c.meshes[sy] = null;
-    if (!m || !m.reg) return;
-    this.freeTrans(m);
-    m.reg.members[m.mi] = null;
-    this.markRegion(m.reg);
-    m.reg = null;
-  }
-  // Rebuilds the buffers of regions whose members changed: unchanged members are copied on the
-  // GPU from the old buffer, new data is uploaded, then the old buffer is dropped.
-  flushRegions() {
-    const list = this.dirtyRegions;
-    if (!list || !list.length) return;
-    const gl = this.gl;
-    for (const r of list) {
-      r.dirty = false;
-      if (r.dead) continue;
-      let n0 = 0, n1 = 0, any = false;
-      for (const m of r.members) if (m) { n0 += m.counts[0]; n1 += m.counts[1]; any = true; }
-      const old = r.vbo;
-      if (!any) { this.freeRegion(r); continue; }
-      const nq = n0 + n1;
-      let nb = null;
-      if (nq) {
-        this.ensureQuads(nq);
-        nb = gl.createBuffer();
-        gl.bindBuffer(gl.COPY_WRITE_BUFFER, nb);
-        gl.bufferData(gl.COPY_WRITE_BUFFER, nq * 48, gl.STATIC_DRAW);
-        if (old) gl.bindBuffer(gl.COPY_READ_BUFFER, old);
-        let a = 0, b = n0;
-        for (const m of r.members) {
-          if (!m) continue;
-          const k0 = m.counts[0], k1 = m.counts[1];
-          if (m.pend) {
-            if (k0) gl.bufferSubData(gl.COPY_WRITE_BUFFER, a * 48, m.pend, 0, k0 * 12);
-            if (k1) gl.bufferSubData(gl.COPY_WRITE_BUFFER, b * 48, m.pend, k0 * 12, k1 * 12);
-            m.pend = null;
-          } else {
-            if (k0) gl.copyBufferSubData(gl.COPY_READ_BUFFER, gl.COPY_WRITE_BUFFER, m.q0 * 48, a * 48, k0 * 48);
-            if (k1) gl.copyBufferSubData(gl.COPY_READ_BUFFER, gl.COPY_WRITE_BUFFER, m.q1 * 48, b * 48, k1 * 48);
-          }
-          m.q0 = a; m.q1 = b; a += k0; b += k1;
-        }
-        gl.bindBuffer(gl.COPY_WRITE_BUFFER, null); gl.bindBuffer(gl.COPY_READ_BUFFER, null);
-        if (!r.vao) r.vao = gl.createVertexArray();
-        gl.bindVertexArray(r.vao);
-        this.bindOrigin(r.slot);
-        gl.bindBuffer(gl.ARRAY_BUFFER, nb);
-        gl.enableVertexAttribArray(0);
-        gl.vertexAttribIPointer(0, 3, gl.UNSIGNED_INT, 12, 0);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.quadIbo);
-        gl.bindVertexArray(null);
-      } else {
-        for (const m of r.members) if (m) m.pend = null;
-        if (r.vao) { gl.deleteVertexArray(r.vao); r.vao = null; }
-      }
-      if (old) gl.deleteBuffer(old);
-      r.vbo = nb; r.bytes = nq * 48; r.n0 = n0; r.n1 = n1;
-    }
-    list.length = 0;
-  }
-  freeRegion(r) {
-    const gl = this.gl;
-    if (r.vbo) gl.deleteBuffer(r.vbo);
-    if (r.vao) gl.deleteVertexArray(r.vao);
-    r.vbo = r.vao = null; r.bytes = 0; r.dead = true;
-    this.originFree.push(r.slot);
-    if (r.c.regions[r.k] === r) r.c.regions[r.k] = null;
   }
   // Translucent quads are drawn back to front through a per-section index buffer that is re-sorted
   // when the camera moves to another block (like Minecraft's translucency sorting). Here: quad
@@ -570,39 +482,35 @@ class Renderer {
   prepareTrans(m, d) {
     const gl = this.gl, n = d.counts[2];
     if (!n) { this.freeTrans(m); return; }
-    const first = d.counts[0] + d.counts[1], w = d.data.subarray(first * 12, (first + n) * 12);
-    const tc = new Float32Array(n * 3), tg = new Uint8Array(n), yb = m.mi * 512 * 4;
+    const first = d.counts[0] + d.counts[1], w = d.data;
+    const tc = new Float32Array(n * 3), tg = new Uint8Array(n);
     for (let q = 0; q < n; q++) {
-      let sx = 0, sy = -yb, sz = 0;
-      for (let v = 0, o = q * 12; v < 4; v++, o += 3) {
+      let sx = 0, sy = 0, sz = 0;
+      for (let v = 0, o = (first + q) * 12; v < 4; v++, o += 3) {
         const w0 = w[o];
-        sx += w0 & 1023; sz += (w0 >>> 10) & 1023; sy += w0 >>> 20;
+        sx += w0 & 1023; sy += (w0 >>> 10) & 1023; sz += (w0 >>> 20) & 1023;
       }
       tc[q * 3] = sx * 0.0078125; tc[q * 3 + 1] = sy * 0.0078125; tc[q * 3 + 2] = sz * 0.0078125;
     }
     if (d.gc) { let q = 0; for (let g = 0; g < 7; g++) for (let k = d.gc[14 + g]; k > 0; k--) tg[q++] = g; }
     else tg.fill(6);
     if (!m.tvao) {
-      m.tvao = gl.createVertexArray(); m.tvbo = gl.createBuffer(); m.tibo = gl.createBuffer();
+      m.tvao = gl.createVertexArray(); m.tibo = gl.createBuffer();
       gl.bindVertexArray(m.tvao);
-      this.bindOrigin(m.reg.slot);
-      gl.bindBuffer(gl.ARRAY_BUFFER, m.tvbo);
+      this.bindOrigin(m.slot);
+      gl.bindBuffer(gl.ARRAY_BUFFER, m.vbo);
       gl.enableVertexAttribArray(0);
       gl.vertexAttribIPointer(0, 3, gl.UNSIGNED_INT, 12, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.tibo);
       gl.bindVertexArray(null);
-      m.tcap = 0; m.tvcap = 0;
+      m.tcap = 0;
     }
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.tvbo);
-    if (w.byteLength > m.tvcap || w.byteLength < m.tvcap / 3) { gl.bufferData(gl.ARRAY_BUFFER, w, gl.STATIC_DRAW); m.tvcap = w.byteLength; }
-    else gl.bufferSubData(gl.ARRAY_BUFFER, 0, w);
-    m.tc = tc; m.tg = tg; m.tn = 0; m.tkey = -1;
+    m.tc = tc; m.tg = tg; m.tfirst = first; m.tn = 0; m.tkey = -1;
   }
   freeTrans(m) {
     if (!m.tvao) return;
-    const gl = this.gl;
-    gl.deleteVertexArray(m.tvao); gl.deleteBuffer(m.tibo); gl.deleteBuffer(m.tvbo);
-    m.tvao = m.tibo = m.tvbo = null; m.tc = m.tg = null; m.tn = 0; m.tcap = m.tvcap = 0;
+    this.gl.deleteVertexArray(m.tvao); this.gl.deleteBuffer(m.tibo);
+    m.tvao = m.tibo = null; m.tc = m.tg = null; m.tn = 0;
   }
   // camera at (px,py,pz) in section-local blocks; vis: facing groups that can face the camera
   sortTrans(m, px, py, pz, vis) {
@@ -620,7 +528,7 @@ class Renderer {
     const o = key.subarray(0, k);
     o.sort();
     for (let j = k - 1, e = 0; j >= 0; j--) {
-      const v = (o[j] % 65536) * 4;
+      const v = (m.tfirst + o[j] % 65536) * 4;
       el[e++] = v; el[e++] = v + 1; el[e++] = v + 2; el[e++] = v; el[e++] = v + 2; el[e++] = v + 3;
     }
     gl.bindVertexArray(m.tvao);
@@ -631,13 +539,12 @@ class Renderer {
     m.tn = k * 6;
   }
   freeColumn(c) {
+    const gl = this.gl;
     for (let s = 0; s < SECTIONS; s++) {
       const m = c.meshes[s];
-      if (m && m.reg) this.freeTrans(m);
+      if (m) this.freeSectionMesh(m);
       c.meshes[s] = null;
     }
-    if (c.regions) for (const r of c.regions) if (r) this.freeRegion(r);
-    c.regions = null;
   }
 
   // ---------------------------------------------------------------- per-frame
@@ -716,15 +623,15 @@ class Renderer {
   collectVisible(world, cam, renderDist) {
     this.frame++;
     const fr = this.frame;
-    const list = this.visList, regs = this.visRegs || (this.visRegs = []);
-    let n = 0, rn = 0;
+    const list = this.visList;
+    let n = 0;
     const ccx = Math.floor(cam[0]) >> 4, ccz = Math.floor(cam[2]) >> 4;
     let csy = (Math.floor(cam[1]) - WORLD_MIN_Y) >> 4;
     if (csy < 0) csy = 0; if (csy >= SECTIONS) csy = SECTIONS - 1;
     const Q = this.bfsQ || (this.bfsQ = new Int32Array(1 << 18));
     let qh = 0, qt = 0;
     const startCol = world.col(ccx, ccz);
-    if (!startCol) { this.visCount = this.visRegCount = 0; return; }
+    if (!startCol) { this.visCount = 0; return; }
     if (!startCol.visFrame) startCol.visFrame = new Uint32Array(SECTIONS);
     startCol.visFrame[csy] = fr;
     Q[qt++] = ccx; Q[qt++] = ccz; Q[qt++] = csy; Q[qt++] = -1; Q[qt++] = 0;
@@ -737,14 +644,9 @@ class Renderer {
       qh += 5;
       const c = world.col(cx, cz);
       const m = c.meshes[sy];
-      if (m && m.reg) {
+      if (m && m.vbo) {
         if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) this.stats.fogCulled++;
-        else {
-          list[n++] = m;
-          const r = m.reg;
-          if (r.visFrame !== fr) { r.visFrame = fr; r.visMask = 0; regs[rn++] = r; }
-          r.visMask |= 1 << m.mi;
-        }
+        else list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
       }
       const vis = m && m.vis;
       for (let d = 0; d < 6; d++) {
@@ -766,7 +668,7 @@ class Renderer {
         Q[qt++] = nx; Q[qt++] = nz; Q[qt++] = ny; Q[qt++] = OPP6[d]; Q[qt++] = dirs | (1 << d);
       }
     }
-    this.visCount = n; this.visRegCount = rn;
+    this.visCount = n;
   }
 
   // A section is skipped when every point of it is in full fog (the terrain fog distance is
@@ -803,70 +705,58 @@ class Renderer {
     gl.uniform1i(p.u.uTex, 0); gl.uniform1i(p.u.uLM, 1); gl.uniform1i(p.u.uAnim, 2);
   }
   // Draws one pass of every visible section. Quads are grouped by facing (-X,+X,-Y,+Y,-Z,+Z,other);
-  // groups that face away from the camera for the whole section are skipped (directional culling).
-  // Opaque passes go region by region (nearest regions first, as found by the visibility search):
-  // the visible ranges of a region's members are merged where they touch or nearly touch and sent
-  // in one multi-draw. Translucent sections are drawn back to front from their sorted indices.
+  // groups that face away from the camera for the whole section are skipped (directional culling),
+  // the rest go out in one multi-draw per section.
   drawPass(pass, cam) {
-    if (pass === 2) { this.drawTranslucentPass(); return; }
-    const gl = this.gl, md = this.multiDraw, regs = this.visRegs, nr = this.visRegCount;
-    const RC = this.rangeCnt, RO = this.rangeOff, gap = this.mergeGap, ps = this.pstat[pass];
-    let draws = 0, quads = 0, calls = 0;
-    for (let i = 0; i < nr; i++) {
-      const reg = regs[i];
-      if (!reg.vao || !(pass === 0 ? reg.n0 : reg.n1)) continue;
-      // ranges in quads: start RO, end RC (converted to bytes / index counts below)
-      let r = 0;
-      for (let mi = 0; mi < REGION_SECS; mi++) {
-        if (!(reg.visMask & (1 << mi))) continue;
-        const m = reg.members[mi];
-        const cnt = m.counts[pass];
-        if (!cnt) continue;
-        ps.sec++;
-        let at = pass === 0 ? m.q0 : m.q1;
-        const gc = m.gc;
-        if (!gc || !this.dirCull) {
-          if (r && at - RC[r - 1] <= gap) RC[r - 1] = at + cnt; else { RO[r] = at; RC[r] = at + cnt; r++; }
-          continue;
-        }
-        // camera below / above / beside the section box on each axis
-        const ox = m.cx * 16 - cam[0], oy = WORLD_MIN_Y + m.sy * 16 - cam[1], oz = m.cz * 16 - cam[2];
-        const vis = (ox > 0 ? 1 : ox + 16 < 0 ? 2 : 3) | (oy > 0 ? 4 : oy + 16 < 0 ? 8 : 12) | (oz > 0 ? 16 : oz + 16 < 0 ? 32 : 48) | 64;
-        const g0 = pass * 7;
-        for (let g = 0; g < 7; g++) {
-          const c = gc[g0 + g];
-          if (!c) continue;
-          if (vis & (1 << g)) {
-            if (r && at - RC[r - 1] <= gap) RC[r - 1] = at + c; else { RO[r] = at; RC[r] = at + c; r++; }
-          } else ps.skipped += c;
-          at += c;
-        }
-      }
-      if (!r) continue;
-      for (let k = 0; k < r; k++) { quads += RC[k] - RO[k]; RC[k] = (RC[k] - RO[k]) * 6; RO[k] *= 24; }
-      gl.bindVertexArray(reg.vao);
-      if (md) md.multiDrawElementsWEBGL(gl.TRIANGLES, RC, 0, gl.UNSIGNED_INT, RO, 0, r);
-      else for (let k = 0; k < r; k++) gl.drawElements(gl.TRIANGLES, RC[k], gl.UNSIGNED_INT, RO[k]);
-      draws += r; calls++;
-    }
-    this.stats.draws += draws; this.stats.quads += quads;
-    ps.draws += draws; ps.quads += quads; ps.calls += calls;
-  }
-  drawTranslucentPass() {
-    const gl = this.gl, list = this.visList, n = this.visCount, ps = this.pstat[2];
+    const gl = this.gl, list = this.visList, n = this.visCount, md = this.multiDraw;
+    const p = pass === 0 ? this.progSolid : pass === 1 ? this.progCutout : this.progTrans;
+    const RC = this.rangeCnt, RO = this.rangeOff;
     let draws = 0, quads = 0;
-    for (let k = n - 1; k >= 0; k--) {
-      const m = list[k];
-      if (!m.tvao || m.tkey === -1) continue;
+    const back = pass === 2;
+    for (let k = 0; k < n; k++) {
+      const m = list[back ? n - 1 - k : k];
+      const cnt = m.counts[pass];
+      if (!cnt) continue;
+      const ps = this.pstat[pass];
       ps.sec++;
-      ps.skipped += m.counts[2] - m.tn / 6;
-      if (!m.tn) continue;
-      gl.bindVertexArray(m.tvao);
-      gl.drawElements(gl.TRIANGLES, m.tn, gl.UNSIGNED_INT, 0);
-      draws++; quads += m.tn / 6;
+      if (back && m.tvao && m.tkey !== -1) {
+        ps.skipped += cnt - m.tn / 6;
+        if (!m.tn) continue;
+        gl.bindVertexArray(m.tvao);
+        gl.drawElements(gl.TRIANGLES, m.tn, gl.UNSIGNED_INT, 0);
+        draws++; quads += m.tn / 6;
+        continue;
+      }
+      const first = pass === 0 ? 0 : pass === 1 ? m.counts[0] : m.counts[0] + m.counts[1];
+      const ox = m.cx * 16 - cam[0], oy = WORLD_MIN_Y + m.sy * 16 - cam[1], oz = m.cz * 16 - cam[2];
+      gl.bindVertexArray(m.vao);
+      const gc = m.gc;
+      if (!gc || !this.dirCull) {
+        gl.drawElements(gl.TRIANGLES, cnt * 6, gl.UNSIGNED_INT, first * 24);
+        draws++; quads += cnt;
+        continue;
+      }
+      // camera below / above / beside the section box on each axis (camera sits at the origin)
+      const vis = (ox > 0 ? 1 : ox + 16 < 0 ? 2 : 3) | (oy > 0 ? 4 : oy + 16 < 0 ? 8 : 12) | (oz > 0 ? 16 : oz + 16 < 0 ? 32 : 48) | 64;
+      let r = 0, at = first, open = false;
+      const g0 = pass * 7, q0 = quads;
+      for (let g = 0; g < 7; g++) {
+        const c = gc[g0 + g];
+        if (!c) continue;
+        if (vis & (1 << g)) {
+          if (open && RO[r - 1] + RC[r - 1] * 4 === at * 24) RC[r - 1] += c * 6;
+          else { RC[r] = c * 6; RO[r] = at * 24; r++; open = true; }
+          quads += c;
+        }
+        at += c;
+      }
+      ps.skipped += cnt - (quads - q0);
+      if (!r) continue;
+      if (md) { md.multiDrawElementsWEBGL(gl.TRIANGLES, RC, 0, gl.UNSIGNED_INT, RO, 0, r); draws++; }
+      else for (let q = 0; q < r; q++) { gl.drawElements(gl.TRIANGLES, RC[q], gl.UNSIGNED_INT, RO[q]); draws++; }
     }
     this.stats.draws += draws; this.stats.quads += quads;
-    ps.draws += draws; ps.quads += quads; ps.calls += draws;
+    this.pstat[pass].draws += draws; this.pstat[pass].quads += quads;
   }
 
   renderWorld(world, cam, yaw, pitch, env, time, tick) {
@@ -886,7 +776,6 @@ class Renderer {
     // fog occlusion only when the sky below the horizon is plain fog colour
     this.fogCull = !env.underwater && env.sunset < 0.001 && !this.noFogCull ? { end: env.fogEnd, y: cam[1] } : null;
     let tc = performance.now();
-    this.flushRegions();
     this.collectVisible(world, cam, env.renderDist);
     this.cpuVis = performance.now() - tc;
     this.stats.sections = this.visCount;

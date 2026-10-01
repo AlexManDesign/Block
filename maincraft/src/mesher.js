@@ -5,15 +5,11 @@
 // (solid, cutout, translucent) + face-to-face visibility graph for occlusion culling.
 //
 // vertex layout
-//   w0: x | z<<10 | y<<20                    (positions in 1/32 block; x, z section-local, y from the
-//                                             bottom of the section's render region of REGION_SECS
-//                                             sections, so sections of one region share a buffer)
-//   w1: layer | u<<11 | v<<16 | shade<<21 | kind<<29   (u,v in texels 0..16, shade 0..255,
-//                                             kind: 0 plain, 1 waving plant, 2 waving leaves, 3 grass side overlay)
-//   w2: sky | blk<<8 | tint<<16              (light*16, 0..240; biome tint RGB565)
+//   w0: x | y<<10 | z<<20 | flags<<30      (positions in 1/32 block, section-local)
+//   w1: layer | u<<11 | v<<16 | shade<<21   (u,v in texels 0..16, shade 0..255)
+//   w2: sky | blk<<8                         (light*16, 0..240)
 
 const P = 18, SX = 1, SZ = 18, SY = 324;
-const REGION_SECS = 6;   // sections per render region (a vertical run of one column)
 const pidx = (x, y, z) => ((y + 1) * P + (z + 1)) * P + (x + 1);
 
 // face order: 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z
@@ -97,17 +93,17 @@ class Mesher {
     if (tk) {
       tint = this.tints[(tk === 4 ? 0 : tk - 1) * 256 + this.tcol];
       layer = TINT_LAYER[layer];
-      if (tk === 4) ovl = 3 << 29;
+      if (tk === 4) ovl = 1 << 29;
     }
     for (let k = 0; k < 4; k++) {
       const v = flip ? (k + 1) & 3 : k;
       let x = Math.round(px[v] * 2), y = Math.round(py[v] * 2), z = Math.round(pz[v] * 2);
       if (x < 0) x = 0; if (y < 0) y = 0; if (z < 0) z = 0;
       const fl = typeof flags === 'number' ? flags : flags[v];
-      d[o++] = x | (z << 10) | ((y + this.yBase) << 20);
+      d[o++] = x | (y << 10) | (z << 20) | (fl << 30);
       let u = us[v], vv = vs[v];
       u = u < 0 ? 0 : u > 16 ? 16 : u; vv = vv < 0 ? 0 : vv > 16 ? 16 : vv;
-      d[o++] = layer | (Math.round(u) << 11) | (Math.round(vv) << 16) | (shades[v] << 21) | (ovl || fl << 29);
+      d[o++] = layer | (Math.round(u) << 11) | (Math.round(vv) << 16) | (shades[v] << 21) | ovl;
       d[o++] = skys[v] | (blks[v] << 8) | (tint << 16);
     }
     buf.n++;
@@ -116,7 +112,6 @@ class Mesher {
   mesh(job) {
     const ids = job.ids, meta = job.meta, light = job.light;
     this.ids = ids; this.metaArr = meta; this.light = light;
-    this.yBase = (job.sy % REGION_SECS) * 512;
     // leaves: 2 fancy (every face, like Minecraft), 1 optimized (faces buried two leaves deep are
     // skipped: they only show through two aligned holes), 0 fast (no faces between leaves)
     this.fancyLeaves = job.leaves !== 0;

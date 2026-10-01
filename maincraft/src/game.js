@@ -247,8 +247,8 @@ class Game {
         if (w.meshInFlight >= maxMesh) break;
         if (w.sectionEmpty(c, s)) {
           c.dirty &= ~(1 << s);
-          this.r.freeSection(c, s);
-          c.meshed |= 1 << s;
+          if (c.meshes[s]) this.r.freeSectionMesh(c.meshes[s]);
+          c.meshes[s] = null; c.meshed |= 1 << s;
           continue;
         }
         w.submitMesh(c, s, Settings.leaves, Settings.sway);
@@ -501,22 +501,20 @@ class Game {
     if (b.t >= 12) { b.acc = r.gpuAcc; b.phase = 'diag'; b.vi = -1; b.t = 0; this.benchVariant(0); }
   }
   // Diagnosis after the main run: the same circle (6 s each) with one thing changed at a time, to
-  // see what the GPU time depends on on this machine: pixels (half resolution), the number of draws
-  // (every visible range of a region merged into one, directional culling off) or vertices (no
-  // merging, as before render regions). The first 0.5 s of each variant is not measured, so GPU
+  // see what the GPU time depends on on this machine: pixels (half resolution) or triangles
+  // (directional culling off: more triangles, fewer draw ranges). The first 0.5 s of each variant is not measured, so GPU
   // timings still in flight from the previous variant are not mixed in.
   benchVariants() {
     const r = this.r;
     return [
       { name: 'как есть', set: () => { } },
       { name: 'разрешение ×½ (пиксели ¼)', set: () => { this.benchRes = 0.5; this.resize(); } },
-      { name: 'меньше вызовов (всё одним диапазоном)', set: () => { r.dirCull = false; r.mergeGap = 1e9; } },
-      { name: 'больше вызовов (без слияния)', set: () => { r.mergeGap = 0; } },
+      { name: 'без отсечения граней по направлению (больше треугольников, меньше диапазонов)', set: () => { r.dirCull = false; } },
     ];
   }
   benchRestore() {
     const r = this.r;
-    r.dirCull = true; r.mergeGap = 256;
+    r.dirCull = true;
     if (this.benchRes !== 1 && this.benchRes !== undefined) { this.benchRes = 1; this.resize(); }
   }
   benchVariant(i) {
@@ -563,7 +561,7 @@ class Game {
     let gsum = 0; for (const k of names) gsum += Gv(k);
     const cv = r.canvas, w = this.world, pb = w.biomeAt(Math.floor(b.pos[0]), Math.floor(b.pos[2]));
     const L = [];
-    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры, затем диагностика 4 × 6 с) ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
+    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры, затем диагностика 3 × 6 с) ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
     L.push(`Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${b.pos.map(v => v.toFixed(1)).join(' ')} · pitch ${b.pitch.toFixed(2)} · биом ${BIOME_LIST[pb] ? BIOME_LIST[pb][0] : '?'}`);
     L.push(`GPU: ${r.gpuName || '?'}`);
     L.push(`${navigator.userAgent}`);
@@ -572,7 +570,7 @@ class Game {
     if (acc) L.push(`GPU мс (отброшено замеров ${r.gpuBad || 0}): всего ${f(gsum)} | рельеф ${f(Gv('solid'))} листва ${f(Gv('cutout'))} небо ${f(Gv('sky'))} облака ${f(Gv('clouds'))} частицы ${f(Gv('particles'))} мобы ${f(Gv('entities'))} вода ${f(Gv('water'))} рука ${f(Gv('hand'))}`);
     else L.push('GPU мс: таймер видеокарты недоступен');
     L.push(`CPU мс: кадр ${C('frame')} | мир ${C('update')} (мобы ${C('mobs')}) · тики ${C('ticks')} · чанки ${C('stream')} · загрузка ${C('upload')} · рендер ${C('render')} (видимость ${C('rVis')} · рельеф ${C('rTerrain')} · мобы ${C('rEntities')} · вода ${C('rWater')}) · HUD ${C('hud')}`);
-    L.push(`в среднем за кадр: секций ${f(b.sec / fr, 0)} · отброшено туманом ${f(b.fog / fr, 0)} · диапазонов отрисовки ${f(b.draws / fr, 0)} · треугольников ${f(b.quads * 2 / fr / 1000, 0)}k`);
+    L.push(`в среднем за кадр: секций ${f(b.sec / fr, 0)} · отброшено туманом ${f(b.fog / fr, 0)} · вызовов отрисовки ${f(b.draws / fr, 0)} · треугольников ${f(b.quads * 2 / fr / 1000, 0)}k`);
     const mem = r.meshMemory(w);
     L.push(`память мешей ${f(mem.bytes / 1048576, 1)} МБ · колонок ${w.cols.size} · ожидание загрузки ${f(b.waited, 1)} с`);
     L.push(this.spikeReport());
@@ -582,7 +580,7 @@ class Game {
         const fa = d.frames.length ? d.frames.reduce((x, y) => x + y, 0) / d.frames.length : 0, A = d.acc, g = (k) => A && A[k] ? A[k].s / A[k].n : 0;
         let gs = 0; for (const k of names) gs += g(k);
         const dn = d.n || 1;
-        L.push(`${d.name}: кадр ${f(fa)} мс · GPU ${A ? f(gs) : '—'} (рельеф ${f(g('solid'))} листва ${f(g('cutout'))} вода ${f(g('water'))}) · диапазонов ${f(d.draws / dn, 0)} · треугольников ${f(d.quads * 2 / dn / 1000, 0)}k`);
+        L.push(`${d.name}: кадр ${f(fa)} мс · GPU ${A ? f(gs) : '—'} (рельеф ${f(g('solid'))} листва ${f(g('cutout'))} вода ${f(g('water'))}) · вызовов ${f(d.draws / dn, 0)} · треугольников ${f(d.quads * 2 / dn / 1000, 0)}k`);
       }
     }
     this.benchText = L.join('\n');
@@ -1460,7 +1458,7 @@ class Game {
     t += `Sections: ${r.stats.sections}  draws ${r.stats.draws}  quads ${r.stats.quads}\n`;
     t += `Time: ${Math.floor((this.time * 24 + 6) % 24)}:${String(Math.floor((this.time * 1440) % 60)).padStart(2, '0')}  Day ${this.days || 0}\n`;
     if (this.target) t += `Target: ${B_KEY[this.target.id]} [${this.target.meta}] @ ${this.target.x} ${this.target.y} ${this.target.z}\n`;
-    if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : this.bench.phase === 'diag' ? 'диагностика ' + (this.bench.vi + 1) + '/4' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
+    if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : this.bench.phase === 'diag' ? 'диагностика ' + (this.bench.vi + 1) + '/3' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
     else if (this.benchText) t += '\n' + this.benchText + '\n';
     t += '\n' + this.perfReport();
     t += this.copiedT > performance.now() ? '\n>>> отчёт скопирован в буфер обмена' : '\nP — скопировать отчёт целиком · B — бенчмарк (12 с на месте, результат в окне; он же в меню паузы)';
@@ -1491,9 +1489,9 @@ class Game {
     L.push(`CPU мс: кадр ${f(P.frame)} | мир ${f(P.update)} (мобы ${f(P.mobs)}, частицы ${f(P.particlesSim)}) · тики ${f(P.ticks)} · чанки ${f(P.stream)} · загрузка в GPU ${f(P.upload)} · HUD ${f(P.hud)}`);
     L.push(`CPU рендер ${f(P.render)}: видимость ${f(P.rVis)} · рельеф ${f(P.rTerrain)} · облака ${f(P.rClouds)} · частицы ${f(P.rParticles)} · мобы ${f(P.rEntities)} · вода ${f(P.rWater)} (сортировка ${f(P.rSort)}) · рука ${f(P.rHand)}`);
     const ps = r.pstat, q = ps[0].quads + ps[1].quads + ps[2].quads;
-    L.push(`секции: видно ${r.visCount} · отброшено туманом ${r.stats.fogCulled || 0} · диапазонов отрисовки ${r.stats.draws} · треугольников ${(q * 2 / 1000).toFixed(0)}k`);
+    L.push(`секции: видно ${r.visCount} · отброшено туманом ${r.stats.fogCulled || 0} · вызовов отрисовки ${r.stats.draws} · треугольников ${(q * 2 / 1000).toFixed(0)}k`);
     const pn = ['рельеф', 'листва', 'вода'];
-    for (let i = 0; i < 3; i++) L.push(`  ${pn[i]}: ${ps[i].sec} секций · ${ps[i].calls} вызовов (${ps[i].draws} диапазонов) · ${(ps[i].quads / 1000).toFixed(1)}k квадов (отсечено по направлению ${(ps[i].skipped / 1000).toFixed(1)}k)`);
+    for (let i = 0; i < 3; i++) L.push(`  ${pn[i]}: ${ps[i].sec} секций · ${ps[i].draws} draw · ${(ps[i].quads / 1000).toFixed(1)}k квадов (отсечено по направлению ${(ps[i].skipped / 1000).toFixed(1)}k)`);
     const mem = r.meshMemory(w), heap = performance.memory ? performance.memory.usedJSHeapSize : 0;
     L.push(`память: меши ${f(mem.bytes / 1048576, 1)} МБ в ${mem.n} секциях${heap ? ' · JS ' + f(heap / 1048576, 0) + ' МБ' : ''}`);
     L.push(`чанки: колонок ${w.cols.size} · генерация ${w.genInFlight} · меши ${w.meshInFlight} (очередь ${this.meshQueue ? this.meshQueue.length : 0}) · свет ${w.pendingLit.size} · загрузка ${f(this.upS.rate, 0)} секц/с ${f(this.upS.bRate / 1048576, 2)} МБ/с`);
