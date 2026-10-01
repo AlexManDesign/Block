@@ -282,6 +282,24 @@ def crack_stage(stage):
     return img
 
 
+def no_cones(img):
+    """The pack's spruce leaves carry orange cones that Minecraft's needles do not have: each
+    reddish pixel takes the mean colour of its needle neighbours."""
+    out = img.copy().convert('RGBA')
+    px = out.load()
+    red = lambda p: p[3] >= 128 and p[0] > p[1]
+    for _ in range(3):
+        for y in range(16):
+            for x in range(16):
+                if not red(px[x, y]):
+                    continue
+                nb = [px[(x + dx) % 16, (y + dy) % 16] for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1))]
+                nb = [q for q in nb if q[3] >= 128 and not red(q)]
+                if nb:
+                    px[x, y] = tuple(sum(q[i] for q in nb) // len(nb) for i in range(3)) + (255,)
+    return out
+
+
 def collect():
     tiles = []   # list of (name, [Image frames], ticks)
     for fn in sorted(os.listdir(TEX)):
@@ -303,6 +321,8 @@ def collect():
             frames = frames[:1]
         if name == 'water_still':
             frames = frames[::3]
+        if name == 'spruce_leaves':
+            frames = [no_cones(f) for f in frames]
         rgb = TINT.get(name)
         if name in BIOME_TINTED:
             tiles.append((name + '_bt', [f.copy() for f in frames], ANIM_TICKS.get(name, 4) if len(frames) > 1 else 0))

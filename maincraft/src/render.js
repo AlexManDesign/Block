@@ -822,8 +822,13 @@ class Renderer {
     this.gpuBegin('water');
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
+    // a water face lying in the plane of a neighbour's face (a snow layer, ice, leaves beside it)
+    // stays behind it instead of fighting over the pixels in stripes; Minecraft insets these
+    // faces by 0.001 of a block, below what the packed vertices can hold
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1, 2);
     this.bindTerrain(this.progTrans, cam, env, time, tick);
     this.drawPass(2, cam);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.depthMask(true);
     gl.disable(gl.BLEND);
     gl.bindVertexArray(null);
