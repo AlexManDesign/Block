@@ -10137,9 +10137,20 @@ class Entities {
       return;
     }
     if (e.fleeT > 0) {
+      // PanicGoal: while hurt within the last 5 s, run to random spots up to 5 blocks away
+      // (DefaultRandomPos.getPos(mob, 5, 4)), a new one each time the last is reached
       e.fleeT -= dt;
-      this.steer(e, e.pos[0] - dx, e.pos[2] - dz, goalSpeed(speed, d.panic || 2));
+      if (!e.panicTgt || Math.hypot(e.panicTgt[0] - e.pos[0], e.panicTgt[1] - e.pos[2]) < 1 || e.stuckT > 0.5) {
+        let t = null;
+        for (let k = 0; k < 10 && !t; k++) {
+          const tx = Math.floor(e.pos[0]) + ((Math.random() * 11) | 0) - 5 + 0.5, tz = Math.floor(e.pos[2]) + ((Math.random() * 11) | 0) - 5 + 0.5;
+          if (Math.hypot(tx - e.pos[0], tz - e.pos[2]) > 1.5 && !this.pointSolid(tx, e.pos[1] + 0.5, tz)) t = [tx, tz];
+        }
+        e.panicTgt = t; e.stuckT = 0;
+      }
+      if (e.panicTgt) this.goTo(e, e.panicTgt[0], e.panicTgt[1], goalSpeed(speed, d.panic || 2), dt); else this.stop(e);
       e.headYaw = e.bodyYaw;
+      if (e.fleeT <= 0) e.panicTgt = null;
       return;
     }
     if (d.creeper && e.fuse >= 0) {
@@ -10892,7 +10903,7 @@ class Entities {
       e.vel[0] = e.vel[0] / 2 + dx / l * 8; e.vel[2] = e.vel[2] / 2 + dz / l * 8;
       if (e.onGround) e.vel[1] = Math.min(8, e.vel[1] / 2 + 8);
     }
-    if (!d.hostile) e.fleeT = 4;
+    if (!d.hostile) e.fleeT = 5;   // lastHurtByMob is kept for 100 ticks
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 30;
     if (e.hp > 0 && e.type === 'enderman' && Math.random() < 0.5 && this.teleportNear(e, e.pos[0], e.pos[2], 24)) e.tpT = 1;
