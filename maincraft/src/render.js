@@ -385,7 +385,10 @@ class Renderer {
       this.qPend.shift(); this.qFree.push(e.q);
       if (disjoint) continue;
       const ms = ns / 1e6, M = this.gpuMs;
+      // drivers occasionally return garbage for a query: keep only plausible values
+      if (!(ms >= 0 && ms < 1000)) { this.gpuBad = (this.gpuBad || 0) + 1; continue; }
       M[e.name] = M[e.name] === undefined ? ms : M[e.name] * 0.9 + ms * 0.1;
+      if (this.gpuAcc) { const A = this.gpuAcc[e.name] || (this.gpuAcc[e.name] = { s: 0, n: 0 }); A.s += ms; A.n++; }
     }
     if (this.qPend.length > 64) { for (const e of this.qPend) this.qFree.push(e.q); this.qPend.length = 0; }
   }

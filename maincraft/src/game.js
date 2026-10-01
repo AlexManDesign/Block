@@ -386,6 +386,7 @@ class Game {
       if (this.saveTimer > 30) { this.saveTimer = 0; this.saveWorld(false); }
     }
     this.perfT('ticks', performance.now() - tu);
+    if (this.bench) this.benchTick(dt);
     tu = performance.now();
     this.renderFrame(dt);
     this.perfT('render', performance.now() - tu);
@@ -398,6 +399,82 @@ class Game {
   perfT(name, ms) {
     const P = this.perf || (this.perf = {});
     P[name] = P[name] === undefined ? ms : P[name] * 0.92 + ms * 0.08;
+    const b = this.bench;
+    if (b && b.phase === 'run') b.cpu[name] = (b.cpu[name] || 0) + ms;
+  }
+
+  // ------------------------------------------------------------------ benchmark (F3 + B)
+  // Repeatable measurement in place: waits until every column within the render distance is
+  // generated and meshed, then turns the camera a full circle in 12 s from where the player
+  // stands, averaging frame times, GPU and CPU time per pass and the geometry drawn. The result
+  // is copied to the clipboard. Run it, change one setting, run it again on the same spot.
+  startBenchmark() {
+    if (this.bench) { this.endBenchmark(true); return; }
+    const p = this.player;
+    this.bench = { phase: 'wait', t: 0, ready: 0, pos: p.pos.slice(), yaw: p.yaw, pitch: p.pitch, flying: p.flying,
+      frames: [], cpu: {}, sec: 0, draws: 0, quads: 0, fog: 0, n: 0 };
+    p.flying = true;
+    this.r.gpuAcc = null;
+  }
+  worldReady() {
+    const w = this.world, p = this.player.pos;
+    if (w.genInFlight || w.meshInFlight || this.meshQueue.length) return false;
+    const pcx = Math.floor(p[0]) >> 4, pcz = Math.floor(p[2]) >> 4, R = Math.min(Settings.renderDist, 27);
+    for (const [dx, dz, d] of this.spiral) {
+      if (d > R) break;
+      const c = w.col(pcx + dx, pcz + dz);
+      if (!c || c.state !== 2 || c.dirty || c.meshBusy) return false;
+    }
+    return true;
+  }
+  benchTick(dt) {
+    const b = this.bench, p = this.player;
+    p.pos[0] = b.pos[0]; p.pos[1] = b.pos[1]; p.pos[2] = b.pos[2]; p.vel[0] = p.vel[1] = p.vel[2] = 0;
+    b.t += dt;
+    if (b.phase === 'wait') {
+      p.yaw = b.yaw; p.pitch = b.pitch;
+      b.ready = this.worldReady() ? b.ready + dt : 0;
+      if (b.ready > 1.5 || b.t > 45) { b.loadedAll = b.ready > 1.5; b.waited = b.t; b.phase = 'run'; b.t = 0; this.r.gpuAcc = {}; }
+      return;
+    }
+    p.yaw = b.yaw + Math.PI * 2 * Math.min(1, b.t / 12); p.pitch = b.pitch;
+    b.frames.push(dt * 1000);
+    const r = this.r, ps = r.pstat;
+    b.sec += r.visCount; b.draws += r.stats.draws; b.quads += ps[0].quads + ps[1].quads + ps[2].quads; b.fog += r.stats.fogCulled || 0; b.n++;
+    if (b.t >= 12) this.endBenchmark(false);
+  }
+  endBenchmark(cancelled) {
+    const b = this.bench, p = this.player, r = this.r;
+    this.bench = null;
+    p.yaw = b.yaw; p.pitch = b.pitch; p.flying = b.flying;
+    const acc = r.gpuAcc; r.gpuAcc = null;
+    if (cancelled || !b.frames.length) { this.benchText = 'бенчмарк отменён'; return; }
+    const f = (v, d = 2) => (v || 0).toFixed(d);
+    const a = b.frames.slice(1).sort((x, y) => x - y), n = a.length;
+    const avg = a.reduce((s, v) => s + v, 0) / n, p99 = a[Math.min(n - 1, Math.floor(n * 0.99))], worst = a[n - 1];
+    const fr = b.n || 1, C = (k) => f((b.cpu[k] || 0) / fr);
+    const Gv = (k) => acc && acc[k] ? acc[k].s / acc[k].n : 0;
+    const names = ['solid', 'cutout', 'sky', 'clouds', 'particles', 'entities', 'water', 'hand'];
+    let gsum = 0; for (const k of names) gsum += Gv(k);
+    const cv = r.canvas, w = this.world, pb = w.biomeAt(Math.floor(b.pos[0]), Math.floor(b.pos[2]));
+    const L = [];
+    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры) ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
+    L.push(`Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${b.pos.map(v => v.toFixed(1)).join(' ')} · pitch ${b.pitch.toFixed(2)} · биом ${BIOME_LIST[pb] ? BIOME_LIST[pb][0] : '?'}`);
+    L.push(`GPU: ${r.gpuName || '?'}`);
+    L.push(`${navigator.userAgent}`);
+    L.push(`настройки: экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'}`);
+    L.push(`FPS ${f(1000 / avg, 1)} · кадр ${f(avg)} мс · 1% low ${f(1000 / p99, 1)} fps · худший ${f(worst, 1)} мс · кадров ${n}`);
+    if (acc) L.push(`GPU мс (отброшено замеров ${r.gpuBad || 0}): всего ${f(gsum)} | рельеф ${f(Gv('solid'))} листва ${f(Gv('cutout'))} небо ${f(Gv('sky'))} облака ${f(Gv('clouds'))} частицы ${f(Gv('particles'))} мобы ${f(Gv('entities'))} вода ${f(Gv('water'))} рука ${f(Gv('hand'))}`);
+    else L.push('GPU мс: таймер видеокарты недоступен');
+    L.push(`CPU мс: кадр ${C('frame')} | мир ${C('update')} (мобы ${C('mobs')}) · тики ${C('ticks')} · чанки ${C('stream')} · загрузка ${C('upload')} · рендер ${C('render')} (видимость ${C('rVis')} · рельеф ${C('rTerrain')} · мобы ${C('rEntities')} · вода ${C('rWater')}) · HUD ${C('hud')}`);
+    L.push(`в среднем за кадр: секций ${f(b.sec / fr, 0)} · отброшено туманом ${f(b.fog / fr, 0)} · вызовов отрисовки ${f(b.draws / fr, 0)} · треугольников ${f(b.quads * 2 / fr / 1000, 0)}k`);
+    const mem = r.meshMemory(w);
+    L.push(`память мешей ${f(mem.bytes / 1048576, 1)} МБ · колонок ${w.cols.size} · ожидание загрузки ${f(b.waited, 1)} с`);
+    this.benchText = L.join('\n');
+    console.log(this.benchText);
+    const done = () => { this.copiedT = performance.now() + 4000; };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(this.benchText).then(done, () => { this.copyFallback(this.benchText); done(); });
+    else { this.copyFallback(this.benchText); done(); }
   }
 
   update(dt) {
@@ -1021,7 +1098,7 @@ class Game {
     const time = performance.now() / 1000;
     const tick = Math.floor(performance.now() / 50);
     const vy = this.camMode === 2 ? p.yaw + Math.PI : p.yaw, vpch = this.camMode === 2 ? -p.pitch : p.pitch;
-    r.gpuOn = this.debug;
+    r.gpuOn = this.debug || !!this.bench;
     r.gpuPoll();
     let t = performance.now();
     r.renderWorld(w, cam, vy, vpch, env, time, tick);
@@ -1270,8 +1347,10 @@ class Game {
     t += `Sections: ${r.stats.sections}  draws ${r.stats.draws}  quads ${r.stats.quads}\n`;
     t += `Time: ${Math.floor((this.time * 24 + 6) % 24)}:${String(Math.floor((this.time * 1440) % 60)).padStart(2, '0')}  Day ${this.days || 0}\n`;
     if (this.target) t += `Target: ${B_KEY[this.target.id]} [${this.target.meta}] @ ${this.target.x} ${this.target.y} ${this.target.z}\n`;
+    if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
+    else if (this.benchText) t += '\n' + this.benchText + '\n';
     t += '\n' + this.perfReport();
-    t += this.copiedT > performance.now() ? '\n>>> отчёт скопирован в буфер обмена' : '\nP — скопировать отчёт целиком';
+    t += this.copiedT > performance.now() ? '\n>>> отчёт скопирован в буфер обмена' : '\nP — скопировать отчёт целиком · B — бенчмарк (12 с на месте, результат копируется)';
     el.textContent = t;
   }
 
@@ -1371,6 +1450,7 @@ class Game {
       if (e.code === 'KeyW') { const now = performance.now(); if (now - this.lastW < 280) this.player.sprintLatch = true; this.lastW = now; }
       if (e.code === 'F3') this.debug = !this.debug;
       if (e.code === 'KeyP' && this.debug) this.copyPerfReport();
+      if (e.code === 'KeyB' && this.debug) this.startBenchmark();
       if (e.code === 'KeyF' && this.mode === 'creative') { this.player.flying = !this.player.flying; this.player.vel[1] = 0; }
       if (e.code === 'F5') this.camMode = (this.camMode + 1) % 3;
       if (e.code === 'F1') { this.hideHud = !this.hideHud; document.body.classList.toggle('nohud', this.hideHud); }
