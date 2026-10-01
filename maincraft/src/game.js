@@ -329,6 +329,7 @@ class Game {
     // frame-time history for the F3 performance report (average, 1% low, worst)
     if (!this.ftHist) { this.ftHist = new Float32Array(600); this.ftI = 0; }
     this.ftHist[this.ftI++ % 600] = dt * 1000;
+    this.noteSpike(dt * 1000);
     const tf0 = performance.now();
     this.stream();
     const tf1 = performance.now();
@@ -395,8 +396,32 @@ class Game {
     this.perfT('hud', performance.now() - tu);
     this.perfT('frame', performance.now() - tf0);
   }
+  // Stutter attribution: a frame interval over 25 ms is charged to the biggest JS stage of the
+  // frame before it when JS took most of that time, otherwise to work outside our JS (garbage
+  // collection, the GPU or the browser). Counts cover the last 600 frames.
+  noteSpike(ms) {
+    const F = this.frameStages, S = this.spikes || (this.spikes = { list: [] });
+    if (ms > 25 && F && F.frame !== undefined) {
+      const stages = ['stream', 'upload', 'update', 'ticks', 'render', 'hud'];
+      let big = 'вне JS (GC / видеокарта / браузер)', bv = 0;
+      if (F.frame > ms * 0.5) for (const k of stages) if ((F[k] || 0) > bv) { bv = F[k]; big = k; }
+      S.list.push({ i: this.ftI, ms, why: big, js: F.frame });
+    }
+    while (S.list.length && S.list[0].i < this.ftI - 600) S.list.shift();
+  }
+  spikeReport() {
+    const S = this.spikes;
+    if (!S || !S.list.length) return 'рывки (>25 мс за 600 кадров): нет';
+    const by = {};
+    for (const s of S.list) { const b = by[s.why] || (by[s.why] = { n: 0, ms: 0, js: 0 }); b.n++; b.ms += s.ms; b.js += s.js; }
+    const names = { stream: 'чанки', upload: 'загрузка в GPU', update: 'мир', ticks: 'тики', render: 'рендер', hud: 'HUD' };
+    return `рывки (>25 мс за 600 кадров): ${S.list.length} · ` + Object.entries(by).sort((a, b) => b[1].n - a[1].n)
+      .map(([k, b]) => `${names[k] || k}: ${b.n} (кадр ~${(b.ms / b.n).toFixed(0)} мс, JS ~${(b.js / b.n).toFixed(0)} мс)`).join(' · ');
+  }
   // smoothed CPU milliseconds per frame stage (shown with F3)
   perfT(name, ms) {
+    const F = this.frameStages || (this.frameStages = {});
+    F[name] = ms;
     const P = this.perf || (this.perf = {});
     P[name] = P[name] === undefined ? ms : P[name] * 0.92 + ms * 0.08;
     const b = this.bench;
@@ -470,6 +495,7 @@ class Game {
     L.push(`в среднем за кадр: секций ${f(b.sec / fr, 0)} · отброшено туманом ${f(b.fog / fr, 0)} · вызовов отрисовки ${f(b.draws / fr, 0)} · треугольников ${f(b.quads * 2 / fr / 1000, 0)}k`);
     const mem = r.meshMemory(w);
     L.push(`память мешей ${f(mem.bytes / 1048576, 1)} МБ · колонок ${w.cols.size} · ожидание загрузки ${f(b.waited, 1)} с`);
+    L.push(this.spikeReport());
     this.benchText = L.join('\n');
     console.log(this.benchText);
     const done = () => { this.copiedT = performance.now() + 4000; };
@@ -1384,6 +1410,7 @@ class Game {
     const mem = r.meshMemory(w), heap = performance.memory ? performance.memory.usedJSHeapSize : 0;
     L.push(`память: меши ${f(mem.bytes / 1048576, 1)} МБ в ${mem.n} секциях${heap ? ' · JS ' + f(heap / 1048576, 0) + ' МБ' : ''}`);
     L.push(`чанки: колонок ${w.cols.size} · генерация ${w.genInFlight} · меши ${w.meshInFlight} (очередь ${this.meshQueue ? this.meshQueue.length : 0}) · свет ${w.pendingLit.size} · загрузка ${f(this.upS.rate, 0)} секц/с ${f(this.upS.bRate / 1048576, 2)} МБ/с`);
+    L.push(this.spikeReport());
     L.push(`сущности: мобы ${this.ents ? this.ents.mobs.length : 0} · предметы ${this.ents ? this.ents.items.length : 0} · падающие ${this.ents ? this.ents.falling.length : 0} · частицы ${this.particles.length}`);
     return L.join('\n');
   }
