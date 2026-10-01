@@ -247,8 +247,8 @@ class Game {
         if (w.meshInFlight >= maxMesh) break;
         if (w.sectionEmpty(c, s)) {
           c.dirty &= ~(1 << s);
-          if (c.meshes[s] && c.meshes[s].vbo) { this.r.gl.deleteBuffer(c.meshes[s].vbo); this.r.gl.deleteVertexArray(c.meshes[s].vao); }
-          c.meshes[s] = null; c.meshed |= 1 << s;
+          this.r.freeSection(c, s);
+          c.meshed |= 1 << s;
           continue;
         }
         w.submitMesh(c, s, Settings.leaves, Settings.sway);
@@ -532,7 +532,7 @@ class Game {
     if (acc) L.push(`GPU мс (отброшено замеров ${r.gpuBad || 0}): всего ${f(gsum)} | рельеф ${f(Gv('solid'))} листва ${f(Gv('cutout'))} небо ${f(Gv('sky'))} облака ${f(Gv('clouds'))} частицы ${f(Gv('particles'))} мобы ${f(Gv('entities'))} вода ${f(Gv('water'))} рука ${f(Gv('hand'))}`);
     else L.push('GPU мс: таймер видеокарты недоступен');
     L.push(`CPU мс: кадр ${C('frame')} | мир ${C('update')} (мобы ${C('mobs')}) · тики ${C('ticks')} · чанки ${C('stream')} · загрузка ${C('upload')} · рендер ${C('render')} (видимость ${C('rVis')} · рельеф ${C('rTerrain')} · мобы ${C('rEntities')} · вода ${C('rWater')}) · HUD ${C('hud')}`);
-    L.push(`в среднем за кадр: секций ${f(b.sec / fr, 0)} · отброшено туманом ${f(b.fog / fr, 0)} · вызовов отрисовки ${f(b.draws / fr, 0)} · треугольников ${f(b.quads * 2 / fr / 1000, 0)}k`);
+    L.push(`в среднем за кадр: секций ${f(b.sec / fr, 0)} · отброшено туманом ${f(b.fog / fr, 0)} · диапазонов отрисовки ${f(b.draws / fr, 0)} · треугольников ${f(b.quads * 2 / fr / 1000, 0)}k`);
     const mem = r.meshMemory(w);
     L.push(`память мешей ${f(mem.bytes / 1048576, 1)} МБ · колонок ${w.cols.size} · ожидание загрузки ${f(b.waited, 1)} с`);
     L.push(this.spikeReport());
@@ -1442,9 +1442,9 @@ class Game {
     L.push(`CPU мс: кадр ${f(P.frame)} | мир ${f(P.update)} (мобы ${f(P.mobs)}, частицы ${f(P.particlesSim)}) · тики ${f(P.ticks)} · чанки ${f(P.stream)} · загрузка в GPU ${f(P.upload)} · HUD ${f(P.hud)}`);
     L.push(`CPU рендер ${f(P.render)}: видимость ${f(P.rVis)} · рельеф ${f(P.rTerrain)} · облака ${f(P.rClouds)} · частицы ${f(P.rParticles)} · мобы ${f(P.rEntities)} · вода ${f(P.rWater)} (сортировка ${f(P.rSort)}) · рука ${f(P.rHand)}`);
     const ps = r.pstat, q = ps[0].quads + ps[1].quads + ps[2].quads;
-    L.push(`секции: видно ${r.visCount} · отброшено туманом ${r.stats.fogCulled || 0} · вызовов отрисовки ${r.stats.draws} · треугольников ${(q * 2 / 1000).toFixed(0)}k`);
+    L.push(`секции: видно ${r.visCount} · отброшено туманом ${r.stats.fogCulled || 0} · диапазонов отрисовки ${r.stats.draws} · треугольников ${(q * 2 / 1000).toFixed(0)}k`);
     const pn = ['рельеф', 'листва', 'вода'];
-    for (let i = 0; i < 3; i++) L.push(`  ${pn[i]}: ${ps[i].sec} секций · ${ps[i].draws} draw · ${(ps[i].quads / 1000).toFixed(1)}k квадов (отсечено по направлению ${(ps[i].skipped / 1000).toFixed(1)}k)`);
+    for (let i = 0; i < 3; i++) L.push(`  ${pn[i]}: ${ps[i].sec} секций · ${ps[i].calls} вызовов (${ps[i].draws} диапазонов) · ${(ps[i].quads / 1000).toFixed(1)}k квадов (отсечено по направлению ${(ps[i].skipped / 1000).toFixed(1)}k)`);
     const mem = r.meshMemory(w), heap = performance.memory ? performance.memory.usedJSHeapSize : 0;
     L.push(`память: меши ${f(mem.bytes / 1048576, 1)} МБ в ${mem.n} секциях${heap ? ' · JS ' + f(heap / 1048576, 0) + ' МБ' : ''}`);
     L.push(`чанки: колонок ${w.cols.size} · генерация ${w.genInFlight} · меши ${w.meshInFlight} (очередь ${this.meshQueue ? this.meshQueue.length : 0}) · свет ${w.pendingLit.size} · загрузка ${f(this.upS.rate, 0)} секц/с ${f(this.upS.bRate / 1048576, 2)} МБ/с`);
