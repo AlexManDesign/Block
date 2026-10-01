@@ -761,9 +761,8 @@ class WorldGen {
         // noodles
         if (!cave && depth > 10 && v[3] * v[3] + v[4] * v[4] < 0.0022) cave = true;
         if (!cave) continue;
-        if (y <= -55) ids[i] = B.LAVA;
-        else if (colOcean && y <= SEA) ids[i] = B.WATER;
-        else ids[i] = 0;
+        // water below sea level is decided afterwards by aquifer()
+        ids[i] = y <= -55 ? B.LAVA : 0;
         this.meta[i] = 0;
       }
       // a cave that opened the surface exposes filler (dirt, sand...): the new top gets the biome's
@@ -777,6 +776,29 @@ class WorldGen {
         if (t2 !== B.STONE || nt === B.DIRT) ids[CI(x, ny, z)] = t2;
       }
       TOP[z * 16 + x] = ids[CI(x, ny, z)] === B.WATER ? top : ny;
+    }
+    this.aquifer();
+  }
+
+  // Simplified Minecraft aquifer: open space below sea level holds water only near the surface
+  // (within 12 blocks under the column's terrain height, which covers seas, shores and the caves
+  // just under them); deeper cavities stay dry. Where a dry cave meets that water zone a stone
+  // barrier is left, so water never stands against air. Depends only on coordinates, so
+  // neighbouring chunks agree.
+  aquifer() {
+    const ids = this.ids, x0 = this.x0, z0 = this.z0;
+    const lo = this.aqLo || (this.aqLo = new Int16Array(18 * 18));
+    for (let z = -1; z <= 16; z++) for (let x = -1; x <= 16; x++) lo[(z + 1) * 18 + x + 1] = Math.ceil(this.colInfo(x0 + x, z0 + z).h) - 12;
+    for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
+      const k = (z + 1) * 18 + x + 1, L = lo[k];
+      const side = Math.min(lo[k - 1], lo[k + 1], lo[k - 18], lo[k + 18]);
+      for (let y = SEA; y > -55; y--) {
+        const i = CI(x, y, z), id = ids[i];
+        if (id !== 0 && id !== B.WATER) continue;
+        if (y >= L) { ids[i] = B.WATER; continue; }
+        // below this column's zone: a barrier where the zone above or beside it holds water
+        ids[i] = y === L - 1 || y >= side ? (y < 0 ? B.DEEPSLATE : B.STONE) : 0;
+      }
     }
   }
 
