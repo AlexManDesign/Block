@@ -90,6 +90,7 @@ function blockBoxes(world, id, m, x, y, z) {
     case SH.VINE: case SH.LICHEN: return [[0, 0, 0, 1, 1, 1]];
     case SH.SNOWLAYER: return [[0, 0, 0, 1, ((m & 7) + 1) / 8, 1]];
     case SH.CRYSTAL: return [crystalBox(id, m)];
+    case SH.MODEL: { const bx = MODEL_BOX_ID[id]; return bx ? [bx[m] || bx[0]] : FULL_BOX; }
     case SH.WATER: case SH.LAVA: return FULL_BOX;
     default: return FULL_BOX;
   }

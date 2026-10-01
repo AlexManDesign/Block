@@ -301,6 +301,71 @@ class Mesher {
     }
   }
 
+  // Minecraft block model (models.js): the parts of the block's variant, each element's faces with
+  // their uv, uv rotation and element rotation, turned by the variant's x / y rotation; faces with a
+  // cullface hidden behind an opaque neighbour on that side
+  model(p, id, m, x, y, z, buf) {
+    const V = MODEL_VAR_ID[id];
+    if (!V) return;
+    const parts = V[m] || V[0], ids = this.ids;
+    const lt = this.maxLight(p), s = lt >> 4, b = (FLAGS[id] & BF_EMISSIVE) ? 15 : lt & 15;
+    const { tpx, tpy, tpz, tu, tv, sh, sk, bl } = this.t;
+    const P = MODEL_TMP;
+    for (const [mi, rx, ry] of parts) {
+      const cx = Math.cos(rx * Math.PI / 180), sx = Math.sin(rx * Math.PI / 180), cy = Math.cos(ry * Math.PI / 180), sy = Math.sin(ry * Math.PI / 180);
+      for (const E of MODEL_LIST[mi]) {
+        const fr = E[0], to = E[1], rot = E[2], faces = E[3];
+        let ra = 0, rc = 1, rs = 0, sc = [1, 1, 1];
+        if (rot) {
+          ra = rot[1]; const a = rot[2] * Math.PI / 180; rc = Math.cos(a); rs = Math.sin(a);
+          if (rot[3]) { const k = 1 / Math.cos(Math.abs(rot[2]) === 22.5 ? Math.PI / 8 : Math.PI / 4) - 1; sc = [ra === 0 ? 1 : 1 + k, ra === 1 ? 1 : 1 + k, ra === 2 ? 1 : 1 + k]; }
+        }
+        for (let f = 0; f < 6; f++) {
+          const F = faces[f];
+          if (!F) continue;
+          const C = MODEL_FACE_CORNERS[f];
+          for (let v = 0; v < 4; v++) {
+            let px = C[v][0] ? to[0] : fr[0], py = C[v][1] ? to[1] : fr[1], pz = C[v][2] ? to[2] : fr[2];
+            if (rot) {
+              const o = rot[0]; let a = px - o[0], bb = py - o[1], c = pz - o[2], t;
+              if (ra === 0) { t = bb * rc - c * rs; c = bb * rs + c * rc; bb = t; }
+              else if (ra === 1) { t = a * rc + c * rs; c = -a * rs + c * rc; a = t; }
+              else { t = a * rc - bb * rs; bb = a * rs + bb * rc; a = t; }
+              px = a * sc[0] + o[0]; py = bb * sc[1] + o[1]; pz = c * sc[2] + o[2];
+            }
+            // variant rotation about the block centre: x (+y toward north), then y (clockwise from above)
+            let a = px - 8, bb = py - 8, c = pz - 8, t;
+            if (rx) { t = bb * cx + c * sx; c = -bb * sx + c * cx; bb = t; }
+            if (ry) { t = a * cy - c * sy; c = a * sy + c * cy; a = t; }
+            P[v * 3] = a + 8; P[v * 3 + 1] = bb + 8; P[v * 3 + 2] = c + 8;
+          }
+          // cullface, turned with the variant
+          if (F[6] >= 0) {
+            const n = FN[F[6]];
+            let nx = n[0], ny = n[1], nz = n[2], t;
+            if (rx) { t = Math.round(ny * cx + nz * sx); nz = Math.round(-ny * sx + nz * cx); ny = t; }
+            if (ry) { t = Math.round(nx * cy - nz * sy); nz = Math.round(nx * sy + nz * cy); nx = t; }
+            if (OPAQUE[ids[p + nx * SX + ny * SY + nz * SZ]]) continue;
+          }
+          for (let v = 0; v < 4; v++) {
+            tpx[v] = x * 16 + P[v * 3]; tpy[v] = y * 16 + P[v * 3 + 1]; tpz[v] = z * 16 + P[v * 3 + 2];
+            const j = (v + (F[5] / 90 | 0)) & 3;
+            tu[v] = j === 0 || j === 1 ? F[1] : F[3];
+            tv[v] = j === 0 || j === 3 ? F[2] : F[4];
+          }
+          // shade by the face's direction after turning
+          const e1x = P[3] - P[0], e1y = P[4] - P[1], e1z = P[5] - P[2], e2x = P[6] - P[0], e2y = P[7] - P[1], e2z = P[8] - P[2];
+          const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+          const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+          const fs = F[7] === 0 ? 1 : ay >= ax && ay >= az ? (ny > 0 ? FACE_SHADE[2] : FACE_SHADE[3]) : ax >= az ? FACE_SHADE[0] : FACE_SHADE[4];
+          const shv = Math.round(fs * 255);
+          for (let v = 0; v < 4; v++) { sh[v] = shv; sk[v] = s * 16; bl[v] = b * 16; }
+          this.quad(buf, tpx, tpy, tpz, tu, tv, F[8], sh, sk, bl, 0, false);
+        }
+      }
+    }
+  }
+
   // flat double sided quad given 4 corner positions (1/16 units, absolute in section) and uv rect
   flat(buf, pts, layer, u0, v0, u1, v1, s, b, shade, flags, twoSided) {
     const { tpx, tpy, tpz, tu, tv, sh, sk, bl } = this.t;
@@ -353,6 +418,7 @@ class Mesher {
       case SH.WATER: case SH.LAVA:
         this.fluid(ids, meta, light, p, id, x, y, z);
         return;
+      case SH.MODEL: this.model(p, id, m, x, y, z, buf); return;
       case SH.CROSS: {
         if (FLAGS[id] & BF_AQUATIC) this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
         const lt = this.maxLight(p);
@@ -745,6 +811,16 @@ class Mesher {
 }
 
 // rotate a box (1/16 units) by quarter turns around the block's vertical axis: north -> east -> south -> west
+// Minecraft's FaceInfo vertex order per face (FN order: +x -x +y -y +z -z); 1 = element max
+const MODEL_FACE_CORNERS = [
+  [[1, 1, 1], [1, 0, 1], [1, 0, 0], [1, 1, 0]],
+  [[0, 1, 0], [0, 0, 0], [0, 0, 1], [0, 1, 1]],
+  [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]],
+  [[0, 0, 1], [0, 0, 0], [1, 0, 0], [1, 0, 1]],
+  [[0, 1, 1], [0, 0, 1], [1, 0, 1], [1, 1, 1]],
+  [[1, 1, 0], [1, 0, 0], [0, 0, 0], [0, 1, 0]],
+];
+const MODEL_TMP = new Float32Array(12);
 function rotBox(b, turns) {
   let x0 = b[0], z0 = b[2], x1 = b[3], z1 = b[5];
   for (let t = 0; t < turns; t++) {

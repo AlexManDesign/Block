@@ -28,7 +28,7 @@ const RT = (function () {
   const n = B_KEY.length, kind = new Uint8Array(n), next = new Uint16Array(n), flam = new Uint8Array(n);
   for (let id = 1; id < n; id++) {
     const k = B_KEY[id] || '';
-    const crop = /^(WHEAT|CARROTS|POTATOES|PUMPKIN_STEM|MELON_STEM)_([0-2])$/.exec(k);
+    const crop = /^(WHEAT|CARROTS|POTATOES|BEETROOTS|PUMPKIN_STEM|MELON_STEM)_([0-2])$/.exec(k);
     if (crop) { kind[id] = 1; next[id] = B[crop[1] + '_' + (+crop[2] + 1)]; }
     else if (k === 'PUMPKIN_STEM_3') { kind[id] = 2; next[id] = B.PUMPKIN; }
     else if (k === 'MELON_STEM_3') { kind[id] = 2; next[id] = B.MELON; }
@@ -823,7 +823,7 @@ class Game {
       if (td && td.tool === 'shovel' && id === B.GRASS && !w.getBlock(tg.x, tg.y + 1, tg.z)) {
         w.setBlock(tg.x, tg.y, tg.z, B.DIRT_PATH, 0); Sfx.block(B.DIRT, 'place'); this.swing(); this.damageTool(); return;
       }
-      const seeds = { [IT.WHEAT_SEEDS]: B.WHEAT_0, [IT.CARROT]: B.CARROTS_0, [IT.POTATO]: B.POTATOES_0, [IT.PUMPKIN_SEEDS]: B.PUMPKIN_STEM_0, [IT.MELON_SEEDS]: B.MELON_STEM_0 };
+      const seeds = { [IT.WHEAT_SEEDS]: B.WHEAT_0, [IT.BEETROOT_SEEDS]: B.BEETROOTS_0, [IT.CARROT]: B.CARROTS_0, [IT.POTATO]: B.POTATOES_0, [IT.PUMPKIN_SEEDS]: B.PUMPKIN_STEM_0, [IT.MELON_SEEDS]: B.MELON_STEM_0 };
       if (seeds[hid] && (id === B.FARMLAND || id === B.FARMLAND_MOIST) && tg.face === 2 && !w.getBlock(tg.x, tg.y + 1, tg.z)) {
         w.setBlock(tg.x, tg.y + 1, tg.z, seeds[hid], 0); this.consumeHeld(); this.swing(); return;
       }

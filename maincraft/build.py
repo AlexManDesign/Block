@@ -30,7 +30,8 @@ SKIP_PREFIX = ('entity_', 'ui_')
 SKIP = {'sun', 'moon_phases', 'bobber'}
 FIRST_FRAME_ONLY = {'short_grass', 'seagrass', 'tall_seagrass_top', 'tall_seagrass_bottom', 'kelp', 'kelp_plant'}
 ANIM_TICKS = {'water_still': 2, 'seagrass': 3, 'kelp': 3, 'sea_lantern': 5, 'magma': 8,
-              'prismarine': 60, 'crimson_stem': 10, 'warped_stem': 10}
+              'prismarine': 60, 'crimson_stem': 10, 'warped_stem': 10,
+              'lantern': 8, 'campfire_fire': 2, 'campfire_log_lit': 20, 'stonecutter_saw': 1}
 
 
 def tint(img, rgb):

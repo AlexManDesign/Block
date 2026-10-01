@@ -106,9 +106,11 @@ for c in COLORS:
     SIMPLE.setdefault(c + '_terracotta', c.upper() + '_TERRACOTTA')
     SIMPLE[c + '_bed'] = 'BED' if c == 'red' else 'BED_' + c.upper()
 # blocks this game does not have yet: left out (Minecraft places them, we place nothing)
-MISSING = {'brewing_stand', 'water_cauldron', 'cauldron', 'oak_wall_sign', 'spruce_wall_sign', 'barrel', 'bell', 'blast_furnace', 'brown_wall_banner',
-           'campfire', 'cartography_table', 'composter', 'fletching_table', 'grindstone', 'lantern', 'lectern', 'loom', 'smithing_table', 'smoker',
-           'stonecutter', 'beetroots'}
+MISSING = {'oak_wall_sign', 'spruce_wall_sign', 'brown_wall_banner'}
+MODEL_BLOCKS = {'barrel': 'BARREL', 'blast_furnace': 'BLAST_FURNACE', 'smoker': 'SMOKER', 'loom': 'LOOM', 'cartography_table': 'CARTOGRAPHY_TABLE',
+                'fletching_table': 'FLETCHING_TABLE', 'smithing_table': 'SMITHING_TABLE', 'lectern': 'LECTERN', 'stonecutter': 'STONECUTTER',
+                'grindstone': 'GRINDSTONE', 'bell': 'BELL', 'lantern': 'LANTERN', 'campfire': 'CAMPFIRE', 'brewing_stand': 'BREWING_STAND',
+                'cauldron': 'CAULDRON', 'water_cauldron': 'CAULDRON', 'composter': 'COMPOSTER'}
 KEYS = None   # block keys of this game (checked when set)
 
 
@@ -128,6 +130,21 @@ def convert(name, props):
     half_top = pr.get('half') == 'top'
     if n in MISSING: return None
     if n.startswith('potted_'): return ['FLOWER_POT', 0, 0]
+    if n in MODEL_BLOCKS:
+        # meta as models.js / blockdata.js encode them
+        k = MODEL_BLOCKS[n]
+        if n == 'barrel': m = {'south': 0, 'west': 1, 'north': 2, 'east': 3, 'up': 4, 'down': 5}[pr.get('facing', 'up')] | (8 if pr.get('open') == 'true' else 0)
+        elif n in ('blast_furnace', 'smoker', 'loom', 'lectern', 'stonecutter'): m = f
+        elif n == 'grindstone': m = f | ({'floor': 0, 'wall': 1, 'ceiling': 2}[pr.get('face', 'floor')] << 2)
+        elif n == 'bell': m = f | ({'floor': 0, 'ceiling': 1, 'single_wall': 2, 'double_wall': 3}[pr.get('attachment', 'floor')] << 2)
+        elif n == 'lantern': m = 1 if pr.get('hanging') == 'true' else 0
+        elif n == 'campfire': m = f | (4 if pr.get('lit') == 'false' else 0)
+        elif n == 'brewing_stand': m = sum(1 << i for i in range(3) if pr.get('has_bottle_%d' % i) == 'true')
+        elif n == 'water_cauldron': m = int(pr.get('level', 3))
+        elif n == 'composter': m = int(pr.get('level', 0))
+        else: m = 0
+        return [k, m, 0]
+    if n == 'beetroots': return ['BEETROOTS_%d' % min(3, int(pr.get('age', 0))), 0, 0]
     key = None
     for w, keys in WOODS.items():
         if n.startswith(w + '_'):

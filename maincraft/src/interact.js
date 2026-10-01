@@ -111,6 +111,13 @@ function placementFor(world, heldId, hit, fd, player) {
     case SH.LICHEN:
       m = hdir >= 0 ? 1 << ((hdir + 2) & 3) : hit.face === 2 ? 16 : 32; break;
     case SH.CHEST: m = (fd + 2) & 3; break;
+    case SH.MODEL:
+      // models.js meta: facing toward the player; lanterns hang under a ceiling; barrels face the player's look
+      if (heldId === B.LANTERN) m = hit.face === 3 ? 1 : 0;
+      else if (heldId === B.BARREL) m = player && player.pitch < -0.8 ? 4 : player && player.pitch > 0.8 ? 5 : (fd + 2) & 3;
+      else if (heldId === B.BREWING_STAND || heldId === B.CAULDRON || heldId === B.COMPOSTER) m = 0;
+      else m = (fd + 2) & 3;
+      break;
     default:
       if (fl & BF_AXIS) m = hit.face <= 1 ? 1 : hit.face >= 4 ? 2 : 0;
       else if (fl & BF_FACING) m = (fd + 2) & 3;
@@ -200,6 +207,7 @@ function dropsFor(id, m, item) {
     WHEAT_0: [IT.WHEAT_SEEDS], WHEAT_1: [IT.WHEAT_SEEDS], WHEAT_2: [IT.WHEAT_SEEDS], WHEAT_3: [IT.WHEAT],
     CARROTS_0: [IT.CARROT], CARROTS_1: [IT.CARROT], CARROTS_2: [IT.CARROT], CARROTS_3: [IT.CARROT, 2, 4],
     POTATOES_0: [IT.POTATO], POTATOES_1: [IT.POTATO], POTATOES_2: [IT.POTATO], POTATOES_3: [IT.POTATO, 2, 4],
+    BEETROOTS_0: [IT.BEETROOT_SEEDS], BEETROOTS_1: [IT.BEETROOT_SEEDS], BEETROOTS_2: [IT.BEETROOT_SEEDS],
   };
   if ((k === 'TALL_GRASS' || k === 'FERN' || k === 'TALL_GRASS_PLANT') && !shears) return r < 0.125 ? [{ id: IT.WHEAT_SEEDS, count: 1 }] : [];
   // snow and snow layers need a shovel (Minecraft: requiresCorrectToolForDrops), so snow washed
@@ -207,6 +215,7 @@ function dropsFor(id, m, item) {
   if (k === 'SNOW' || k === 'SNOW_LAYER') return t && t.tool === 'shovel' ? [{ id, count: 1 }] : [];
   if (k === 'GRAVEL') return r < 0.1 ? [{ id: IT.FLINT, count: 1 }] : [{ id, count: 1 }];
   if (k === 'WHEAT_3') return [{ id: IT.WHEAT, count: 1 }, { id: IT.WHEAT_SEEDS, count: 1 + ((Math.random() * 3) | 0) }];
+  if (k === 'BEETROOTS_3') return [{ id: IT.BEETROOT, count: 1 }, { id: IT.BEETROOT_SEEDS, count: 1 + ((Math.random() * 3) | 0) }];
   if (/LAPIS_ORE|REDSTONE_ORE/.test(k)) return [{ id, count: 1 }];
   if (SHAPE[id] === SH.WATER || SHAPE[id] === SH.LAVA) return [];
   if (map[k] && !(shears && (k === 'TALL_GRASS' || k === 'FERN'))) {

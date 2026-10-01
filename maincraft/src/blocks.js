@@ -9,7 +9,7 @@ const SH = {
   AIR: 0, CUBE: 1, CROSS: 2, WATER: 3, LAVA: 4, SLAB: 5, STAIRS: 6, FENCE: 7, GATE: 8, WALL: 9,
   PANE: 10, DOOR: 11, TRAPDOOR: 12, LADDER: 13, TORCH: 14, CARPET: 15, PLATE: 16, BUTTON: 17,
   TALL: 18, VINE: 19, LICHEN: 20, LILY: 21, PICKLE: 22, BAMBOO: 23, POT: 24, RAIL: 25, CACTUS: 26,
-  CHEST: 27, BED: 28, FARMLAND: 29, FIRE: 30, SNOWLAYER: 31, CRYSTAL: 32,
+  CHEST: 27, BED: 28, FARMLAND: 29, FIRE: 30, SNOWLAYER: 31, CRYSTAL: 32, MODEL: 33,
 };
 const SHAPE_BY_NAME = {
   '': SH.CUBE, x: SH.CROSS, water: SH.WATER, lava: SH.LAVA, slab: SH.SLAB, stairs: SH.STAIRS,
@@ -17,7 +17,7 @@ const SHAPE_BY_NAME = {
   ladder: SH.LADDER, torch: SH.TORCH, carpet: SH.CARPET, plate: SH.PLATE, button: SH.BUTTON,
   tallplant: SH.TALL, vine: SH.VINE, lichen: SH.LICHEN, lilypad: SH.LILY, seapickle: SH.PICKLE,
   bamboo: SH.BAMBOO, pot: SH.POT, rail: SH.RAIL, cactus: SH.CACTUS, chest: SH.CHEST, bed: SH.BED,
-  farmland: SH.FARMLAND, fire: SH.FIRE, snowlayer: SH.SNOWLAYER, crystal: SH.CRYSTAL,
+  farmland: SH.FARMLAND, fire: SH.FIRE, snowlayer: SH.SNOWLAYER, crystal: SH.CRYSTAL, model: SH.MODEL,
 };
 
 // render layers
@@ -60,7 +60,7 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     if (sh === SH.CROSS || sh === SH.TALL || sh === SH.VINE || sh === SH.LICHEN || sh === SH.LILY) f |= BF_PLANT;
     if (sh === SH.CROSS || sh === SH.TALL || sh === SH.WATER || sh === SH.LAVA || sh === SH.VINE ||
         sh === SH.LICHEN || sh === SH.FIRE || key === 'SNOW_LAYER') f |= BF_REPLACE;
-    if (/SAPLING|WHEAT_|CARROTS_|POTATOES_|STEM_|MUSHROOM$|FUNGUS|ROOTS|SPROUTS|CORAL_FAN|KELP|SEAGRASS|PROPAGULE|SUGAR_CANE|SWEET_BERRY|COBWEB|FLOWER_POT|DANDELION|POPPY|TULIP|ORCHID|ALLIUM|BLUET|CORNFLOWER|DAISY|LILY_OF|WITHER_ROSE/.test(key)) f &= ~BF_REPLACE;
+    if (/SAPLING|WHEAT_|CARROTS_|POTATOES_|BEETROOTS_|STEM_|MUSHROOM$|FUNGUS|ROOTS|SPROUTS|CORAL_FAN|KELP|SEAGRASS|PROPAGULE|SUGAR_CANE|SWEET_BERRY|COBWEB|FLOWER_POT|DANDELION|POPPY|TULIP|ORCHID|ALLIUM|BLUET|CORNFLOWER|DAISY|LILY_OF|WITHER_ROSE/.test(key)) f &= ~BF_REPLACE;
     if (key === 'TALL_GRASS' || key === 'FERN' || key === 'DEAD_BUSH' || key === 'SEAGRASS') f |= BF_REPLACE;
     FLAGS[id] = f;
     EMIT[id] = r[6] | 0;
@@ -100,10 +100,19 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     if (f & BF_PLANT || sh === SH.CROSS || sh === SH.TORCH || sh === SH.FIRE || sh === SH.TALL) { h = 0; tool = 0; }
     if (key === 'COBWEB') { h = 4; tool = 4; }
     if (key === 'SPAWNER') { h = 5; tool = 1; }
+    if (/^(BARREL|LECTERN|LOOM|COMPOSTER|FLETCHING_TABLE|CARTOGRAPHY_TABLE|SMITHING_TABLE|CAMPFIRE)$/.test(key)) { h = 2.5; tool = 2; }
+    if (/^(BLAST_FURNACE|SMOKER|STONECUTTER)$/.test(key)) { h = 3.5; tool = 1; }
+    if (/^(GRINDSTONE|CAULDRON|BELL)$/.test(key)) { h = 2; tool = 1; }
+    if (key === 'LANTERN') { h = 3.5; tool = 1; }
+    if (key === 'BREWING_STAND') { h = 0.5; tool = 1; }
+    if (/^BEETROOTS_/.test(key)) { h = 0; tool = 0; }
     if (sh === SH.WATER || sh === SH.LAVA) h = -1;
     HARD[id] = h; TOOL[id] = tool;
   }
 })();
+
+// model variants / selection boxes by block id (filled from models.js)
+const MODEL_VAR_ID = [], MODEL_BOX_ID = [];
 
 // waterlogged twins of the shapes Minecraft lets hold water
 const WET = new Uint16Array(NB);
@@ -171,6 +180,11 @@ function resolveBlockTextures(layerMap) {
       for (let k = 0; k < 6; k++) FTEX[o + k] = FTEX[base * 6 + k];
       if (sh === SH.FENCE || sh === SH.GATE) for (let k = 0; k < 6; k++) FTEX[o + k] = FTEX[base * 6];
     }
+  }
+  // block model faces: texture name -> layer (models.js), models by block id
+  if (typeof MODEL_LIST !== 'undefined') {
+    for (const M of MODEL_LIST) for (const E of M) for (const F of E[3]) if (F) F[8] = L(F[0].split('/').pop());
+    for (const k in MODEL_VAR) if (B[k]) { MODEL_VAR_ID[B[k]] = MODEL_VAR[k]; MODEL_BOX_ID[B[k]] = MODEL_BOX[k]; }
   }
   for (let id = 1; id < NB; id++) {
     const t = WET[id];
@@ -251,6 +265,8 @@ ITEM_TABLE.push(['SPAWN_EGG_ENDERMAN', 'Enderman Spawn Egg', 'Яйцо приз�
 ITEM_TABLE.push(['SPAWN_EGG_SLIME', 'Slime Spawn Egg', 'Яйцо призыва слизня', 'item_spawn_egg_slime', 64, { mob: 'slime' }]);
 ITEM_TABLE.push(['SPAWN_EGG_SALMON', 'Salmon Spawn Egg', 'Яйцо призыва лосося', 'item_spawn_egg_salmon', 64, { mob: 'salmon' }]);
 ITEM_TABLE.push(['SPAWN_EGG_SHARK', 'Shark Spawn Egg', 'Яйцо призыва акулы', 'item_spawn_egg_shark', 64, { mob: 'shark' }]);
+ITEM_TABLE.push(['BEETROOT', 'Beetroot', 'Свёкла', 'item_beetroot', 64, { food: 1 }]);
+ITEM_TABLE.push(['BEETROOT_SEEDS', 'Beetroot Seeds', 'Семена свёклы', 'item_beetroot_seeds', 64]);
 const IT = {};
 for (let i = 0; i < ITEM_TABLE.length; i++) IT[ITEM_TABLE[i][0]] = ITEM_BASE + i;
 function isItem(id) { return id >= ITEM_BASE && id < WET_BASE; }
