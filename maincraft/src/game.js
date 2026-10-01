@@ -64,7 +64,7 @@ class Game {
     this.camMode = 0;
     this.debug = false;
     this.hideHud = false;
-    this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, lavaT: 0, invT: 0, lastHurt: 0 };
+    this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, lavaT: 0, invT: 0, lastHurt: 0, poisonT: 0, poisonAcc: 0 };
     this.atkT = 10; this.atkBarV = -1; this.lastHeld = null;
     this.spiral = [];
     for (let dz = -40; dz <= 40; dz++) for (let dx = -40; dx <= 40; dx++) this.spiral.push([dx, dz, Math.hypot(dx, dz)]);
@@ -722,6 +722,13 @@ class Game {
     this.breakingPlayer = false;
   }
   onBlockBroken(x, y, z, id, m, byUpdate) {
+    // a broken chest spills its contents in every mode (Containers.dropContents)
+    if (id === B.CHEST) {
+      const C = this.chests = this.meta.chests || (this.meta.chests = {}), k = `${x},${y},${z}`;
+      const items = C[k] || ((m >> 2) ? rollLoot(m >> 2) : null);
+      delete C[k];
+      if (items) for (const it of items) if (it) this.ents.dropItem(it.id, it.count, x + 0.5, y + 0.5, z + 0.5);
+    }
     // the player breaking blocks drops nothing in creative; blocks broken by the world (lost
     // support, washed away by water) drop in every mode, as in Minecraft
     if (this.mode !== 'survival' && !byUpdate) return;
@@ -1005,6 +1012,11 @@ class Game {
     }
     if (s.hurtT > 0) s.hurtT -= dt;
     if (s.invT > 0) s.invT -= dt;
+    // MobEffects.POISON (level I): 1 damage every 25 ticks while health is above 1
+    if (s.poisonT > 0) {
+      s.poisonT -= dt; s.poisonAcc += dt;
+      if (s.poisonAcc >= 1.25) { s.poisonAcc -= 1.25; if (s.hp > 1) this.hurt(1); }
+    }
     this.updateSurvivalHud();
   }
   // LivingEntity.hurt: 20 ticks of invulnerability; in the first 10 only a bigger hit lands, by the difference
@@ -1028,6 +1040,7 @@ class Game {
     this.updateSurvivalHud();
     return true;
   }
+  poison(sec) { if (this.mode === 'survival') { if (this.surv.poisonT <= 0) this.surv.poisonAcc = 0; this.surv.poisonT = Math.max(this.surv.poisonT, sec); this.updateSurvivalHud(); } }
   die() {
     this.surv.dead = true;
     if (document.pointerLockElement) document.exitPointerLock();
@@ -1035,7 +1048,7 @@ class Game {
   }
   respawn() {
     const p = this.player;
-    Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false });
+    Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false, poisonT: 0 });
     this.inv = this.inv.map(() => null);
     p.pos = (this.spawn || [0.5, 100, 0.5]).slice(); p.vel = [0, 0, 0]; p.fallDist = 0;
     this.updateHotbar(); this.updateSurvivalHud();

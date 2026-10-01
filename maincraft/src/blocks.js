@@ -96,10 +96,19 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     else if (/BED/.test(key)) { h = 0.2; tool = 0; }
     if (f & BF_PLANT || sh === SH.CROSS || sh === SH.TORCH || sh === SH.FIRE || sh === SH.TALL) { h = 0; tool = 0; }
     if (key === 'COBWEB') { h = 4; tool = 4; }
+    if (key === 'SPAWNER') { h = 5; tool = 1; }
     if (sh === SH.WATER || sh === SH.LAVA) h = -1;
     HARD[id] = h; TOOL[id] = tool;
   }
 })();
+
+// horizontal directions (same order as the main thread's DIRX_W / DIRZ_W: +z, -x, -z, +x)
+const HDX = [0, -1, 0, 1], HDZ = [1, 0, -1, 0];
+// loot tables of generated chests (chest meta bits 2+, rolled when first opened or broken)
+const LOOT = { SIMPLE_DUNGEON: 1, ABANDONED_MINESHAFT: 2, DESERT_PYRAMID: 3, JUNGLE_TEMPLE: 4, SHIPWRECK_SUPPLY: 5, SHIPWRECK_TREASURE: 6, SHIPWRECK_MAP: 7, UNDERWATER_RUIN_SMALL: 8, UNDERWATER_RUIN_BIG: 9, IGLOO: 10, VILLAGE: 11 };
+// mob of a spawner (spawner meta)
+const SPAWNER_MOB = { pig: 0, zombie: 1, skeleton: 2, spider: 3, cave_spider: 4 };
+const SPAWNER_TYPES = ['pig', 'zombie', 'skeleton', 'spider', 'cave_spider'];
 
 // water / aquatic helpers
 function isWaterId(id) { return id === B.WATER || (FLAGS[id] & BF_AQUATIC) !== 0; }

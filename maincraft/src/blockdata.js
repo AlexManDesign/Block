@@ -667,4 +667,5 @@ const BLOCK_TABLE = [
   ["AMETHYST_CLUSTER", "Amethyst Cluster", "Друза аметиста", "amethyst_cluster", "crystal", "", 5, "", "n"],
   ["CHERRY_LOG", "Cherry Log", "Вишнёвое бревно", "cherry_log_top,cherry_log", "", "Y", 0, "", "n"],
   ["CHERRY_LEAVES", "Cherry Leaves", "Вишнёвая листва", "cherry_leaves", "", "L", 0, "", "n"],
+  ["SPAWNER", "Monster Spawner", "Рассадник монстров", "spawner", "", "G", 0, "", "n"],
 ];

@@ -574,6 +574,8 @@ class WorldGen {
     this.surface();
     this.caves();
     this.geodes();
+    this.spawnerList = [];
+    this.dungeons();
     this.ores();
     this.bedrock();
     this.springs();
@@ -594,7 +596,7 @@ class WorldGen {
       secs[s] = { ids: ids.slice(off, off + 4096), meta: meta.slice(off, off + 4096) };
     }
     const bio = new Uint8Array(BIO);
-    return { sections: secs, biomes: bio, springs: this.springList };
+    return { sections: secs, biomes: bio, springs: this.springList, spawners: this.spawnerList };
   }
 
   fillTerrain() {
@@ -969,6 +971,50 @@ class WorldGen {
       const a = ni(lo + 8, hi), b = ni(lo, a - 1), y = ni(lo, b - 1 + 8);
       tryAt(x, y, z, B.LAVA, LROCK);
     }
+  }
+
+  // MonsterRoomFeature: monster_room (10 tries, y 0..top) and monster_room_deep (4 tries, y -58..-1).
+  // A cobblestone / mossy cobblestone room 5..7 wide around a spawner, kept where floor and ceiling
+  // are solid and the walls have 1..5 openings at floor level, with up to two loot chests against a
+  // wall. The room is kept inside this chunk, so the solidity check sees final terrain.
+  dungeons() {
+    const ids = this.ids, meta = this.meta;
+    const rnd = mulberry(hash2i(this.seed + 1301, this.cx, this.cz)), ri = (n) => (rnd() * n) | 0;
+    const solid = (x, y, z) => OPAQUE[ids[CI(x, y, z)]] === 1;
+    const air = (x, y, z) => ids[CI(x, y, z)] === 0;
+    const room = (y0, y1) => {
+      const xr = ri(2) + 2, zr = ri(2) + 2;
+      const ox = xr + 1 + ri(14 - 2 * xr), oz = zr + 1 + ri(14 - 2 * zr), oy = y0 + ri(y1 - y0 + 1);
+      if (oy - 1 <= WORLD_MIN_Y || oy + 4 >= WORLD_MAX_Y) return;
+      const x0 = ox - xr - 1, x1 = ox + xr + 1, z0 = oz - zr - 1, z1 = oz + zr + 1;
+      let open = 0;
+      for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) {
+        if (!solid(x, oy - 1, z) || !solid(x, oy + 4, z)) return;
+        if ((x === x0 || x === x1 || z === z0 || z === z1) && air(x, oy, z) && air(x, oy + 1, z)) open++;
+      }
+      if (open < 1 || open > 5) return;
+      for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) for (let y = oy + 3; y >= oy - 1; y--) {
+        const i = CI(x, y, z);
+        if (x !== x0 && x !== x1 && z !== z0 && z !== z1 && y !== oy - 1) { ids[i] = 0; meta[i] = 0; }
+        else if (!OPAQUE[ids[i - 256]] && !SOLID[ids[i - 256]]) { ids[i] = 0; meta[i] = 0; }
+        else if (OPAQUE[ids[i]]) { ids[i] = y === oy - 1 && ri(4) !== 0 ? B.MOSSY : B.COBBLE; meta[i] = 0; }
+      }
+      for (let c = 0; c < 2; c++) for (let t = 0; t < 3; t++) {
+        const x = ox + ri(xr * 2 + 1) - xr, z = oz + ri(zr * 2 + 1) - zr;
+        if (!air(x, oy, z)) continue;
+        let n = 0, wall = 0;
+        for (let d = 0; d < 4; d++) if (solid(x + HDX[d], oy, z + HDZ[d])) { n++; wall = d; }
+        if (n !== 1) continue;
+        const i = CI(x, oy, z);
+        ids[i] = B.CHEST; meta[i] = ((wall + 2) & 3) | (LOOT.SIMPLE_DUNGEON << 2);
+        break;
+      }
+      const i = CI(ox, oy, oz);
+      ids[i] = B.SPAWNER; meta[i] = [SPAWNER_MOB.skeleton, SPAWNER_MOB.zombie, SPAWNER_MOB.zombie, SPAWNER_MOB.spider][ri(4)];
+      this.spawnerList.push(this.x0 + ox, oy, this.z0 + oz);
+    };
+    for (let k = 0; k < 10; k++) room(0, WORLD_MAX_Y - 1);
+    for (let k = 0; k < 4; k++) room(WORLD_MIN_Y + 6, -1);
   }
 
   ores() {

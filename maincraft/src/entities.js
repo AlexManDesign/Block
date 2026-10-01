@@ -74,6 +74,8 @@ const MODELS = {
     return p;
   })() },
 };
+// cave spider: the spider model at 0.7 (CaveSpiderRenderer) with its own skin
+MODELS.cave_spider = { tex: 'cave_spider', tw: 64, th: 32, scale: 0.7, parts: MODELS.spider.parts };
 // Converts a part in the original maincraft layout ({b:[w,h,d], at: bottom-centre, y up, +z = front})
 // into the MC model space used here (y down, ground at 24, front = -z).
 function opart(b, at, uv, o) {
@@ -145,7 +147,8 @@ const MOB_DEFS = {
   zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, drops: () => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0]], hostile: true, burns: true },
   skeleton: { w: 0.6, h: 1.95, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true },
   creeper: { w: 0.6, h: 1.6, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
-  spider: { w: 1.4, h: 0.9, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
+  spider: { w: 1.4, h: 0.9, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
+  cave_spider: { w: 0.7, h: 0.5, hp: 12, attr: 0.3, wander: 0.8, dmg: 2, poison: 7, climber: true, neutralLight: 12, spiderAI: true, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
   enderman: { w: 0.6, h: 2.9, hp: 40, attr: 0.3, dmg: 7, detect: 64, drops: () => [[IT.ENDER_PEARL, Math.random() * 2 | 0]], hostile: true, neutral: true },
   slime: { w: 1.02, h: 1.02, hp: 4, speed: 2.7, dmg: 2, drops: (e) => [[IT.SLIME_BALL, e.size === 1 ? Math.random() * 3 | 0 : 0]], hostile: true, slime: true },
   salmon: { w: 0.7, h: 0.4, hp: 3, speed: 1.6, drops: (e) => [[e.fire > 0 ? IT.COOKED_SALMON : IT.RAW_SALMON, 1]], passive: true, aquatic: true },
@@ -343,6 +346,7 @@ class Entities {
     let steps = 0;
     while (this.acc >= MOB_DT && steps < 3) {
       for (const e of this.mobs) this.snapshot(e);
+      this.tickSpawners();
       this.tickMobs(MOB_DT);
       this.tickFalling();
       this.acc -= MOB_DT; steps++;
@@ -564,7 +568,7 @@ class Entities {
         if (S[1] > 0 && h < e.w * 0.5 + 1.1 && Math.abs(dy) < e.h + 0.6 && e.atkT > 0.5) { e.atkT = 0; this.hitPlayer(e, S[1], dx, dz); }
         return;
       }
-      if (e.type === 'spider') {
+      if (d.spiderAI) {
         this.steer(e, p.pos[0], p.pos[2], speed);
         const hd = Math.hypot(dx, dz);
         if (e.onGround && hd >= 2 && hd <= 4 && Math.random() < 1 - Math.pow(0.8, dt * 20)) {
@@ -572,7 +576,7 @@ class Entities {
           // LeapAtTargetGoal(0.4): 0.4 toward the target plus 0.2 x velocity, 0.4 up (blocks/tick)
           e.vel[0] = dx / l * 8 + e.vel[0] * 0.2; e.vel[2] = dz / l * 8 + e.vel[2] * 0.2; e.vel[1] = 8;
         }
-        if (h < 1.6 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+        if (h < 1.6 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; if (this.hitPlayer(e, d.dmg, dx, dz) && d.poison) this.game.poison(d.poison); }
         return;
       }
       if (e.type === 'enderman') {
@@ -758,10 +762,11 @@ class Entities {
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
-    if (!g.hurt(dmg)) return;
+    if (!g.hurt(dmg)) return false;
     // LivingEntity.knockback(0.4) on the player
     p.vel[0] = p.vel[0] / 2 + dx / l * 8; p.vel[2] = p.vel[2] / 2 + dz / l * 8;
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
+    return true;
   }
   lightAt(e) {
     const lt = this.game.world.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.5), Math.floor(e.pos[2]));
@@ -1272,6 +1277,47 @@ class Entities {
     }
   }
 
+  // BaseSpawner.serverTick: while a player is within 16 blocks the delay counts down (first spawn
+  // after 20 ticks, then 200..799); each round tries 4 spawns within 4 blocks (y -1..+1) where the
+  // mob fits and its spawn rules hold (monsters: block light 0, sky light below a random 0..31),
+  // and stops when 6 of that mob are already in the 9x9x9 box around the spawner.
+  tickSpawners() {
+    const g = this.game, w = g.world, p = g.player, S = this.spawnerState || (this.spawnerState = new Map());
+    for (const c of w.spawnerCols) {
+      if (w.cols.get(c.key) !== c) { w.spawnerCols.delete(c); continue; }
+      const L = c.spawners;
+      for (let k = 0; k < L.length; k += 3) {
+        const x = L[k], y = L[k + 1], z = L[k + 2];
+        const dx = x + 0.5 - p.pos[0], dy = y + 0.5 - p.pos[1], dz = z + 0.5 - p.pos[2], d2 = dx * dx + dy * dy + dz * dz;
+        const key = x + ',' + y + ',' + z;
+        let st = S.get(key);
+        if (d2 > 4096 || w.getBlock(x, y, z) !== B.SPAWNER) { if (st) S.delete(key); continue; }
+        if (!st) { st = { x, y, z, delay: 20, spin: 0, ospin: 0 }; S.set(key, st); }
+        st.ospin = st.spin;
+        if (d2 > 256 || g.surv.dead) continue;
+        // the mob inside turns faster as the next spawn nears (BaseSpawner.clientTick)
+        st.spin = (st.spin + 1000 / (st.delay + 200)) % 360;
+        if (st.delay > 0) { st.delay--; continue; }
+        const type = SPAWNER_TYPES[w.getMeta(x, y, z)] || 'pig', d = MOB_DEFS[type];
+        let near = 0;
+        for (const m of this.mobs) if (m.type === type && m.deathT <= 0 && Math.abs(m.pos[0] - x - 0.5) < 4.5 + m.w / 2 && Math.abs(m.pos[2] - z - 0.5) < 4.5 + m.w / 2 && m.pos[1] < y + 5 && m.pos[1] + m.h > y - 4) near++;
+        let spawned = false;
+        for (let i = 0; i < 4 && near < 6; i++) {
+          const sx = x + (Math.random() - Math.random()) * 4 + 0.5, sy = y + (Math.random() * 3 | 0) - 1, sz = z + (Math.random() - Math.random()) * 4 + 0.5;
+          if (entCollides(w, sx, sy, sz, d.w, d.h)) continue;
+          if (d.hostile) {
+            const lt = w.getLight(Math.floor(sx), sy, Math.floor(sz));
+            if ((lt & 15) > 0 || (lt >> 4) * (g.envObj.day < 0.5 ? 0.2 : 1) > Math.random() * 32) continue;
+          }
+          this.spawnMob(type, sx, sy, sz);
+          this.game.spawnParticles(sx - 0.5, sy + 0.2, sz - 0.5, B.WOOL_LIGHT_GRAY, 6);
+          spawned = true; near++;
+        }
+        if (spawned || near >= 6) st.delay = 200 + (Math.random() * 600 | 0);
+      }
+    }
+  }
+
   // ray vs mobs; returns {e, t}
   raycastMob(o, dir, maxD) {
     let best = null;
@@ -1360,6 +1406,18 @@ class Entities {
         add('sheep_fur', fv);
       }
     }
+    // SpawnerRenderer: the spawner's mob turning inside the cage, scaled to fit (0.53125 / its
+    // largest dimension above 1), raised 0.2 and tilted back 30 degrees
+    if (this.spawnerState) for (const st of this.spawnerState.values()) {
+      const type = SPAWNER_TYPES[g.world.getMeta(st.x, st.y, st.z)] || 'pig', d = MOB_DEFS[type], m = MODELS[type];
+      if (!m || !r.boxVisible(st.x - cam[0], st.y - cam[1], st.z - cam[2], st.x + 1 - cam[0], st.y + 1 - cam[1], st.z + 1 - cam[2])) continue;
+      let sp = st.spin - st.ospin; if (sp < 0) sp += 360;
+      const yaw = (st.ospin + sp * al) * 10 * Math.PI / 180, f = 0.53125 / Math.max(1, d.w, d.h);
+      const e = { type, rpos: [st.x + 0.5, st.y + 0.2, st.z + 0.5], ryaw: yaw, rhead: yaw, rwalk: 0, walkAmt: 0, rpitch: -Math.PI / 6, dispScale: f };
+      const v = [];
+      this.buildModel(v, m, e, cam, g.lightAt(st.x + 0.5, st.y + 0.5, st.z + 0.5, env), null);
+      add(m.tex, v);
+    }
     if (g.camMode) {
       const p = g.player;
       const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, swing: g.swingT };
@@ -1421,7 +1479,7 @@ class Entities {
     let walkA = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 0.6662) * 1.4 * e.walkAmt;
     if (m.halfSwing) walkA = Math.max(-0.4, Math.min(0.4, walkA * 0.5));
     // model scale: fixed per model, slime size with MC's squish (wide on landing, tall when jumping)
-    let S = (m.scale || 1) * (e.size ? e.size * 0.999 : 1) * (e.baby ? 0.5 : 1), sxz = 1, syy = 1;
+    let S = (m.scale || 1) * (e.size ? e.size * 0.999 : 1) * (e.baby ? 0.5 : 1) * (e.dispScale || 1), sxz = 1, syy = 1;
     if (e.size) { const f = (e.squish || 0) / (e.size * 0.5 + 1), f1 = 1 / (f + 1); sxz = f1; syy = 1 / f1; }
     const sp = (e.rpitch !== undefined ? e.rpitch : e.swimPitch) || 0, cpt = Math.cos(sp), spt = Math.sin(sp), pY = (m.pitchY || 0) / 16 * S;
     const tail = Math.sin(performance.now() / 1000 * (e.type === 'shark' ? 7 : 12)) * (e.type === 'shark' ? 0.3 : 0.25) * (e.inWater === false ? 1.5 : 1);

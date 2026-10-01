@@ -210,6 +210,26 @@ def amethyst_shards(shards):
     return im
 
 
+def spawner_cage():
+    """Monster spawner: a dark iron cage (frame and a grid of bars) with see-through holes."""
+    im = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+    px = im.load()
+    dark, mid, light = (22, 27, 33), (44, 54, 64), (82, 98, 112)
+    bars = {0, 1, 5, 10, 14, 15}
+    for y in range(16):
+        for x in range(16):
+            if x in bars or y in bars:
+                c = mid
+                if x in (0, 15) or y in (0, 15):
+                    c = dark
+                elif (x in (1, 5, 10) and y not in bars) or (y in (1, 5, 10) and x not in bars):
+                    c = light if (x + y) % 3 == 0 else mid
+                elif x in bars and y in bars:
+                    c = light
+                px[x, y] = c + (255,)
+    return im
+
+
 LEAF_TEXTURES = {'oak_leaves', 'birch_leaves', 'spruce_leaves', 'jungle_leaves', 'acacia_leaves', 'dark_oak_leaves',
                  'mangrove_leaves', 'azalea_leaves', 'flowering_azalea_leaves', 'cherry_leaves'}
 
@@ -365,6 +385,7 @@ def collect():
     extra['medium_amethyst_bud'] = amethyst_shards([(8, 7, 1.8), (5, 4, 1.2), (11, 5, 1.2)])
     extra['large_amethyst_bud'] = amethyst_shards([(8, 10, 2.0), (4.5, 6, 1.3), (11.5, 7, 1.3)])
     extra['amethyst_cluster'] = amethyst_shards([(8, 13, 2.2), (4, 9, 1.5), (12, 10, 1.5), (6, 6, 1.1), (10.5, 6, 1.1)])
+    extra['spawner'] = spawner_cage()
     if 'grass_block_snow' not in names:
         extra['grass_block_snow'] = snowy_side(load('dirt'), load('snow'))
     extra['item_ender_pearl'] = orb((12, 59, 55), (46, 143, 134), (160, 230, 220), 6)
@@ -421,6 +442,16 @@ def main():
     for fn in sorted(os.listdir(TEX)):
         if fn.startswith('entity_') and fn.endswith('.png'):
             assets['entities'][fn[7:-4]] = b64png(load(fn[:-4]))
+    # cave spider: the spider skin in the cave spider's dark blue-green, same red eyes
+    cs = load('entity_spider').convert('RGBA')
+    cp = cs.load()
+    for yy in range(cs.height):
+        for xx in range(cs.width):
+            r, g, b, a = cp[xx, yy]
+            l = (r * 0.3 + g * 0.59 + b * 0.11) / 255
+            cp[xx, yy] = (int(18 + 60 * l), int(40 + 120 * l), int(48 + 128 * l), a)
+    assets['entities']['cave_spider'] = b64png(cs)
+    assets['entities']['cave_spider_eyes'] = b64png(load('entity_spider_eyes'))
     html = open(os.path.join(SRC, 'index.html'), encoding='utf-8').read()
 
     def inc(m):

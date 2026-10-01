@@ -203,7 +203,7 @@ const UI = {
     const on = g.mode === 'survival';
     show('survBars', on);
     if (!on) return;
-    const key = `${s.hp}|${s.food}|${Math.ceil(s.air / 30)}`;
+    const key = `${s.hp}|${s.food}|${Math.ceil(s.air / 30)}|${s.poisonT > 0}`;
     if (key === this.lastSurvKey) return;
     this.lastSurvKey = key;
     const hp = $('hearts'), fd = $('food'), air = $('air');
@@ -218,6 +218,7 @@ const UI = {
       return h;
     };
     hp.innerHTML = row(s.hp, this.icons.heart, this.icons.heartE);
+    hp.classList.toggle('poison', s.poisonT > 0);
     fd.innerHTML = row(s.food, this.icons.food, this.icons.foodE, true);
     const bubbles = Math.ceil(Math.max(0, s.air) / 30);
     air.innerHTML = s.air < 300 ? Array.from({ length: bubbles }, () => `<i style="background-image:url(${this.icons.air})"></i>`).join('') : '';
@@ -253,9 +254,8 @@ const UI = {
   },
   openChest(x, y, z) {
     const g = this.game;
-    g.chests = g.meta.chests || (g.meta.chests = {});
     this.chestPos = `${x},${y},${z}`;
-    this.chestItems = g.chests[this.chestPos] || new Array(27).fill(null);
+    this.chestItems = chestContents(g, x, y, z) || new Array(27).fill(null);
     this.openInventory('chest');
   },
   openFurnace(x, y, z) {

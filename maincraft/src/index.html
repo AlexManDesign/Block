@@ -52,7 +52,7 @@ body.nohud #hud>*:not(#debug){display:none}
 @keyframes fade{0%,70%{opacity:1}100%{opacity:0}}
 #survBars{position:absolute;left:50%;bottom:62px;transform:translateX(-50%);width:420px;height:40px}
 #hearts,#food,#air{position:absolute;display:flex;gap:1px}
-#hearts{left:0;bottom:0}#food{right:0;bottom:0;flex-direction:row-reverse}#air{right:0;bottom:20px;flex-direction:row-reverse}
+#hearts{left:0;bottom:0}#hearts.poison i{filter:hue-rotate(75deg) saturate(.8)}#food{right:0;bottom:0;flex-direction:row-reverse}#air{right:0;bottom:20px;flex-direction:row-reverse}
 #survBars i{display:block;width:18px;height:18px;background-size:100% 100%;image-rendering:pixelated}
 #debug{position:absolute;left:4px;top:4px;font-size:12px;line-height:1.35;white-space:pre;background:rgba(0,0,0,.35);padding:4px 6px;font-family:ui-monospace,Menlo,Consolas,monospace}
 #biomeInfo{position:absolute;left:4px;top:4px;font-size:13px;line-height:1.4;white-space:pre;text-shadow:1px 1px #000;background:rgba(0,0,0,.28);padding:3px 7px;border-radius:3px}

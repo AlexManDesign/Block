@@ -78,7 +78,8 @@ class World {
     this.rq = new Int32Array(1 << 20); this.rqh = 0; this.rqt = 0;
     // scheduled block updates: Map key -> due tick
     this.sched = new Map(); this.schedB = new Map();
-    this.springCols = new Set();   // columns whose generated fluid springs have not started yet
+    this.springCols = new Set();
+    this.spawnerCols = new Set();   // columns holding generated monster spawners (ticked near the player)   // columns whose generated fluid springs have not started yet
     this.tick = 0;
     this.stats = { gen: 0, mesh: 0, lit: 0 };
   }
@@ -161,6 +162,7 @@ class World {
     c.biomes = d.biomes;
     // fluid springs start flowing once the column and its neighbours are lit (see gameTick)
     if (d.springs && d.springs.length) { c.springs = d.springs; this.springCols.add(c); }
+    if (d.spawners && d.spawners.length) { c.spawners = d.spawners; this.spawnerCols.add(c); }
     const saved = this.savedEdits.get(c.key);
     if (saved) { c.edits = saved; this.applyEdits(c); }
     this.skyInit(c);

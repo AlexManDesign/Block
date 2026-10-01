@@ -193,7 +193,7 @@ function dropsFor(id, m, item) {
     CLAY: [IT.CLAY_BALL, 4, 4], GLOWSTONE: [B.GLOW], MELON: [IT.MELON_SLICE, 3, 7], BOOKSHELF: [B.PLANKS, 3, 3],
     FURNACE_LIT: [B.FURNACE], BUDDING_AMETHYST: [], ICE: [], GLASS: [], GLASS_PANE: [], FIRE: [],
     SNOW: [B.SNOW], TALL_GRASS: [], FERN: [], DEAD_BUSH: [IT.STICK, 0, 2], SEAGRASS: [], TALL_GRASS_PLANT: [], LARGE_FERN: [],
-    SWEET_BERRY_BUSH: [IT.SWEET_BERRIES, 1, 3], MANGROVE_ROOTS_WET: [B.MANGROVE_ROOTS], CAVE_VINES: [], KELP: [B.KELP], COBWEB: [IT.STRING],
+    SWEET_BERRY_BUSH: [IT.SWEET_BERRIES, 1, 3], MANGROVE_ROOTS_WET: [B.MANGROVE_ROOTS], CAVE_VINES: [], KELP: [B.KELP], COBWEB: [IT.STRING], SPAWNER: [],
     WHEAT_0: [IT.WHEAT_SEEDS], WHEAT_1: [IT.WHEAT_SEEDS], WHEAT_2: [IT.WHEAT_SEEDS], WHEAT_3: [IT.WHEAT],
     CARROTS_0: [IT.CARROT], CARROTS_1: [IT.CARROT], CARROTS_2: [IT.CARROT], CARROTS_3: [IT.CARROT, 2, 4],
     POTATOES_0: [IT.POTATO], POTATOES_1: [IT.POTATO], POTATOES_2: [IT.POTATO], POTATOES_3: [IT.POTATO, 2, 4],
@@ -215,4 +215,85 @@ function dropsFor(id, m, item) {
   if (FLAGS[id] & BF_AQUATIC) return shears ? [{ id, count: 1 }] : [];
   if (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR || SHAPE[id] === SH.BED) return (m & (SHAPE[id] === SH.DOOR ? 4 : SHAPE[id] === SH.TALL ? 1 : 4)) ? [] : [{ id, count: 1 }];
   return [{ id, count: 1 }];
+}
+
+// ---------------- loot tables of generated chests (Minecraft 1.18 data/minecraft/loot_tables/chests).
+// Pool: [minRolls, maxRolls, entries], entry: [item, weight, min, max]. Items this game does not have
+// (saddles, name tags, discs, enchanted books, horse armour, redstone, lapis, nuggets, paper...) stay
+// in as empty results, so the odds of the others are Minecraft's.
+const LOOT_TABLES = (function () {
+  const N = 0;
+  const T = {};
+  T[LOOT.SIMPLE_DUNGEON] = [
+    [1, 3, [[N, 20], [IT.GOLDEN_APPLE, 15], [N, 2], [N, 2], [N, 15], [N, 15], [N, 20], [N, 10], [N, 15], [N, 5], [N, 10]]],
+    [1, 4, [[IT.IRON_INGOT, 10, 1, 4], [IT.GOLD_INGOT, 5, 1, 4], [IT.BREAD, 20], [IT.WHEAT, 20, 1, 4], [IT.BUCKET, 10], [N, 15], [IT.COAL, 15, 1, 4], [IT.MELON_SEEDS, 10, 2, 4], [IT.PUMPKIN_SEEDS, 10, 2, 4], [N, 10]]],
+    [3, 3, [[IT.BONE, 10, 1, 8], [IT.GUNPOWDER, 10, 1, 8], [IT.ROTTEN_FLESH, 10, 1, 8], [IT.STRING, 10, 1, 8]]],
+  ];
+  T[LOOT.ABANDONED_MINESHAFT] = [
+    [1, 1, [[IT.GOLDEN_APPLE, 20], [N, 1], [N, 30], [N, 10], [IT.IRON_PICKAXE, 5], [N, 5]]],
+    [2, 4, [[IT.IRON_INGOT, 10, 1, 5], [IT.GOLD_INGOT, 5, 1, 3], [N, 5], [N, 5], [IT.DIAMOND, 3, 1, 2], [IT.COAL, 10, 3, 8], [IT.BREAD, 15, 1, 3], [N, 15], [IT.MELON_SEEDS, 10, 2, 4], [IT.PUMPKIN_SEEDS, 10, 2, 4], [N, 10]]],
+    [3, 3, [[B.RAIL, 20, 4, 8], [N, 5], [N, 5], [N, 5], [B.TORCH, 15, 1, 16]]],
+  ];
+  T[LOOT.DESERT_PYRAMID] = [
+    [2, 4, [[IT.DIAMOND, 5, 1, 3], [IT.IRON_INGOT, 15, 1, 5], [IT.GOLD_INGOT, 15, 2, 7], [IT.EMERALD, 15, 1, 3], [IT.BONE, 25, 4, 6], [IT.SPIDER_EYE, 25, 1, 3], [IT.ROTTEN_FLESH, 25, 3, 7], [N, 20], [N, 15], [N, 10], [N, 5], [N, 20], [IT.GOLDEN_APPLE, 20], [N, 2], [N, 15]]],
+    [4, 4, [[IT.BONE, 10, 1, 8], [IT.GUNPOWDER, 10, 1, 8], [IT.ROTTEN_FLESH, 10, 1, 8], [IT.STRING, 10, 1, 8], [B.SAND, 10, 1, 8]]],
+  ];
+  T[LOOT.JUNGLE_TEMPLE] = [
+    [2, 6, [[IT.DIAMOND, 3, 1, 3], [IT.IRON_INGOT, 10, 1, 5], [IT.GOLD_INGOT, 15, 2, 7], [IT.EMERALD, 2, 1, 3], [IT.BONE, 20, 4, 6], [IT.ROTTEN_FLESH, 16, 3, 7], [N, 3], [N, 1], [N, 1], [N, 1], [N, 1]]],
+  ];
+  T[LOOT.SHIPWRECK_SUPPLY] = [
+    [3, 10, [[N, 8], [IT.POTATO, 7, 2, 6], [N, 7], [IT.CARROT, 7, 4, 8], [IT.WHEAT, 7, 8, 21], [N, 10], [IT.COAL, 6, 2, 8], [IT.ROTTEN_FLESH, 5, 5, 24], [B.PUMPKIN, 2, 1, 3], [N, 2], [IT.GUNPOWDER, 3, 1, 5], [B.TNT, 1, 1, 2], [N, 3], [N, 3], [N, 3], [N, 3]]],
+  ];
+  T[LOOT.SHIPWRECK_TREASURE] = [
+    [3, 6, [[IT.IRON_INGOT, 90, 1, 5], [IT.GOLD_INGOT, 10, 1, 5], [IT.EMERALD, 40, 1, 5], [IT.DIAMOND, 5], [N, 5]]],
+    [2, 5, [[N, 50], [N, 10], [N, 20]]],
+  ];
+  T[LOOT.SHIPWRECK_MAP] = [
+    [1, 1, [[N, 1]]],
+    [3, 3, [[N, 1], [N, 1], [N, 1], [N, 20], [IT.FEATHER, 10, 1, 5], [N, 5]]],
+  ];
+  T[LOOT.UNDERWATER_RUIN_SMALL] = [
+    [2, 8, [[IT.COAL, 10, 1, 4], [IT.STONE_AXE, 2], [IT.ROTTEN_FLESH, 5], [IT.EMERALD, 1], [IT.WHEAT, 10, 2, 3]]],
+    [1, 1, [[N, 1], [N, 1], [N, 5], [N, 5]]],
+  ];
+  T[LOOT.UNDERWATER_RUIN_BIG] = [
+    [2, 8, [[IT.COAL, 10, 1, 4], [N, 10], [IT.EMERALD, 1], [IT.WHEAT, 10, 2, 3]]],
+    [1, 1, [[IT.GOLDEN_APPLE, 1], [N, 5], [N, 1], [N, 1], [N, 5], [N, 10]]],
+  ];
+  T[LOOT.IGLOO] = [
+    [2, 8, [[IT.APPLE, 15, 1, 3], [IT.COAL, 15, 1, 4], [N, 10], [IT.STONE_AXE, 2], [IT.ROTTEN_FLESH, 10], [IT.EMERALD, 1], [IT.WHEAT, 10, 2, 3]]],
+    [1, 1, [[IT.GOLDEN_APPLE, 1]]],
+  ];
+  return T;
+})();
+// LootTable.fill: roll every pool, then spread the stacks over random free slots of the chest
+function rollLoot(table) {
+  const out = new Array(27).fill(null), T = LOOT_TABLES[table];
+  if (!T) return out;
+  const ri = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  const stacks = [];
+  for (const [r0, r1, entries] of T) {
+    let total = 0;
+    for (const e of entries) total += e[1];
+    for (let n = ri(r0, r1); n > 0; n--) {
+      let w = Math.random() * total, e = entries[0];
+      for (const c of entries) { w -= c[1]; if (w < 0) { e = c; break; } }
+      if (!e[0]) continue;
+      const count = e.length > 2 ? ri(e[2], e[3]) : 1;
+      for (let c = count; c > 0;) { const k = Math.min(c, maxStack(e[0])); stacks.push({ id: e[0], count: k }); c -= k; }
+    }
+  }
+  const free = []; for (let i = 0; i < 27; i++) free.push(i);
+  for (const s of stacks) { if (!free.length) break; out[free.splice(Math.floor(Math.random() * free.length), 1)[0]] = s; }
+  return out;
+}
+// contents of a chest (rolling its loot table the first time; the block keeps only its facing then)
+function chestContents(game, x, y, z) {
+  const C = game.chests = game.meta.chests || (game.meta.chests = {}), k = `${x},${y},${z}`;
+  const m = game.world.getMeta(x, y, z);
+  if (game.world.getBlock(x, y, z) === B.CHEST && (m >> 2)) {
+    if (!C[k]) C[k] = rollLoot(m >> 2);
+    game.world.setBlock(x, y, z, B.CHEST, m & 3);
+  }
+  return C[k] || null;
 }
