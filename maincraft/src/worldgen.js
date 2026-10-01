@@ -91,7 +91,7 @@ const BIOME_TINT = new Uint32Array(BIOME_LIST.length * 3);
   });
 })();
 
-// per-biome properties: surface top / filler / underwater floor and flags (trees: TREE_TABLE)
+// per-biome properties: surface top / filler / underwater floor and flags (trees: MC_TREES)
 const BPROP = [];
 (function () {
   const G = B.GRASS, D = B.DIRT, S = B.SAND;
@@ -143,41 +143,91 @@ const BPROP = [];
   def('MUSHROOM_FIELDS', { top: B.MYCELIUM, fill: D });
 })();
 
-// Trees per biome as in maincraft: [grid cell, [[cumulative chance, type], ...]]. Variant biomes use
-// the table of the biome the original maps them to.
-const TREE_TABLE = {};
 const ORIG_BIOME = [];   // biome of the original's set that a biome follows (variants -> base)
-// room a tree needs from a higher-priority neighbour (Chebyshev distance between trunks)
-const TREE_ROOM = { cactus: 2, ice_spike: 2, giant_red_mushroom: 3, dark_oak: 5, swamp_oak: 5 };
+// Trees per biome as Minecraft's placed tree features (VegetationPlacements): count attempts a
+// chunk plus `extra` more with probability `chance`, each at a random column of the chunk, kept where
+// the column's biome is the one the feature belongs to; the type by sequential chances, the last
+// entry being the default (RandomFeatureConfiguration). Variant biomes use their own entries.
+const MC_TREES = {};
+// columns (Chebyshev distance between trunks) a tree needs free of another tree's trunk: 2x2
+// trunks and cacti; other trunks may stand side by side as in Minecraft
+const TREE_ROOM = { cactus: 2, ice_spike: 2, giant_red_mushroom: 3, giant_brown_mushroom: 3, dark_oak: 2, mega_spruce: 2, mega_pine: 2, mega_jungle: 2 };
 // deepest water (blocks above the ground) a tree may stand in, as Minecraft's surface water depth filter
 const TREE_WATER = { mangrove: 5, tall_mangrove: 5, swamp_oak: 2 };
 const FACE6 = [1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1], FACE4 = [1, 0, -1, 0, 0, 1, 0, -1];
 (function () {
-  const T = (k, cell, types) => { TREE_TABLE[BI[k]] = [cell, types]; };
-  T('FOREST', 6, [[0.5, 'oak'], [0.75, 'birch'], [0.87, 'fancy_oak']]);
-  T('BIRCH_FOREST', 6, [[0.78, 'birch'], [0.9, 'oak']]);
-  T('FLOWER_FOREST', 9, [[0.45, 'oak'], [0.7, 'birch']]);
-  T('DARK_FOREST', 6, [[0.62, 'dark_oak'], [0.82, 'oak'], [0.9, 'birch']]);
-  T('JUNGLE', 5, [[0.72, 'jungle'], [0.85, 'oak']]);
-  T('SPARSE_JUNGLE', 11, [[0.5, 'jungle'], [0.65, 'oak']]);
-  T('TAIGA', 6, [[0.85, 'spruce']]);
-  T('OLD_GROWTH_SPRUCE_TAIGA', 6, [[0.55, 'tall_spruce'], [0.85, 'spruce']]);
-  T('SNOWY_TAIGA', 8, [[0.7, 'spruce']]);
-  T('SNOWY_PLAINS', 18, [[0.4, 'spruce']]);
-  T('PLAINS', 18, [[0.3, 'oak'], [0.42, 'fancy_oak']]);
-  T('SAVANNA', 13, [[0.55, 'acacia']]);
-  T('MEADOW', 26, [[0.25, 'oak']]);
-  T('GROVE', 7, [[0.75, 'spruce']]);
-  T('SWAMP', 9, [[0.55, 'swamp_oak']]);
-  T('WINDSWEPT_HILLS', 15, [[0.25, 'oak'], [0.4, 'spruce']]);
-  T('CHERRY_GROVE', 9, [[0.4, 'cherry']]);
-  T('BAMBOO_JUNGLE', 6, [[0.5, 'jungle'], [0.65, 'oak']]);
-  T('WOODED_BADLANDS', 10, [[0.35, 'oak']]);
-  T('MANGROVE_SWAMP', 5, [[0.85, 'mangrove'], [1, 'tall_mangrove']]);
+  const T = (keys, count, chance, extra, types) => { for (const k of keys.split(' ')) MC_TREES[BI[k]] = { count, chance, extra, types }; };
+  T('PLAINS SUNFLOWER_PLAINS', 0, 0.05, 1, [[0.33333334, 'fancy_oak'], [1, 'oak']]);
+  T('FOREST', 10, 0.1, 1, [[0.2, 'birch'], [0.1, 'fancy_oak'], [1, 'oak']]);
+  T('FLOWER_FOREST', 6, 0.1, 1, [[0.2, 'birch'], [0.1, 'fancy_oak'], [1, 'oak']]);
+  T('BIRCH_FOREST', 10, 0.1, 1, [[1, 'birch']]);
+  T('OLD_GROWTH_BIRCH_FOREST', 10, 0.1, 1, [[0.5, 'super_birch'], [1, 'birch']]);
+  T('DARK_FOREST', 16, 0, 0, [[0.025, 'giant_brown_mushroom'], [0.05, 'giant_red_mushroom'], [0.6666667, 'dark_oak'], [0.2, 'birch'], [0.1, 'fancy_oak'], [1, 'oak']]);
+  T('TAIGA SNOWY_TAIGA', 10, 0.1, 1, [[0.33333334, 'pine'], [1, 'spruce']]);
+  T('GROVE', 10, 0.1, 1, [[0.33333334, 'pine'], [1, 'spruce']]);
+  T('OLD_GROWTH_SPRUCE_TAIGA', 10, 0.1, 1, [[0.33333334, 'mega_spruce'], [0.33333334, 'pine'], [1, 'spruce']]);
+  T('OLD_GROWTH_PINE_TAIGA', 10, 0.1, 1, [[0.025641026, 'mega_spruce'], [0.30769232, 'mega_pine'], [0.33333334, 'pine'], [1, 'spruce']]);
+  T('SNOWY_PLAINS', 0, 0.1, 1, [[1, 'spruce']]);
+  T('JUNGLE', 50, 0.1, 1, [[0.1, 'fancy_oak'], [0.5, 'jungle_bush'], [0.33333334, 'mega_jungle'], [1, 'jungle']]);
+  T('SPARSE_JUNGLE', 2, 0.1, 1, [[0.1, 'fancy_oak'], [0.5, 'jungle_bush'], [1, 'jungle']]);
+  T('BAMBOO_JUNGLE', 30, 0.1, 1, [[0.05, 'fancy_oak'], [0.15, 'jungle_bush'], [0.7, 'mega_jungle'], [1, null]]);
+  T('SAVANNA SAVANNA_PLATEAU', 1, 0.1, 2, [[0.8, 'acacia'], [1, 'oak']]);
+  T('WINDSWEPT_SAVANNA', 2, 0.1, 2, [[0.8, 'acacia'], [1, 'oak']]);
+  T('WINDSWEPT_HILLS WINDSWEPT_GRAVELLY_HILLS', 0, 0.1, 1, [[0.666, 'spruce'], [0.1, 'fancy_oak'], [1, 'oak']]);
+  T('WINDSWEPT_FOREST', 3, 0.1, 1, [[0.666, 'spruce'], [0.1, 'fancy_oak'], [1, 'oak']]);
+  T('MEADOW', 0, 0.01, 1, [[0.5, 'fancy_oak'], [1, 'super_birch']]);
+  T('CHERRY_GROVE', 10, 0.1, 1, [[1, 'cherry']]);
+  T('SWAMP', 2, 0.1, 1, [[1, 'swamp_oak']]);
+  T('MANGROVE_SWAMP', 25, 0, 0, [[0.85, 'mangrove'], [1, 'tall_mangrove']]);
+  T('WOODED_BADLANDS', 5, 0.1, 1, [[1, 'oak']]);
   const alias = { SUNFLOWER_PLAINS: 'PLAINS', OLD_GROWTH_BIRCH_FOREST: 'BIRCH_FOREST', OLD_GROWTH_PINE_TAIGA: 'OLD_GROWTH_SPRUCE_TAIGA',
     SAVANNA_PLATEAU: 'SAVANNA', WINDSWEPT_SAVANNA: 'SAVANNA', WINDSWEPT_GRAVELLY_HILLS: 'WINDSWEPT_HILLS', WINDSWEPT_FOREST: 'WINDSWEPT_HILLS',
     ERODED_BADLANDS: 'BADLANDS' };
   BIOME_LIST.forEach((b, i) => { ORIG_BIOME[i] = alias[b[0]] ? BI[alias[b[0]]] : BPROP[i].base; });
+})();
+
+// Ground cover as Minecraft's vegetation patches (RandomPatchFeature + VegetationPlacements):
+// a patch puts up to `tries` plants around its origin, each at origin + (r(xz) - r(xz), r(y) - r(y),
+// r(xz) - r(xz)) where the cell is free and the plant can stay. kind picks the plant.
+const PATCHES = {
+  grass: { tries: 32, xz: 7, y: 3, kind: 'grass' }, grass_jungle: { tries: 32, xz: 7, y: 3, kind: 'grass_jungle' },
+  grass_taiga: { tries: 32, xz: 7, y: 3, kind: 'grass_taiga' }, tall_grass: { tries: 96, xz: 7, y: 3, kind: 'tall_grass' },
+  large_fern: { tries: 96, xz: 7, y: 3, kind: 'large_fern' }, dead_bush: { tries: 4, xz: 7, y: 3, kind: 'dead_bush' },
+  sugar_cane: { tries: 20, xz: 4, y: 0, kind: 'sugar_cane' }, pumpkin: { tries: 96, xz: 7, y: 3, kind: 'pumpkin' },
+  melon: { tries: 64, xz: 7, y: 3, kind: 'melon' }, berry: { tries: 96, xz: 7, y: 3, kind: 'berry' },
+  sunflower: { tries: 96, xz: 7, y: 3, kind: 'sunflower' }, brown_mushroom: { tries: 96, xz: 7, y: 3, kind: 'brown_mushroom' },
+  red_mushroom: { tries: 96, xz: 7, y: 3, kind: 'red_mushroom' },
+  flower_default: { tries: 64, xz: 6, y: 2, kind: 'flower_default' }, flower_plains: { tries: 64, xz: 6, y: 2, kind: 'flower_plains' },
+  flower_swamp: { tries: 64, xz: 6, y: 2, kind: 'blue_orchid' }, flower_flower_forest: { tries: 96, xz: 6, y: 2, kind: 'flower_forest' },
+  flower_meadow: { tries: 96, xz: 6, y: 2, kind: 'flower_meadow' }, forest_flowers: { tries: 96, xz: 7, y: 3, kind: 'forest_flowers' },
+};
+// per biome: [patch, placement]; placement: n = count per chunk, r = 1-in-r chance per instance,
+// nt = [count below the noise threshold -0.8, count above] (NoiseThresholdCountPlacement),
+// rn = [min, max] uniform count clamped at 0
+const MC_VEG = {};
+(function () {
+  const V = (keys, list) => { for (const k of keys.split(' ')) MC_VEG[BI[k]] = list; };
+  const mush = [['brown_mushroom', { r: 256 }], ['red_mushroom', { r: 512 }]];
+  const extra = [['sugar_cane', { r: 6 }], ['pumpkin', { r: 300 }]];
+  const forest = [['forest_flowers', { r: 7, rn: [-1, 3] }], ['flower_default', { r: 32 }], ['grass', { n: 2 }], ...mush, ...extra];
+  V('PLAINS', [['tall_grass', { nt: [0, 7], r: 32 }], ['flower_plains', { nt: [15, 4], r: 32 }], ['grass', { nt: [5, 10] }], ...mush, ...extra]);
+  V('SUNFLOWER_PLAINS', [['sunflower', { r: 3 }], ['tall_grass', { nt: [0, 7], r: 32 }], ['flower_plains', { nt: [15, 4], r: 32 }], ['grass', { nt: [5, 10] }], ...mush, ...extra]);
+  V('FOREST BIRCH_FOREST OLD_GROWTH_BIRCH_FOREST DARK_FOREST', forest);
+  V('FLOWER_FOREST', [['flower_flower_forest', { n: 3, r: 2 }], ['forest_flowers', { r: 7, rn: [-3, 1] }], ['grass', { n: 2 }], ...mush, ...extra]);
+  V('TAIGA SNOWY_TAIGA', [['large_fern', { r: 5 }], ['grass_taiga', { n: 1 }], ['flower_default', { r: 32 }], ['brown_mushroom', { r: 4 }], ['red_mushroom', { r: 256 }], ['berry', { r: 32 }], ...extra]);
+  V('OLD_GROWTH_SPRUCE_TAIGA OLD_GROWTH_PINE_TAIGA', [['large_fern', { r: 5 }], ['grass_taiga', { n: 7 }], ['dead_bush', { n: 1 }], ['flower_default', { r: 32 }],
+    ['brown_mushroom', { r: 4 }], ['red_mushroom', { r: 171 }], ['berry', { r: 32 }], ...extra]);
+  V('SAVANNA SAVANNA_PLATEAU WINDSWEPT_SAVANNA', [['tall_grass', { r: 5 }], ['flower_default', { r: 16 }], ['grass', { n: 20 }], ...mush, ...extra]);
+  V('JUNGLE BAMBOO_JUNGLE', [['flower_default', { r: 16 }], ['grass_jungle', { n: 25 }], ['melon', { r: 6 }], ...mush, ...extra]);
+  V('SPARSE_JUNGLE', [['flower_default', { r: 16 }], ['grass_jungle', { n: 25 }], ['melon', { r: 64 }], ...mush, ...extra]);
+  V('SWAMP', [['flower_swamp', { r: 32 }], ['grass', { n: 5 }], ['dead_bush', { n: 1 }], ['brown_mushroom', { n: 2 }], ['red_mushroom', { r: 64 }], ['sugar_cane', { n: 3 }], ['pumpkin', { r: 300 }]]);
+  V('MANGROVE_SWAMP', [['grass', { n: 5 }], ['dead_bush', { n: 1 }]]);
+  V('DESERT', [['dead_bush', { n: 2 }], ['sugar_cane', { n: 1 }], ['pumpkin', { r: 300 }]]);
+  V('BADLANDS ERODED_BADLANDS', [['dead_bush', { n: 20 }], ['sugar_cane', { r: 5 }], ...mush]);
+  V('WOODED_BADLANDS', [['grass', { n: 1 }], ['dead_bush', { n: 20 }], ['sugar_cane', { r: 5 }], ...mush]);
+  V('MEADOW', [['flower_meadow', { n: 1 }], ['grass', { n: 1 }]]);
+  V('CHERRY_GROVE', [['grass', { nt: [5, 10] }], ['flower_plains', { r: 32 }]]);
+  V('WINDSWEPT_HILLS WINDSWEPT_GRAVELLY_HILLS WINDSWEPT_FOREST SNOWY_PLAINS STONY_SHORE BEACH RIVER', [['grass', { n: 1 }], ['flower_default', { r: 32 }], ...mush, ...extra]);
 })();
 
 // ---------------------------------------------------------------- multi-noise biome lookup
@@ -312,8 +362,9 @@ class WorldGen {
     this.treeCache = new Map();
     this.deco = [];                              // tree decorations of the chunk being generated
     this.treeWrites = null;                      // queued tree blocks while features() runs
-    this.tb = { n: 0, map: new Map(), x: new Int32Array(4096), y: new Int32Array(4096), z: new Int32Array(4096), id: new Uint16Array(4096),
-      kind: new Uint8Array(4096), dist: new Uint8Array(4096), q: new Int32Array(4096) };
+    // tree buffer; id carries the log axis in bits 16+ (0 y, 1 x, 2 z)
+    this.tb = { n: 0, map: new Map(), x: new Int32Array(16384), y: new Int32Array(16384), z: new Int32Array(16384), id: new Int32Array(16384),
+      kind: new Uint8Array(16384), dist: new Uint8Array(16384), q: new Int32Array(16384) };
   }
 
   // ------------------------------------------------------------ climate / height
@@ -993,9 +1044,34 @@ class WorldGen {
   }
 
   // ---------------------------------------------------------------- trees
-  // Tree candidate at column x,z from the original's per-biome table (jittered grid cell + weighted
-  // types). Only seed-derived data is used, so every chunk a tree overlaps makes the same decision.
-  // The spacing check asks every column for its neighbours' candidates, so results are cached.
+  // Tree attempts of a chunk (Minecraft's count / in-square placement per biome present in the
+  // chunk, a biome filter at the column). Only seed-derived data is used, so every chunk a tree
+  // overlaps makes the same decision. Map: column key -> type.
+  treeAttempts(cx, cz) {
+    const key = cx * 65536 + cz, C = this.attemptCache || (this.attemptCache = new Map());
+    let A = C.get(key);
+    if (A) return A;
+    A = new Map();
+    const x0 = cx * 16, z0 = cz * 16, present = new Set();
+    for (let i = 0; i < 16; i++) present.add(this.colInfo(x0 + (i & 3) * 4 + 2, z0 + (i >> 2) * 4 + 2).biome);
+    for (const bio of present) {
+      const T = MC_TREES[bio];
+      if (!T) continue;
+      const rnd = mulberry(hash2i(this.seed + 23 + bio * 7919, cx, cz));
+      const n = T.count + (rnd() < T.chance ? T.extra : 0);
+      for (let k = 0; k < n; k++) {
+        const x = x0 + ((rnd() * 16) | 0), z = z0 + ((rnd() * 16) | 0);
+        let t = null;
+        for (const e of T.types) if (e[0] >= 1 || rnd() < e[0]) { t = e[1]; break; }
+        const ck = x * 131072 + z;
+        if (!t || A.has(ck) || this.colInfo(x, z).biome !== bio) continue;
+        A.set(ck, t);
+      }
+    }
+    if (C.size > 4096) C.clear();
+    C.set(key, A);
+    return A;
+  }
   treeCandidate(x, z) {
     const k = x * 131072 + z, C = this.candCache;
     let v = C.get(k);
@@ -1008,27 +1084,24 @@ class WorldGen {
     if (ob === BI.DESERT) return r0 < 0.006 ? 'cactus' : 0;
     if (ob === BI.MUSHROOM_FIELDS) return r0 < 0.004 ? 'giant_red_mushroom' : r0 < 0.008 ? 'giant_brown_mushroom' : 0;
     if (ob === BI.ICE_SPIKES) return r0 < 0.01 ? 'ice_spike' : 0;
-    const T = TREE_TABLE[ob];
-    if (!T) return 0;
-    const cell = T[0], gx = Math.floor(x / cell), gz = Math.floor(z / cell);
-    if (gx * cell + ((hash2(this.seed + 21, gx, gz) * cell) | 0) !== x || gz * cell + ((hash2(this.seed + 22, gx, gz) * cell) | 0) !== z) return 0;
-    if (ob === BI.WOODED_BADLANDS && ci.h < SEA + 10) return 0;
+    const t = this.treeAttempts(x >> 4, z >> 4).get(x * 131072 + z);
+    if (!t) return 0;
+    if (ci.biome === BI.WOODED_BADLANDS && ci.h < SEA + 10) return 0;
     if (ob === BI.WINDSWEPT_HILLS && this.windswept(x, z, ci.h) >= 0.53) return 0;
-    const r = hash2(this.seed + 23, gx, gz);
-    for (const t of T[1]) if (r < t[0]) return t[1];
-    return 0;
+    return t;
   }
-  // Spacing: a candidate gives way to a higher-priority candidate closer than the room both
-  // need (trunks never grow through a neighbour's crown, cacti never touch). Deterministic.
+  // Spacing: a candidate gives way to a higher-priority one whose trunk would share its columns
+  // (2x2 trunks, cacti); deterministic.
   treeAt(x, z) {
     const t = this.treeCandidate(x, z);
     if (!t) return 0;
-    const rk = hash2(this.seed + 24, x, z), rt = TREE_ROOM[t] || 4;
-    for (let dz = -4; dz <= 4; dz++) for (let dx = -4; dx <= 4; dx++) {
+    const rk = hash2(this.seed + 24, x, z), rt = TREE_ROOM[t] || 1;
+    for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
       if (!dx && !dz) continue;
       const d = Math.max(dx < 0 ? -dx : dx, dz < 0 ? -dz : dz);
+      if (d >= Math.max(rt, 2)) continue;
       const tn = this.treeCandidate(x + dx, z + dz);
-      if (!tn || d >= Math.max(rt, TREE_ROOM[tn] || 4)) continue;
+      if (!tn || d >= Math.max(rt, TREE_ROOM[tn] || 1)) continue;
       if (hash2(this.seed + 24, x + dx, z + dz) < rk) return 0;
     }
     return t;
@@ -1057,7 +1130,7 @@ class WorldGen {
     else if (t === 'ice_spike') { if (top !== B.SNOW) return null; }
     else if (t === 'mangrove' || t === 'tall_mangrove') { if (top !== B.MUD) return null; }
     else if (sy > SEA && top !== B.GRASS && top !== B.PODZOL && top !== B.SNOW && top !== B.MYCELIUM && top !== B.MUD && top !== B.DIRT) return null;
-    if (t === 'dark_oak') {
+    if (t === 'dark_oak' || t === 'mega_spruce' || t === 'mega_pine' || t === 'mega_jungle') {
       // 2x2 trunk: every column needs ground no more than 3 blocks below the origin
       for (const [dx, dz] of [[1, 0], [0, 1], [1, 1]]) { const g = this.groundAt(x + dx, z + dz); if (g < sy - 3 || g > sy + 3) return null; }
     }
@@ -1065,7 +1138,7 @@ class WorldGen {
   }
 
   features() {
-    const x0 = this.x0, z0 = this.z0, M = 6;
+    const x0 = this.x0, z0 = this.z0, M = 9;   // the widest crowns (fancy oak, cherry, jungle branches) reach 9 out
     this.deco.length = 0; this.treeWrites = [];
     for (let z = z0 - M; z < z0 + 16 + M; z++) for (let x = x0 - M; x < x0 + 16 + M; x++) {
       // a tree reaches several chunks: build it once, then every chunk takes its part
@@ -1120,79 +1193,300 @@ class WorldGen {
     let rs = (hash2(this.seed + 131, x, z) * 4294967296) >>> 0;
     const rnd = () => { rs = (rs + 0x6D2B79F5) | 0; let t = Math.imul(rs ^ (rs >>> 15), 1 | rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     const nextInt = (n) => (rnd() * n) | 0;
-    let vineChance = 0, propagules = false, mossOnRoots = false;
+    let vineChance = 0, propagules = false, mossOnRoots = false, trunkVines = false, podzol = false;
+    // FoliagePlacer.placeLeavesRow: the square of `range` around (cx, cy + yo, cz) (one more column
+    // on the + sides for a 2x2 trunk), minus the cells skip(|dx|, yo, |dz|, range, large) drops
+    const row = (cx, cy, cz, range, yo, large, id, skip) => {
+      if (range < 0) return;
+      const e = large ? 1 : 0;
+      for (let dx = -range; dx <= range + e; dx++) for (let dz = -range; dz <= range + e; dz++) {
+        const ax = large ? Math.min(Math.abs(dx), Math.abs(dx - 1)) : Math.abs(dx), az = large ? Math.min(Math.abs(dz), Math.abs(dz - 1)) : Math.abs(dz);
+        if (skip(ax, yo, az, range, large)) continue;
+        put(cx + dx, cy + yo, cz + dz, id, 1);
+      }
+    };
+    // the same with the signed offsets (dark oak's wide middle row loses its outermost ring corners)
+    const rowSigned = (cx, cy, cz, range, yo, large, id, skip) => {
+      const e = large ? 1 : 0;
+      for (let dx = -range; dx <= range + e; dx++) for (let dz = -range; dz <= range + e; dz++) {
+        if (skip(dx, yo, dz, range)) continue;
+        put(cx + dx, cy + yo, cz + dz, id, 1);
+      }
+    };
+    // BlobFoliagePlacer: rows offset .. offset - height, radius shrinking upward
+    const blob = (cx, cy, cz, radius, offset, height, id, large) => {
+      for (let i = offset; i >= offset - height; i--) {
+        const j = Math.max(radius - 1 - Math.trunc(i / 2), 0);
+        row(cx, cy, cz, j, i, large, id, (ax, yy, az, r) => ax === r && az === r && (nextInt(2) === 0 || yy === 0));
+      }
+    };
+    const straight = (h, id) => { for (let y = sy + 1; y <= sy + h; y++) log(x, y, z, id); soil(x, sy, z); };
+    // GiantTrunkPlacer: 2x2 trunk, every column down to its own ground
+    const giant = (h, id) => {
+      for (let d = 0; d < 4; d++) {
+        const cx = x + (d & 1), cz = z + (d >> 1), gy = d ? this.groundAt(cx, cz) : sy;
+        for (let y = gy + 1; y <= sy + h; y++) log(cx, y, cz, id);
+        soil(cx, gy, cz);
+      }
+    };
     switch (type) {
       case 'cactus': {
         const n = 2 + ((g(1) * 2) | 0);
         for (let y = sy + 1; y <= sy + n; y++) log(x, y, z, B.CACTUS);
         break;
       }
-      case 'spruce': case 'tall_spruce': {
-        const tall = type === 'tall_spruce';
-        const top = sy + (tall ? 10 + ((g(2) * 4) | 0) : 6 + ((g(3) * 3) | 0));
-        for (let y = sy + 1; y <= top; y++) log(x, y, z, B.SPRUCE_LOG);
-        put(x, top + 1, z, B.SPRUCE_LEAVES, 1);
-        const n = tall ? 8 : 5;
-        for (let u = 0; u < n; u++) {
-          const y = top - u;
-          if (y <= sy + 2) break;
-          layer(x, y, z, u === 0 || u % 2 === 1 ? 1 : 2, B.SPRUCE_LEAVES, false);
-        }
-        soil(x, sy, z);
+      // ---- Minecraft's trunk and foliage placers (TreeFeatures) ----
+      case 'oak': case 'birch': case 'super_birch': case 'swamp_oak': case 'jungle': {
+        // StraightTrunkPlacer(base, a, b) + BlobFoliagePlacer(radius, 0, 3)
+        const P = { oak: [4, 2, 0, 2, B.LOG, B.LEAVES], birch: [5, 2, 0, 2, B.BIRCH_LOG, B.BIRCH_LEAVES], super_birch: [5, 2, 6, 2, B.BIRCH_LOG, B.BIRCH_LEAVES],
+          swamp_oak: [5, 3, 0, 3, B.LOG, B.LEAVES], jungle: [4, 8, 0, 2, B.JUNGLE_LOG, B.JUNGLE_LEAVES] }[type];
+        const h = P[0] + nextInt(P[1] + 1) + nextInt(P[2] + 1);
+        straight(h, P[4]);
+        blob(x, sy + 1 + h, z, P[3], 0, 3, P[5], false);
+        if (type === 'swamp_oak' || type === 'jungle') vineChance = 0.25;
+        if (type === 'jungle') trunkVines = true;
         break;
       }
-      case 'dark_oak': {
-        const top = sy + 7 + ((g(4) * 3) | 0);
-        // each trunk column reaches down to its own ground
-        for (let d = 0; d < 4; d++) {
-          const cx = x + (d & 1), cz = z + (d >> 1), gy = d ? this.groundAt(cx, cz) : sy;
-          for (let y = gy + 1; y <= top; y++) log(cx, y, cz, B.DARK_LOG);
-          soil(cx, gy, cz);
-        }
-        for (let u = -2; u <= 1; u++) if (top + u > sy) layer(x, top + u, z, u <= 0 ? 3 : 2, B.DARK_LEAVES, true);
-        break;
-      }
-      case 'jungle': {
-        const top = sy + 8 + ((g(5) * 5) | 0);
-        for (let y = sy + 1; y <= top; y++) log(x, y, z, B.JUNGLE_LOG);
-        layer(x, top + 1, z, 1, B.JUNGLE_LEAVES, false);
-        layer(x, top, z, 2, B.JUNGLE_LEAVES, true);
-        layer(x, top - 1, z, 2, B.JUNGLE_LEAVES, true);
-        soil(x, sy, z);
-        break;
-      }
-      case 'acacia': {
-        const n = 5 + ((g(6) * 2) | 0), dir = (g(7) * 4) | 0;
-        const ddx = [1, -1, 0, 0][dir], ddz = [0, 0, 1, -1][dir];
-        let cx = x, cz = z;
-        for (let y = sy + 1; y <= sy + n; y++) {
-          if (y > sy + 2 && (y - sy) % 2 === 1) { cx += ddx; cz += ddz; }
-          log(cx, y, cz, B.ACACIA_LOG);
-        }
-        layer(cx, sy + n, cz, 3, B.ACACIA_LEAVES, false);
-        layer(cx, sy + n + 1, cz, 2, B.ACACIA_LEAVES, true);
-        soil(x, sy, z);
+      case 'jungle_bush': {
+        // StraightTrunkPlacer(1, 0, 0) + BushFoliagePlacer(2, 1, 2): one jungle log in an oak-leaf bush
+        straight(1, B.JUNGLE_LOG);
+        const ay = sy + 2;
+        for (let i = 1; i >= -1; i--) row(x, ay, z, 2 - 1 - i, i, false, B.LEAVES, (ax, yy, az, r) => ax === r && az === r && nextInt(2) === 0);
         break;
       }
       case 'fancy_oak': {
-        const top = sy + 7 + ((g(8) * 3) | 0), R = [2, 3, 3, 2, 1];
-        for (let y = sy + 1; y <= top; y++) log(x, y, z, B.LOG);
-        for (let u = 0; u < R.length; u++) { const y = top - 3 + u; if (y > sy) layer(x, y, z, R[u], B.LEAVES, true); }
-        const k = (g(9) * 4) | 0;
-        layer(x + [2, -2, 0, 0][k], top - 3, z + [0, 0, 2, -2][k], 1, B.LEAVES, false);
+        // FancyTrunkPlacer(3, 11, 0) + FancyFoliagePlacer(2, 4, 4)
+        const height = 3 + nextInt(12), i = height + 2, j = Math.floor(i * 0.618);
+        const by = sy + 1, l = by + j;
         soil(x, sy, z);
+        const limb = (ax, ay, az, bx, byy, bz, place) => {
+          const dx = bx - ax, dy = byy - ay, dz = bz - az, n = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
+          const axis = Math.abs(dx) > Math.abs(dz) && Math.abs(dx) > Math.abs(dy) ? 1 : Math.abs(dz) > Math.abs(dx) && Math.abs(dz) > Math.abs(dy) ? 2 : 0;
+          for (let k = 0; k <= n; k++) {
+            const px = ax + Math.floor(0.5 + k * (n ? dx / n : 0)), py = ay + Math.floor(0.5 + k * (n ? dy / n : 0)), pz = az + Math.floor(0.5 + k * (n ? dz / n : 0));
+            if (place) put(px, py, pz, B.LOG | (axis << 16), 0);
+            else if (this.solidTerrain(px, py, pz)) return false;
+          }
+          return true;
+        };
+        const shape = (k) => {
+          if (k < i * 0.3) return -1;
+          const f = i / 2, f1 = f - k;
+          let f2 = Math.sqrt(f * f - f1 * f1);
+          if (f1 === 0) f2 = f; else if (Math.abs(f1) >= f) return 0;
+          return f2 * 0.5;
+        };
+        const coords = [[x, by + i - 5, z, l]];
+        for (let i1 = i - 5; i1 >= 0; i1--) {
+          const f = shape(i1);
+          if (f < 0) continue;
+          const d1 = f * (rnd() + 0.328), d2 = rnd() * 2 * Math.PI;
+          const bx = x + Math.floor(d1 * Math.sin(d2) + 0.5), bz = z + Math.floor(d1 * Math.cos(d2) + 0.5), byy = by + i1 - 1;
+          if (!limb(bx, byy, bz, bx, byy + 5, bz, false)) continue;
+          const k1 = x - bx, l1 = z - bz, d5 = byy - Math.sqrt(k1 * k1 + l1 * l1) * 0.381;
+          const i2 = d5 > l ? l : Math.trunc(d5);
+          if (limb(x, i2, z, bx, byy, bz, false)) coords.push([bx, byy, bz, i2]);
+        }
+        limb(x, by, z, x, by + j, z, true);
+        for (const c of coords) if (c[3] - by >= i * 0.2 && !(c[0] === x && c[1] === c[3] && c[2] === z)) limb(x, c[3], z, c[0], c[1], c[2], true);
+        for (const c of coords) {
+          if (!(c[3] - by >= i * 0.2)) continue;
+          for (let yy = 4; yy >= 0; yy--) row(c[0], c[1], c[2], 2 + (yy !== 4 && yy !== 0 ? 1 : 0), yy, false, B.LEAVES, (ax, y2, az, r) => (ax + 0.5) * (ax + 0.5) + (az + 0.5) * (az + 0.5) > r * r);
+        }
+        break;
+      }
+      case 'spruce': case 'pine': {
+        const spruce = type === 'spruce';
+        // spruce: StraightTrunkPlacer(5, 2, 1) + SpruceFoliagePlacer(2..3, 0..2, 1..2);
+        // pine: StraightTrunkPlacer(6, 4, 0) + PineFoliagePlacer(1, 1, 3..4)
+        const h = spruce ? 5 + nextInt(3) + nextInt(2) : 6 + nextInt(5);
+        straight(h, B.SPRUCE_LOG);
+        const ay = sy + 1 + h, corner = (ax, yy, az, r) => ax === r && az === r && r > 0;
+        if (spruce) {
+          const fh = Math.max(4, h - (1 + nextInt(2))), radius = 2 + nextInt(2), offset = nextInt(3);
+          let r = nextInt(2), lim = 1, k = 0;
+          for (let yy = offset; yy >= -fh; yy--) {
+            row(x, ay, z, r, yy, false, B.SPRUCE_LEAVES, corner);
+            if (r >= lim) { r = k; k = 1; lim = Math.min(lim + 1, radius); } else r++;
+          }
+        } else {
+          const fh = 3 + nextInt(2), radius = 1 + nextInt(Math.max(h - fh, 1));
+          let r = 0;
+          for (let yy = 1; yy >= 1 - fh; yy--) {
+            row(x, ay, z, r, yy, false, B.SPRUCE_LEAVES, corner);
+            if (r >= 1 && yy === 1 - fh + 1) r--; else if (r < radius) r++;
+          }
+        }
+        break;
+      }
+      case 'mega_spruce': case 'mega_pine': {
+        // GiantTrunkPlacer(13, 2, 14) + MegaPineFoliagePlacer(0, 0, 13..17 / 3..7), podzol around
+        const h = 13 + nextInt(3) + nextInt(15);
+        giant(h, B.SPRUCE_LOG);
+        const fh = type === 'mega_spruce' ? 13 + nextInt(5) : 3 + nextInt(5), top = sy + 1 + h;
+        let prev = 0;
+        for (let yy = top - fh; yy <= top; yy++) {
+          const k = top - yy, l = Math.floor(k / fh * 3.5);
+          const r = k > 0 && l === prev && (yy & 1) === 0 ? l + 1 : l;
+          row(x, yy, z, r, 0, true, B.SPRUCE_LEAVES, (ax, y2, az, rr) => ax + az >= 7 || ax * ax + az * az > rr * rr);
+          prev = l;
+        }
+        podzol = true;
+        break;
+      }
+      case 'mega_jungle': {
+        // MegaJungleTrunkPlacer(10, 2, 19) + MegaJungleFoliagePlacer(2, 0, 2), vines
+        const h = 10 + nextInt(3) + nextInt(20);
+        giant(h, B.JUNGLE_LOG);
+        const att = [[x, sy + 1 + h, z, 0, true]];
+        for (let i = h - 2 - nextInt(4); i > h / 2; i -= 2 + nextInt(4)) {
+          const f = rnd() * Math.PI * 2;
+          let bx = 0, bz = 0;
+          for (let l = 0; l < 5; l++) {
+            bx = Math.trunc(1.5 + Math.cos(f) * l); bz = Math.trunc(1.5 + Math.sin(f) * l);
+            put(x + bx, sy + 1 + i - 3 + (l >> 1), z + bz, B.JUNGLE_LOG, 0);
+          }
+          att.push([x + bx, sy + 1 + i, z + bz, -2, false]);
+        }
+        const mj = (ax, yy, az, r) => ax + az >= 7 || ax * ax + az * az > r * r;
+        for (const [ax, ay, az, ro, dbl] of att) {
+          const n = dbl ? 2 : 1 + nextInt(2);
+          for (let j = 0; j >= -n; j--) row(ax, ay, az, 2 + ro + 1 - j, j, dbl, B.JUNGLE_LEAVES, mj);
+        }
+        vineChance = 0.25; trunkVines = true;
+        break;
+      }
+      case 'dark_oak': {
+        // DarkOakTrunkPlacer(6, 2, 1) + DarkOakFoliagePlacer(0, 0)
+        const h = 6 + nextInt(3) + nextInt(2);
+        for (let d = 0; d < 4; d++) { const cx = x + (d & 1), cz = z + (d >> 1); soil(cx, this.groundAt(cx, cz), cz); }
+        const dir = nextInt(4), sx = [1, -1, 0, 0][dir], sz = [0, 0, 1, -1][dir];
+        const bend = h - nextInt(4);
+        let steps = 2 - nextInt(3), j1 = x, k1 = z;
+        const l1 = sy + 1 + h - 1;
+        for (let i2 = 0; i2 < h; i2++) {
+          if (i2 >= bend && steps > 0) { j1 += sx; k1 += sz; steps--; }
+          const yy = sy + 1 + i2;
+          for (let d = 0; d < 4; d++) {
+            const cx = j1 + (d & 1), cz = k1 + (d >> 1);
+            // the 2x2 trunk reaches down to the ground of each of its columns
+            if (i2 === 0 && j1 === x && k1 === z) for (let gy = this.groundAt(cx, cz) + 1; gy < yy; gy++) put(cx, gy, cz, B.DARK_LOG, 0);
+            put(cx, yy, cz, B.DARK_LOG, 0);
+          }
+        }
+        const att = [[j1, l1, k1, true]];
+        for (let l2 = -1; l2 <= 2; l2++) for (let i3 = -1; i3 <= 2; i3++) {
+          if ((l2 < 0 || l2 > 1 || i3 < 0 || i3 > 1) && nextInt(3) <= 0) {
+            const n = nextInt(3) + 2;
+            for (let k2 = 0; k2 < n; k2++) put(x + l2, l1 - k2 - 1, z + i3, B.DARK_LOG, 0);
+            att.push([j1 + l2, l1, k1 + i3, false]);
+          }
+        }
+        for (const [ax, ay, az, dbl] of att) {
+          const sk = (adx, yy, adz, r, large) => {
+            if (yy === -1 && !large) return adx === r && adz === r;
+            if (yy === 1) return adx + adz > r * 2 - 2;
+            return false;
+          };
+          if (dbl) {
+            row(ax, ay, az, 2, -1, true, B.DARK_LEAVES, sk);
+            rowSigned(ax, ay, az, 3, 0, true, B.DARK_LEAVES, (dx, yy, dz, r) => (dx === -r || dx >= r) && (dz === -r || dz >= r));
+            row(ax, ay, az, 2, 1, true, B.DARK_LEAVES, sk);
+            if (nextInt(2)) row(ax, ay, az, 0, 2, true, B.DARK_LEAVES, sk);
+          } else {
+            row(ax, ay, az, 2, -1, false, B.DARK_LEAVES, sk);
+            row(ax, ay, az, 1, 0, false, B.DARK_LEAVES, sk);
+          }
+        }
+        break;
+      }
+      case 'acacia': {
+        // ForkingTrunkPlacer(5, 2, 2) + AcaciaFoliagePlacer(2, 0)
+        const h = 5 + nextInt(3) + nextInt(3), by = sy + 1;
+        soil(x, sy, z);
+        const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        const d1 = nextInt(4), i = h - nextInt(4) - 1;
+        let j = 3 - nextInt(3), k = x, l = z, top = -1;
+        for (let i1 = 0; i1 < h; i1++) {
+          const yy = by + i1;
+          if (i1 >= i && j > 0) { k += D[d1][0]; l += D[d1][1]; j--; }
+          put(k, yy, l, B.ACACIA_LOG, 0); top = yy + 1;
+        }
+        const att = [[k, top, l, 1]];
+        k = x; l = z;
+        const d2 = nextInt(4);
+        if (d2 !== d1) {
+          const k2 = i - nextInt(2) - 1;
+          let n = 1 + nextInt(3), t2 = -1;
+          for (let i2 = k2; i2 < h && n > 0; n--, i2++) {
+            if (i2 >= 1) { const yy = by + i2; k += D[d2][0]; l += D[d2][1]; put(k, yy, l, B.ACACIA_LOG, 0); t2 = yy + 1; }
+          }
+          if (t2 > 0) att.push([k, t2, l, 0]);
+        }
+        for (const [ax, ay, az, ro] of att) {
+          const sk = (adx, yy, adz, r) => yy === 0 ? (adx > 1 || adz > 1) && adx !== 0 && adz !== 0 : adx === r && adz === r && r > 0;
+          row(ax, ay, az, 2 + ro, -1, false, B.ACACIA_LEAVES, sk);
+          row(ax, ay, az, 1, 0, false, B.ACACIA_LEAVES, sk);
+          row(ax, ay, az, 2 + ro - 1, 0, false, B.ACACIA_LEAVES, sk);
+        }
         break;
       }
       case 'cherry': {
-        const top = sy + 4 + ((g(10) * 2) | 0), R = [2, 3, 2];
-        for (let y = sy + 1; y <= top; y++) log(x, y, z, B.LOG);
-        layer(x, top + 1, z, 1, B.FLOWERING_AZALEA_LEAVES, false);
-        for (let u = 0; u < R.length; u++) {
-          const y = top - u;
-          if (y <= sy + 1) break;
-          layer(x, y, z, R[u], hash3(this.seed + 96, x, y, z) < 0.25 ? B.AZALEA_LEAVES : B.FLOWERING_AZALEA_LEAVES, true);
-        }
+        // CherryTrunkPlacer(7, 1, 0; branches 1-3, length 2..4, start -4..-3, end -1..0) +
+        // CherryFoliagePlacer(4, 0, 5; holes 0.25 / 0.25, hanging leaves 1/6, extension 1/3)
+        const h = 7 + nextInt(2), by = sy + 1;
         soil(x, sy, z);
+        const i = Math.max(0, h - 1 + (-4 + nextInt(2)));
+        let j = Math.max(0, h - 1 + (-4 + nextInt(1)));
+        if (j >= i) j++;
+        const cnt = 1 + nextInt(3), three = cnt === 3, two = cnt >= 2;
+        const L = three ? h : two ? Math.max(i, j) + 1 : i + 1;
+        for (let i1 = 0; i1 < L; i1++) put(x, by + i1, z, B.CHERRY_LOG, 0);
+        const att = [];
+        if (three) att.push([x, by + L, z]);
+        const D = [[1, 0], [-1, 0], [0, 1], [0, -1]], dir = nextInt(4);
+        const branch = (d, start, upwards) => {
+          const ax = D[d][0] !== 0 ? 1 : 2;
+          let mx = x, my = by + start, mz = z;
+          const endY = by + h - 1 + (-1 + nextInt(2));
+          const flag = upwards || endY < my;
+          const len = 2 + nextInt(3) + (flag ? 1 : 0);
+          const ex = x + D[d][0] * len, ez = z + D[d][1] * len;
+          for (let s2 = 0; s2 < (flag ? 2 : 1); s2++) { mx += D[d][0]; mz += D[d][1]; put(mx, my, mz, B.CHERRY_LOG | (ax << 16), 0); }
+          const up = endY > my ? 1 : -1;
+          for (let guard = 0; guard < 32; guard++) {
+            const dist = Math.abs(ex - mx) + Math.abs(endY - my) + Math.abs(ez - mz);
+            if (dist === 0) { att.push([ex, endY + 1, ez]); return; }
+            const vert = rnd() < Math.abs(endY - my) / dist;
+            if (vert) my += up; else { mx += D[d][0]; mz += D[d][1]; }
+            put(mx, my, mz, vert ? B.CHERRY_LOG : B.CHERRY_LOG | (ax << 16), 0);
+          }
+        };
+        branch(dir, i, i < L - 1);
+        if (two) branch(dir ^ 1, j, j < L - 1);
+        const r = 3;
+        const sk = (adx, yy, adz, rr) => {
+          if (yy === -1 && (adx === rr || adz === rr) && rnd() < 0.25) return true;
+          const c = adx === rr && adz === rr;
+          if (rr > 2) return c || (adx + adz > rr * 2 - 2 && rnd() < 0.25);
+          return c && rnd() < 0.25;
+        };
+        for (const [ax, ay, az] of att) {
+          row(ax, ay, az, r - 2, 2, false, B.CHERRY_LEAVES, sk);
+          row(ax, ay, az, r - 1, 1, false, B.CHERRY_LEAVES, sk);
+          row(ax, ay, az, r, 0, false, B.CHERRY_LEAVES, sk);
+          for (const [rr, yy] of [[r, -1], [r - 1, -2]]) {
+            row(ax, ay, az, rr, yy, false, B.CHERRY_LEAVES, sk);
+            // hanging leaves under the rim, one more below sometimes, within 6 of the attachment
+            for (let dx = -rr; dx <= rr; dx++) for (let dz = -rr; dz <= rr; dz++) {
+              if (Math.abs(dx) !== rr && Math.abs(dz) !== rr) continue;
+              if (!TB.map.has(key(ax + dx, ay + yy, az + dz))) continue;
+              if (Math.abs(dx) + 1 + Math.abs(dz) >= 7 || rnd() > 1 / 6) continue;
+              put(ax + dx, ay + yy - 1, az + dz, B.CHERRY_LEAVES, 1);
+              if (Math.abs(dx) + 2 + Math.abs(dz) < 7 && rnd() <= 1 / 3) put(ax + dx, ay + yy - 2, az + dz, B.CHERRY_LEAVES, 1);
+            }
+          }
+        }
         break;
       }
       case 'giant_red_mushroom': {
@@ -1216,21 +1510,6 @@ class WorldGen {
           if (this.groundAt(x + 1, z) >= sy) log(x + 1, sy + 1, z, B.PACKED_ICE);
           if (this.groundAt(x, z + 1) >= sy) log(x, sy + 1, z + 1, B.PACKED_ICE);
         }
-        break;
-      }
-      case 'swamp_oak': {
-        // Minecraft: straight trunk 5 + 0..3, blob foliage radius 3 / height 3, vines on the leaves
-        const top = sy + 5 + nextInt(4);
-        for (let y = sy + 1; y <= top; y++) log(x, y, z, B.LOG);
-        for (let i = 0; i >= -3; i--) {
-          const r = Math.max(2 - Math.trunc(i / 2), 0), yy = top + 1 + i;
-          for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
-            if (Math.abs(dx) === r && Math.abs(dz) === r && (i === 0 || nextInt(2) === 0)) continue;
-            put(x + dx, yy, z + dz, B.LEAVES, 1);
-          }
-        }
-        soil(x, sy, z);
-        vineChance = 0.25;
         break;
       }
       case 'mangrove': case 'tall_mangrove': {
@@ -1301,14 +1580,15 @@ class WorldGen {
         vineChance = 0.125; propagules = true;
         break;
       }
-      default: { // oak / birch
-        const birch = type === 'birch';
-        const logId = birch ? B.BIRCH_LOG : B.LOG, leafId = birch ? B.BIRCH_LEAVES : B.LEAVES;
-        const top = sy + 4 + ((g(14) * 3) | 0) + (birch ? 1 : 0);
-        for (let y = sy + 1; y <= top; y++) log(x, y, z, logId);
-        for (let u = -2; u <= 1; u++) { const y = top + u; if (y > sy) layer(x, y, z, u <= -1 ? 2 : 1, leafId, true); }
-        soil(x, sy, z);
-      }
+    }
+    // AlterGroundDecorator(podzol) of the giant spruces: circles of podzol on the ground around the
+    // trunk (radius 2 without corners) at its four corners and at five random spots of the ring 3 out
+    if (podzol) {
+      const circle = (cx, cz) => {
+        for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) if (Math.abs(dx) !== 2 || Math.abs(dz) !== 2) put(cx + dx, this.groundAt(cx + dx, cz + dz), cz + dz, B.PODZOL, 4);
+      };
+      circle(x - 1, z - 1); circle(x + 2, z - 1); circle(x - 1, z + 2); circle(x + 2, z + 2);
+      for (let k = 0; k < 5; k++) { const j = nextInt(64), a = j % 8, b = (j / 8) | 0; if (a === 0 || a === 7 || b === 0 || b === 7) circle(x - 3 + a, z - 3 + b); }
     }
     // crown connectivity (face neighbours) from the trunk through free crown cells
     const n = TB.n, dist = TB.dist, q = TB.q;
@@ -1331,7 +1611,7 @@ class WorldGen {
     // decorations on the surviving leaves: Minecraft's leave vine decorator (vines hanging down
     // up to five blocks) and hanging propagules under mangrove leaves (two free blocks below)
     const deco = [];
-    if (vineChance || propagules || mossOnRoots) {
+    if (vineChance || propagules || mossOnRoots || trunkVines) {
       const taken = new Set(), props = new Set();
       const free = (xx, yy, zz) => {
         const k = key(xx, yy, zz);
@@ -1344,6 +1624,17 @@ class WorldGen {
         if (TB.kind[j] !== 3) continue;
         const rx = TB.x[j], ry = TB.y[j] + 1, rz = TB.z[j];
         if (hash3(this.seed + 133, rx, ry, rz) < 0.5 && free(rx, ry, rz)) { deco.push(rx, ry, rz, B.MOSS_CARPET, 0, rx, ry - 1, rz); taken.add(key(rx, ry, rz)); }
+      }
+      // TrunkVineDecorator: a vine on each free side of every log, two times in three
+      if (trunkVines) for (let j = 0; j < n; j++) {
+        if (TB.kind[j] !== 0) continue;
+        const lx = TB.x[j], ly = TB.y[j], lz = TB.z[j];
+        for (let s = 0; s < 4; s++) {
+          if (hash3(this.seed + 140 + s, lx, ly, lz) < 1 / 3) continue;
+          const vx = lx + hang[s][0], vz = lz + hang[s][1];
+          if (!free(vx, ly, vz)) continue;
+          deco.push(vx, ly, vz, B.VINE, hang[s][2], lx, ly, lz); taken.add(key(vx, ly, vz));
+        }
       }
       for (let j = 0; j < n; j++) {
         if (TB.kind[j] !== 1 || dist[j] > 6 || !(FLAGS[TB.id[j]] & BF_LEAVES)) continue;
@@ -1388,12 +1679,17 @@ class WorldGen {
   }
   // phase order: 0 trunks (forced), 1 crowns (free cells only; a leaf next to any tree's log is
   // held), 2 soil under trunks, 3 roots (never over a tree's logs or leaves)
-  writeTreeBlock(xx, yy, zz, id, kind) {
-    if (kind === 0) this.setB(xx, yy, zz, id, 0, 2);
+  writeTreeBlock(xx, yy, zz, idm, kind) {
+    const id = idm & 0xFFFF;
+    if (kind === 0) this.setB(xx, yy, zz, id, idm >>> 16, 2);
     else if (kind === 1) this.setB(xx, yy, zz, id, 0, 0);
     else if (kind === 3) {
       const cur = this.getB(xx, yy, zz);
       if (cur >= 0 && !(FLAGS[cur] & BF_LEAVES) && !/_LOG$|^LOG$|ROOTS/.test(B_KEY[cur] || '')) this.setB(xx, yy, zz, id, 0, 2);
+    } else if (kind === 4) {
+      // ground cover (podzol): replaces grass and dirt only
+      const cur = this.getB(xx, yy, zz);
+      if (cur === B.GRASS || cur === B.DIRT || cur === B.COARSE_DIRT || cur === B.SNOWY_GRASS || cur === B.PODZOL) this.setB(xx, yy, zz, id, 0, 2);
     } else {
       const cur = this.getB(xx, yy, zz);
       if (cur >= 0 && cur !== B.GRASS && cur !== B.DIRT && cur !== B.PODZOL && cur !== B.COARSE_DIRT && cur !== B.MUD && cur !== B.SNOW) this.setB(xx, yy, zz, B.DIRT, 0, 2);
@@ -1401,7 +1697,7 @@ class WorldGen {
   }
   flushTrees() {
     const W = this.treeWrites;
-    for (const phase of [0, 1, 2, 3]) for (let i = 0; i < W.length; i += 5) if (W[i + 4] === phase) this.writeTreeBlock(W[i], W[i + 1], W[i + 2], W[i + 3], phase);
+    for (const phase of [0, 1, 2, 3, 4]) for (let i = 0; i < W.length; i += 5) if (W[i + 4] === phase) this.writeTreeBlock(W[i], W[i + 1], W[i + 2], W[i + 3], phase);
     this.treeWrites = null;
     this.treeDecorations();
     this.deco.length = 0;
@@ -1414,7 +1710,8 @@ class WorldGen {
     for (let i = 0; i < deco.length; i += 8) {
       const sup = this.getB(deco[i + 5], deco[i + 6], deco[i + 7]), id = deco[i + 3];
       if (sup >= 0) {
-        const ok = id === B.MOSS_CARPET ? /ROOTS/.test(B_KEY[sup] || '') : id === B.VINE && deco[i + 6] > deco[i + 1] ? sup === B.VINE : (FLAGS[sup] & BF_LEAVES) !== 0;
+        const ok = id === B.MOSS_CARPET ? /ROOTS/.test(B_KEY[sup] || '') : id === B.VINE && deco[i + 6] > deco[i + 1] ? sup === B.VINE :
+          (FLAGS[sup] & BF_LEAVES) !== 0 || (id === B.VINE && /_LOG$|^LOG$/.test(B_KEY[sup] || ''));
         if (!ok) continue;
       }
       this.setB(deco[i], deco[i + 1], deco[i + 2], id, deco[i + 4], 0);
@@ -1429,37 +1726,138 @@ class WorldGen {
   // ---------------------------------------------------------------- vegetation (maincraft rules)
   vegetation() {
     const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0, TOP = this.TOP;
+    // underwater decoration, and the original's bamboo and mushroom-field columns
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
       const y = TOP[z * 16 + x];
       if (y <= WORLD_MIN_Y + 1 || y >= WORLD_MAX_Y - 3) continue;
       const bio = this.BIO[z * 16 + x], ob = ORIG_BIOME[bio], wx = x0 + x, wz = z0 + z;
       const above = ids[CI(x, y + 1, z)];
       if (y < SEA) { if (above === B.WATER) this.waterDecor(x, z, y, ob); continue; }
-      if (above !== 0) continue;
-      const ground = ids[CI(x, y, z)];
-      if (ground === B.GRASS && hash2(this.seed + 33, wx * 17 + 101, wz * 17 - 59) < 13e-5) { ids[CI(x, y + 1, z)] = B.PUMPKIN; continue; }
-      if (ground === B.GRASS && (ob === BI.JUNGLE || ob === BI.SPARSE_JUNGLE || ob === BI.BAMBOO_JUNGLE) &&
-        hash2(this.seed + 34, wx * 19 - 71, wz * 19 + 43) < 0.0016) { ids[CI(x, y + 1, z)] = B.MELON; continue; }
-      const plant = this.plantAt(bio, ob, x, z, wx, wz, y);
+      if (above !== 0 || (ob !== BI.BAMBOO_JUNGLE && ob !== BI.MUSHROOM_FIELDS)) continue;
+      const plant = this.plantAt(bio, ob, x, z, wx, wz, y), ground = ids[CI(x, y, z)];
       if (!plant) continue;
       const mush = plant === B.BROWN_MUSHROOM || plant === B.RED_MUSHROOM;
-      const ok = ground === B.GRASS || ground === B.PODZOL ||
-        ((ground === B.SAND || ground === B.RED_SAND) && (plant === B.DEAD_BUSH || plant === B.SUGAR_CANE)) ||
-        (mush && (ground === B.MYCELIUM || ground === B.MUD)) ||
-        ((plant === B.TALL_GRASS || plant === B.FERN) && ground === B.MUD) ||
-        (plant === B.BAMBOO_PLANT && ground === B.DIRT);
-      if (!ok) continue;
+      if (!(ground === B.GRASS || ground === B.PODZOL || (mush && ground === B.MYCELIUM) || (plant === B.BAMBOO_PLANT && ground === B.DIRT))) continue;
       const i1 = CI(x, y + 1, z);
-      if (SHAPE[plant] === SH.TALL) {
-        if (ids[CI(x, y + 2, z)] !== 0) continue;
-        ids[i1] = plant; ids[i1 + 256] = plant; meta[i1 + 256] = 1;
-      } else if (plant === B.SUGAR_CANE || plant === B.BAMBOO_PLANT) {
-        const n = plant === B.SUGAR_CANE ? 2 + (hash2(this.seed + 35, wx * 13 + 5, wz * 13 - 5) < 0.4 ? 1 : 0) : 3 + ((hash2(this.seed + 36, wx * 11 - 4, wz * 11 + 6) * 4) | 0);
+      if (plant === B.BAMBOO_PLANT) {
+        const n = 3 + ((hash2(this.seed + 36, wx * 11 - 4, wz * 11 + 6) * 4) | 0);
         for (let k = 0; k < n && y + 1 + k < WORLD_MAX_Y - 1 && ids[i1 + k * 256] === 0; k++) ids[i1 + k * 256] = plant;
-      } else {
-        ids[i1] = plant;
+      } else if (SHAPE[plant] !== SH.TALL) ids[i1] = plant;
+    }
+    // Minecraft's vegetation patches of the biomes, from this chunk and its neighbours (a patch
+    // spreads up to 7 blocks); every choice comes from the origin chunk's seed, so parts agree
+    for (let sz = this.cz - 1; sz <= this.cz + 1; sz++) for (let sx = this.cx - 1; sx <= this.cx + 1; sx++) {
+      const present = new Set();
+      for (let i = 0; i < 16; i++) present.add(this.colInfo(sx * 16 + (i & 3) * 4 + 2, sz * 16 + (i >> 2) * 4 + 2).biome);
+      for (const bio of present) {
+        const list = MC_VEG[bio];
+        if (!list) continue;
+        for (let f = 0; f < list.length; f++) {
+          const [name, pl] = list[f], P = PATCHES[name];
+          const rnd = mulberry(hash2i(this.seed + 4111 + bio * 131 + f * 7, sx, sz));
+          let n = pl.n ?? 1;
+          if (pl.nt) n = this.nMisc.n2(sx * 16 / 200, sz * 16 / 200) < -0.8 ? pl.nt[0] : pl.nt[1];
+          if (pl.rn) n = Math.max(0, pl.rn[0] + ((rnd() * (pl.rn[1] - pl.rn[0] + 1)) | 0));
+          for (let k = 0; k < n; k++) {
+            const ox = sx * 16 + ((rnd() * 16) | 0), oz = sz * 16 + ((rnd() * 16) | 0);
+            const pass = !pl.r || rnd() < 1 / pl.r, seed = (rnd() * 4294967296) >>> 0;
+            if (!pass || this.colInfo(ox, oz).biome !== bio) continue;
+            this.patch(P, ox, this.groundAt(ox, oz) + 1, oz, seed);
+          }
+        }
       }
     }
+  }
+  // one RandomPatchFeature: tries at random offsets; only cells of this chunk are written
+  patch(P, ox, oy, oz, seed) {
+    if (ox < this.x0 - P.xz - 1 || ox > this.x0 + 16 + P.xz || oz < this.z0 - P.xz - 1 || oz > this.z0 + 16 + P.xz) return;
+    const rnd = mulberry(seed), ri = (n) => (rnd() * (n + 1)) | 0;
+    // forest flowers: one of lilac, rose bush, peony, lily of the valley for the whole patch
+    const pickF = P.kind === 'forest_flowers' ? [B.LILAC, B.ROSE_BUSH, B.PEONY, B.LILY_OF_THE_VALLEY][(rnd() * 4) | 0] : 0;
+    for (let t = 0; t < P.tries; t++) {
+      const x = ox + ri(P.xz) - ri(P.xz), y = oy + ri(P.y) - ri(P.y), z = oz + ri(P.xz) - ri(P.xz);
+      const r1 = rnd(), r2 = rnd();
+      const lx = x - this.x0, lz = z - this.z0;
+      if (lx < 0 || lx > 15 || lz < 0 || lz > 15 || y <= WORLD_MIN_Y + 1 || y >= WORLD_MAX_Y - 3) continue;
+      const i = CI(lx, y, lz), ids = this.ids;
+      if (ids[i] !== 0) continue;
+      const below = ids[i - 256];
+      const id = this.patchPlant(P.kind, x, z, r1, r2, pickF);
+      if (!id || !this.plantStays(id, below, lx, y, lz)) continue;
+      if (SHAPE[id] === SH.TALL) {
+        if (ids[i + 256] !== 0) continue;
+        ids[i] = id; ids[i + 256] = id; this.meta[i + 256] = 1;
+      } else if (id === B.SUGAR_CANE) {
+        const h = 2 + ((rnd() * (((rnd() * 3) | 0) + 1)) | 0);
+        for (let k = 0; k < h && ids[i + k * 256] === 0; k++) ids[i + k * 256] = id;
+      } else {
+        ids[i] = id;
+        if (id === B.SWEET_BERRY_BUSH) this.meta[i] = 3;
+      }
+    }
+  }
+  patchPlant(kind, x, z, r1, r2, pickF) {
+    switch (kind) {
+      case 'grass': return B.TALL_GRASS;
+      case 'grass_jungle': return r1 < 0.75 ? B.TALL_GRASS : B.FERN;
+      case 'grass_taiga': return r1 < 0.2 ? B.TALL_GRASS : B.FERN;
+      case 'tall_grass': return B.TALL_GRASS_PLANT;
+      case 'large_fern': return B.LARGE_FERN;
+      case 'dead_bush': return B.DEAD_BUSH;
+      case 'sugar_cane': return B.SUGAR_CANE;
+      case 'pumpkin': return B.PUMPKIN;
+      case 'melon': return B.MELON;
+      case 'berry': return B.SWEET_BERRY_BUSH;
+      case 'sunflower': return B.SUNFLOWER;
+      case 'brown_mushroom': return B.BROWN_MUSHROOM;
+      case 'red_mushroom': return B.RED_MUSHROOM;
+      case 'blue_orchid': return B.BLUE_ORCHID;
+      case 'forest_flowers': return pickF;
+      case 'flower_default': return r1 < 2 / 3 ? B.POPPY : B.DANDELION;
+      case 'flower_plains': {
+        // NoiseThresholdProvider(scale 0.005, threshold -0.8, high chance 1/3): tulips in the low
+        // noise areas, else poppy / bluet / daisy / cornflower one time in three, else dandelion
+        if (this.nMisc.n2(x * 0.005 + 71.3, z * 0.005 - 19.7) < -0.8) return [B.ORANGE_TULIP, B.RED_TULIP, B.PINK_TULIP, B.WHITE_TULIP][(r2 * 4) | 0];
+        return r1 < 1 / 3 ? [B.POPPY, B.AZURE_BLUET, B.OXEYE_DAISY, B.CORNFLOWER][(r2 * 4) | 0] : B.DANDELION;
+      }
+      case 'flower_forest': {
+        // NoiseProvider(scale 0.020833334): the kind of flower changes smoothly across the forest
+        const L = [B.DANDELION, B.POPPY, B.ALLIUM, B.AZURE_BLUET, B.RED_TULIP, B.ORANGE_TULIP, B.WHITE_TULIP, B.PINK_TULIP, B.OXEYE_DAISY, B.CORNFLOWER, B.LILY_OF_THE_VALLEY];
+        const v = (this.nMisc.n2(x * 0.020833334 - 313.1, z * 0.020833334 + 77.7) + 1) / 2;
+        return L[Math.max(0, Math.min(L.length - 1, (v * L.length) | 0))];
+      }
+      case 'flower_meadow': {
+        const L = [B.TALL_GRASS_PLANT, B.ALLIUM, B.POPPY, B.AZURE_BLUET, B.DANDELION, B.CORNFLOWER, B.OXEYE_DAISY, B.TALL_GRASS];
+        const v = (this.nMisc.n2(x * 0.020833334 + 911.1, z * 0.020833334 - 55.5) + 1) / 2;
+        // DualNoiseProvider in Minecraft: a few kinds at a time, changing across the meadow
+        return L[Math.max(0, Math.min(L.length - 1, ((v + (r1 - 0.5) * 0.25) * L.length) | 0))];
+      }
+    }
+    return 0;
+  }
+  // canSurvive of the plants on the block below (Minecraft's BushBlock and friends)
+  plantStays(id, below, lx, y, lz) {
+    const dirt = below === B.GRASS || below === B.DIRT || below === B.PODZOL || below === B.COARSE_DIRT || below === B.ROOTED_DIRT ||
+      below === B.MOSS_BLOCK || below === B.MUD || below === B.SNOWY_GRASS || below === B.MYCELIUM;
+    if (id === B.DEAD_BUSH) return dirt || below === B.SAND || below === B.RED_SAND || below === B.TERRACOTTA || /TERRACOTTA$/.test(B_KEY[below] || '');
+    if (id === B.PUMPKIN || id === B.MELON) return below === B.GRASS;
+    if (id === B.BROWN_MUSHROOM || id === B.RED_MUSHROOM) {
+      if (below === B.MYCELIUM || below === B.PODZOL) return true;
+      if (!OPAQUE[below]) return false;
+      // light 12 or less: only under cover (leaves, logs or terrain above)
+      for (let yy = y + 1; yy < Math.min(WORLD_MAX_Y - 1, y + 40); yy++) if (this.ids[CI(lx, yy, lz)] !== 0) return true;
+      return false;
+    }
+    if (id === B.SUGAR_CANE) {
+      if (!(dirt || below === B.SAND || below === B.RED_SAND)) return false;
+      for (let f = 0; f < 4; f++) {
+        const nx = lx + FACE4[f * 2], nz = lz + FACE4[f * 2 + 1];
+        if (nx >= 0 && nx < 16 && nz >= 0 && nz < 16) { const n = this.ids[CI(nx, y - 1, nz)]; if (n === B.WATER || n === B.ICE) return true; continue; }
+        if (y - 1 <= SEA && this.groundAt(this.x0 + nx, this.z0 + nz) < y - 1) return true;
+      }
+      return false;
+    }
+    return dirt && below !== B.MYCELIUM;
   }
   // Cold biomes (Minecraft's freeze-top-layer): open water at sea level freezes, and every top block
   // that can hold snow (ground, leaves, logs) under open sky gets a snow layer.
@@ -1487,116 +1885,12 @@ class WorldGen {
       if (OPAQUE[t] || (FLAGS[t] & BF_LEAVES)) ids[CI(x, y + 1, z)] = B.SNOW_LAYER;
     }
   }
-  // land plant for a column (the original's per-biome table)
+  // bamboo of the bamboo jungle and mushrooms of the mushroom fields, per column
   plantAt(bio, ob, lx, lz, x, z, y) {
     const r = hash2(this.seed + 31, x * 7 + 3, z * 7 - 5), b2 = hash2(this.seed + 32, x * 11 - 7, z * 11 + 13);
-    const pick = a => a[Math.floor(b2 * a.length) % a.length];
-    if (y === SEA && r < 0.32 && ob !== BI.DESERT && ob !== BI.BADLANDS && this.waterBeside(lx, lz, x, z)) return B.SUGAR_CANE;
-    if (bio === BI.SUNFLOWER_PLAINS) {
-      // the sunflower variant keeps its sunflowers (the original merges it into plains)
-      if (r < 0.1) return B.TALL_GRASS;
-      if (r < 0.14) return pick([B.DANDELION, B.POPPY, B.CORNFLOWER, B.OXEYE_DAISY, B.AZURE_BLUET]);
-      if (r < 0.19) return B.SUNFLOWER;
-      return 0;
-    }
-    switch (ob) {
-      case BI.PLAINS:
-        if (r < 0.1) return B.TALL_GRASS;
-        if (r < 0.14) return pick([B.DANDELION, B.POPPY, B.CORNFLOWER, B.OXEYE_DAISY, B.AZURE_BLUET]);
-        break;
-      case BI.MEADOW:
-        if (r < 0.14) return B.TALL_GRASS;
-        if (r < 0.205) return pick([B.DANDELION, B.CORNFLOWER, B.OXEYE_DAISY, B.POPPY]);
-        if (r < 0.21) return B.SUNFLOWER;
-        break;
-      case BI.FLOWER_FOREST:
-        if (r < 0.07) return B.TALL_GRASS;
-        if (r < 0.26) return pick([B.DANDELION, B.POPPY, B.ALLIUM, B.CORNFLOWER, B.OXEYE_DAISY, B.AZURE_BLUET, B.LILY_OF_THE_VALLEY,
-          B.ORANGE_TULIP, B.PINK_TULIP, B.RED_TULIP, B.WHITE_TULIP]);
-        if (r < 0.275) return b2 < 0.5 ? B.LILAC : B.ROSE_BUSH;
-        break;
-      case BI.FOREST:
-        if (r < 0.06) return B.TALL_GRASS;
-        if (r < 0.08) return B.FERN;
-        if (r < 0.092) return b2 < 0.5 ? B.DANDELION : B.POPPY;
-        if (r < 0.098) return pick([B.LILAC, B.ROSE_BUSH, B.PEONY]);
-        break;
-      case BI.BIRCH_FOREST:
-        if (r < 0.06) return B.TALL_GRASS;
-        if (r < 0.086) return b2 < 0.5 ? B.LILY_OF_THE_VALLEY : B.DANDELION;
-        if (r < 0.093) return b2 < 0.5 ? B.LILAC : B.PEONY;
-        break;
-      case BI.DARK_FOREST:
-        if (r < 0.05) return B.TALL_GRASS;
-        if (r < 0.075) return b2 < 0.5 ? B.BROWN_MUSHROOM : B.RED_MUSHROOM;
-        if (r < 0.09) return B.LARGE_FERN;
-        if (r < 0.097) return b2 < 0.5 ? B.ROSE_BUSH : B.PEONY;
-        break;
-      case BI.JUNGLE:
-        if (r < 0.12) return B.TALL_GRASS;
-        if (r < 0.22) return B.FERN;
-        break;
-      case BI.SPARSE_JUNGLE:
-        if (r < 0.14) return B.TALL_GRASS;
-        if (r < 0.2) return B.FERN;
-        break;
-      case BI.TAIGA: case BI.OLD_GROWTH_SPRUCE_TAIGA: case BI.SNOWY_TAIGA: case BI.GROVE:
-        if (r < 0.08) return B.FERN;
-        if (r < 0.12) return b2 < 0.5 ? B.TALL_GRASS : B.LARGE_FERN;
-        if (r < 0.135) return B.SWEET_BERRY_BUSH;
-        break;
-      case BI.SAVANNA:
-        if (r < 0.25) return B.TALL_GRASS;
-        break;
-      case BI.SWAMP:
-        if (r < 0.1) return B.TALL_GRASS;
-        if (r < 0.13) return B.FERN;
-        if (r < 0.145) return B.BLUE_ORCHID;
-        break;
-      case BI.WINDSWEPT_HILLS:
-        if (r < 0.05) return B.TALL_GRASS;
-        break;
-      case BI.DESERT:
-        if (r < 0.016) return B.DEAD_BUSH;
-        break;
-      case BI.BADLANDS:
-        if (r < 0.02) return B.DEAD_BUSH;
-        break;
-      case BI.WOODED_BADLANDS:
-        if (r < 0.04) return B.DEAD_BUSH;
-        if (r < 0.08) return B.TALL_GRASS;
-        break;
-      case BI.CHERRY_GROVE:
-        if (r < 0.14) return B.TALL_GRASS;
-        if (r < 0.34) return pick([B.PINK_TULIP, B.ALLIUM, B.OXEYE_DAISY, B.DANDELION, B.PINK_TULIP]);
-        break;
-      case BI.BAMBOO_JUNGLE:
-        if (r < 0.32) return B.BAMBOO_PLANT;
-        if (r < 0.42) return B.FERN;
-        if (r < 0.48) return B.TALL_GRASS;
-        break;
-      case BI.MUSHROOM_FIELDS:
-        if (r < 0.22) return b2 < 0.5 ? B.BROWN_MUSHROOM : B.RED_MUSHROOM;
-        break;
-      case BI.MANGROVE_SWAMP:
-        if (r < 0.08) return B.TALL_GRASS;
-        if (r < 0.12) return B.FERN;
-        break;
-    }
+    if (ob === BI.BAMBOO_JUNGLE) return r < 0.32 ? B.BAMBOO_PLANT : 0;
+    if (ob === BI.MUSHROOM_FIELDS) return r < 0.22 ? (b2 < 0.5 ? B.BROWN_MUSHROOM : B.RED_MUSHROOM) : 0;
     return 0;
-  }
-  // Sugar cane needs water right next to its ground block (Minecraft's rule, also the one the
-  // game checks later). Ground is at sea level; a neighbour column is water there when its
-  // density surface is below sea level and its biome is not a freezing one.
-  waterBeside(lx, lz, x, z) {
-    for (let f = 0; f < 4; f++) {
-      const dx = FACE4[f * 2], dz = FACE4[f * 2 + 1], nx = lx + dx, nz = lz + dz;
-      // water in a cold biome freezes over (snowCover), so it doesn't count
-      if (nx >= 0 && nx < 16 && nz >= 0 && nz < 16) { if (this.ids[CI(nx, SEA, nz)] === B.WATER && BPROP[this.BIO[nz * 16 + nx]].cold !== 2) return true; continue; }
-      if (this.groundAt(x + dx, z + dz) >= SEA) continue;
-      if (BPROP[this.biomeAtBlock(x + dx, z + dz)].cold !== 2) return true;
-    }
-    return false;
   }
   // underwater decoration of the original (gw): icebergs and surface ice, coral reefs, kelp
   // forests, seagrass, lily pads. fy = floor block, water above it.

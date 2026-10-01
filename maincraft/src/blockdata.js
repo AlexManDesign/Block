@@ -665,4 +665,6 @@ const BLOCK_TABLE = [
   ["MEDIUM_AMETHYST_BUD", "Medium Amethyst Bud", "Средний аметистовый бутон", "medium_amethyst_bud", "crystal", "", 2, "", "n"],
   ["LARGE_AMETHYST_BUD", "Large Amethyst Bud", "Большой аметистовый бутон", "large_amethyst_bud", "crystal", "", 4, "", "n"],
   ["AMETHYST_CLUSTER", "Amethyst Cluster", "Друза аметиста", "amethyst_cluster", "crystal", "", 5, "", "n"],
+  ["CHERRY_LOG", "Cherry Log", "Вишнёвое бревно", "cherry_log_top,cherry_log", "", "Y", 0, "", "n"],
+  ["CHERRY_LEAVES", "Cherry Leaves", "Вишнёвая листва", "cherry_leaves", "", "L", 0, "", "n"],
 ];

@@ -141,11 +141,12 @@ def recolor(img, src_avg, dst_avg, mask=None):
 MANGROVE_BARK = (84, 66, 56)
 
 
-def mangrove_log(oak_log, oak_top, planks):
-    """Mangrove log from the oak log: dark red-brown bark, reddish wood inside the rings."""
-    side = recolor(oak_log, avg_rgb(oak_log), MANGROVE_BARK)
+def mangrove_log(oak_log, oak_top, planks, bark=None):
+    """Mangrove (or cherry) log from the oak log: the bark colour, the planks' wood inside the rings."""
+    MANGROVE_BARK_ = bark or MANGROVE_BARK
+    side = recolor(oak_log, avg_rgb(oak_log), MANGROVE_BARK_)
     ring = lambda x, y: x in (0, 15) or y in (0, 15)
-    top = recolor(oak_top, avg_rgb(oak_log), MANGROVE_BARK, ring)
+    top = recolor(oak_top, avg_rgb(oak_log), MANGROVE_BARK_, ring)
     inner = [(x, y) for y in range(1, 15) for x in range(1, 15)]
     ia = tuple(sum(oak_top.getpixel(p)[i] for p in inner) / len(inner) for i in range(3))
     top = recolor(top, ia, avg_rgb(planks), lambda x, y: not ring(x, y))
@@ -210,7 +211,7 @@ def amethyst_shards(shards):
 
 
 LEAF_TEXTURES = {'oak_leaves', 'birch_leaves', 'spruce_leaves', 'jungle_leaves', 'acacia_leaves', 'dark_oak_leaves',
-                 'mangrove_leaves', 'azalea_leaves', 'flowering_azalea_leaves'}
+                 'mangrove_leaves', 'azalea_leaves', 'flowering_azalea_leaves', 'cherry_leaves'}
 
 
 def opaque_leaves(img):
@@ -331,6 +332,14 @@ def collect():
         m.alpha_composite(root_strands(seed, 5, (112, 88, 68), (66, 50, 40)))
         extra[side] = m
     extra['mangrove_propagule_hanging'] = mangrove_propagule()
+    # cherry: dark purple-brown bark, pink planks inside, pink leaves (not biome tinted)
+    extra['cherry_log'], extra['cherry_log_top'] = mangrove_log(load('oak_log'), load('oak_log_top'), load('cherry_planks'), (58, 36, 46))
+    extra['cherry_leaves'] = tint(load('azalea_leaves').convert('L').convert('RGBA'), (238, 168, 204))
+    cl, al = extra['cherry_leaves'].load(), load('azalea_leaves').convert('RGBA').load()
+    for yy in range(16):
+        for xx in range(16):
+            r, g, b, _ = cl[xx, yy]
+            cl[xx, yy] = (min(255, r * 3 // 2), min(255, g * 3 // 2), min(255, b * 3 // 2), al[xx, yy][3])
     # amethyst buds and cluster (the pack has the block only)
     extra['small_amethyst_bud'] = amethyst_shards([(8, 4, 1.6), (5.5, 3, 1.0), (10.5, 2, 0.9)])
     extra['medium_amethyst_bud'] = amethyst_shards([(8, 7, 1.8), (5, 4, 1.2), (11, 5, 1.2)])
