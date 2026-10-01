@@ -15,7 +15,9 @@ const Settings = {
   save() { try { const o = {}; for (const k in this) if (typeof this[k] !== 'function') o[k] = this[k]; localStorage.setItem(SETTINGS_KEY, JSON.stringify(o)); } catch (e) { } },
 };
 
-const DAY_LEN = 1200; // seconds
+const DAY_LEN = 1200;
+// water fog colours of the biomes (Minecraft's water_fog_color); the rest use 0x050533
+const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
 const MB_SHADE = [0.72, 0.72, 1.0, 0.55, 0.8, 0.9], MB_TRI = [0, 1, 2, 0, 2, 3];
@@ -305,11 +307,20 @@ class Game {
     const ib = this.world ? this.world.getBlock(Math.floor(eye[0]), Math.floor(eye[1]), Math.floor(eye[2])) : 0;
     e.underwater = false;
     if (isWaterId(ib)) {
+      // Minecraft's underwater fog (FogRenderer): the biome's water fog colour (blended over 5 s
+      // when it changes), brightened toward full by the water vision, which grows over 30 s under
+      // water; fog from -8 to 96 x max(0.25, vision) blocks (x0.85 in swamps), at most the view.
       e.underwater = true;
-      const lt = this.world.getLight(Math.floor(eye[0]), Math.floor(eye[1]), Math.floor(eye[2]));
-      const b = Math.max(0.15, ((lt >> 4) / 15) * (0.2 + 0.8 * day));
-      e.fogColor.set([0.05 * b, 0.2 * b, 0.45 * b]);
-      e.fogStart = 1; e.fogEnd = 26 + 20 * b;
+      const v = this.waterVision();
+      const bn = BIOME_LIST[this.world.biomeAt(Math.floor(eye[0]), Math.floor(eye[2]))][0];
+      const fc = WATER_FOG[bn] ?? 0x050533, W = this.wfog || (this.wfog = { from: fc, to: fc, t: 0 });
+      if (fc !== W.to) { W.from = this.wfogNow ?? W.to; W.to = fc; W.t = performance.now(); }
+      const k = Math.min(1, (performance.now() - W.t) / 5000), col = [0, 0, 0];
+      for (let i = 0; i < 3; i++) { const sh = 16 - i * 8, a = (W.from >> sh) & 255, b = (W.to >> sh) & 255; col[i] = (a + (b - a) * k) / 255; }
+      this.wfogNow = (Math.round(col[0] * 255) << 16) | (Math.round(col[1] * 255) << 8) | Math.round(col[2] * 255);
+      const m = Math.min(1 / Math.max(col[0], 1e-3), 1 / Math.max(col[1], 1e-3), 1 / Math.max(col[2], 1e-3));
+      e.fogColor.set(col.map(c => c * (1 - v) + c * m * v));
+      e.fogStart = -8; e.fogEnd = Math.min(e.fogEnd, 96 * Math.max(0.25, v) * (bn === 'SWAMP' || bn === 'MANGROVE_SWAMP' ? 0.85 : 1));
     } else if (ib === B.LAVA) {
       e.underwater = true; e.fogColor.set([0.6, 0.12, 0.0]); e.fogStart = 0; e.fogEnd = 2.5;
     }
@@ -574,6 +585,7 @@ class Game {
     }
     if (this.mode === 'survival') this.survivalTick(dt);
     this.updateCamera();
+    this.waterVisT = isWaterId(w.getBlock(Math.floor(this.cam[0]), Math.floor(this.cam[1]), Math.floor(this.cam[2]))) ? (this.waterVisT || 0) + dt * 20 : 0;
     this.interact(dt);
     let tm = performance.now();
     this.ents.update(dt);
@@ -584,6 +596,12 @@ class Game {
     this.perfT('particlesSim', performance.now() - tm);
   }
 
+  // LocalPlayer.getWaterVision: 0..1 over the first 30 s (600 ticks) with the eye under water
+  waterVision() {
+    const t = this.waterVisT || 0;
+    if (t >= 600) return 1;
+    return Math.min(1, t / 100) * 0.6 + (t < 100 ? 0 : Math.min(1, (t - 100) / 500)) * 0.4;
+  }
   updateCamera() {
     const p = this.player;
     const e = p.eye();

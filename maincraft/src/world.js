@@ -522,6 +522,10 @@ class World {
       if (sh === SH.LILY) return below === B.WATER;
       return SOLID[below] === 1;
     }
+    if (sh === SH.CRYSTAL) {
+      const n = FACE_DIR[m % 6];
+      return OPAQUE[this.getBlock(x - n[0], y - n[1], z - n[2])] === 1;
+    }
     if (sh === SH.LADDER) {
       const f = m & 3, d = (f + 2) & 3;
       return OPAQUE[this.getBlock(x + DIRX_W[d], y, z + DIRZ_W[d])] === 1;
@@ -755,3 +759,5 @@ class World {
 }
 
 const DIRX_W = [0, -1, 0, 1], DIRZ_W = [1, 0, -1, 0];
+// face directions in the mesher's order: +x, -x, +y, -y, +z, -z
+const FACE_DIR = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];

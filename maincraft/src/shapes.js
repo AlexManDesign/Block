@@ -8,6 +8,22 @@ function rotBoxU(b, turns) {
 }
 const FULL_BOX = [[0, 0, 0, 1, 1, 1]];
 
+// Amethyst buds and cluster (AmethystClusterBlock(height, offset)): a box growing out of the face
+// the block is attached to (meta = face, mesher order +x -x +y -y +z -z).
+const CRYSTAL_SIZE = {};
+function crystalBox(id, m) {
+  const sz = CRYSTAL_SIZE[id] || (CRYSTAL_SIZE[id] = id === B.AMETHYST_CLUSTER ? [7, 3] : id === B.LARGE_AMETHYST_BUD ? [5, 3] : id === B.MEDIUM_AMETHYST_BUD ? [4, 3] : [3, 4]);
+  const h = sz[0] / 16, o = sz[1] / 16, a = o, b = 1 - o;
+  switch (m % 6) {
+    case 0: return [0, a, a, h, b, b];
+    case 1: return [1 - h, a, a, 1, b, b];
+    case 2: return [a, 0, a, b, h, b];
+    case 3: return [a, 1 - h, a, b, 1, b];
+    case 4: return [a, a, 0, b, b, h];
+    default: return [a, a, 1 - h, b, b, 1];
+  }
+}
+
 // selection boxes (what the outline / raycast uses)
 function blockBoxes(world, id, m, x, y, z) {
   const sh = SHAPE[id];
@@ -73,6 +89,7 @@ function blockBoxes(world, id, m, x, y, z) {
     case SH.CROSS: case SH.TALL: case SH.FIRE: return [[0.15, 0, 0.15, 0.85, (id === B.TALL_GRASS ? 0.8 : 1), 0.85]];
     case SH.VINE: case SH.LICHEN: return [[0, 0, 0, 1, 1, 1]];
     case SH.SNOWLAYER: return [[0, 0, 0, 1, ((m & 7) + 1) / 8, 1]];
+    case SH.CRYSTAL: return [crystalBox(id, m)];
     case SH.WATER: case SH.LAVA: return FULL_BOX;
     default: return FULL_BOX;
   }

@@ -360,6 +360,20 @@ class Mesher {
         this.cross(buf, x, y, z, layer, lt, 2.4, sway);
         return;
       }
+      case SH.CRYSTAL: {
+        // the cross model turned so that its top points out of the face it grows from (meta)
+        const f = m % 6, lt = this.maxLight(p), X = x * 16, Y = y * 16, Z = z * 16, a = 2.4, c = 16 - a;
+        const rot = (px, py, pz) => f === 2 ? [px, py, pz] : f === 3 ? [px, 16 - py, 16 - pz] : f === 0 ? [py, 16 - px, pz] :
+          f === 1 ? [16 - py, px, pz] : f === 4 ? [px, 16 - pz, py] : [px, pz, 16 - py];
+        for (const q of [[a, a, c, c], [c, a, a, c]]) {
+          const pts = [];
+          for (const [px, py, pz] of [[q[0], 0, q[1]], [q[2], 0, q[3]], [q[2], 16, q[3]], [q[0], 16, q[1]]]) {
+            const r = rot(px, py, pz); pts.push(X + r[0], Y + r[1], Z + r[2]);
+          }
+          this.flat(buf, pts, texs[2], 0, 0, 16, 16, lt >> 4, lt & 15, 0.95, 0, true);
+        }
+        return;
+      }
       case SH.TALL: {
         const lt = this.maxLight(p);
         this.cross(buf, x, y, z, (m & 1) ? texs[2] : texs[3], lt, 2.4, this.sway && (m & 1));

@@ -189,6 +189,26 @@ def mangrove_propagule():
     return im
 
 
+def amethyst_shards(shards):
+    """Amethyst bud / cluster: pointed crystal shards growing from the bottom edge (x centre,
+    height, half width), light along the middle, dark edges, as the shards of Minecraft's."""
+    im = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
+    px = im.load()
+    light, mid, dark, edge = (244, 206, 252), (198, 146, 234), (148, 98, 204), (96, 62, 150)
+    for cx, h, hw in shards:
+        for k in range(h):
+            y = 15 - k
+            w = hw * min(1.0, (h - k) / 2.5)
+            for x in range(16):
+                d = abs(x + 0.5 - cx)
+                if d > w + 0.35:
+                    continue
+                r = d / max(w, 0.5)
+                c = light if r < 0.3 and k > 0 else mid if r < 0.65 else dark if r < 0.95 else edge
+                px[x, y] = c + (255,)
+    return im
+
+
 LEAF_TEXTURES = {'oak_leaves', 'birch_leaves', 'spruce_leaves', 'jungle_leaves', 'acacia_leaves', 'dark_oak_leaves',
                  'mangrove_leaves', 'azalea_leaves', 'flowering_azalea_leaves'}
 
@@ -311,6 +331,11 @@ def collect():
         m.alpha_composite(root_strands(seed, 5, (112, 88, 68), (66, 50, 40)))
         extra[side] = m
     extra['mangrove_propagule_hanging'] = mangrove_propagule()
+    # amethyst buds and cluster (the pack has the block only)
+    extra['small_amethyst_bud'] = amethyst_shards([(8, 4, 1.6), (5.5, 3, 1.0), (10.5, 2, 0.9)])
+    extra['medium_amethyst_bud'] = amethyst_shards([(8, 7, 1.8), (5, 4, 1.2), (11, 5, 1.2)])
+    extra['large_amethyst_bud'] = amethyst_shards([(8, 10, 2.0), (4.5, 6, 1.3), (11.5, 7, 1.3)])
+    extra['amethyst_cluster'] = amethyst_shards([(8, 13, 2.2), (4, 9, 1.5), (12, 10, 1.5), (6, 6, 1.1), (10.5, 6, 1.1)])
     if 'grass_block_snow' not in names:
         extra['grass_block_snow'] = snowy_side(load('dirt'), load('snow'))
     extra['item_ender_pearl'] = orb((12, 59, 55), (46, 143, 134), (160, 230, 220), 6)

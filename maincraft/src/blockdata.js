@@ -661,4 +661,8 @@ const BLOCK_TABLE = [
   ["MANGROVE_ROOTS_WET", "Mangrove Roots", "Мангровые корни", "mangrove_roots_top,mangrove_roots", "", "GA", 0, "MANGROVE_ROOTS", "n"],
   ["MUDDY_MANGROVE_ROOTS", "Muddy Mangrove Roots", "Грязные мангровые корни", "muddy_mangrove_roots_top,muddy_mangrove_roots_side", "", "Y", 0, "", "n"],
   ["MANGROVE_PROPAGULE", "Mangrove Propagule", "Мангровая пропагула", "mangrove_propagule_hanging", "x", "h", 0, "", "n"],
+  ["SMALL_AMETHYST_BUD", "Small Amethyst Bud", "Маленький аметистовый бутон", "small_amethyst_bud", "crystal", "", 1, "", "n"],
+  ["MEDIUM_AMETHYST_BUD", "Medium Amethyst Bud", "Средний аметистовый бутон", "medium_amethyst_bud", "crystal", "", 2, "", "n"],
+  ["LARGE_AMETHYST_BUD", "Large Amethyst Bud", "Большой аметистовый бутон", "large_amethyst_bud", "crystal", "", 4, "", "n"],
+  ["AMETHYST_CLUSTER", "Amethyst Cluster", "Друза аметиста", "amethyst_cluster", "crystal", "", 5, "", "n"],
 ];

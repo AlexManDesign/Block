@@ -295,7 +295,7 @@ class WorldGen {
     this.nCont = S(1); this.nEro = S(2); this.nWeird = S(3); this.nTemp = S(4); this.nHum = S(5);
     this.nHill = S(6); this.nDen = S(7); this.nCheese = S(8); this.nSp1 = S(9); this.nSp2 = S(10);
     this.nNd1 = S(11); this.nNd2 = S(12); this.nSurf = S(13); this.nRiver = S(14); this.nCave = S(15);
-    this.nMisc = S(16); this.nOre = S(17); this.nMush = S(18); this.nWarp = S(19);
+    this.nMisc = S(16); this.nOre = S(17); this.nMush = S(18); this.nWarp = S(19); this.nGeode = S(20);
     this.ids = new Uint16Array(COL_N);
     this.meta = new Uint8Array(COL_N);
     this.clim = { h: 0, c: 0, e: 0, w: 0, pv: 0, t: 0, hu: 0, m: 0, river: 0, mush: 0, ti: 0, hi: 0 };
@@ -522,6 +522,7 @@ class WorldGen {
     this.fillTerrain();
     this.surface();
     this.caves();
+    this.geodes();
     this.ores();
     this.bedrock();
     this.features();
@@ -799,6 +800,90 @@ class WorldGen {
         if (y >= L) { ids[i] = B.WATER; continue; }
         // below this column's zone: a barrier where the zone above or beside it holds water
         ids[i] = y === L - 1 || y >= side ? (y < 0 ? B.DEEPSLATE : B.STONE) : 0;
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ amethyst geodes
+  // Minecraft's amethyst_geode (GeodeFeature): in 1 of 24 chunks, origin at y -58..30; 3-4
+  // distribution points 4-6 blocks off the origin on each axis, each with an offset of 1-2. A cell
+  // belongs to the geode by d = sum over the points of 1/sqrt(distance^2 + offset) (+ noise x 0.05):
+  // filling air from 1/sqrt(1.7), amethyst from 1/sqrt(2.2 + k/6) (8.3% budding amethyst), calcite
+  // from 1/sqrt(3.2 + k/6), smooth basalt from 1/sqrt(4.2 + k/6). 95% get a crack to one side, and
+  // 35% of the budding blocks grow a bud or cluster into their first open neighbour (down, up,
+  // north, south, west, east). A geode is not placed when more than one of its points is open space
+  // (here: above the ground). Geodes span chunks: each chunk writes its part of the geodes started
+  // up to one chunk away, with every choice made from the position, so the parts agree.
+  geodeOf(sx, sz) {
+    const key = sx * 65536 + sz, C = this.geodeCache || (this.geodeCache = new Map());
+    if (C.has(key)) return C.get(key);
+    let G = null;
+    const rnd = mulberry(hash2i(this.seed + 911, sx, sz));
+    if (rnd() < 1 / 24) {
+      const ox = sx * 16 + ((rnd() * 16) | 0), oz = sz * 16 + ((rnd() * 16) | 0), oy = -58 + ((rnd() * 89) | 0);
+      const k = 3 + ((rnd() * 2) | 0), pts = [];
+      let bad = 0;
+      for (let i = 0; i < k; i++) {
+        const px = ox + 4 + ((rnd() * 3) | 0), py = oy + 4 + ((rnd() * 3) | 0), pz = oz + 4 + ((rnd() * 3) | 0);
+        if (py >= this.colInfo(px, pz).h - 1) bad++;
+        pts.push([px, py, pz, 1 + ((rnd() * 2) | 0)]);
+      }
+      if (bad <= 1) {
+        const d0 = k / 6, crack = rnd() < 0.95, side = (rnd() * 4) | 0, j = k * 2 + 1, cr = [];
+        if (crack) for (const dy of [7, 5, 1]) cr.push(side === 0 ? [ox + j, oy + dy, oz] : side === 1 ? [ox, oy + dy, oz + j] : side === 2 ? [ox + j, oy + dy, oz + j] : [ox, oy + dy, oz]);
+        G = { ox, oy, oz, pts, cr, d1: 1 / Math.sqrt(1.7), d2: 1 / Math.sqrt(2.2 + d0), d3: 1 / Math.sqrt(3.2 + d0), d4: 1 / Math.sqrt(4.2 + d0),
+          d5: 1 / Math.sqrt(2 + rnd() * 0.5 + (k > 3 ? d0 : 0)), nx: rnd() * 1000, nz: rnd() * 1000, seed: hash2i(this.seed + 913, sx, sz) };
+      }
+    }
+    if (C.size > 512) C.clear();
+    C.set(key, G);
+    return G;
+  }
+  // 0 outside, 1 crack, 2 filling air, 3 amethyst layer, 4 calcite, 5 smooth basalt
+  geodeCell(G, x, y, z) {
+    if (Math.abs(x - G.ox) > 16 || Math.abs(y - G.oy) > 16 || Math.abs(z - G.oz) > 16) return 0;
+    const n = this.nGeode.n3((x + G.nx) / 16, y / 16, (z + G.nz) / 16) * 0.05;
+    let d6 = 0;
+    for (const p of G.pts) { const dx = x - p[0], dy = y - p[1], dz = z - p[2]; d6 += 1 / Math.sqrt(dx * dx + dy * dy + dz * dz + p[3]) + n; }
+    if (d6 < G.d4) return 0;
+    if (G.cr.length && d6 < G.d1) {
+      let d7 = 0;
+      for (const p of G.cr) { const dx = x - p[0], dy = y - p[1], dz = z - p[2]; d7 += 1 / Math.sqrt(dx * dx + dy * dy + dz * dz + 2) + n; }
+      if (d7 >= G.d5) return 1;
+    }
+    return d6 >= G.d1 ? 2 : d6 >= G.d2 ? 3 : d6 >= G.d3 ? 4 : 5;
+  }
+  geodes() {
+    const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0;
+    // bud directions in Minecraft's order (down, up, north, south, west, east) and their faces
+    const DIRS = [[0, -1, 0, 3], [0, 1, 0, 2], [0, 0, -1, 5], [0, 0, 1, 4], [-1, 0, 0, 1], [1, 0, 0, 0]];
+    const BUDS = [B.SMALL_AMETHYST_BUD, B.MEDIUM_AMETHYST_BUD, B.LARGE_AMETHYST_BUD, B.AMETHYST_CLUSTER];
+    for (let sz = this.cz - 1; sz <= this.cz + 1; sz++) for (let sx = this.cx - 1; sx <= this.cx + 1; sx++) {
+      const G = this.geodeOf(sx, sz);
+      if (!G) continue;
+      const xa = Math.max(x0 - 1, G.ox - 16), xb = Math.min(x0 + 16, G.ox + 16), za = Math.max(z0 - 1, G.oz - 16), zb = Math.min(z0 + 16, G.oz + 16);
+      if (xa > xb || za > zb) continue;
+      const ya = Math.max(WORLD_MIN_Y, G.oy - 16), yb = G.oy + 16;
+      for (let y = ya; y <= yb; y++) for (let z = za; z <= zb; z++) for (let x = xa; x <= xb; x++) {
+        const c = this.geodeCell(G, x, y, z);
+        if (!c) continue;
+        const inside = x >= x0 && x < x0 + 16 && z >= z0 && z < z0 + 16;
+        const budding = c === 3 && hash3(G.seed, x, y, z) < 0.083;
+        if (inside) {
+          const i = CI(x - x0, y, z - z0);
+          ids[i] = c <= 2 ? 0 : c === 3 ? (budding ? B.BUDDING_AMETHYST : B.AMETHYST_BLOCK) : c === 4 ? B.CALCITE : B.SMOOTH_BASALT;
+          meta[i] = 0;
+        }
+        if (!budding || hash3(G.seed + 1, x, y, z) >= 0.35) continue;
+        for (const d of DIRS) {
+          const nx = x + d[0], ny = y + d[1], nz = z + d[2], nc = this.geodeCell(G, nx, ny, nz);
+          if (nc !== 1 && nc !== 2) continue;
+          if (nx >= x0 && nx < x0 + 16 && nz >= z0 && nz < z0 + 16) {
+            const i = CI(nx - x0, ny, nz - z0);
+            ids[i] = BUDS[(hash3(G.seed + 2, x, y, z) * 4) | 0]; meta[i] = d[3];
+          }
+          break;
+        }
       }
     }
   }
@@ -1596,8 +1681,6 @@ class WorldGen {
             if (r < 0.4) ids[i + 256] = B.DRIPSTONE;
             if (r < 0.07) { const len = 1 + ((hash3(seed + 55, wx, y, wz) * 3) | 0); for (let k = 0; k < len; k++) { const j = i - k * 256; if (ids[j] !== 0) break; ids[j] = B.DRIPSTONE; } }
           }
-        } else if (y < -20 && reg < -0.5 && floor && r < 0.03) {
-          ids[i - 256] = r < 0.01 ? B.BUDDING_AMETHYST : B.AMETHYST_BLOCK;
         }
       }
     }

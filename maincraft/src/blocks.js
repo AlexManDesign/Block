@@ -9,7 +9,7 @@ const SH = {
   AIR: 0, CUBE: 1, CROSS: 2, WATER: 3, LAVA: 4, SLAB: 5, STAIRS: 6, FENCE: 7, GATE: 8, WALL: 9,
   PANE: 10, DOOR: 11, TRAPDOOR: 12, LADDER: 13, TORCH: 14, CARPET: 15, PLATE: 16, BUTTON: 17,
   TALL: 18, VINE: 19, LICHEN: 20, LILY: 21, PICKLE: 22, BAMBOO: 23, POT: 24, RAIL: 25, CACTUS: 26,
-  CHEST: 27, BED: 28, FARMLAND: 29, FIRE: 30, SNOWLAYER: 31,
+  CHEST: 27, BED: 28, FARMLAND: 29, FIRE: 30, SNOWLAYER: 31, CRYSTAL: 32,
 };
 const SHAPE_BY_NAME = {
   '': SH.CUBE, x: SH.CROSS, water: SH.WATER, lava: SH.LAVA, slab: SH.SLAB, stairs: SH.STAIRS,
@@ -17,7 +17,7 @@ const SHAPE_BY_NAME = {
   ladder: SH.LADDER, torch: SH.TORCH, carpet: SH.CARPET, plate: SH.PLATE, button: SH.BUTTON,
   tallplant: SH.TALL, vine: SH.VINE, lichen: SH.LICHEN, lilypad: SH.LILY, seapickle: SH.PICKLE,
   bamboo: SH.BAMBOO, pot: SH.POT, rail: SH.RAIL, cactus: SH.CACTUS, chest: SH.CHEST, bed: SH.BED,
-  farmland: SH.FARMLAND, fire: SH.FIRE, snowlayer: SH.SNOWLAYER,
+  farmland: SH.FARMLAND, fire: SH.FIRE, snowlayer: SH.SNOWLAYER, crystal: SH.CRYSTAL,
 };
 
 // render layers
