@@ -7965,17 +7965,19 @@ const M4 = {
 const TERRAIN_VS = `#version 300 es
 precision highp float; precision highp int;
 layout(location=0) in uvec3 aV;
-uniform mat4 uVP; uniform vec3 uOrigin; uniform vec3 uCam; uniform float uTime; uniform uint uTick;
+layout(location=1) in vec3 aOrigin;   // section origin in world blocks, per section (divisor 1)
+uniform mat4 uVP; uniform vec3 uCamI; uniform vec3 uCamF; uniform float uTime; uniform uint uTick;
 uniform highp usampler2D uAnim; uniform sampler2D uLM; uniform vec2 uFog; uniform float uSway;
 out vec3 vUV; out vec3 vLit; out float vFog;
 flat out vec3 vTint; flat out float vOvl;
 void main(){
   uint w0 = aV.x, w1 = aV.y, w2 = aV.z;
   vec3 p = vec3(float(w0 & 1023u), float((w0 >> 10) & 1023u), float((w0 >> 20) & 1023u)) * 0.03125;
-  vec3 wp = uOrigin + p;
+  // camera-relative: integer parts first, so the result is exact far from the world origin
+  vec3 wp = (aOrigin - uCamI) - uCamF + p;
   uint fl = w0 >> 30;
   if (fl != 0u && uSway > 0.0) {
-    vec3 a = wp + uCam;
+    vec3 a = aOrigin + p;
     float t = uTime;
     if (fl == 1u) { wp.x += sin(t * 1.7 + a.x * 0.6 + a.z * 0.35) * 0.065 * uSway; wp.z += cos(t * 1.3 + a.z * 0.5 + a.x * 0.2) * 0.05 * uSway; }
     else if (fl == 2u) { wp.x += sin(t * 1.1 + a.x * 0.5 + a.y * 0.4 + a.z * 0.3) * 0.022 * uSway; wp.y += cos(t * 1.3 + a.z * 0.45 + a.x * 0.25) * 0.012 * uSway; }
@@ -8328,19 +8330,50 @@ class Renderer {
   }
 
   // ---------------------------------------------------------------- section meshes
+  // Every section's origin lives in one buffer, read by the section's VAOs as a per-instance
+  // attribute: drawing a section changes no uniform (ANGLE on D3D11 rewrites a constant buffer for
+  // every draw whose uniforms changed, which with thousands of sections starved the GPU).
+  originSlot(c, sy) {
+    const gl = this.gl;
+    if (!this.originBuf) {
+      this.originBuf = gl.createBuffer(); this.originCap = 1 << 16; this.originFree = []; this.originTop = 0;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.originBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, this.originCap * 12, gl.DYNAMIC_DRAW);
+    }
+    const slot = this.originFree.length ? this.originFree.pop() : this.originTop++;
+    if (slot >= this.originCap) throw new Error('section origin slots exhausted');
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.originBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, slot * 12, new Float32Array([c.cx * 16, WORLD_MIN_Y + sy * 16, c.cz * 16]));
+    return slot;
+  }
+  bindOrigin(slot) {
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.originBuf);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 12, slot * 12);
+    gl.vertexAttribDivisor(1, 1);
+  }
+  freeSectionMesh(m) {
+    const gl = this.gl;
+    if (m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); m.vbo = m.vao = null; }
+    this.freeTrans(m);
+    if (m.slot !== undefined) { this.originFree.push(m.slot); m.slot = undefined; }
+  }
   uploadSection(c, sy, d) {
     const gl = this.gl;
     this.upN = (this.upN || 0) + 1; this.upBytes = (this.upBytes || 0) + d.data.byteLength;
     let m = c.meshes[sy];
     const total = d.counts[0] + d.counts[1] + d.counts[2];
     if (!total) {
-      if (m) { if (m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); } this.freeTrans(m); }
+      if (m) this.freeSectionMesh(m);
       c.meshes[sy] = { vbo: null, vao: null, counts: [0, 0, 0], vis: d.vis, cap: 0 };
       return;
     }
     if (!m || !m.vbo) {
       m = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), counts: null, vis: null, cap: 0 };
+      m.slot = this.originSlot(c, sy);
       gl.bindVertexArray(m.vao);
+      this.bindOrigin(m.slot);
       gl.bindBuffer(gl.ARRAY_BUFFER, m.vbo);
       gl.enableVertexAttribArray(0);
       gl.vertexAttribIPointer(0, 3, gl.UNSIGNED_INT, 12, 0);
@@ -8377,6 +8410,7 @@ class Renderer {
     if (!m.tvao) {
       m.tvao = gl.createVertexArray(); m.tibo = gl.createBuffer();
       gl.bindVertexArray(m.tvao);
+      this.bindOrigin(m.slot);
       gl.bindBuffer(gl.ARRAY_BUFFER, m.vbo);
       gl.enableVertexAttribArray(0);
       gl.vertexAttribIPointer(0, 3, gl.UNSIGNED_INT, 12, 0);
@@ -8421,8 +8455,7 @@ class Renderer {
     const gl = this.gl;
     for (let s = 0; s < SECTIONS; s++) {
       const m = c.meshes[s];
-      if (m && m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); }
-      if (m) this.freeTrans(m);
+      if (m) this.freeSectionMesh(m);
       c.meshes[s] = null;
     }
   }
@@ -8572,7 +8605,9 @@ class Renderer {
     const gl = this.gl;
     gl.useProgram(p);
     gl.uniformMatrix4fv(p.u.uVP, false, this.vp);
-    gl.uniform3f(p.u.uCam, cam[0], cam[1], cam[2]);
+    const ix = Math.floor(cam[0]), iy = Math.floor(cam[1]), iz = Math.floor(cam[2]);
+    gl.uniform3f(p.u.uCamI, ix, iy, iz);
+    gl.uniform3f(p.u.uCamF, cam[0] - ix, cam[1] - iy, cam[2] - iz);
     gl.uniform1f(p.u.uTime, time);
     gl.uniform1ui(p.u.uTick, tick >>> 0);
     gl.uniform2f(p.u.uFog, env.fogStart, env.fogEnd);
@@ -8588,7 +8623,7 @@ class Renderer {
   drawPass(pass, cam) {
     const gl = this.gl, list = this.visList, n = this.visCount, md = this.multiDraw;
     const p = pass === 0 ? this.progSolid : pass === 1 ? this.progCutout : this.progTrans;
-    const u = p.u.uOrigin, RC = this.rangeCnt, RO = this.rangeOff;
+    const RC = this.rangeCnt, RO = this.rangeOff;
     let draws = 0, quads = 0;
     const back = pass === 2;
     for (let k = 0; k < n; k++) {
@@ -8600,7 +8635,6 @@ class Renderer {
       if (back && m.tvao && m.tkey !== -1) {
         ps.skipped += cnt - m.tn / 6;
         if (!m.tn) continue;
-        gl.uniform3f(u, m.cx * 16 - cam[0], WORLD_MIN_Y + m.sy * 16 - cam[1], m.cz * 16 - cam[2]);
         gl.bindVertexArray(m.tvao);
         gl.drawElements(gl.TRIANGLES, m.tn, gl.UNSIGNED_INT, 0);
         draws++; quads += m.tn / 6;
@@ -8608,7 +8642,6 @@ class Renderer {
       }
       const first = pass === 0 ? 0 : pass === 1 ? m.counts[0] : m.counts[0] + m.counts[1];
       const ox = m.cx * 16 - cam[0], oy = WORLD_MIN_Y + m.sy * 16 - cam[1], oz = m.cz * 16 - cam[2];
-      gl.uniform3f(u, ox, oy, oz);
       gl.bindVertexArray(m.vao);
       const gc = m.gc;
       if (!gc || !this.dirCull) {
