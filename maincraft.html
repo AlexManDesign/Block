@@ -8072,10 +8072,11 @@ out vec3 vUV; out vec4 vCol; out float vFog;
 void main(){ vUV = aUV; vCol = aCol; gl_Position = uVP * vec4(aPos, 1.0); vFog = clamp((max(length(aPos.xz), abs(aPos.y) * 0.5) - uFog.x) / (uFog.y - uFog.x), 0.0, 1.0); }`;
 const ARR_FS = `#version 300 es
 precision mediump float; precision mediump sampler2DArray;
-uniform sampler2DArray uTex; uniform vec3 uFogColor; uniform float uAlphaRef;
+uniform sampler2DArray uTex; uniform vec3 uFogColor; uniform float uAlphaRef; uniform vec3 uMul;
 in vec3 vUV; in vec4 vCol; in float vFog; out vec4 o;
 void main(){
   vec4 c = texture(uTex, vUV) * vCol;
+  c.rgb *= uMul;
   if (c.a < uAlphaRef) discard;
   o = vec4(mix(c.rgb, uFogColor, vFog), c.a);
 }`;
@@ -8713,6 +8714,7 @@ class Renderer {
     gl.uniform2f(p.u.uFog, env ? env.fogStart : 1e9, env ? env.fogEnd : 1e9 + 1);
     gl.uniform3fv(p.u.uFogColor, env ? env.fogColor : [0, 0, 0]);
     gl.uniform1f(p.u.uAlphaRef, alphaRef);
+    gl.uniform3f(p.u.uMul, 1, 1, 1);
     gl.uniform1i(p.u.uTex, 0);
     this.uploadDyn(arr);
     gl.bindVertexArray(this.dyn.vao3);
@@ -8757,33 +8759,47 @@ class Renderer {
     const drift = time * 0.6;
     const R = Math.min(40, Math.ceil(env.far / S) + 2);
     const ox = cam[0] + drift, oz = cam[2];
-    const gx0 = Math.floor(ox / S), gz0 = Math.floor(oz / S);
+    // the mesh covers 8 cells more than is visible around an anchor that moves in 8-cell steps, so
+    // it is rebuilt only every ~100 blocks of travel; the colour is a uniform, not baked in
+    const M = 8, RR = R + M;
+    const gx0 = Math.round(Math.floor(ox / S) / M) * M, gz0 = Math.round(Math.floor(oz / S) / M) * M;
     const col = env.cloudColor;
-    const colKey = Math.round(col[0] * 64);
-    const cm = this.cloudMesh || (this.cloudMesh = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), n: 0, key: '' });
-    const key = gx0 + ',' + gz0 + ',' + R + ',' + colKey;
+    const cm = this.cloudMesh || (this.cloudMesh = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), n: 0, key: '', buf: null });
+    const key = gx0 + ',' + gz0 + ',' + RR;
     if (cm.key !== key) {
       cm.key = key;
-      const out = [];
-      const put = (x, y, z, sh) => out.push(x, y, z, 0.5, 0.5, this.whiteLayer, col[0] * sh, col[1] * sh, col[2] * sh, 0.8);
-      const quad = (a, b, c, d, sh) => { put(...a, sh); put(...b, sh); put(...c, sh); put(...a, sh); put(...c, sh); put(...d, sh); };
       const at = (x, z) => g[((z % N + N) % N) * N + ((x % N + N) % N)];
-      for (let dz = -R; dz <= R; dz++) for (let dx = -R; dx <= R; dx++) {
-        if (dx * dx + dz * dz > R * R) continue;
+      // count first, then write straight into one Float32Array
+      let quads = 0;
+      for (let dz = -RR; dz <= RR; dz++) for (let dx = -RR; dx <= RR; dx++) {
+        if (dx * dx + dz * dz > RR * RR || !at(gx0 + dx, gz0 + dz)) continue;
+        const cx = gx0 + dx, cz = gz0 + dz;
+        quads += 2 + !at(cx + 1, cz) + !at(cx - 1, cz) + !at(cx, cz + 1) + !at(cx, cz - 1);
+      }
+      const need = quads * 60;
+      if (!cm.buf || cm.buf.length < need) cm.buf = new Float32Array(need);
+      const out = cm.buf, L = this.whiteLayer;
+      let o = 0;
+      const put = (x, y, z, sh) => { out[o++] = x; out[o++] = y; out[o++] = z; out[o++] = 0.5; out[o++] = 0.5; out[o++] = L; out[o++] = sh; out[o++] = sh; out[o++] = sh; out[o++] = 0.8; };
+      const quad = (ax, ay, az, bx, by, bz, qx, qy, qz, dx, dy, dz, sh) => {
+        put(ax, ay, az, sh); put(bx, by, bz, sh); put(qx, qy, qz, sh); put(ax, ay, az, sh); put(qx, qy, qz, sh); put(dx, dy, dz, sh);
+      };
+      for (let dz = -RR; dz <= RR; dz++) for (let dx = -RR; dx <= RR; dx++) {
+        if (dx * dx + dz * dz > RR * RR) continue;
         const cx = gx0 + dx, cz = gz0 + dz;
         if (!at(cx, cz)) continue;
         const x0 = dx * S, x1 = x0 + S, z0 = dz * S, z1 = z0 + S, y0 = 0, y1 = H;
-        quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], 1.0);
-        quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], 0.7);
-        if (!at(cx + 1, cz)) quad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], 0.9);
-        if (!at(cx - 1, cz)) quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], 0.9);
-        if (!at(cx, cz + 1)) quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], 0.8);
-        if (!at(cx, cz - 1)) quad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], 0.8);
+        quad(x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0, 1.0);
+        quad(x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1, 0.7);
+        if (!at(cx + 1, cz)) quad(x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 0.9);
+        if (!at(cx - 1, cz)) quad(x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, 0.9);
+        if (!at(cx, cz + 1)) quad(x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0.8);
+        if (!at(cx, cz - 1)) quad(x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0.8);
       }
-      cm.n = out.length / 10;
+      cm.n = o / 10;
       gl.bindVertexArray(cm.vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, cm.vbo);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STATIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, out.subarray(0, o), gl.STATIC_DRAW);
       gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 40, 0);
       gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 40, 12);
       gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 40, 24);
@@ -8803,6 +8819,7 @@ class Renderer {
     gl.uniform2f(p.u.uFog, env.far * 0.9 + 400, env.far * 2 + 600);
     gl.uniform3fv(p.u.uFogColor, env.fogColor);
     gl.uniform1f(p.u.uAlphaRef, 0);
+    gl.uniform3f(p.u.uMul, col[0], col[1], col[2]);
     gl.uniform1i(p.u.uTex, 0);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(gl.CULL_FACE);
