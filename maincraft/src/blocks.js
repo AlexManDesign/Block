@@ -112,6 +112,7 @@ function fluidBreaks(id) {
   if (!id) return false;
   const fl = FLAGS[id];
   if (fl & BF_AQUATIC) return false;
+  if (SHAPE[id] === SH.LICHEN) return false;   // glow lichen holds water in Minecraft instead of washing away
   if (fl & BF_REPLACE) return true;
   const sh = SHAPE[id];
   if (sh === SH.TORCH || sh === SH.FIRE || sh === SH.BUTTON || sh === SH.TALL) return true;

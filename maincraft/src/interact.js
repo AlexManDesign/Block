@@ -185,6 +185,9 @@ function dropsFor(id, m, item) {
     POTATOES_0: [IT.POTATO], POTATOES_1: [IT.POTATO], POTATOES_2: [IT.POTATO], POTATOES_3: [IT.POTATO, 2, 4],
   };
   if ((k === 'TALL_GRASS' || k === 'FERN' || k === 'TALL_GRASS_PLANT') && !shears) return r < 0.125 ? [{ id: IT.WHEAT_SEEDS, count: 1 }] : [];
+  // snow and snow layers need a shovel (Minecraft: requiresCorrectToolForDrops), so snow washed
+  // away by water or broken by hand drops nothing
+  if (k === 'SNOW' || k === 'SNOW_LAYER') return t && t.tool === 'shovel' ? [{ id, count: 1 }] : [];
   if (k === 'GRAVEL') return r < 0.1 ? [{ id: IT.FLINT, count: 1 }] : [{ id, count: 1 }];
   if (k === 'WHEAT_3') return [{ id: IT.WHEAT, count: 1 }, { id: IT.WHEAT_SEEDS, count: 1 + ((Math.random() * 3) | 0) }];
   if (/LAPIS_ORE|REDSTONE_ORE/.test(k)) return [{ id, count: 1 }];
