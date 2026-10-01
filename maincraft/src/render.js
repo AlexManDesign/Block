@@ -229,6 +229,7 @@ class Renderer {
     this.visList = []; this.visCount = 0;
     this.frame = 0;
     this.stats = { draws: 0, quads: 0, sections: 0 };
+    this.initProfiler();
     this.clouds = null;
     this.entTex = new Map();
   }
@@ -344,6 +345,54 @@ class Renderer {
     return t;
   }
 
+  // ---------------------------------------------------------------- profiling (F3)
+  // GPU time per render phase with EXT_disjoint_timer_query_webgl2: one TIME_ELAPSED query per
+  // phase (queries cannot nest), results read back a few frames later, smoothed per phase.
+  initProfiler() {
+    const gl = this.gl;
+    this.tq = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    this.gpuOn = false; this.qFree = []; this.qPend = []; this.qCur = null; this.gpuMs = {}; this.gpuFrameMs = 0;
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    this.gpuName = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    this.resetPassStats();
+  }
+  resetPassStats() {
+    const P = () => ({ sec: 0, draws: 0, quads: 0, skipped: 0 });
+    this.pstat = [P(), P(), P()];
+    this.stats.fogCulled = 0;
+  }
+  gpuBegin(name) {
+    if (!this.gpuOn || !this.tq) return;
+    if (this.qCur) this.gpuEnd();
+    const gl = this.gl, q = this.qFree.pop() || gl.createQuery();
+    gl.beginQuery(this.tq.TIME_ELAPSED_EXT, q);
+    this.qCur = { q, name, frame: this.frame };
+  }
+  gpuEnd() {
+    if (!this.qCur) return;
+    this.gl.endQuery(this.tq.TIME_ELAPSED_EXT);
+    this.qPend.push(this.qCur); this.qCur = null;
+  }
+  gpuPoll() {
+    if (!this.tq) return;
+    const gl = this.gl, disjoint = gl.getParameter(this.tq.GPU_DISJOINT_EXT);
+    while (this.qPend.length) {
+      const e = this.qPend[0];
+      if (!gl.getQueryParameter(e.q, gl.QUERY_RESULT_AVAILABLE)) break;
+      const ns = gl.getQueryParameter(e.q, gl.QUERY_RESULT);
+      this.qPend.shift(); this.qFree.push(e.q);
+      if (disjoint) continue;
+      const ms = ns / 1e6, M = this.gpuMs;
+      M[e.name] = M[e.name] === undefined ? ms : M[e.name] * 0.9 + ms * 0.1;
+    }
+    if (this.qPend.length > 64) { for (const e of this.qPend) this.qFree.push(e.q); this.qPend.length = 0; }
+  }
+  meshMemory(world) {
+    let bytes = 0, n = 0;
+    for (const c of world.cols.values()) if (c.meshes) for (const m of c.meshes) if (m && m.vbo) { bytes += m.cap + (m.tcap || 0); n++; }
+    return { bytes, n };
+  }
+
   initMultiDraw() {
     this.multiDraw = this.gl.getExtension('WEBGL_multi_draw');
     this.rangeCnt = new Int32Array(8); this.rangeOff = new Int32Array(8);
@@ -365,6 +414,7 @@ class Renderer {
   // ---------------------------------------------------------------- section meshes
   uploadSection(c, sy, d) {
     const gl = this.gl;
+    this.upN = (this.upN || 0) + 1; this.upBytes = (this.upBytes || 0) + d.data.byteLength;
     let m = c.meshes[sy];
     const total = d.counts[0] + d.counts[1] + d.counts[2];
     if (!total) {
@@ -558,7 +608,10 @@ class Renderer {
       qh += 5;
       const c = world.col(cx, cz);
       const m = c.meshes[sy];
-      if (m && m.vbo && !(fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY))) list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
+      if (m && m.vbo) {
+        if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) this.stats.fogCulled++;
+        else list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
+      }
       const vis = m && m.vis;
       for (let d = 0; d < 6; d++) {
         if (dirs & (1 << OPP6[d])) continue;
@@ -626,7 +679,10 @@ class Renderer {
       const m = list[back ? n - 1 - k : k];
       const cnt = m.counts[pass];
       if (!cnt) continue;
+      const ps = this.pstat[pass];
+      ps.sec++;
       if (back && m.tvao && m.tkey !== -1) {
+        ps.skipped += cnt - m.tn / 6;
         if (!m.tn) continue;
         gl.uniform3f(u, m.cx * 16 - cam[0], WORLD_MIN_Y + m.sy * 16 - cam[1], m.cz * 16 - cam[2]);
         gl.bindVertexArray(m.tvao);
@@ -647,7 +703,7 @@ class Renderer {
       // camera below / above / beside the section box on each axis (camera sits at the origin)
       const vis = (ox > 0 ? 1 : ox + 16 < 0 ? 2 : 3) | (oy > 0 ? 4 : oy + 16 < 0 ? 8 : 12) | (oz > 0 ? 16 : oz + 16 < 0 ? 32 : 48) | 64;
       let r = 0, at = first, open = false;
-      const g0 = pass * 7;
+      const g0 = pass * 7, q0 = quads;
       for (let g = 0; g < 7; g++) {
         const c = gc[g0 + g];
         if (!c) continue;
@@ -658,17 +714,21 @@ class Renderer {
         }
         at += c;
       }
+      ps.skipped += cnt - (quads - q0);
       if (!r) continue;
       if (md) { md.multiDrawElementsWEBGL(gl.TRIANGLES, RC, 0, gl.UNSIGNED_INT, RO, 0, r); draws++; }
       else for (let q = 0; q < r; q++) { gl.drawElements(gl.TRIANGLES, RC[q], gl.UNSIGNED_INT, RO[q]); draws++; }
     }
     this.stats.draws += draws; this.stats.quads += quads;
+    this.pstat[pass].draws += draws; this.pstat[pass].quads += quads;
   }
 
   renderWorld(world, cam, yaw, pitch, env, time, tick) {
     const gl = this.gl, cv = this.canvas;
     gl.viewport(0, 0, cv.width, cv.height);
     this.stats.draws = 0; this.stats.quads = 0;
+    this.resetPassStats();
+    this.gpuBegin('solid');
     this.setCamera(env.fov, yaw, pitch, env.far);
     gl.depthMask(true);
     gl.clearColor(env.fogColor[0], env.fogColor[1], env.fogColor[2], 1);
@@ -679,16 +739,22 @@ class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     // fog occlusion only when the sky below the horizon is plain fog colour
     this.fogCull = !env.underwater && env.sunset < 0.001 && !this.noFogCull ? { end: env.fogEnd, y: cam[1] } : null;
+    let tc = performance.now();
     this.collectVisible(world, cam, env.renderDist);
+    this.cpuVis = performance.now() - tc;
     this.stats.sections = this.visCount;
     gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
     gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
     gl.disable(gl.BLEND);
+    tc = performance.now();
     this.bindTerrain(this.progSolid, cam, env, time, tick);
     this.drawPass(0, cam);
+    this.gpuBegin('cutout');
     this.bindTerrain(this.progCutout, cam, env, time, tick);
     this.drawPass(1, cam);
+    this.cpuTerrain = performance.now() - tc;
     // sky after the opaque terrain: it only shades pixels the terrain left empty
+    this.gpuBegin('sky');
     if (!env.underwater) this.drawSky(env);
   }
   // Re-sorts translucent quads of sections whose camera block changed, nearest sections first,
@@ -714,7 +780,10 @@ class Renderer {
   }
   renderTranslucent(cam, env, time, tick) {
     const gl = this.gl;
+    let tc = performance.now();
     this.sortTranslucent(cam);
+    this.cpuSort = performance.now() - tc;
+    this.gpuBegin('water');
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
     this.bindTerrain(this.progTrans, cam, env, time, tick);
