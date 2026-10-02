@@ -758,9 +758,17 @@ class WorldGen {
 
   surface() {
     const ids = this.ids, x0 = this.x0, z0 = this.z0;
+    // highest layer holding anything: the column scans start there instead of at the world top
+    let hi = WORLD_MAX_Y - 1;
+    for (; hi > WORLD_MIN_Y; hi--) {
+      const o = (hi - WORLD_MIN_Y) << 8;
+      let i = 0;
+      while (i < 256 && !ids[o + i]) i++;
+      if (i < 256) break;
+    }
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
       const bio = this.BIO[z * 16 + x], P = BPROP[bio], ob = ORIG_BIOME[bio];
-      let y = WORLD_MAX_Y - 1;
+      let y = hi;
       while (y > WORLD_MIN_Y && !this.isStoneLike(ids[CI(x, y, z)])) y--;
       this.TOP[z * 16 + x] = y;
       if (y <= WORLD_MIN_Y) continue;
@@ -814,6 +822,19 @@ class WorldGen {
       if (y < 40) { G[o + 3] = this.nNd1.n3(x / 26, y / 22, z / 26); G[o + 4] = this.nNd2.n3(x / 26, y / 22, z / 26); }
       else { G[o + 3] = 1; G[o + 4] = 1; }
     }
+    // a 4x4x4 cell can hold a cave only if its 8 corner values allow one: trilinear interpolation
+    // stays between the corners' min and max, so cells failing every test are skipped exactly
+    const F = new Uint8Array(16 * NY), mn = new Float32Array(5), mx = new Float32Array(5);
+    for (let ck = 0; ck < 4; ck++) for (let ci = 0; ci < 4; ci++) for (let j = 0; j < NY - 1; j++) {
+      mn.fill(Infinity); mx.fill(-Infinity);
+      for (let q = 0; q < 8; q++) {
+        const o = (((ck + (q >> 2)) * 5 + ci + ((q >> 1) & 1)) * NY + j + (q & 1)) * 5;
+        for (let c = 0; c < 5; c++) { const g = G[o + c]; if (g < mn[c]) mn[c] = g; if (g > mx[c]) mx[c] = g; }
+      }
+      const near0 = (c, t) => mn[c] < t && mx[c] > -t;
+      // cheese threshold is at least 0.45; spaghetti radius^2 at most 0.0082; noodles 0.0022
+      F[(ck * 4 + ci) * NY + j] = mx[0] > 0.449 || (near0(1, 0.091) && near0(2, 0.091)) || (near0(3, 0.047) && near0(4, 0.047)) ? 1 : 0;
+    }
     const v = new Float32Array(5);
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
       const top = TOP[z * 16 + x];
@@ -833,6 +854,7 @@ class WorldGen {
         // the beard of a village piece fills caves under it (it is added after the carvers in Minecraft)
         if (BD && y >= BD.y0 && y <= BD.y1 && BD.A[(y - BD.y0) * 256 + z * 16 + x] > 0.05) continue;
         const j = (y - WORLD_MIN_Y) >> 2, fy = ((y - WORLD_MIN_Y) & 3) / 4;
+        if (!F[(ck * 4 + ci) * NY + j]) continue;
         for (let c = 0; c < 5; c++) {
           const a0 = G[b00 + j * 5 + c], a1 = G[b10 + j * 5 + c], a2 = G[b01 + j * 5 + c], a3 = G[b11 + j * 5 + c];
           const c0 = G[b00 + (j + 1) * 5 + c], c1 = G[b10 + (j + 1) * 5 + c], c2 = G[b01 + (j + 1) * 5 + c], c3 = G[b11 + (j + 1) * 5 + c];
@@ -2106,7 +2128,8 @@ class WorldGen {
     const out = [];
     for (let j = 0; j < n; j++) {
       const kind = TB.kind[j];
-      if (kind === 1 && dist[j] > 6) continue;
+      // only leaves need the trunk within reach; other crown blocks (mushroom caps) always stay
+      if (kind === 1 && dist[j] > 6 && (FLAGS[TB.id[j]] & BF_LEAVES)) continue;
       out.push(TB.x[j], TB.y[j], TB.z[j], TB.id[j], kind);
     }
     return { w: Int32Array.from(out), d: Int32Array.from(deco) };
