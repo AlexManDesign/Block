@@ -891,76 +891,66 @@ class WorldGen {
   }
 
   // ------------------------------------------------------------ amethyst geodes
-  // Minecraft's amethyst_geode (GeodeFeature): in 1 of 24 chunks, origin at y -58..30; 3-4
-  // distribution points 4-6 blocks off the origin on each axis, each with an offset of 1-2. A cell
-  // belongs to the geode by d = sum over the points of 1/sqrt(distance^2 + offset) (+ noise x 0.05):
-  // filling air from 1/sqrt(1.7), amethyst from 1/sqrt(2.2 + k/6) (8.3% budding amethyst), calcite
-  // from 1/sqrt(3.2 + k/6), smooth basalt from 1/sqrt(4.2 + k/6). 95% get a crack to one side, and
-  // 35% of the budding blocks grow a bud or cluster into their first open neighbour (down, up,
-  // north, south, west, east). A geode is not placed when more than one of its points is open space
-  // (here: above the ground). Geodes span chunks: each chunk writes its part of the geodes started
-  // up to one chunk away, with every choice made from the position, so the parts agree.
+  // Amethyst geodes (own design): in 1 of 20 chunks a hollow ellipsoid (radii 4..6.5, the outline
+  // rippled by noise) at y -50..20, at least 8 below the surface. From outside in: one layer of
+  // smooth basalt, one of calcite, one of amethyst (8% budding), then the hollow. Most have a crack:
+  // a slot two blocks wide through the shell on one side. A third of the budding blocks grow a bud
+  // or cluster into the first open neighbour. Geodes span chunks: every choice comes from the start
+  // position, so the parts agree.
   geodeOf(sx, sz) {
     const key = sx * 65536 + sz, C = this.geodeCache || (this.geodeCache = new Map());
     if (C.has(key)) return C.get(key);
     let G = null;
     const rnd = mulberry(hash2i(this.seed + 911, sx, sz));
-    if (rnd() < 1 / 24) {
-      const ox = sx * 16 + ((rnd() * 16) | 0), oz = sz * 16 + ((rnd() * 16) | 0), oy = -58 + ((rnd() * 89) | 0);
-      const k = 3 + ((rnd() * 2) | 0), pts = [];
-      let bad = 0;
-      for (let i = 0; i < k; i++) {
-        const px = ox + 4 + ((rnd() * 3) | 0), py = oy + 4 + ((rnd() * 3) | 0), pz = oz + 4 + ((rnd() * 3) | 0);
-        if (py >= this.colInfo(px, pz).h - 1) bad++;
-        pts.push([px, py, pz, 1 + ((rnd() * 2) | 0)]);
-      }
-      if (bad <= 1) {
-        const d0 = k / 6, crack = rnd() < 0.95, side = (rnd() * 4) | 0, j = k * 2 + 1, cr = [];
-        if (crack) for (const dy of [7, 5, 1]) cr.push(side === 0 ? [ox + j, oy + dy, oz] : side === 1 ? [ox, oy + dy, oz + j] : side === 2 ? [ox + j, oy + dy, oz + j] : [ox, oy + dy, oz]);
-        G = { ox, oy, oz, pts, cr, d1: 1 / Math.sqrt(1.7), d2: 1 / Math.sqrt(2.2 + d0), d3: 1 / Math.sqrt(3.2 + d0), d4: 1 / Math.sqrt(4.2 + d0),
-          d5: 1 / Math.sqrt(2 + rnd() * 0.5 + (k > 3 ? d0 : 0)), nx: rnd() * 1000, nz: rnd() * 1000, seed: hash2i(this.seed + 913, sx, sz) };
+    if (rnd() < 1 / 20) {
+      const ox = sx * 16 + ((rnd() * 16) | 0), oz = sz * 16 + ((rnd() * 16) | 0), oy = -50 + ((rnd() * 71) | 0);
+      const rx = 4.5 + rnd() * 2, ry = 4 + rnd() * 2, rz = 4.5 + rnd() * 2;
+      if (oy + ry + 8 < this.colInfo(ox, oz).h) {
+        const crack = rnd() < 0.85, side = (rnd() * 4) | 0;
+        G = { ox, oy, oz, rx, ry, rz, rmin: Math.min(rx, ry, rz), crack, cdx: FACE4[side * 2], cdz: FACE4[side * 2 + 1],
+          nx: rnd() * 1000, nz: rnd() * 1000, seed: hash2i(this.seed + 913, sx, sz) };
       }
     }
     if (C.size > 512) C.clear();
     C.set(key, G);
     return G;
   }
-  // 0 outside, 1 crack, 2 filling air, 3 amethyst layer, 4 calcite, 5 smooth basalt
+  // 0 outside, 1 crack, 2 hollow, 3 amethyst layer, 4 calcite, 5 smooth basalt
   geodeCell(G, x, y, z) {
-    if (Math.abs(x - G.ox) > 16 || Math.abs(y - G.oy) > 16 || Math.abs(z - G.oz) > 16) return 0;
-    const n = this.nGeode.n3((x + G.nx) / 16, y / 16, (z + G.nz) / 16) * 0.05;
-    let d6 = 0;
-    for (const p of G.pts) { const dx = x - p[0], dy = y - p[1], dz = z - p[2]; d6 += 1 / Math.sqrt(dx * dx + dy * dy + dz * dz + p[3]) + n; }
-    if (d6 < G.d4) return 0;
-    if (G.cr.length && d6 < G.d1) {
-      let d7 = 0;
-      for (const p of G.cr) { const dx = x - p[0], dy = y - p[1], dz = z - p[2]; d7 += 1 / Math.sqrt(dx * dx + dy * dy + dz * dz + 2) + n; }
-      if (d7 >= G.d5) return 1;
+    const dx = x - G.ox, dy = y - G.oy, dz = z - G.oz;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8 || Math.abs(dz) > 8) return 0;
+    const ripple = 1 + this.nGeode.n3((x + G.nx) / 5, y / 5, (z + G.nz) / 5) * 0.12;
+    const d = Math.sqrt((dx / G.rx) ** 2 + (dy / G.ry) ** 2 + (dz / G.rz) ** 2) * ripple;
+    if (d > 1) return 0;
+    const r = Math.sqrt(dx * dx + dy * dy + dz * dz), depth = d > 0 ? r * (1 / d - 1) : 9;   // blocks in from the outline along the ray from the centre
+    if (G.crack && depth < 3.2 && Math.abs(dy) <= 2) {
+      const out = dx * G.cdx + dz * G.cdz, across = Math.abs(dx * G.cdz - dz * G.cdx);
+      if (out > 0 && across <= 1) return 1;
     }
-    return d6 >= G.d1 ? 2 : d6 >= G.d2 ? 3 : d6 >= G.d3 ? 4 : 5;
+    return depth < 1 ? 5 : depth < 2 ? 4 : depth < 3 ? 3 : 2;
   }
   geodes() {
     const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0;
-    // bud directions in Minecraft's order (down, up, north, south, west, east) and their faces
+    // bud directions (down, up, north, south, west, east) and the face each bud stands on
     const DIRS = [[0, -1, 0, 3], [0, 1, 0, 2], [0, 0, -1, 5], [0, 0, 1, 4], [-1, 0, 0, 1], [1, 0, 0, 0]];
     const BUDS = [B.SMALL_AMETHYST_BUD, B.MEDIUM_AMETHYST_BUD, B.LARGE_AMETHYST_BUD, B.AMETHYST_CLUSTER];
     for (let sz = this.cz - 1; sz <= this.cz + 1; sz++) for (let sx = this.cx - 1; sx <= this.cx + 1; sx++) {
       const G = this.geodeOf(sx, sz);
       if (!G) continue;
-      const xa = Math.max(x0 - 1, G.ox - 16), xb = Math.min(x0 + 16, G.ox + 16), za = Math.max(z0 - 1, G.oz - 16), zb = Math.min(z0 + 16, G.oz + 16);
+      const xa = Math.max(x0 - 1, G.ox - 8), xb = Math.min(x0 + 16, G.ox + 8), za = Math.max(z0 - 1, G.oz - 8), zb = Math.min(z0 + 16, G.oz + 8);
       if (xa > xb || za > zb) continue;
-      const ya = Math.max(WORLD_MIN_Y, G.oy - 16), yb = G.oy + 16;
+      const ya = Math.max(WORLD_MIN_Y + 1, G.oy - 8), yb = G.oy + 8;
       for (let y = ya; y <= yb; y++) for (let z = za; z <= zb; z++) for (let x = xa; x <= xb; x++) {
         const c = this.geodeCell(G, x, y, z);
         if (!c) continue;
         const inside = x >= x0 && x < x0 + 16 && z >= z0 && z < z0 + 16;
-        const budding = c === 3 && hash3(G.seed, x, y, z) < 0.083;
+        const budding = c === 3 && hash3(G.seed, x, y, z) < 0.08;
         if (inside) {
           const i = CI(x - x0, y, z - z0);
           ids[i] = c <= 2 ? 0 : c === 3 ? (budding ? B.BUDDING_AMETHYST : B.AMETHYST_BLOCK) : c === 4 ? B.CALCITE : B.SMOOTH_BASALT;
           meta[i] = 0;
         }
-        if (!budding || hash3(G.seed + 1, x, y, z) >= 0.35) continue;
+        if (!budding || hash3(G.seed + 1, x, y, z) >= 0.33) continue;
         for (const d of DIRS) {
           const nx = x + d[0], ny = y + d[1], nz = z + d[2], nc = this.geodeCell(G, nx, ny, nz);
           if (nc !== 1 && nc !== 2) continue;
@@ -1785,45 +1775,37 @@ class WorldGen {
       }
     };
     const g = (k) => hash2(this.seed + 97, x * 31 + k, z * 17 - k);
-    // sequential random numbers for the ported Minecraft placers (seeded by the tree position, so
+    // sequential random numbers for the tree designs (seeded by the tree position, so
     // every chunk the tree reaches builds it identically)
     let rs = (hash2(this.seed + 131, x, z) * 4294967296) >>> 0;
     const rnd = () => { rs = (rs + 0x6D2B79F5) | 0; let t = Math.imul(rs ^ (rs >>> 15), 1 | rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     const nextInt = (n) => (rnd() * n) | 0;
     let vineChance = 0, propagules = false, mossOnRoots = false, trunkVines = false, podzol = false, paleMoss = false;
-    // FoliagePlacer.placeLeavesRow: the square of `range` around (cx, cy + yo, cz) (one more column
-    // on the + sides for a 2x2 trunk), minus the cells skip(|dx|, yo, |dz|, range, large) drops
-    const row = (cx, cy, cz, range, yo, large, id, skip) => {
-      if (range < 0) return;
-      const e = large ? 1 : 0;
-      for (let dx = -range; dx <= range + e; dx++) for (let dz = -range; dz <= range + e; dz++) {
-        const ax = large ? Math.min(Math.abs(dx), Math.abs(dx - 1)) : Math.abs(dx), az = large ? Math.min(Math.abs(dz), Math.abs(dz - 1)) : Math.abs(dz);
-        if (skip(ax, yo, az, range, large)) continue;
-        put(cx + dx, cy + yo, cz + dz, id, 1);
-      }
-    };
-    // the same with the signed offsets (dark oak's wide middle row loses its outermost ring corners)
-    const rowSigned = (cx, cy, cz, range, yo, large, id, skip) => {
-      const e = large ? 1 : 0;
-      for (let dx = -range; dx <= range + e; dx++) for (let dz = -range; dz <= range + e; dz++) {
-        if (skip(dx, yo, dz, range)) continue;
-        put(cx + dx, cy + yo, cz + dz, id, 1);
-      }
-    };
-    // BlobFoliagePlacer: rows offset .. offset - height, radius shrinking upward
-    const blob = (cx, cy, cz, radius, offset, height, id, large) => {
-      for (let i = offset; i >= offset - height; i--) {
-        const j = Math.max(radius - 1 - Math.trunc(i / 2), 0);
-        row(cx, cy, cz, j, i, large, id, (ax, yy, az, r) => ax === r && az === r && (nextInt(2) === 0 || yy === 0));
-      }
-    };
     const straight = (h, id) => { for (let y = sy + 1; y <= sy + h; y++) log(x, y, z, id); soil(x, sy, z); };
-    // GiantTrunkPlacer: 2x2 trunk, every column down to its own ground
+    // 2x2 trunk, every column down to its own ground
     const giant = (h, id) => {
       for (let d = 0; d < 4; d++) {
         const cx = x + (d & 1), cz = z + (d >> 1), gy = d ? this.groundAt(cx, cz) : sy;
         for (let y = gy + 1; y <= sy + h; y++) log(cx, y, cz, id);
         soil(cx, gy, cz);
+      }
+    };
+    // a crown: the leaf cells of an ellipsoid around (cx, cy, cz), its outer shell thinned at random
+    const ball = (cx, cy, cz, rx, ry, rz, id) => {
+      const X0 = Math.floor(cx - rx), X1 = Math.ceil(cx + rx), Y0 = Math.floor(cy - ry), Y1 = Math.ceil(cy + ry), Z0 = Math.floor(cz - rz), Z1 = Math.ceil(cz + rz);
+      for (let yy = Y0; yy <= Y1; yy++) for (let zz = Z0; zz <= Z1; zz++) for (let xx = X0; xx <= X1; xx++) {
+        const ex = (xx - cx) / (rx + 0.5), ey = (yy - cy) / (ry + 0.5), ez = (zz - cz) / (rz + 0.5), d = ex * ex + ey * ey + ez * ez;
+        if (d > 1 || (d > 0.7 && rnd() < 0.35)) continue;
+        put(xx, yy, zz, id, 1);
+      }
+    };
+    // a branch: logs along the line between two cells, laid along their main axis
+    const line = (ax, ay, az, bx, by, bz, id) => {
+      const dx = bx - ax, dy = by - ay, dz = bz - az, n = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
+      const axis = Math.abs(dy) >= Math.abs(dx) && Math.abs(dy) >= Math.abs(dz) ? 0 : Math.abs(dx) >= Math.abs(dz) ? 1 : 2;
+      for (let k = 0; k <= n; k++) {
+        const px = Math.round(ax + (n ? dx * k / n : 0)), py = Math.round(ay + (n ? dy * k / n : 0)), pz = Math.round(az + (n ? dz * k / n : 0));
+        put(px, py, pz, id | (axis << 16), 0);
       }
     };
     switch (type) {
@@ -1832,261 +1814,146 @@ class WorldGen {
         for (let y = sy + 1; y <= sy + n; y++) log(x, y, z, B.CACTUS);
         break;
       }
-      // ---- Minecraft's trunk and foliage placers (TreeFeatures) ----
-      case 'oak': case 'birch': case 'super_birch': case 'swamp_oak': case 'jungle': {
-        // StraightTrunkPlacer(base, a, b) + BlobFoliagePlacer(radius, 0, 3)
-        const P = { oak: [4, 2, 0, 2, B.LOG, B.LEAVES], birch: [5, 2, 0, 2, B.BIRCH_LOG, B.BIRCH_LEAVES], super_birch: [5, 2, 6, 2, B.BIRCH_LOG, B.BIRCH_LEAVES],
-          swamp_oak: [5, 3, 0, 3, B.LOG, B.LEAVES], jungle: [4, 8, 0, 2, B.JUNGLE_LOG, B.JUNGLE_LEAVES] }[type];
-        const h = P[0] + nextInt(P[1] + 1) + nextInt(P[2] + 1);
+      // ---- own tree designs: trunks of logs, crowns as ragged ellipsoids, branches as log lines ----
+      case 'oak': case 'swamp_oak': case 'jungle': {
+        // a straight trunk under a round crown; one or two short side limbs with a tuft each
+        const P = { oak: [4, 3, 2.6, 2.2, B.LOG, B.LEAVES], swamp_oak: [4, 3, 3.4, 1.8, B.LOG, B.LEAVES], jungle: [5, 7, 2.6, 2.2, B.JUNGLE_LOG, B.JUNGLE_LEAVES] }[type];
+        const h = P[0] + nextInt(P[1]), top = sy + h;
         straight(h, P[4]);
-        blob(x, sy + 1 + h, z, P[3], 0, 3, P[5], false);
-        if (type === 'swamp_oak' || type === 'jungle') vineChance = 0.25;
+        ball(x, top, z, P[2], P[3], P[2], P[5]);
+        for (let k = nextInt(3); k > 0; k--) {
+          const d = nextInt(4), by = sy + 2 + nextInt(Math.max(1, h - 3)), ex = x + FACE4[d * 2] * 2, ez = z + FACE4[d * 2 + 1] * 2;
+          line(x, by, z, ex, by + 1, ez, P[4]);
+          ball(ex, by + 2, ez, 1.6, 1.2, 1.6, P[5]);
+        }
+        if (type !== 'oak') vineChance = 0.25;
         if (type === 'jungle') trunkVines = true;
         break;
       }
+      case 'birch': case 'super_birch': {
+        // a slim white trunk with a tall narrow crown and a single leaf tip
+        const h = (type === 'birch' ? 5 : 8) + nextInt(type === 'birch' ? 3 : 5), top = sy + h;
+        straight(h, B.BIRCH_LOG);
+        ball(x, top - 1, z, 1.9, 2.8, 1.9, B.BIRCH_LEAVES);
+        put(x, top + 2, z, B.BIRCH_LEAVES, 1);
+        break;
+      }
       case 'jungle_bush': {
-        // StraightTrunkPlacer(1, 0, 0) + BushFoliagePlacer(2, 1, 2): one jungle log in an oak-leaf bush
         straight(1, B.JUNGLE_LOG);
-        const ay = sy + 2;
-        for (let i = 1; i >= -1; i--) row(x, ay, z, 2 - 1 - i, i, false, B.LEAVES, (ax, yy, az, r) => ax === r && az === r && nextInt(2) === 0);
+        ball(x, sy + 2, z, 2.4, 1.4, 2.4, B.LEAVES);
         break;
       }
       case 'fancy_oak': {
-        // FancyTrunkPlacer(3, 11, 0) + FancyFoliagePlacer(2, 4, 4)
-        const height = 3 + nextInt(12), i = height + 2, j = Math.floor(i * 0.618);
-        const by = sy + 1, l = by + j;
-        soil(x, sy, z);
-        const limb = (ax, ay, az, bx, byy, bz, place) => {
-          const dx = bx - ax, dy = byy - ay, dz = bz - az, n = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
-          const axis = Math.abs(dx) > Math.abs(dz) && Math.abs(dx) > Math.abs(dy) ? 1 : Math.abs(dz) > Math.abs(dx) && Math.abs(dz) > Math.abs(dy) ? 2 : 0;
-          for (let k = 0; k <= n; k++) {
-            const px = ax + Math.floor(0.5 + k * (n ? dx / n : 0)), py = ay + Math.floor(0.5 + k * (n ? dy / n : 0)), pz = az + Math.floor(0.5 + k * (n ? dz / n : 0));
-            if (place) put(px, py, pz, B.LOG | (axis << 16), 0);
-            else if (this.solidTerrain(px, py, pz)) return false;
-          }
-          return true;
-        };
-        const shape = (k) => {
-          if (k < i * 0.3) return -1;
-          const f = i / 2, f1 = f - k;
-          let f2 = Math.sqrt(f * f - f1 * f1);
-          if (f1 === 0) f2 = f; else if (Math.abs(f1) >= f) return 0;
-          return f2 * 0.5;
-        };
-        const coords = [[x, by + i - 5, z, l]];
-        for (let i1 = i - 5; i1 >= 0; i1--) {
-          const f = shape(i1);
-          if (f < 0) continue;
-          const d1 = f * (rnd() + 0.328), d2 = rnd() * 2 * Math.PI;
-          const bx = x + Math.floor(d1 * Math.sin(d2) + 0.5), bz = z + Math.floor(d1 * Math.cos(d2) + 0.5), byy = by + i1 - 1;
-          if (!limb(bx, byy, bz, bx, byy + 5, bz, false)) continue;
-          const k1 = x - bx, l1 = z - bz, d5 = byy - Math.sqrt(k1 * k1 + l1 * l1) * 0.381;
-          const i2 = d5 > l ? l : Math.trunc(d5);
-          if (limb(x, i2, z, bx, byy, bz, false)) coords.push([bx, byy, bz, i2]);
-        }
-        limb(x, by, z, x, by + j, z, true);
-        for (const c of coords) if (c[3] - by >= i * 0.2 && !(c[0] === x && c[1] === c[3] && c[2] === z)) limb(x, c[3], z, c[0], c[1], c[2], true);
-        for (const c of coords) {
-          if (!(c[3] - by >= i * 0.2)) continue;
-          for (let yy = 4; yy >= 0; yy--) row(c[0], c[1], c[2], 2 + (yy !== 4 && yy !== 0 ? 1 : 0), yy, false, B.LEAVES, (ax, y2, az, r) => (ax + 0.5) * (ax + 0.5) + (az + 0.5) * (az + 0.5) > r * r);
+        // a tall oak whose trunk splits into 3-5 limbs climbing outward, each ending in a crown
+        const h = 6 + nextInt(6), top = sy + h;
+        straight(h, B.LOG);
+        ball(x, top + 1, z, 2.6, 2, 2.6, B.LEAVES);
+        const n = 3 + nextInt(3), a0 = rnd() * Math.PI * 2;
+        for (let k = 0; k < n; k++) {
+          const a = a0 + k * Math.PI * 2 / n + (rnd() - 0.5) * 0.6, len = 3 + nextInt(3);
+          const by = sy + Math.floor(h * (0.45 + rnd() * 0.4));
+          const ex = x + Math.round(Math.cos(a) * len), ez = z + Math.round(Math.sin(a) * len), ey = by + 2 + nextInt(3);
+          line(x, by, z, ex, ey, ez, B.LOG);
+          ball(ex, ey + 1, ez, 2.3, 1.7, 2.3, B.LEAVES);
         }
         break;
       }
       case 'spruce': case 'pine': {
-        const spruce = type === 'spruce';
-        // spruce: StraightTrunkPlacer(5, 2, 1) + SpruceFoliagePlacer(2..3, 0..2, 1..2);
-        // pine: StraightTrunkPlacer(6, 4, 0) + PineFoliagePlacer(1, 1, 3..4)
-        const h = spruce ? 5 + nextInt(3) + nextInt(2) : 6 + nextInt(5);
+        // spruce: a cone of tiers down most of the trunk; pine: a small tight cone at the top only
+        const spruce = type === 'spruce', h = spruce ? 6 + nextInt(4) : 7 + nextInt(5), top = sy + h;
         straight(h, B.SPRUCE_LOG);
-        const ay = sy + 1 + h, corner = (ax, yy, az, r) => ax === r && az === r && r > 0;
-        if (spruce) {
-          const fh = Math.max(4, h - (1 + nextInt(2))), radius = 2 + nextInt(2), offset = nextInt(3);
-          let r = nextInt(2), lim = 1, k = 0;
-          for (let yy = offset; yy >= -fh; yy--) {
-            row(x, ay, z, r, yy, false, B.SPRUCE_LEAVES, corner);
-            if (r >= lim) { r = k; k = 1; lim = Math.min(lim + 1, radius); } else r++;
-          }
-        } else {
-          const fh = 3 + nextInt(2), radius = 1 + nextInt(Math.max(h - fh, 1));
-          let r = 0;
-          for (let yy = 1; yy >= 1 - fh; yy--) {
-            row(x, ay, z, r, yy, false, B.SPRUCE_LEAVES, corner);
-            if (r >= 1 && yy === 1 - fh + 1) r--; else if (r < radius) r++;
+        put(x, top + 1, z, B.SPRUCE_LEAVES, 1);
+        const low = spruce ? sy + 2 + nextInt(2) : top - 3 - nextInt(2), maxR = spruce ? 3 : 2;
+        for (let y = top; y >= low; y--) {
+          const t = (top - y) / Math.max(1, top - low), tier = (top - y) % 2;     // every other row steps in: tiers
+          const r = Math.max(0, Math.round(t * maxR + 0.3) - tier);
+          for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
+            const d = Math.abs(dx) + Math.abs(dz);
+            if (d > r + (r > 1 ? 1 : 0)) continue;
+            if (d === r + 1 && rnd() < 0.5) continue;
+            put(x + dx, y, z + dz, B.SPRUCE_LEAVES, 1);
           }
         }
         break;
       }
       case 'mega_spruce': case 'mega_pine': {
-        // GiantTrunkPlacer(13, 2, 14) + MegaPineFoliagePlacer(0, 0, 13..17 / 3..7), podzol around
-        const h = 13 + nextInt(3) + nextInt(15);
+        // a 2x2 giant: a long cone (spruce) or a short crown at the very top (pine), podzol around
+        const h = 14 + nextInt(14), top = sy + h, mega = type === 'mega_spruce';
         giant(h, B.SPRUCE_LOG);
-        const fh = type === 'mega_spruce' ? 13 + nextInt(5) : 3 + nextInt(5), top = sy + 1 + h;
-        let prev = 0;
-        for (let yy = top - fh; yy <= top; yy++) {
-          const k = top - yy, l = Math.floor(k / fh * 3.5);
-          const r = k > 0 && l === prev && (yy & 1) === 0 ? l + 1 : l;
-          row(x, yy, z, r, 0, true, B.SPRUCE_LEAVES, (ax, y2, az, rr) => ax + az >= 7 || ax * ax + az * az > rr * rr);
-          prev = l;
+        const low = mega ? sy + Math.floor(h * 0.35) : top - 5 - nextInt(3), maxR = mega ? 4.5 : 3.5;
+        for (let y = top + 1; y >= low; y--) {
+          const t = (top + 1 - y) / Math.max(1, top + 1 - low), r = t * maxR - ((top - y) % 3 === 0 ? 0.8 : 0);
+          for (let dx = -5; dx <= 6; dx++) for (let dz = -5; dz <= 6; dz++) {
+            const ex = dx - 0.5, ez = dz - 0.5;
+            if (ex * ex + ez * ez <= r * r + 0.5) put(x + dx, y, z + dz, B.SPRUCE_LEAVES, 1);
+          }
         }
         podzol = true;
         break;
       }
       case 'mega_jungle': {
-        // MegaJungleTrunkPlacer(10, 2, 19) + MegaJungleFoliagePlacer(2, 0, 2), vines
-        const h = 10 + nextInt(3) + nextInt(20);
+        // a 2x2 giant with a broad flat crown and a few side limbs carrying their own crowns
+        const h = 12 + nextInt(16), top = sy + h;
         giant(h, B.JUNGLE_LOG);
-        const att = [[x, sy + 1 + h, z, 0, true]];
-        for (let i = h - 2 - nextInt(4); i > h / 2; i -= 2 + nextInt(4)) {
-          const f = rnd() * Math.PI * 2;
-          let bx = 0, bz = 0;
-          for (let l = 0; l < 5; l++) {
-            bx = Math.trunc(1.5 + Math.cos(f) * l); bz = Math.trunc(1.5 + Math.sin(f) * l);
-            put(x + bx, sy + 1 + i - 3 + (l >> 1), z + bz, B.JUNGLE_LOG, 0);
-          }
-          att.push([x + bx, sy + 1 + i, z + bz, -2, false]);
-        }
-        const mj = (ax, yy, az, r) => ax + az >= 7 || ax * ax + az * az > r * r;
-        for (const [ax, ay, az, ro, dbl] of att) {
-          const n = dbl ? 2 : 1 + nextInt(2);
-          for (let j = 0; j >= -n; j--) row(ax, ay, az, 2 + ro + 1 - j, j, dbl, B.JUNGLE_LEAVES, mj);
+        ball(x + 0.5, top + 1, z + 0.5, 4.5, 1.8, 4.5, B.JUNGLE_LEAVES);
+        for (let yy = top - 4 - nextInt(3); yy > sy + h * 0.5; yy -= 3 + nextInt(4)) {
+          const a = rnd() * Math.PI * 2, ex = x + Math.round(0.5 + Math.cos(a) * 4), ez = z + Math.round(0.5 + Math.sin(a) * 4);
+          line(x + (Math.cos(a) > 0 ? 1 : 0), yy, z + (Math.sin(a) > 0 ? 1 : 0), ex, yy + 2, ez, B.JUNGLE_LOG);
+          ball(ex, yy + 3, ez, 2.6, 1.3, 2.6, B.JUNGLE_LEAVES);
         }
         vineChance = 0.25; trunkVines = true;
         break;
       }
       case 'dark_oak': case 'pale_oak': {
-        // DarkOakTrunkPlacer(6, 2, 1) + DarkOakFoliagePlacer(0, 0); the pale oak is the same build in
-        // pale wood, with moss hanging from its crown and now and then a creaking heart in the trunk
+        // a stout 2x2 trunk with root flares, a low wide umbrella crown; the pale oak in pale wood
+        // with moss hanging from the crown and now and then a creaking heart in the trunk
         const pale = type === 'pale_oak', LG = pale ? B.PALE_OAK_LOG : B.DARK_LOG, LV = pale ? B.PALE_OAK_LEAVES : B.DARK_LEAVES;
         if (pale) paleMoss = true;
-        const h = 6 + nextInt(3) + nextInt(2);
-        for (let d = 0; d < 4; d++) { const cx = x + (d & 1), cz = z + (d >> 1); soil(cx, this.groundAt(cx, cz), cz); }
-        const dir = nextInt(4), sx = [1, -1, 0, 0][dir], sz = [0, 0, 1, -1][dir];
-        const bend = h - nextInt(4);
-        let steps = 2 - nextInt(3), j1 = x, k1 = z;
-        const l1 = sy + 1 + h - 1;
-        for (let i2 = 0; i2 < h; i2++) {
-          if (i2 >= bend && steps > 0) { j1 += sx; k1 += sz; steps--; }
-          const yy = sy + 1 + i2;
-          for (let d = 0; d < 4; d++) {
-            const cx = j1 + (d & 1), cz = k1 + (d >> 1);
-            // the 2x2 trunk reaches down to the ground of each of its columns
-            if (i2 === 0 && j1 === x && k1 === z) for (let gy = this.groundAt(cx, cz) + 1; gy < yy; gy++) put(cx, gy, cz, LG, 0);
-            put(cx, yy, cz, LG, 0);
-          }
-        }
-        if (pale && nextInt(4) === 0) log(j1 + nextInt(2), sy + 2 + nextInt(Math.max(1, h - 4)), k1 + nextInt(2), B.CREAKING_HEART);
-        const att = [[j1, l1, k1, true]];
-        for (let l2 = -1; l2 <= 2; l2++) for (let i3 = -1; i3 <= 2; i3++) {
-          if ((l2 < 0 || l2 > 1 || i3 < 0 || i3 > 1) && nextInt(3) <= 0) {
-            const n = nextInt(3) + 2;
-            for (let k2 = 0; k2 < n; k2++) put(x + l2, l1 - k2 - 1, z + i3, LG, 0);
-            att.push([j1 + l2, l1, k1 + i3, false]);
-          }
-        }
-        for (const [ax, ay, az, dbl] of att) {
-          const sk = (adx, yy, adz, r, large) => {
-            if (yy === -1 && !large) return adx === r && adz === r;
-            if (yy === 1) return adx + adz > r * 2 - 2;
-            return false;
-          };
-          if (dbl) {
-            row(ax, ay, az, 2, -1, true, LV, sk);
-            rowSigned(ax, ay, az, 3, 0, true, LV, (dx, yy, dz, r) => (dx === -r || dx >= r) && (dz === -r || dz >= r));
-            row(ax, ay, az, 2, 1, true, LV, sk);
-            if (nextInt(2)) row(ax, ay, az, 0, 2, true, LV, sk);
-          } else {
-            row(ax, ay, az, 2, -1, false, LV, sk);
-            row(ax, ay, az, 1, 0, false, LV, sk);
-          }
-        }
+        const h = 5 + nextInt(4), top = sy + h;
+        giant(h, LG);
+        for (const [dx, dz] of [[-1, 0], [2, 1], [0, 2], [1, -1]]) if (rnd() < 0.6) { const gy = this.groundAt(x + dx, z + dz); if (gy >= sy - 1 && gy <= sy + 1) put(x + dx, gy + 1, z + dz, LG, 0); }
+        if (pale && nextInt(4) === 0) log(x + nextInt(2), sy + 2 + nextInt(Math.max(1, h - 4)), z + nextInt(2), B.CREAKING_HEART);
+        ball(x + 0.5, top + 1, z + 0.5, 4.4, 1.7, 4.4, LV);
+        for (let k = 0; k < 2; k++) { const d = nextInt(4), ex = x + 0.5 + FACE4[d * 2] * 3, ez = z + 0.5 + FACE4[d * 2 + 1] * 3; line(x + (FACE4[d * 2] > 0 ? 1 : 0), top - 1, z + (FACE4[d * 2 + 1] > 0 ? 1 : 0), Math.round(ex), top, Math.round(ez), LG); }
         break;
       }
       case 'acacia': {
-        // ForkingTrunkPlacer(5, 2, 2) + AcaciaFoliagePlacer(2, 0)
-        const h = 5 + nextInt(3) + nextInt(3), by = sy + 1;
-        soil(x, sy, z);
-        const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-        const d1 = nextInt(4), i = h - nextInt(4) - 1;
-        let j = 3 - nextInt(3), k = x, l = z, top = -1;
-        for (let i1 = 0; i1 < h; i1++) {
-          const yy = by + i1;
-          if (i1 >= i && j > 0) { k += D[d1][0]; l += D[d1][1]; j--; }
-          put(k, yy, l, B.ACACIA_LOG, 0); top = yy + 1;
-        }
-        const att = [[k, top, l, 1]];
-        k = x; l = z;
-        const d2 = nextInt(4);
-        if (d2 !== d1) {
-          const k2 = i - nextInt(2) - 1;
-          let n = 1 + nextInt(3), t2 = -1;
-          for (let i2 = k2; i2 < h && n > 0; n--, i2++) {
-            if (i2 >= 1) { const yy = by + i2; k += D[d2][0]; l += D[d2][1]; put(k, yy, l, B.ACACIA_LOG, 0); t2 = yy + 1; }
+        // a trunk that leans after a few blocks, a flat two-layer canopy; sometimes a second limb
+        // with its own smaller canopy
+        const h = 4 + nextInt(3), lean = 2 + nextInt(2), d = nextInt(4), dx = FACE4[d * 2], dz = FACE4[d * 2 + 1];
+        straight(h, B.ACACIA_LOG);
+        const tx = x + dx * lean, tz = z + dz * lean, ty = sy + h + lean;
+        line(x, sy + h, z, tx, ty, tz, B.ACACIA_LOG);
+        const canopy = (cx, cy, cz, r) => {
+          for (let ax = -r; ax <= r; ax++) for (let az = -r; az <= r; az++) {
+            const q = ax * ax + az * az;
+            if (q <= r * r + 1 && !(q > r * r - 2 && rnd() < 0.3)) put(cx + ax, cy, cz + az, B.ACACIA_LEAVES, 1);
+            if (q <= (r - 2) * (r - 2) + 1) put(cx + ax, cy + 1, cz + az, B.ACACIA_LEAVES, 1);
           }
-          if (t2 > 0) att.push([k, t2, l, 0]);
-        }
-        for (const [ax, ay, az, ro] of att) {
-          const sk = (adx, yy, adz, r) => yy === 0 ? (adx > 1 || adz > 1) && adx !== 0 && adz !== 0 : adx === r && adz === r && r > 0;
-          row(ax, ay, az, 2 + ro, -1, false, B.ACACIA_LEAVES, sk);
-          row(ax, ay, az, 1, 0, false, B.ACACIA_LEAVES, sk);
-          row(ax, ay, az, 2 + ro - 1, 0, false, B.ACACIA_LEAVES, sk);
+        };
+        canopy(tx, ty + 1, tz, 3);
+        if (rnd() < 0.6) {
+          const d2 = (d + 1 + nextInt(3)) & 3, bx = x + FACE4[d2 * 2] * 2, bz = z + FACE4[d2 * 2 + 1] * 2, by = sy + h - 1 + nextInt(2);
+          line(x, by - 1, z, bx, by + 1, bz, B.ACACIA_LOG);
+          canopy(bx, by + 2, bz, 2);
         }
         break;
       }
       case 'cherry': {
-        // CherryTrunkPlacer(7, 1, 0; branches 1-3, length 2..4, start -4..-3, end -1..0) +
-        // CherryFoliagePlacer(4, 0, 5; holes 0.25 / 0.25, hanging leaves 1/6, extension 1/3)
-        const h = 7 + nextInt(2), by = sy + 1;
-        soil(x, sy, z);
-        const i = Math.max(0, h - 1 + (-4 + nextInt(2)));
-        let j = Math.max(0, h - 1 + (-4 + nextInt(1)));
-        if (j >= i) j++;
-        const cnt = 1 + nextInt(3), three = cnt === 3, two = cnt >= 2;
-        const L = three ? h : two ? Math.max(i, j) + 1 : i + 1;
-        for (let i1 = 0; i1 < L; i1++) put(x, by + i1, z, B.CHERRY_LOG, 0);
-        const att = [];
-        if (three) att.push([x, by + L, z]);
-        const D = [[1, 0], [-1, 0], [0, 1], [0, -1]], dir = nextInt(4);
-        const branch = (d, start, upwards) => {
-          const ax = D[d][0] !== 0 ? 1 : 2;
-          let mx = x, my = by + start, mz = z;
-          const endY = by + h - 1 + (-1 + nextInt(2));
-          const flag = upwards || endY < my;
-          const len = 2 + nextInt(3) + (flag ? 1 : 0);
-          const ex = x + D[d][0] * len, ez = z + D[d][1] * len;
-          for (let s2 = 0; s2 < (flag ? 2 : 1); s2++) { mx += D[d][0]; mz += D[d][1]; put(mx, my, mz, B.CHERRY_LOG | (ax << 16), 0); }
-          const up = endY > my ? 1 : -1;
-          for (let guard = 0; guard < 32; guard++) {
-            const dist = Math.abs(ex - mx) + Math.abs(endY - my) + Math.abs(ez - mz);
-            if (dist === 0) { att.push([ex, endY + 1, ez]); return; }
-            const vert = rnd() < Math.abs(endY - my) / dist;
-            if (vert) my += up; else { mx += D[d][0]; mz += D[d][1]; }
-            put(mx, my, mz, vert ? B.CHERRY_LOG : B.CHERRY_LOG | (ax << 16), 0);
-          }
-        };
-        branch(dir, i, i < L - 1);
-        if (two) branch(dir ^ 1, j, j < L - 1);
-        const r = 3;
-        const sk = (adx, yy, adz, rr) => {
-          if (yy === -1 && (adx === rr || adz === rr) && rnd() < 0.25) return true;
-          const c = adx === rr && adz === rr;
-          if (rr > 2) return c || (adx + adz > rr * 2 - 2 && rnd() < 0.25);
-          return c && rnd() < 0.25;
-        };
-        for (const [ax, ay, az] of att) {
-          row(ax, ay, az, r - 2, 2, false, B.CHERRY_LEAVES, sk);
-          row(ax, ay, az, r - 1, 1, false, B.CHERRY_LEAVES, sk);
-          row(ax, ay, az, r, 0, false, B.CHERRY_LEAVES, sk);
-          for (const [rr, yy] of [[r, -1], [r - 1, -2]]) {
-            row(ax, ay, az, rr, yy, false, B.CHERRY_LEAVES, sk);
-            // hanging leaves under the rim, one more below sometimes, within 6 of the attachment
-            for (let dx = -rr; dx <= rr; dx++) for (let dz = -rr; dz <= rr; dz++) {
-              if (Math.abs(dx) !== rr && Math.abs(dz) !== rr) continue;
-              if (!TB.map.has(key(ax + dx, ay + yy, az + dz))) continue;
-              if (Math.abs(dx) + 1 + Math.abs(dz) >= 7 || rnd() > 1 / 6) continue;
-              put(ax + dx, ay + yy - 1, az + dz, B.CHERRY_LEAVES, 1);
-              if (Math.abs(dx) + 2 + Math.abs(dz) < 7 && rnd() <= 1 / 3) put(ax + dx, ay + yy - 2, az + dz, B.CHERRY_LEAVES, 1);
-            }
-          }
+        // a short trunk forking into two or three arching limbs under one wide, airy pink crown,
+        // with petals hanging from its rim
+        const h = 4 + nextInt(2), top = sy + h;
+        straight(h, B.CHERRY_LOG);
+        const n = 2 + nextInt(2), a0 = rnd() * Math.PI * 2, tips = [];
+        for (let k = 0; k < n; k++) {
+          const a = a0 + k * Math.PI * 2 / n, ex = x + Math.round(Math.cos(a) * 3), ez = z + Math.round(Math.sin(a) * 3), ey = top + 2 + nextInt(2);
+          line(x, top, z, ex, ey, ez, B.CHERRY_LOG);
+          tips.push([ex, ey, ez]);
+        }
+        for (const [ex, ey, ez] of tips) ball(ex, ey + 1, ez, 2.8, 1.5, 2.8, B.CHERRY_LEAVES);
+        for (const [ex, ey, ez] of tips) for (let k = 0; k < 6; k++) {
+          const a = rnd() * Math.PI * 2, hx = ex + Math.round(Math.cos(a) * 3), hz = ez + Math.round(Math.sin(a) * 3);
+          if (TB.map.has(key(hx, ey, hz))) { put(hx, ey - 1, hz, B.CHERRY_LEAVES, 1); if (rnd() < 0.3) put(hx, ey - 2, hz, B.CHERRY_LEAVES, 1); }
         }
         break;
       }
@@ -2114,82 +1981,51 @@ class WorldGen {
         break;
       }
       case 'mangrove': case 'tall_mangrove': {
-        // Minecraft's mangrove: MangroveRootPlacer + UpwardsBranchingTrunkPlacer +
-        // RandomSpreadFoliagePlacer(3, 0, 2, 70), vines and hanging propagules
+        // the trunk stands on arched prop roots: from 2-3 blocks up, four to six roots bow outward
+        // and down into the mud; a round crown with hanging propagules and vines
         const tall = type === 'tall_mangrove';
-        const oy = sy + 1 + 1 + nextInt(3);                     // trunk origin 1..3 above the sapling spot
-        // terrain the roots may grow into: air, water and the mud layers of a mangrove swamp
+        const oy = sy + 2 + nextInt(2);
         const rootCell = (xx, yy, zz) => {
           const gy = this.groundAt(xx, zz);
           if (yy > gy) return 1;
           return ORIG_BIOME[this.colInfo(xx, zz).biome] === BI.MANGROVE_SWAMP && yy > gy - 4 ? 1 : 0;
         };
         for (let y = sy + 1; y < oy; y++) if (!rootCell(x, y, z)) return null;
-        const roots = [[x, oy - 1, z]];
-        const simulate = (px, py, pz, dx, dz, list, depth) => {
-          if (depth === 15 || list.length > 15) return false;
-          const dist = Math.abs(px - x) + Math.abs(py - oy) + Math.abs(pz - z);
-          let next;
-          if (dist > 5 && dist <= 8) next = rnd() < 0.2 ? [[px, py - 1, pz], [px + dx, py - 1, pz + dz]] : [[px, py - 1, pz]];
-          else if (dist > 8) next = [[px, py - 1, pz]];
-          else if (rnd() < 0.2) next = [[px, py - 1, pz]];
-          else next = rnd() < 0.5 ? [[px + dx, py, pz + dz]] : [[px, py - 1, pz]];
-          for (const p of next) {
-            if (!rootCell(p[0], p[1], p[2])) continue;
-            list.push(p);
-            if (!simulate(p[0], p[1], p[2], dx, dz, list, depth + 1)) return false;
+        const nr = 4 + nextInt(3), a0 = rnd() * Math.PI * 2;
+        for (let k = 0; k < nr; k++) {
+          const a = a0 + k * Math.PI * 2 / nr, ca = Math.cos(a), sa = Math.sin(a);
+          let px = x, pz = z;
+          for (let s2 = 1, yy = oy - 1; s2 <= 7 && yy > sy - 4; s2++) {
+            const rx = x + Math.round(ca * Math.min(s2, 3)), rz = z + Math.round(sa * Math.min(s2, 3));
+            if (!rootCell(rx, yy, rz)) break;
+            const gy = this.groundAt(rx, rz), ob = ORIG_BIOME[this.colInfo(rx, rz).biome];
+            const wet = yy <= SEA && (yy > gy || (yy === gy && this.poolAt(ob, rx, rz, gy)));
+            root(rx, yy, rz, yy <= gy && !wet ? B.MUDDY_MANGROVE_ROOTS : wet ? B.MANGROVE_ROOTS_WET : B.MANGROVE_ROOTS);
+            if (yy <= gy) break;
+            px = rx; pz = rz;
+            if (s2 >= 2) yy--;
           }
-          return true;
-        };
-        for (const [dx, dz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-          const list = [];
-          if (!simulate(x + dx, oy, z + dz, dx, dz, list, 0)) return null;
-          roots.push(...list, [x + dx, oy, z + dz]);
-        }
-        for (const [rx, ry, rz] of roots) {
-          const gy = this.groundAt(rx, rz), ob = ORIG_BIOME[this.colInfo(rx, rz).biome];
-          const wet = ry <= SEA && (ry > gy || (ry === gy && this.poolAt(ob, rx, rz, gy)));
-          root(rx, ry, rz, ry <= gy && !wet ? B.MUDDY_MANGROVE_ROOTS : wet ? B.MANGROVE_ROOTS_WET : B.MANGROVE_ROOTS);
+          void px; void pz;
         }
         mossOnRoots = true;
-        // trunk with upward branches; every branch log and the trunk top carry foliage
-        const height = tall ? 4 + nextInt(2) + nextInt(10) : 2 + nextInt(2) + nextInt(5);
-        const attach = [];
-        for (let i = 0; i < height; i++) {
-          const y = oy + i;
-          log(x, y, z, B.MANGROVE_LOG);
-          if (i < height - 1 && rnd() < 0.5) {
-            const d = nextInt(4), bx = [0, 0, -1, 1][d], bz = [-1, 1, 0, 0][d];
-            const k = nextInt(2), off = Math.max(0, k - nextInt(2) - 1), steps0 = 1 + nextInt(4);
-            let cx = x, cz = z, top = y + off;
-            for (let l = off, steps = steps0; l < height && steps > 0; l++, steps--) {
-              if (l >= 1) {
-                cx += bx; cz += bz;
-                log(cx, y + l, cz, B.MANGROVE_LOG);
-                top = y + l + 1;
-                attach.push([cx, y + l, cz]);
-              }
-            }
-            if (top - y > 1) attach.push([cx, top, cz], [cx, top - 2, cz]);
-          }
-        }
-        attach.push([x, oy + height, z]);
-        for (const [ax, ay, az] of attach) put(ax, ay, az, B.MANGROVE_LEAVES, 1);   // no bare trunk / branch tips
-        for (const [ax, ay, az] of attach) for (let n = 0; n < 70; n++) {
-          put(ax + nextInt(3) - nextInt(3), ay + nextInt(2) - nextInt(2), az + nextInt(3) - nextInt(3), B.MANGROVE_LEAVES, 1);
+        const height = tall ? 6 + nextInt(6) : 3 + nextInt(4), top = oy + height;
+        for (let y = oy; y < top; y++) log(x, y, z, B.MANGROVE_LOG);
+        ball(x, top, z, tall ? 3.2 : 2.7, 2, tall ? 3.2 : 2.7, B.MANGROVE_LEAVES);
+        if (tall) for (let k = 0; k < 2; k++) {
+          const d = nextInt(4), ex = x + FACE4[d * 2] * 3, ez = z + FACE4[d * 2 + 1] * 3, by = oy + 2 + nextInt(Math.max(1, height - 4));
+          line(x, by, z, ex, by + 2, ez, B.MANGROVE_LOG);
+          ball(ex, by + 3, ez, 2, 1.4, 2, B.MANGROVE_LEAVES);
         }
         vineChance = 0.125; propagules = true;
         break;
       }
     }
-    // AlterGroundDecorator(podzol) of the giant spruces: circles of podzol on the ground around the
-    // trunk (radius 2 without corners) at its four corners and at five random spots of the ring 3 out
+    // giant spruces: a ragged disc of podzol on the ground around the trunk
     if (podzol) {
-      const circle = (cx, cz) => {
-        for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) if (Math.abs(dx) !== 2 || Math.abs(dz) !== 2) put(cx + dx, this.groundAt(cx + dx, cz + dz), cz + dz, B.PODZOL, 4);
-      };
-      circle(x - 1, z - 1); circle(x + 2, z - 1); circle(x - 1, z + 2); circle(x + 2, z + 2);
-      for (let k = 0; k < 5; k++) { const j = nextInt(64), a = j % 8, b = (j / 8) | 0; if (a === 0 || a === 7 || b === 0 || b === 7) circle(x - 3 + a, z - 3 + b); }
+      for (let dx = -5; dx <= 6; dx++) for (let dz = -5; dz <= 6; dz++) {
+        const q = (dx - 0.5) * (dx - 0.5) + (dz - 0.5) * (dz - 0.5);
+        if (q <= 30 * (0.6 + 0.4 * rnd())) put(x + dx, this.groundAt(x + dx, z + dz), z + dz, B.PODZOL, 4);
+      }
     }
     // crown connectivity (face neighbours) from the trunk through free crown cells
     const n = TB.n, dist = TB.dist, q = TB.q;
