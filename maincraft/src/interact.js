@@ -114,6 +114,7 @@ function placementFor(world, heldId, hit, fd, player) {
     case SH.MODEL:
       // models.js meta: facing toward the player; lanterns hang under a ceiling; barrels face the player's look
       if (heldId === B.LANTERN) m = hit.face === 3 ? 1 : 0;
+      else if (heldId === B.POINTED_DRIPSTONE) m = hit.face === 3 ? 1 : 9;   // tip, hanging down or standing up
       else if (heldId === B.BARREL) m = player && player.pitch < -0.8 ? 4 : player && player.pitch > 0.8 ? 5 : (fd + 2) & 3;
       else if (heldId === B.BREWING_STAND || heldId === B.CAULDRON || heldId === B.COMPOSTER) m = 0;
       else m = (fd + 2) & 3;

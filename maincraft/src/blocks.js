@@ -60,7 +60,7 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     if (sh === SH.CROSS || sh === SH.TALL || sh === SH.VINE || sh === SH.LICHEN || sh === SH.LILY) f |= BF_PLANT;
     if (sh === SH.CROSS || sh === SH.TALL || sh === SH.WATER || sh === SH.LAVA || sh === SH.VINE ||
         sh === SH.LICHEN || sh === SH.FIRE || key === 'SNOW_LAYER') f |= BF_REPLACE;
-    if (/SAPLING|WHEAT_|CARROTS_|POTATOES_|BEETROOTS_|STEM_|MUSHROOM$|FUNGUS|ROOTS|SPROUTS|CORAL_FAN|KELP|SEAGRASS|PROPAGULE|SUGAR_CANE|SWEET_BERRY|COBWEB|FLOWER_POT|DANDELION|POPPY|TULIP|ORCHID|ALLIUM|BLUET|CORNFLOWER|DAISY|LILY_OF|WITHER_ROSE/.test(key)) f &= ~BF_REPLACE;
+    if (/SAPLING|EYEBLOSSOM|WHEAT_|CARROTS_|POTATOES_|BEETROOTS_|STEM_|MUSHROOM$|FUNGUS|ROOTS|SPROUTS|CORAL_FAN|KELP|SEAGRASS|PROPAGULE|SUGAR_CANE|SWEET_BERRY|COBWEB|FLOWER_POT|DANDELION|POPPY|TULIP|ORCHID|ALLIUM|BLUET|CORNFLOWER|DAISY|LILY_OF|WITHER_ROSE/.test(key)) f &= ~BF_REPLACE;
     if (key === 'TALL_GRASS' || key === 'FERN' || key === 'DEAD_BUSH' || key === 'SEAGRASS') f |= BF_REPLACE;
     FLAGS[id] = f;
     EMIT[id] = r[6] | 0;
@@ -106,6 +106,10 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     if (key === 'LANTERN') { h = 3.5; tool = 1; }
     if (key === 'BREWING_STAND') { h = 0.5; tool = 1; }
     if (/^BEETROOTS_/.test(key)) { h = 0; tool = 0; }
+    if (/^(SCULK|SCULK_VEIN|PALE_MOSS_BLOCK|PALE_MOSS_CARPET|AZALEA|FLOWERING_AZALEA|BIG_DRIPLEAF|BIG_DRIPLEAF_STEM|SMALL_DRIPLEAF|SPORE_BLOSSOM)$/.test(key)) { h = key === 'SCULK' ? 0.2 : 0.1; tool = 0; }
+    if (key === 'SCULK_SENSOR' || key === 'SCULK_CATALYST' || key === 'SCULK_SHRIEKER') { h = 1.5; tool = 0; }
+    if (key === 'POINTED_DRIPSTONE') { h = 1.5; tool = 1; }
+    if (key === 'CREAKING_HEART') { h = 10; tool = 2; }
     if (sh === SH.WATER || sh === SH.LAVA) h = -1;
     HARD[id] = h; TOOL[id] = tool;
   }

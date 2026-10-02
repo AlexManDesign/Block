@@ -44,6 +44,17 @@ BLOCKS = {
     'BREWING_STAND': ('brewing_stand', range(8), lambda m: {'has_bottle_0': str(bool(m & 1)).lower(), 'has_bottle_1': str(bool(m & 2)).lower(), 'has_bottle_2': str(bool(m & 4)).lower()}),
     'CAULDRON': (None, range(4), lambda m: {'level': str(m)}),
     'COMPOSTER': ('composter', range(9), lambda m: {'level': str(m)}),
+    # pointed dripstone: thickness (tip_merge, tip, frustum, middle, base) | 8 pointing up
+    'POINTED_DRIPSTONE': ('pointed_dripstone', range(16), lambda m: {'thickness': ['tip_merge', 'tip', 'frustum', 'middle', 'base'][min(4, m & 7)],
+                                                                        'vertical_direction': 'up' if m & 8 else 'down', 'waterlogged': 'false'}),
+    'AZALEA': ('azalea', range(1), lambda m: {}),
+    'FLOWERING_AZALEA': ('flowering_azalea', range(1), lambda m: {}),
+    'BIG_DRIPLEAF': ('big_dripleaf', range(4), lambda m: {'facing': bits_facing(m), 'tilt': 'none', 'waterlogged': 'false'}),
+    'BIG_DRIPLEAF_STEM': ('big_dripleaf_stem', range(4), lambda m: {'facing': bits_facing(m), 'waterlogged': 'false'}),
+    'SMALL_DRIPLEAF': ('small_dripleaf', range(8), lambda m: {'facing': bits_facing(m), 'half': 'upper' if m & 4 else 'lower', 'waterlogged': 'false'}),
+    'SPORE_BLOSSOM': ('spore_blossom', range(1), lambda m: {}),
+    'SCULK_SENSOR': ('sculk_sensor', range(1), lambda m: {'sculk_sensor_phase': 'inactive', 'power': '0', 'waterlogged': 'false'}),
+    'SCULK_SHRIEKER': ('sculk_shrieker', range(1), lambda m: {'can_summon': 'false', 'shrieking': 'false', 'waterlogged': 'false'}),
 }
 # BellRenderer's bell (entity/bell/bell_body.png, 32x32): body 6x7x6 at (5..11, 6..13), lip 8x2x8 at (4..12, 4..6)
 def bell_body():
@@ -104,12 +115,12 @@ def parts_for(bs, props):
     def match(cond):
         if 'OR' in cond: return any(match(c) for c in cond['OR'])
         if 'AND' in cond: return all(match(c) for c in cond['AND'])
-        return all(props.get(k) in str(v).split('|') for k, v in cond.items())
+        return all(str(props.get(k)).lower() in str(v).lower().split('|') for k, v in cond.items())
     out = []
     if 'variants' in bs:
         for key, v in bs['variants'].items():
             conds = dict(kv.split('=') for kv in key.split(',') if kv)
-            if all(props.get(k) == val for k, val in conds.items()):
+            if all(k not in props or props.get(k) == val for k, val in conds.items()):
                 v = v[0] if isinstance(v, list) else v
                 return [(v['model'], v.get('x', 0), v.get('y', 0))]
         raise SystemExit('no variant for ' + json.dumps(props))

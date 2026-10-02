@@ -531,16 +531,19 @@ class Entities {
       return;
     }
     if (e.fleeT > 0) {
-      // PanicGoal: while hurt within the last 5 s, run to random spots up to 5 blocks away
-      // (DefaultRandomPos.getPos(mob, 5, 4)), a new one each time the last is reached
+      // PanicGoal: while hurt within the last 5 s, run to random spots up to 5 blocks away, a new one
+      // each time the last is reached; spots farther from whoever hit it (getPosAway), so the
+      // animal runs off instead of circling back to the attacker
       e.fleeT -= dt;
       if (!e.panicTgt || Math.hypot(e.panicTgt[0] - e.pos[0], e.panicTgt[1] - e.pos[2]) < 1 || e.stuckT > 0.5) {
-        let t = null;
-        for (let k = 0; k < 10 && !t; k++) {
+        let t = null, any = null;
+        const F = e.panicFrom, d0 = F ? Math.hypot(e.pos[0] - F[0], e.pos[2] - F[1]) : 0;
+        for (let k = 0; k < 16 && !t; k++) {
           const tx = Math.floor(e.pos[0]) + ((Math.random() * 11) | 0) - 5 + 0.5, tz = Math.floor(e.pos[2]) + ((Math.random() * 11) | 0) - 5 + 0.5;
-          if (Math.hypot(tx - e.pos[0], tz - e.pos[2]) > 1.5 && !this.pointSolid(tx, e.pos[1] + 0.5, tz)) t = [tx, tz];
+          if (Math.hypot(tx - e.pos[0], tz - e.pos[2]) <= 1.5 || this.pointSolid(tx, e.pos[1] + 0.5, tz)) continue;
+          if (!F || Math.hypot(tx - F[0], tz - F[1]) > d0 + 1) t = [tx, tz]; else if (!any) any = [tx, tz];
         }
-        e.panicTgt = t; e.stuckT = 0;
+        e.panicTgt = t || any; e.stuckT = 0;
       }
       if (e.panicTgt) this.goTo(e, e.panicTgt[0], e.panicTgt[1], goalSpeed(speed, d.panic || 2), dt); else this.stop(e);
       e.headYaw = e.bodyYaw;
@@ -800,6 +803,12 @@ class Entities {
     }
     const P = e.path;
     if (!P || e.pathI >= P.length) return this.steer(e, tx, tz, speed);
+    // waypoints already behind (the start cell, or one passed while pushed) are skipped: the next
+    // one is nearer to the mob than to the current waypoint (PathFollower advancing past nodes)
+    while (e.pathI + 1 < P.length) {
+      const a = P[e.pathI], b = P[e.pathI + 1];
+      if (Math.hypot(b[0] - e.pos[0], b[1] - e.pos[2]) <= Math.hypot(b[0] - a[0], b[1] - a[1]) + 0.1) e.pathI++; else break;
+    }
     let wp = P[e.pathI];
     if (Math.hypot(wp[0] - e.pos[0], wp[1] - e.pos[2]) < 0.55) {
       e.pathI++;
@@ -1352,7 +1361,7 @@ class Entities {
     };
     if (from) kb(0.4, e.pos[0] - from[0], e.pos[2] - from[2]);
     if (extra) kb(extra[0], extra[1], extra[2]);
-    if (!d.hostile) e.fleeT = 5;   // lastHurtByMob is kept for 100 ticks
+    if (!d.hostile) { e.fleeT = 5; e.panicFrom = from ? [from[0], from[2]] : null; e.panicTgt = null; }   // lastHurtByMob is kept for 100 ticks
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 30;
     if (e.hp > 0 && e.type === 'enderman' && Math.random() < 0.5 && this.teleportNear(e, e.pos[0], e.pos[2], 24)) e.tpT = 1;

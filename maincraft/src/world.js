@@ -510,7 +510,7 @@ class World {
     if (sh === SH.WATER || sh === SH.LAVA) return true;
     if (fl & BF_AQUATIC) return SOLID[below] || below === id;
     if (sh === SH.CROSS) {
-      if (fl & BF_HANG) { const a = this.getBlock(x, y + 1, z); return SOLID[a] || a === id; }
+      if (fl & BF_HANG) { const a = this.getBlock(x, y + 1, z); return SOLID[a] || a === id || (FLAGS[a] & BF_HANG) !== 0; }
       if (id === B.SUGAR_CANE) return this.caneSupported(x, y, z);
       if (id === B.CACTUS || id === B.BAMBOO_PLANT) return below === id || SOLID[below];
       if (id === B.COBWEB) return true;
