@@ -31,8 +31,7 @@ SKIP = {'sun', 'moon_phases', 'bobber'}
 FIRST_FRAME_ONLY = {'short_grass', 'seagrass', 'tall_seagrass_top', 'tall_seagrass_bottom', 'kelp', 'kelp_plant'}
 ANIM_TICKS = {'water_still': 2, 'seagrass': 3, 'kelp': 3, 'sea_lantern': 5, 'magma': 8,
               'prismarine': 60, 'crimson_stem': 10, 'warped_stem': 10,
-              'lantern': 8, 'campfire_fire': 2, 'campfire_log_lit': 20, 'stonecutter_saw': 1,
-              'sculk': 20, 'sculk_vein': 20}
+              'campfire_fire': 2, 'sculk': 20}
 
 
 def tint(img, rgb):
@@ -405,6 +404,13 @@ def collect():
     egg = load('item_spawn_egg')
     for mob, c1, c2 in SPAWN_EGGS:
         extra['item_spawn_egg_' + mob] = spawn_egg(egg, c1, c2)
+    # own drawings of the blocks the pack lacks (tools/art.py)
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import art
+    drawn, drawn_anim = art.all_textures(load)
+    extra.update(drawn)
+    for k, frames in drawn_anim.items():
+        tiles.append((k, frames, ANIM_TICKS.get(k, 4)))
     for k, v in extra.items():
         tiles.append((k, [v], 0))
     for s in range(10):
