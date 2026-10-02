@@ -249,7 +249,7 @@ const LAND_TABLE = [
   ['PLAINS', 'PLAINS', ['TAIGA', 0, 'FOREST'], 'TAIGA', ['OLD_GROWTH_PINE_TAIGA', 0.3, ['TAIGA', -0.3, 'OLD_GROWTH_SPRUCE_TAIGA']]],   // cold
   [['FLOWER_FOREST', 0.4, 'PLAINS'], ['SUNFLOWER_PLAINS', 0.5, 'PLAINS'], 'FOREST', ['OLD_GROWTH_BIRCH_FOREST', 0.4, 'BIRCH_FOREST'], ['PALE_GARDEN', 0.3, 'DARK_FOREST']],   // temperate
   ['SAVANNA', 'SAVANNA', ['FOREST', 0, 'PLAINS'], 'SPARSE_JUNGLE', ['BAMBOO_JUNGLE', 0.3, 'JUNGLE']],                              // warm
-  ['DESERT', 'DESERT', 'DESERT', 'SAVANNA', 'JUNGLE'],                                                                            // hot
+  ['DESERT', 'DESERT', 'DESERT', 'DESERT', ['JUNGLE', 0, 'SAVANNA']],                                                         // hot
 ];
 function landCell(cell, w) {
   while (typeof cell !== 'string') cell = w > cell[1] ? cell[0] : cell[2];
