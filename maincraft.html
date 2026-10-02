@@ -4355,12 +4355,13 @@ WorldGen.prototype.ownBuilder = function (p) {
       for (let y = ay; y <= by; y++) for (let z = az; z <= bz; z++) for (let x = ax; x <= bx; x++)
         if (x === ax || x === bx || z === az || z === bz) W.set(x, y, z, typeof pick === 'function' ? pick(x, y, z) : pick);
     },
-    // a column downward from y until solid ground (air, liquids and plants are replaced)
+    // a foundation column: the cell at y always, then down through air, liquids and plants to
+    // solid ground (at most 24 more, so a column over a big cave stops instead of reaching its floor)
     down(x, y, z, id) {
-      for (let yy = y; p.y + yy > WORLD_MIN_Y + 1; yy--) {
+      for (let yy = y; yy > y - 25 && p.y + yy > WORLD_MIN_Y + 1; yy--) {
         const i = at(x, yy, z); if (i < 0) return;
         const c = ids[i];
-        if (c && !isLiquidId(c) && !(FLAGS[c] & BF_REPLACE) && !(FLAGS[c] & BF_LEAVES)) return;
+        if (yy < y && c && !isLiquidId(c) && !(FLAGS[c] & BF_REPLACE) && !(FLAGS[c] & BF_LEAVES)) return;
         ids[i] = id; meta[i] = 0;
       }
     },
@@ -4476,7 +4477,7 @@ WorldGen.prototype.ruinedPortal = function (p) {
       W.set(x, G, z, r(x, G, z, 1) < 0.25 ? B.CRACKED_STONE_BRICKS : r(x, G, z, 1) < 0.4 ? B.MOSSY_STONE_BRICKS : B.STONE_BRICKS);
       W.down(x, G - 1, z, B.STONE_BRICKS);
       for (let yy = G + 1; yy < 9; yy++) W.set(x, yy, z, 0);
-    } else if (cur > 0 && cur !== B.WATER && r(x, y, z, 2) < 0.75) W.set(x, y, z, r(x, y, z, 3) < 0.12 ? B.MAGMA_BLOCK : B.NETHERRACK);
+    } else if (OPAQUE[cur] && OPAQUE[W.get(x, y - 1, z)] && r(x, y, z, 2) < 0.75) W.set(x, y, z, r(x, y, z, 3) < 0.12 ? B.MAGMA_BLOCK : B.NETHERRACK);   // only real ground
   }
   const frame = (x, y, z) => {
     const k = r(x, y, z, 4);
