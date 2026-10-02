@@ -109,6 +109,8 @@ class Game {
     this.pendingSave = new Map();
     this.particles.length = 0;
     this.ents = new Entities(this);
+    this.ships = this.ships || new Ships(this);
+    this.ships.ship = null;
     this.r.buildClouds(meta.seed | 0);
     const p = this.player;
     p.vel = [0, 0, 0]; p.flying = false; p.fallDist = 0;
@@ -123,6 +125,7 @@ class Game {
       this.spawn = null;
       this.needSpawnDrop = true;
     }
+    this.pendingShip = meta.ship || null;
     this.playing = true;
     this.loadingWorld = true;
     this.updateHotbar();
@@ -178,6 +181,7 @@ class Game {
     Object.assign(this.meta, {
       lastPlayed: Date.now(), time: this.time, mode: this.mode, inv: this.inv, sel: this.sel,
       player: { pos: p.pos.slice(), yaw: p.yaw, pitch: p.pitch, flying: p.flying }, spawn: this.spawn, surv: { ...this.surv },
+      ship: this.ships ? this.ships.serialize() : null,
     });
     await DB.putWorld(this.meta);
     await DB.saveCols(this.meta.id, entries);
@@ -574,6 +578,20 @@ class Game {
     if (!inp.keys.forward && !(inp.joy && inp.joy[1] < -0.2)) p.sprintLatch = false;
     // only simulate when the column under the player is present
     if (!w.isLoaded(Math.floor(p.pos[0]), Math.floor(p.pos[2]))) return;
+    // a vessel saved under way comes back once the world around it is there
+    if (this.pendingShip && !this.loadingWorld) { this.ships.restore(this.pendingShip); this.pendingShip = null; }
+    if (this.ships && this.ships.ship) {
+      // at the wheel: the keys steer the vessel, the player rides along
+      this.ships.update(dt, inp.keys);
+      p.interp(1);
+      if (this.mode === 'survival') this.survivalTick(dt);
+      this.updateCamera();
+      this.interact(dt);
+      this.ents.update(dt);
+      this.tickFurnaces(dt);
+      this.updateParticles(dt);
+      return;
+    }
     const wasWater = p.inWater;
     // player movement runs in game ticks (20/s) like Minecraft's; drawn between the last two
     this.pAcc = (this.pAcc || 0) + dt;
@@ -783,6 +801,7 @@ class Game {
         w.setBlock(tg.x, tg.y, tg.z, id, nm); Sfx.door(!!(nm & 4)); this.swing(); return;
       }
       if (id === B.CRAFTING_TABLE && this.mode === 'survival') { UI.openInventory('craft3'); return; }
+      if (id === B.SHIP_WHEEL && this.ships) { if (this.ships.assemble(tg.x, tg.y, tg.z)) this.swing(); return; }
       if (dryId(id) === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
       if (id === B.FURNACE || id === B.FURNACE_LIT) { UI.openFurnace(tg.x, tg.y, tg.z); return; }
       if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { this.explode(tg.x + 0.5, tg.y + 0.5, tg.z + 0.5, 4, tg); return; }
@@ -1233,6 +1252,7 @@ class Game {
     r.gpuPoll();
     let t = performance.now();
     r.renderWorld(w, cam, vy, vpch, env, time, tick);
+    if (this.ships) this.ships.render(cam, env, time, tick);
     const gl = r.gl;
     this.perfT('rWorld', performance.now() - t);
     // clouds

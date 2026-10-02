@@ -24,6 +24,7 @@ function matches(tag, id) {
   R(['###', '# #', '###'], { '#': P }, B.CHEST);
   R(['C', 'S'], { C: IT.COAL, S }, B.TORCH, 4);
   R(['# #', '###', '# #'], { '#': S }, B.LADDER, 3);
+  R([' S ', 'SPS', ' S '], { S, P }, B.SHIP_WHEEL);
   for (const [mat, tier, key] of [[P, 'WOODEN'], ['stonetool', 'STONE'], [IT.IRON_INGOT, 'IRON'], [IT.GOLD_INGOT, 'GOLDEN'], [IT.DIAMOND, 'DIAMOND']].map(a => [a[0], 0, a[1]])) {
     void tier;
     R(['###', ' S ', ' S '], { '#': mat, S }, IT[key + '_PICKAXE']);

@@ -179,6 +179,20 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   single('SCULK_SHRIEKER', add([box([0, 0, 0], [16, 8, 16], { u: 'sculk_shrieker_inner_top', d: 'sculk_shrieker_bottom', side: 'sculk_shrieker_side' }),
     box([1, 8, 1], [15, 15, 15], { u: 'sculk_shrieker_top', side: 'sculk_shrieker_side' }, { skip: ['d'] })]));
 
+  // ship wheel: a turned post with a spoked wheel on its north face, handles past the rim
+  {
+    const W = 'spruce_planks', P = 'stripped_spruce_log';
+    facing('SHIP_WHEEL', add([
+      box([6, 0, 8], [10, 11, 12], P),
+      box([7, 9, 5], [9, 11, 8], W),
+      box([3, 14, 6], [13, 15, 7], W), box([3, 5, 6], [13, 6, 7], W),
+      box([3, 6, 6], [4, 14, 7], W), box([12, 6, 6], [13, 14, 7], W),
+      box([7.5, 6, 6], [8.5, 14, 7], W), box([4, 9.5, 6], [12, 10.5, 7], W),
+      box([7.5, 15, 6], [8.5, 16, 7], P), box([7.5, 4, 6], [8.5, 5, 7], P),
+      box([1, 9.5, 6], [3, 10.5, 7], P), box([13, 9.5, 6], [15, 10.5, 7], P),
+    ]));
+  }
+
   // selection boxes: the bounds of each variant's elements, turned like the parts
   const turn = (p, rx, ry) => {
     let [x, y, z] = [p[0] - 8, p[1] - 8, p[2] - 8], t;

@@ -52,13 +52,20 @@ layout(location=0) in uvec3 aV;
 layout(location=1) in vec3 aOrigin;   // section origin in world blocks, per section (divisor 1)
 uniform mat4 uVP; uniform vec3 uCamI; uniform vec3 uCamF; uniform float uTime; uniform uint uTick;
 uniform highp usampler2D uAnim; uniform sampler2D uLM; uniform vec2 uFog; uniform float uSway;
+#ifdef SHIP
+uniform mat3 uShipRot; uniform vec3 uShipRel;   // a vessel: its turn and its wheel cell's centre relative to the camera
+#endif
 out vec3 vUV; out vec3 vLit; out float vFog;
 flat out vec3 vTint; flat out float vOvl;
 void main(){
   uint w0 = aV.x, w1 = aV.y, w2 = aV.z;
   vec3 p = vec3(float(w0 & 1023u), float((w0 >> 10) & 1023u), float((w0 >> 20) & 1023u)) * 0.03125;
   // camera-relative: integer parts first, so the result is exact far from the world origin
+#ifdef SHIP
+  vec3 wp = uShipRot * (aOrigin + p - vec3(0.5, 0.0, 0.5)) + uShipRel;
+#else
   vec3 wp = (aOrigin - uCamI) - uCamF + p;
+#endif
   uint fl = w0 >> 30;
   if (fl != 0u && uSway > 0.0) {
     vec3 a = aOrigin + p;
@@ -200,6 +207,7 @@ class Renderer {
     this.assets = assets;
     this.progSolid = this.program(TERRAIN_VS, TERRAIN_FS, '');
     this.progCutout = this.program(TERRAIN_VS, TERRAIN_FS, '#define CUTOUT\n');
+    this.progShip = this.program(TERRAIN_VS, TERRAIN_FS, '#define SHIP\n#define CUTOUT\n');
     this.progTrans = this.program(TERRAIN_VS, TERRAIN_FS, '#define TRANS\n');
     this.progSky = this.program(SKY_VS, SKY_FS, '');
     this.progSprite = this.program(SPRITE_VS, SPRITE_FS, '');
@@ -759,6 +767,24 @@ class Renderer {
     this.pstat[pass].draws += draws; this.pstat[pass].quads += quads;
   }
 
+  // A vessel (ships.js): its section meshes drawn turned and moved as one, alpha-tested (opaque
+  // and cut-out quads alike; its few translucent quads go in the same pass)
+  drawShip(S, cam, env, time, tick, bob) {
+    const gl = this.gl, p = this.progShip;
+    this.bindTerrain(p, cam, env, time, tick);
+    gl.uniform1f(p.u.uSway, 0);
+    const c = Math.cos(S.yaw), s = Math.sin(S.yaw);
+    gl.uniformMatrix3fv(p.u.uShipRot, false, [c, 0, s, 0, 1, 0, -s, 0, c]);
+    gl.uniform3f(p.u.uShipRel, S.pos[0] + 0.5 - cam[0], S.pos[1] + bob - cam[1], S.pos[2] + 0.5 - cam[2]);
+    gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND); gl.enable(gl.CULL_FACE);
+    for (const m of S.meshes) {
+      const n = m.counts[0] + m.counts[1] + m.counts[2];
+      gl.bindVertexArray(m.vao);
+      gl.vertexAttrib3f(1, m.origin[0], m.origin[1], m.origin[2]);
+      gl.drawElements(gl.TRIANGLES, n * 6, gl.UNSIGNED_INT, 0);
+    }
+    gl.bindVertexArray(null);
+  }
   renderWorld(world, cam, yaw, pitch, env, time, tick) {
     const gl = this.gl, cv = this.canvas;
     gl.viewport(0, 0, cv.width, cv.height);
