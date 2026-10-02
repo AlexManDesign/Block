@@ -139,14 +139,27 @@ class Mesher {
     const out = new Uint32Array(total * 12);
     const gc = new Int32Array(3 * FACE_GROUPS);
     let off = 0;
+    // Quads are sorted by facing group, and inside a group from the side the group is seen from:
+    // a +X face is only visible from larger x, so +X faces go largest x first (the -X ones smallest
+    // x first, and so on). Drawn in that order the nearer layers of a leaf crown or a wall come
+    // first and the depth test rejects the hidden layers behind them before shading.
+    const key = this.sortKey || (this.sortKey = new Int32Array(8192));
     for (let pass = 0; pass < 3; pass++) {
       const b = this.bufs[pass], G = gc.subarray(pass * FACE_GROUPS, pass * FACE_GROUPS + FACE_GROUPS);
-      for (let q = 0; q < b.n; q++) G[b.g[q]]++;
-      // counting sort of the pass's quads by facing group
-      const start = new Int32Array(FACE_GROUPS);
-      for (let k = 1; k < FACE_GROUPS; k++) start[k] = start[k - 1] + G[k - 1];
+      if (key.length < b.n) this.sortKey = null;
+      const K = this.sortKey || (this.sortKey = new Int32Array(b.n * 2));
+      const SK = 520, cnt = new Int32Array(FACE_GROUPS * SK);
       for (let q = 0; q < b.n; q++) {
-        const dst = (off + start[b.g[q]]++) * 12;
+        const g = b.g[q], w = b.d[q * 12];
+        const c = g < 2 ? w & 1023 : g < 4 ? (w >> 10) & 1023 : g < 6 ? (w >> 20) & 1023 : 0;   // plane coordinate (1/32 block)
+        const k = g * SK + (g < 6 && (g & 1) ? 512 - c : c);
+        K[q] = k; cnt[k]++; G[g]++;
+      }
+      // counting sort by (group, plane position)
+      for (let k = 1, s = cnt[0]; k < cnt.length; k++) { const c = cnt[k]; cnt[k] = s; s += c; }
+      cnt[0] = 0;
+      for (let q = 0; q < b.n; q++) {
+        const dst = (off + cnt[K[q]]++) * 12;
         out.set(b.d.subarray(q * 12, q * 12 + 12), dst);
       }
       off += b.n;

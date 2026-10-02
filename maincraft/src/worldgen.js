@@ -434,9 +434,9 @@ class WorldGen {
     }
     // mushroom islands far out in the ocean
     let mush = 0;
-    if (c < -0.85) {
+    if (c < -0.75) {
       const m = this.nMush.n2(x * 0.0011, z * 0.0011) * 0.5 + 0.5;
-      if (m > 0.8) { mush = smooth01((m - 0.8) / 0.12) * smooth01((-0.85 - c) / 0.12); const k = SEA - 14 + mush * 26 + this.fbm(this.nHill, x, z, 0.02, 2) * 3; if (k > h) h = k; }
+      if (m > 0.72) { mush = smooth01((m - 0.72) / 0.12) * smooth01((-0.75 - c) / 0.12); const k = SEA - 14 + mush * 26 + this.fbm(this.nHill, x, z, 0.02, 2) * 3; if (k > h) h = k; }
     }
     if (h < WORLD_MIN_Y + 4) h = WORLD_MIN_Y + 4; if (h > WORLD_MAX_Y - 4) h = WORLD_MAX_Y - 4;
     o.h = h; o.c = c; o.e = e; o.w = w; o.pv = pv; o.s = s; o.mush = mush; o.k6 = k6;
