@@ -459,15 +459,269 @@ WorldGen.prototype.strongholdCell = function (p) {
   }
 };
 
+// ===================================================================== sand temple (desert)
+// A walled courtyard with sandstone obelisks at the corners; in it a square temple behind a portico
+// of two columns, a stepped crown on its flat roof, an inlaid floor (own pattern of terracotta), and
+// under it a burial vault with a sarcophagus and three chests, reached by a ladder.
+WorldGen.prototype.desertPyramidStart = function (cx, cz) {
+  if (this.biomeAt(cx * 16 + 8, cz * 16 + 8) !== BI.DESERT) return null;
+  const rnd = mulberry(hash2i(this.seed + 47120389 * 3, cx, cz)), rot = (rnd() * 4) | 0;
+  const p = ownPiece(this.sandTemple, cx * 16, 0, cz * 16, rot, 19, 19, 19, { noTrees: true });
+  const f = this.footprintH(p.box);
+  if (f.hi - f.lo > 7) return null;
+  p.y = f.lo - 8; p.box[1] = p.y; p.box[4] = p.y + 18;
+  return [p];
+};
+WorldGen.prototype.sandTemple = function (p) {
+  const W = this.ownBuilder(p), F = 8;
+  const sandy = (x, y, z) => W.r(x, y, z, 90) < 0.25 ? B.SANDSTONE : B.CUT_SANDSTONE;
+  W.fill(0, F + 1, 0, 18, 18, 18, 0);
+  for (let z = 0; z < 19; z++) for (let x = 0; x < 19; x++) W.down(x, F, z, B.SANDSTONE);
+  W.fill(0, F, 0, 18, F, 18, B.SMOOTH_SANDSTONE);
+  // courtyard wall (2 high) with a gate, obelisks at the corners
+  W.walls(0, F + 1, 0, 18, F + 2, 18, sandy);
+  W.fill(8, F + 1, 0, 10, F + 2, 0, 0);
+  for (const [x, z] of [[0, 0], [18, 0], [0, 18], [18, 18]]) { W.fill(x, F + 1, z, x, F + 6, z, B.CHISELED_SANDSTONE); W.set(x, F + 7, z, B.SMOOTH_SANDSTONE_SLAB); }
+  // the temple 11 x 11, walls 6 high, a portico of two columns with a lintel
+  W.walls(4, F + 1, 5, 14, F + 6, 15, sandy);
+  W.fill(5, F + 1, 6, 13, F + 6, 14, 0);
+  W.fill(8, F + 1, 5, 10, F + 4, 5, 0);
+  for (const x of [7, 11]) W.fill(x, F + 1, 3, x, F + 5, 3, B.CHISELED_SANDSTONE);
+  W.fill(6, F + 6, 2, 12, F + 6, 4, B.SMOOTH_SANDSTONE_SLAB);
+  for (const z of [8, 12]) for (const x of [4, 14]) W.set(x, F + 3, z, 0);
+  // roof and a stepped crown
+  W.fill(4, F + 7, 5, 14, F + 7, 15, B.SMOOTH_SANDSTONE);
+  for (let s = 1; s <= 3; s++) W.fill(4 + s * 2 - 1, F + 7 + s, 5 + s * 2 - 1, 14 - s * 2 + 1, F + 7 + s, 15 - s * 2 + 1, s === 3 ? B.CHISELED_SANDSTONE : B.CUT_SANDSTONE);
+  // inlaid floor: an orange border, a blue diamond, white corners
+  for (let z = 6; z <= 14; z++) for (let x = 5; x <= 13; x++) {
+    const dx = Math.abs(x - 9), dz = Math.abs(z - 10), d = dx + dz;
+    const id = x === 5 || x === 13 || z === 6 || z === 14 ? B.TERRA_ORANGE : d === 3 ? B.BLUE_TERRACOTTA : d === 0 ? B.YELLOW_TERRACOTTA : (dx === 3 && dz === 3) ? B.TERRA_WHITE : B.SMOOTH_SANDSTONE;
+    W.set(x, F, z, id);
+  }
+  // the vault 7 x 7 below, ladder in the back corner
+  W.walls(5, F - 6, 6, 13, F - 1, 14, B.SANDSTONE);
+  W.fill(5, F - 7, 6, 13, F - 7, 14, B.SANDSTONE);
+  W.fill(6, F - 6, 7, 12, F - 2, 13, 0);
+  W.fill(6, F - 1, 7, 12, F - 1, 13, B.SANDSTONE);
+  for (let y = F - 6; y <= F; y++) W.set(12, y, 13, B.LADDER, 2);
+  W.fill(8, F - 6, 9, 10, F - 6, 11, B.CUT_SANDSTONE);
+  W.set(9, F - 5, 10, B.SMOOTH_SANDSTONE); W.set(9, F - 5, 11, B.SMOOTH_SANDSTONE_SLAB);
+  W.chest(6, F - 6, 10, 3, LOOT.DESERT_PYRAMID); W.chest(12, F - 6, 9, 1, LOOT.DESERT_PYRAMID); W.chest(9, F - 6, 7, 0, LOOT.DESERT_PYRAMID);
+  W.set(6, F - 4, 7, B.TORCH, 1 + 2); W.set(12, F - 4, 7, B.TORCH, 1 + 2);
+};
+
+// ===================================================================== bog shack (swamp)
+// A mud-brick shack on a plank deck raised on mangrove stilts with braces, a porch with a ladder,
+// a thatched hay roof, and inside a cauldron, a brewing stand, a barrel and a potted mushroom.
+WorldGen.prototype.swampHutStart = function (cx, cz) {
+  const bio = this.biomeAt(cx * 16 + 8, cz * 16 + 8);
+  if (bio !== BI.SWAMP && bio !== BI.MANGROVE_SWAMP) return null;
+  const rnd = mulberry(hash2i(this.seed + 55301927 * 3, cx, cz)), rot = (rnd() * 4) | 0;
+  const p = ownPiece(this.bogShack, cx * 16 + 3, 0, cz * 16 + 3, rot, 9, 8, 9, { noTrees: true, margin: 1 });
+  const f = this.footprintH(p.box);
+  p.y = Math.max(f.avg, SEA + 1) + 2; p.box[1] = p.y - 4; p.box[4] = p.y + 7;
+  return [p];
+};
+WorldGen.prototype.bogShack = function (p) {
+  const W = this.ownBuilder(p);
+  W.fill(0, 1, 0, 8, 7, 8, 0);
+  W.fill(0, 0, 0, 8, 0, 8, B.SPRUCE_PLANKS);
+  for (const [x, z] of [[0, 0], [8, 0], [0, 8], [8, 8], [4, 8]]) { W.down(x, -1, z, B.MANGROVE_LOG); }
+  for (const [x, z, d] of [[1, 0, 1], [7, 0, 3], [1, 8, 1], [7, 8, 3]]) W.set(x, -1, z, B.MANGROVE_PLANKS_FENCE);
+  // walls 3 high, mangrove log corners, a door and fence windows
+  W.walls(1, 1, 2, 7, 3, 7, (x, y, z) => (x === 1 || x === 7) && (z === 2 || z === 7) ? B.MANGROVE_LOG : B.MUD_BRICKS);
+  W.set(4, 1, 2, B.SPRUCE_DOOR, 2); W.set(4, 2, 2, B.SPRUCE_DOOR, 2 | 4);
+  for (const z of [4, 5]) { W.set(1, 2, z, B.MANGROVE_PLANKS_FENCE); W.set(7, 2, z, B.MANGROVE_PLANKS_FENCE); }
+  // porch railing and a ladder down from it
+  for (let x = 0; x <= 8; x++) if (x !== 4) W.set(x, 1, 0, B.MANGROVE_PLANKS_FENCE);
+  W.set(0, 1, 1, B.MANGROVE_PLANKS_FENCE); W.set(8, 1, 1, B.MANGROVE_PLANKS_FENCE);
+  for (let y = 0; y >= -4; y--) W.set(4, y, 0, B.LADDER, 2);
+  W.set(4, 0, 1, B.SPRUCE_PLANKS);
+  // thatched roof: three stepped layers of hay
+  W.fill(0, 4, 1, 8, 4, 8, B.HAY_BLOCK); W.fill(1, 5, 2, 7, 5, 7, B.HAY_BLOCK); W.fill(2, 6, 3, 6, 6, 6, B.HAY_BLOCK); W.fill(3, 7, 4, 5, 7, 5, B.HAY_BLOCK);
+  // inside
+  W.set(2, 1, 6, B.CAULDRON, 3); W.set(3, 1, 6, B.BREWING_STAND, 0); W.set(6, 1, 6, B.BARREL, 4);
+  W.set(6, 1, 3, B.CRAFTING_TABLE); W.set(2, 1, 3, B.FLOWER_POT); W.set(4, 3, 5, B.LANTERN, 1);
+};
+
+// ===================================================================== old mines
+// A hub cavern with a dirt floor; from it timbered tunnels grow: straight runs (with rails one time
+// in three), junction chambers, turns, ramps down a level, dead ends with a supply chest. Posts and
+// beams every four blocks, plank bridges over gaps, cobwebs; one tunnel in fifteen is a spider den.
+const MINE_MAX = 40;
+WorldGen.prototype.mineStart = function (cx, cz) {
+  const rnd = mulberry(hash2i(this.seed + 22037 * 3, cx, cz)), ri = (n) => (rnd() * n) | 0;
+  const ground = this.floorH(cx * 16 + 8, cz * 16 + 8);
+  const y = Math.min(ground - 16, 6 + ri(36));
+  if (y < WORLD_MIN_Y + 12) return null;
+  const mesa = !!(BPROP[this.biomeAt(cx * 16 + 8, cz * 16 + 8)] || {}).badlands;
+  const segs = [], boxes = [];
+  // overlap is tested on the dug cores only (a tunnel's walls may touch its neighbours)
+  const free = (b) => { for (const a of boxes) if (a[0] <= b[3] && a[3] >= b[0] && a[1] <= b[4] && a[4] >= b[1] && a[2] <= b[5] && a[5] >= b[2]) return false; return true; };
+  const add = (s) => { segs.push(s); boxes.push(s.core || s.box); return s; };
+  const X = cx * 16 + 4, Z = cz * 16 + 4, DX = [0, -1, 0, 1], DZ = [1, 0, -1, 0];
+  add({ kind: 'hub', box: [X - 4, y, Z - 4, X + 4, y + 5, Z + 4], y });
+  const queue = [[X, y, Z - 5, 2, 0], [X, y, Z + 5, 0, 0], [X - 5, y, Z, 1, 0], [X + 5, y, Z, 3, 0]];
+  while (queue.length && segs.length < MINE_MAX) {
+    const [x, yy, z, d, depth] = queue.shift();
+    if (depth > 9 || Math.abs(x - X) > 72 || Math.abs(z - Z) > 72) continue;
+    const r = rnd();
+    if (r < 0.12) {                                         // ramp: 8 long, 4 down
+      const ex = x + DX[d] * 7, ez = z + DZ[d] * 7;
+      const box = [Math.min(x, ex) - 1, yy - 5, Math.min(z, ez) - 1, Math.max(x, ex) + 1, yy + 3, Math.max(z, ez) + 1];
+      if (!free(box)) continue;
+      add({ kind: 'ramp', box, x, y: yy, z, d });
+      queue.push([ex + DX[d], yy - 4, ez + DZ[d], d, depth + 1]);
+      continue;
+    }
+    const len = 4 * (2 + ri(4)), ex = x + DX[d] * (len - 1), ez = z + DZ[d] * (len - 1);
+    const lx = d & 1 ? 0 : 1, lz = d & 1 ? 1 : 0;      // sideways extent of the dug part
+    const core = [Math.min(x, ex) - lx, yy - 1, Math.min(z, ez) - lz, Math.max(x, ex) + lx, yy + 3, Math.max(z, ez) + lz];
+    const box = [core[0] - lx, core[1], core[2] - lz, core[3] + lx, core[4], core[5] + lz];
+    if (!free(core)) continue;
+    const kr = rnd();
+    add({ kind: 'tunnel', box, core, x, y: yy, z, d, len, rails: kr < 0.33, spider: kr > 0.93, chest: rnd() < 0.15 });
+    // side branches every 8 blocks
+    for (let k = 4; k < len - 2; k += 8) if (rnd() < 0.3) {
+      const sx = x + DX[d] * k, sz = z + DZ[d] * k, sd = rnd() < 0.5 ? (d + 1) & 3 : (d + 3) & 3;
+      queue.push([sx + DX[sd] * 2, yy, sz + DZ[sd] * 2, sd, depth + 1]);
+    }
+    const e = rnd(), nx = ex + DX[d], nz = ez + DZ[d];
+    if (e < 0.3) {                                          // junction chamber 5 x 5
+      const jx = nx + DX[d] * 2, jz = nz + DZ[d] * 2, jb = [jx - 2, yy - 1, jz - 2, jx + 2, yy + 4, jz + 2];
+      if (free(jb)) {
+        add({ kind: 'junction', box: jb, x: jx, y: yy, z: jz });
+        for (const nd of [d, (d + 1) & 3, (d + 3) & 3]) queue.push([jx + DX[nd] * 3, yy, jz + DZ[nd] * 3, nd, depth + 1]);
+      }
+    } else if (e < 0.75) queue.push([nx, yy, nz, rnd() < 0.5 ? d : (rnd() < 0.5 ? (d + 1) & 3 : (d + 3) & 3), depth + 1]);
+  }
+  return segs.map(sg => {
+    const b = sg.box;
+    return { build: this.mineSegment, x: b[0], y: b[1], z: b[2], rot: 0, box: b.slice(), seg: sg, mesa };
+  });
+};
+WorldGen.prototype.mineSegment = function (p) {
+  const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0, sg = p.seg, seed = this.seed;
+  const PL = p.mesa ? B.DARK_PLANKS : B.PLANKS, LG = p.mesa ? B.DARK_LOG : B.LOG;
+  const at = (x, y, z) => x >= x0 && x < x0 + 16 && z >= z0 && z < z0 + 16 && y > WORLD_MIN_Y + 1 && y < WORLD_MAX_Y ? CI(x - x0, y, z - z0) : -1;
+  const liquid = (i) => { const c = ids[i]; return isLiquidId(c) || (FLAGS[c] & BF_AQUATIC) !== 0; };
+  const set = (x, y, z, id, m) => { const i = at(x, y, z); if (i >= 0 && !liquid(i)) { ids[i] = id; meta[i] = m || 0; } };
+  const get = (x, y, z) => { const i = at(x, y, z); return i >= 0 ? ids[i] : -1; };
+  const r = (x, y, z, k) => hash3(seed + 2300 + k, x, y, z);
+  // air for a walkway cell column (floor at y), bridging the floor with planks over gaps
+  const walk = (x, y, z, h) => {
+    if (at(x, y, z) < 0) return;
+    for (let k = 0; k < h; k++) set(x, y + k, z, 0);
+    const u = get(x, y - 1, z);
+    if (u >= 0 && !OPAQUE[u]) set(x, y - 1, z, PL);
+  };
+  if (sg.kind === 'hub' || sg.kind === 'junction') {
+    const [ax, ay, az, bx, by, bz] = sg.box, fy = sg.y;
+    for (let z = az; z <= bz; z++) for (let x = ax; x <= bx; x++) {
+      walk(x, fy, z, by - fy);
+      if (sg.kind === 'hub') set(x, fy - 1, z, r(x, fy, z, 1) < 0.15 ? B.GRAVEL : B.DIRT);
+    }
+    for (const [x, z] of [[ax, az], [bx, az], [ax, bz], [bx, bz]]) for (let y = fy; y < by; y++) set(x, y, z, LG);
+    for (let x = ax; x <= bx; x++) { set(x, by - 1, az, PL); set(x, by - 1, bz, PL); }
+    set((ax + bx) >> 1, by - 2, (az + bz) >> 1, B.LANTERN, 1);
+    set((ax + bx) >> 1, by - 1, (az + bz) >> 1, PL);
+    return;
+  }
+  const DX = [0, -1, 0, 1], DZ = [1, 0, -1, 0], d = sg.d, sxd = DZ[d], szd = -DX[d];   // (sxd, szd): sideways
+  if (sg.kind === 'ramp') {
+    for (let k = 0; k < 8; k++) {
+      const fy = sg.y - (k >> 1), cx = sg.x + DX[d] * k, cz = sg.z + DZ[d] * k;
+      for (let c = -1; c <= 1; c++) walk(cx + sxd * c, fy, cz + szd * c, 3 + (k & 1));
+    }
+    return;
+  }
+  // tunnel
+  for (let k = 0; k < sg.len; k++) {
+    const cx = sg.x + DX[d] * k, cz = sg.z + DZ[d] * k, fy = sg.y;
+    for (let c = -1; c <= 1; c++) {
+      const x = cx + sxd * c, z = cz + szd * c;
+      walk(x, fy, z, 3);
+      if (sg.spider ? r(x, fy, z, 2) < 0.35 : (c !== 0 && r(x, fy + 2, z, 3) < 0.05)) set(x, fy + (sg.spider ? (r(x, fy, z, 4) * 3) | 0 : 2), z, B.COBWEB);
+    }
+    if (sg.rails && get(cx, fy - 1, cz) > 0) set(cx, fy, cz, B.RAIL, d & 1 ? 1 : 0);
+    if (k % 4 === 2) {
+      // timber frame: two posts and a beam (now and then fallen: only the posts)
+      for (const c of [-1, 1]) { set(cx + sxd * c, fy, cz + szd * c, LG); set(cx + sxd * c, fy + 1, cz + szd * c, B.OAK_FENCE); }
+      if (r(cx, fy, cz, 5) > 0.15) for (let c = -1; c <= 1; c++) set(cx + sxd * c, fy + 2, cz + szd * c, PL);
+      else set(cx, fy, cz, B.GRAVEL);
+      if (r(cx, fy, cz, 6) < 0.12) { const tx = cx - DX[d], tz = cz - DZ[d]; set(tx, fy + 2, tz, B.TORCH, 1 + d); }
+    }
+  }
+  const mx = sg.x + DX[d] * (sg.len >> 1), mz = sg.z + DZ[d] * (sg.len >> 1);
+  if (sg.spider) {
+    const i = at(mx, sg.y, mz);
+    if (i >= 0) { ids[i] = B.SPAWNER; meta[i] = SPAWNER_MOB.cave_spider; this.spawnerList.push(mx, sg.y, mz); }
+  }
+  if (sg.chest) {
+    // a niche in the side wall with a supply chest facing the tunnel
+    const nx = mx + sxd * 2, nz = mz + szd * 2, i = at(nx, sg.y, nz);
+    if (i >= 0 && !liquid(i)) { ids[i] = B.CHEST; meta[i] = ((d + 1) & 3) | (LOOT.ABANDONED_MINESHAFT << 2); set(nx, sg.y + 1, nz, 0); }
+  }
+};
+
+// ===================================================================== crypts (dungeons)
+// A small stone-brick crypt sealed in rock: cracked and mossy bricks, a chiselled pedestal with a
+// monster spawner, one or two chests set into the walls, cobwebs in the upper corners. Kept only
+// where the rock around is solid and a cave or tunnel opens into it at one to five places.
+WorldGen.prototype.dungeons = function () {
+  const ids = this.ids, meta = this.meta;
+  const rnd = mulberry(hash2i(this.seed + 1301, this.cx, this.cz)), ri = (n) => (rnd() * n) | 0;
+  const solid = (x, y, z) => OPAQUE[ids[CI(x, y, z)]] === 1;
+  const air = (x, y, z) => ids[CI(x, y, z)] === 0;
+  const room = (yLo, yHi) => {
+    const xr = 2 + ri(2), zr = 2 + ri(2);
+    const ox = xr + 1 + ri(14 - 2 * xr), oz = zr + 1 + ri(14 - 2 * zr), oy = yLo + ri(yHi - yLo + 1);
+    if (oy - 1 <= WORLD_MIN_Y || oy + 5 >= WORLD_MAX_Y) return;
+    const ax = ox - xr - 1, bx = ox + xr + 1, az = oz - zr - 1, bz = oz + zr + 1, H = 4;
+    let open = 0;
+    for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) {
+      if (!solid(x, oy - 1, z) || !solid(x, oy + H, z)) return;
+      if ((x === ax || x === bx || z === az || z === bz) && air(x, oy, z) && air(x, oy + 1, z)) open++;
+    }
+    if (open < 1 || open > 5) return;
+    const brick = () => { const r = rnd(); return r < 0.2 ? B.CRACKED_STONE_BRICKS : r < 0.45 ? B.MOSSY_STONE_BRICKS : B.STONE_BRICKS; };
+    for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) for (let y = oy - 1; y <= oy + H; y++) {
+      const i = CI(x, y, z), wall = x === ax || x === bx || z === az || z === bz;
+      if (!wall && y >= oy && y < oy + H) { ids[i] = 0; meta[i] = 0; continue; }
+      if (wall && y >= oy && y < oy + 2 && ids[i] === 0) continue;       // the openings stay open
+      ids[i] = brick(); meta[i] = 0;
+    }
+    for (const [x, z] of [[ax + 1, az + 1], [bx - 1, az + 1], [ax + 1, bz - 1], [bx - 1, bz - 1]]) if (rnd() < 0.5) ids[CI(x, oy + H - 1, z)] = B.COBWEB;
+    // chests set into the walls
+    let chests = 1 + ri(2);
+    for (let t = 0; t < 8 && chests > 0; t++) {
+      const side = ri(4), k = side < 2 ? ax + 1 + ri(bx - ax - 1) : az + 1 + ri(bz - az - 1);
+      const [x, z, face] = side === 0 ? [k, az, 0] : side === 1 ? [k, bz, 2] : side === 2 ? [ax, k, 3] : [bx, k, 1];
+      const i = CI(x, oy, z);
+      if (ids[i] === 0 || ids[i] === B.CHEST) continue;
+      ids[i] = B.CHEST; meta[i] = face | (LOOT.SIMPLE_DUNGEON << 2); chests--;
+    }
+    ids[CI(ox, oy - 1, oz)] = B.CHISELED_STONE_BRICKS;
+    const i = CI(ox, oy, oz);
+    ids[i] = B.SPAWNER; meta[i] = [SPAWNER_MOB.skeleton, SPAWNER_MOB.zombie, SPAWNER_MOB.zombie, SPAWNER_MOB.spider][ri(4)];
+    this.spawnerList.push(this.x0 + ox, oy, this.z0 + oz);
+  };
+  for (let k = 0; k < 10; k++) room(0, WORLD_MAX_Y - 1);
+  for (let k = 0; k < 4; k++) room(WORLD_MIN_Y + 6, -1);
+};
+
 // structure sets of these (spacing / separation in chunks, own salts)
 STRUCTURE_SETS.push(
-  { salt: 61210487, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.jungleTempleStart(x, z); } },
-  { salt: 33590147, spacing: 28, separation: 10, reach: 1, start: function (x, z) { return this.ruinedPortalStart(x, z); } },
-  { salt: 10387319, spacing: 48, separation: 16, reach: 3, start: function (x, z) { return this.mansionStart(x, z); } },
-  { salt: 10387313, spacing: 32, separation: 5, reach: 3, start: function (x, z) { return this.monumentStart(x, z); } },
+  { salt: 47120389, spacing: 32, separation: 8, reach: 2, clearTrees: true, start: function (x, z) { return this.desertPyramidStart(x, z); } },
+  { salt: 55301927, spacing: 32, separation: 8, reach: 1, clearTrees: true, start: function (x, z) { return this.swampHutStart(x, z); } },
+  { salt: 22037, spacing: 16, separation: 4, reach: 6, start: function (x, z) { return this.mineStart(x, z); } },
+  { salt: 61210487, clearTrees: true, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.jungleTempleStart(x, z); } },
+  { salt: 33590147, clearTrees: true, spacing: 28, separation: 10, reach: 1, start: function (x, z) { return this.ruinedPortalStart(x, z); } },
+  { salt: 10387319, clearTrees: true, spacing: 48, separation: 16, reach: 3, start: function (x, z) { return this.mansionStart(x, z); } },
+  { salt: 10387313, clearTrees: true, spacing: 32, separation: 5, reach: 3, start: function (x, z) { return this.monumentStart(x, z); } },
   { salt: 72411097, spacing: 64, separation: 24, reach: 4, start: function (x, z) { return this.strongholdStart(x, z); } },
 );
-const OWN_TREELESS_SETS = STRUCTURE_SETS.slice(-5);
+const OWN_TREELESS_SETS = STRUCTURE_SETS.filter(s => s.clearTrees);
 // boxes of nearby structures that keep trees out (added to the village boxes the tree check uses)
 WorldGen.prototype.structureTreeBoxes = function () {
   const cx = this.cx, cz = this.cz, out = this.vilBoxes || (this.vilBoxes = []);
