@@ -1456,7 +1456,7 @@ class Game {
     const el = $('debug'), bi = $('biomeInfo');
     if ((this.frameN & 7) === 0 && this.world) {
       const p = this.player;
-      const b = this.world.biomeAt(Math.floor(p.pos[0]), Math.floor(p.pos[2]));
+      const b = this.world.biomeAt3(Math.floor(p.pos[0]), Math.floor(p.pos[1] + 1.6), Math.floor(p.pos[2]));
       const name = BIOME_LIST[b] ? (CUR_LANG === 'ru' ? BIOME_LIST[b][2] : BIOME_LIST[b][1]) : '?';
       bi.textContent = (Settings.fps ? this.fps + ' FPS\n' : '') + T('biome') + ': ' + name + (this.player.flying ? '\n' + T('flying') : '');
     }
@@ -1467,7 +1467,7 @@ class Game {
     const p = this.player, w = this.world, r = this.r;
     const x = Math.floor(p.pos[0]), y = Math.floor(p.pos[1]), z = Math.floor(p.pos[2]);
     const lt = w.getLight(x, y, z);
-    const bid = w.biomeAt(x, z);
+    const bid = w.biomeAt3(x, y + 1, z);
     const dirs = ['S (+Z)', 'W (-X)', 'N (-Z)', 'E (+X)'];
     let t = `Maincraft WebGL2  ${this.fps} fps\n`;
     t += `XYZ: ${p.pos[0].toFixed(2)} / ${p.pos[1].toFixed(2)} / ${p.pos[2].toFixed(2)}\n`;

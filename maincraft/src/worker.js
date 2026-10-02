@@ -13,9 +13,9 @@ self.onmessage = function (e) {
   }
   if (d.t === 'gen') {
     const r = GEN.generate(d.cx, d.cz);
-    const tr = [r.biomes.buffer];
+    const tr = [r.biomes.buffer, r.caveBiomes.buffer];
     for (const s of r.sections) if (s) { tr.push(s.ids.buffer, s.meta.buffer); }
-    self.postMessage({ t: 'gen', cx: d.cx, cz: d.cz, sections: r.sections, biomes: r.biomes, springs: r.springs, spawners: r.spawners }, tr);
+    self.postMessage({ t: 'gen', cx: d.cx, cz: d.cz, sections: r.sections, biomes: r.biomes, caveBiomes: r.caveBiomes, springs: r.springs, spawners: r.spawners }, tr);
     return;
   }
   if (d.t === 'mesh') {

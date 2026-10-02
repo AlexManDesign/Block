@@ -32,6 +32,9 @@ const BIOME_LIST = [
   ['FROZEN_PEAKS', 'Frozen Peaks', 'Заледеневшие пики'], ['STONY_PEAKS', 'Stony Peaks', 'Скалистые пики'],
   ['WINDSWEPT_HILLS', 'Windswept Hills', 'Выветренные холмы'], ['WINDSWEPT_GRAVELLY_HILLS', 'Windswept Gravelly Hills', 'Выветренные гравийные холмы'],
   ['WINDSWEPT_FOREST', 'Windswept Forest', 'Выветренный лес'], ['MUSHROOM_FIELDS', 'Mushroom Fields', 'Грибные поля'],
+  ['PALE_GARDEN', 'Pale Garden', 'Бледный сад'],
+  // cave biomes: only underground (caveBiome), the surface map never holds them
+  ['LUSH_CAVES', 'Lush Caves', 'Пышные пещеры'], ['DRIPSTONE_CAVES', 'Dripstone Caves', 'Капельниковые пещеры'], ['DEEP_DARK', 'Deep Dark', 'Глубокая тьма'],
 ];
 const BI = {};
 BIOME_LIST.forEach((b, i) => { BI[b[0]] = i; });
@@ -45,7 +48,7 @@ const BIOME_TEMP = new Float32Array(BIOME_LIST.length);
 (function () {
   const T = {
     PLAINS: 0.8, SUNFLOWER_PLAINS: 0.8, BEACH: 0.8, SWAMP: 0.8, MANGROVE_SWAMP: 0.8, FOREST: 0.7, FLOWER_FOREST: 0.7,
-    DARK_FOREST: 0.7, BIRCH_FOREST: 0.6, OLD_GROWTH_BIRCH_FOREST: 0.6, TAIGA: 0.25, OLD_GROWTH_PINE_TAIGA: 0.3,
+    DARK_FOREST: 0.7, PALE_GARDEN: 0.7, LUSH_CAVES: 0.5, DRIPSTONE_CAVES: 0.8, DEEP_DARK: 0.8, BIRCH_FOREST: 0.6, OLD_GROWTH_BIRCH_FOREST: 0.6, TAIGA: 0.25, OLD_GROWTH_PINE_TAIGA: 0.3,
     OLD_GROWTH_SPRUCE_TAIGA: 0.25, MEADOW: 0.5, CHERRY_GROVE: 0.5, WINDSWEPT_HILLS: 0.2, WINDSWEPT_GRAVELLY_HILLS: 0.2,
     WINDSWEPT_FOREST: 0.2, STONY_SHORE: 0.2, STONY_PEAKS: 1.0, JUNGLE: 0.95, SPARSE_JUNGLE: 0.95, BAMBOO_JUNGLE: 0.95,
     DESERT: 2, SAVANNA: 2, SAVANNA_PLATEAU: 2, WINDSWEPT_SAVANNA: 2, BADLANDS: 2, ERODED_BADLANDS: 2, WOODED_BADLANDS: 2,
@@ -77,12 +80,13 @@ const BIOME_TINT = new Uint32Array(BIOME_LIST.length * 3);
     MEADOW: [0x83BB6D, 0x63A948], CHERRY_GROVE: [0xB6DB61, 0xB6DB61],
     JUNGLE: [0x59C93C, 0x30BB0B], BAMBOO_JUNGLE: [0x59C93C, 0x30BB0B], SPARSE_JUNGLE: [0x64C73F, 0x3EB80F],
     SWAMP: [0x6A7039, 0x6A7039], MANGROVE_SWAMP: [0x6A7039, 0x8DB127], MUSHROOM_FIELDS: [0x55C93F, 0x2BBB0F],
+    PALE_GARDEN: [0x8A9682, 0x939C88],   // own: a washed-out grey green
   };
   const W = {
     SWAMP: 0x617B64, MANGROVE_SWAMP: 0x3A7A6A, WARM_OCEAN: 0x43D5EE, LUKEWARM_OCEAN: 0x45ADF2,
     DEEP_LUKEWARM_OCEAN: 0x45ADF2, COLD_OCEAN: 0x3D57D6, DEEP_COLD_OCEAN: 0x3D57D6, FROZEN_OCEAN: 0x3938C9,
     DEEP_FROZEN_OCEAN: 0x3938C9, FROZEN_RIVER: 0x3938C9, SNOWY_BEACH: 0x3D57D6, SNOWY_TAIGA: 0x3D57D6,
-    MEADOW: 0x0E4ECF, CHERRY_GROVE: 0x5DB7EF,
+    MEADOW: 0x0E4ECF, CHERRY_GROVE: 0x5DB7EF, PALE_GARDEN: 0x6E8292,
   };
   // everything else (oceans, rivers, caves): temperate defaults
   BIOME_LIST.forEach((b, i) => {
@@ -118,6 +122,7 @@ const BPROP = [];
   def('BIRCH_FOREST', {});
   like('OLD_GROWTH_BIRCH_FOREST', 'BIRCH_FOREST', {});
   def('DARK_FOREST', {});
+  def('PALE_GARDEN', {});
   def('TAIGA', { top: G });
   def('OLD_GROWTH_SPRUCE_TAIGA', {});
   like('OLD_GROWTH_PINE_TAIGA', 'OLD_GROWTH_SPRUCE_TAIGA', {});
@@ -141,6 +146,7 @@ const BPROP = [];
   like('WINDSWEPT_GRAVELLY_HILLS', 'WINDSWEPT_HILLS', { top: B.GRAVEL, fill: B.GRAVEL });
   like('WINDSWEPT_FOREST', 'WINDSWEPT_HILLS', {});
   def('MUSHROOM_FIELDS', { top: B.MYCELIUM, fill: D });
+  def('LUSH_CAVES', {}); def('DRIPSTONE_CAVES', {}); def('DEEP_DARK', {});
 })();
 
 const ORIG_BIOME = [];   // biome of the original's set that a biome follows (variants -> base)
@@ -151,7 +157,7 @@ const ORIG_BIOME = [];   // biome of the original's set that a biome follows (va
 const MC_TREES = {};
 // columns (Chebyshev distance between trunks) a tree needs free of another tree's trunk: 2x2
 // trunks and cacti; other trunks may stand side by side as in Minecraft
-const TREE_ROOM = { cactus: 2, ice_spike: 2, giant_red_mushroom: 3, giant_brown_mushroom: 3, dark_oak: 2, mega_spruce: 2, mega_pine: 2, mega_jungle: 2 };
+const TREE_ROOM = { cactus: 2, ice_spike: 2, giant_red_mushroom: 3, giant_brown_mushroom: 3, dark_oak: 2, pale_oak: 2, mega_spruce: 2, mega_pine: 2, mega_jungle: 2 };
 // deepest water (blocks above the ground) a tree may stand in, as Minecraft's surface water depth filter
 const TREE_WATER = { mangrove: 5, tall_mangrove: 5, swamp_oak: 2 };
 const FACE6 = [1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1], FACE4 = [1, 0, -1, 0, 0, 1, 0, -1];
@@ -163,6 +169,7 @@ const FACE6 = [1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1], FACE4 =
   T('BIRCH_FOREST', 10, 0.1, 1, [[1, 'birch']]);
   T('OLD_GROWTH_BIRCH_FOREST', 10, 0.1, 1, [[0.5, 'super_birch'], [1, 'birch']]);
   T('DARK_FOREST', 16, 0, 0, [[0.025, 'giant_brown_mushroom'], [0.05, 'giant_red_mushroom'], [0.6666667, 'dark_oak'], [0.2, 'birch'], [0.1, 'fancy_oak'], [1, 'oak']]);
+  T('PALE_GARDEN', 14, 0, 0, [[1, 'pale_oak']]);
   T('TAIGA SNOWY_TAIGA', 10, 0.1, 1, [[0.33333334, 'pine'], [1, 'spruce']]);
   T('GROVE', 10, 0.1, 1, [[0.33333334, 'pine'], [1, 'spruce']]);
   T('OLD_GROWTH_SPRUCE_TAIGA', 10, 0.1, 1, [[0.33333334, 'mega_spruce'], [0.33333334, 'pine'], [1, 'spruce']]);
@@ -198,7 +205,7 @@ const PATCHES = {
   sunflower: { tries: 96, xz: 7, y: 3, kind: 'sunflower' }, brown_mushroom: { tries: 96, xz: 7, y: 3, kind: 'brown_mushroom' },
   red_mushroom: { tries: 96, xz: 7, y: 3, kind: 'red_mushroom' },
   flower_default: { tries: 64, xz: 6, y: 2, kind: 'flower_default' }, flower_plains: { tries: 64, xz: 6, y: 2, kind: 'flower_plains' },
-  flower_swamp: { tries: 64, xz: 6, y: 2, kind: 'blue_orchid' }, flower_flower_forest: { tries: 96, xz: 6, y: 2, kind: 'flower_forest' },
+  flower_swamp: { tries: 64, xz: 6, y: 2, kind: 'blue_orchid' }, eyeblossom: { tries: 48, xz: 6, y: 2, kind: 'eyeblossom' }, flower_flower_forest: { tries: 96, xz: 6, y: 2, kind: 'flower_forest' },
   flower_meadow: { tries: 96, xz: 6, y: 2, kind: 'flower_meadow' }, forest_flowers: { tries: 96, xz: 7, y: 3, kind: 'forest_flowers' },
 };
 // per biome: [patch, placement]; placement: n = count per chunk, r = 1-in-r chance per instance,
@@ -226,6 +233,7 @@ const MC_VEG = {};
   V('BADLANDS ERODED_BADLANDS', [['dead_bush', { n: 20 }], ['sugar_cane', { r: 5 }], ...mush]);
   V('WOODED_BADLANDS', [['grass', { n: 1 }], ['dead_bush', { n: 20 }], ['sugar_cane', { r: 5 }], ...mush]);
   V('MEADOW', [['flower_meadow', { n: 1 }], ['grass', { n: 1 }]]);
+  V('PALE_GARDEN', [['eyeblossom', { r: 2 }], ['grass', { n: 2 }]]);
   V('CHERRY_GROVE', [['grass', { nt: [5, 10] }], ['flower_plains', { r: 32 }]]);
   V('WINDSWEPT_HILLS WINDSWEPT_GRAVELLY_HILLS WINDSWEPT_FOREST SNOWY_PLAINS STONY_SHORE BEACH RIVER', [['grass', { n: 1 }], ['flower_default', { r: 32 }], ...mush, ...extra]);
 })();
@@ -239,7 +247,7 @@ const LAND_TABLE = [
   // humidity: dry ............................................................................ wet
   [['ICE_SPIKES', 0.3, 'SNOWY_PLAINS'], 'SNOWY_PLAINS', ['SNOWY_TAIGA', -0.2, 'SNOWY_PLAINS'], 'SNOWY_TAIGA', 'SNOWY_TAIGA'],          // frozen
   ['PLAINS', 'PLAINS', ['TAIGA', 0, 'FOREST'], 'TAIGA', ['OLD_GROWTH_PINE_TAIGA', 0.3, ['TAIGA', -0.3, 'OLD_GROWTH_SPRUCE_TAIGA']]],   // cold
-  [['FLOWER_FOREST', 0.4, 'PLAINS'], ['SUNFLOWER_PLAINS', 0.5, 'PLAINS'], 'FOREST', ['OLD_GROWTH_BIRCH_FOREST', 0.4, 'BIRCH_FOREST'], 'DARK_FOREST'],   // temperate
+  [['FLOWER_FOREST', 0.4, 'PLAINS'], ['SUNFLOWER_PLAINS', 0.5, 'PLAINS'], 'FOREST', ['OLD_GROWTH_BIRCH_FOREST', 0.4, 'BIRCH_FOREST'], ['PALE_GARDEN', 0.3, 'DARK_FOREST']],   // temperate
   ['SAVANNA', 'SAVANNA', ['FOREST', 0, 'PLAINS'], 'SPARSE_JUNGLE', ['BAMBOO_JUNGLE', 0.3, 'JUNGLE']],                              // warm
   ['DESERT', 'DESERT', 'DESERT', 'SAVANNA', 'JUNGLE'],                                                                            // hot
 ];
@@ -613,7 +621,7 @@ class WorldGen {
       secs[s] = { ids: ids.slice(off, off + 4096), meta: meta.slice(off, off + 4096) };
     }
     const bio = new Uint8Array(BIO);
-    return { sections: secs, biomes: bio, springs: this.springList, spawners: this.spawnerList };
+    return { sections: secs, biomes: bio, caveBiomes: this.cbio.slice(), springs: this.springList, spawners: this.spawnerList };
   }
 
   fillTerrain() {
@@ -2129,7 +2137,7 @@ class WorldGen {
     else if (t === 'ice_spike') { if (top !== B.SNOW) return null; }
     else if (t === 'mangrove' || t === 'tall_mangrove') { if (top !== B.MUD) return null; }
     else if (sy > SEA && top !== B.GRASS && top !== B.PODZOL && top !== B.SNOW && top !== B.MYCELIUM && top !== B.MUD && top !== B.DIRT) return null;
-    if (t === 'dark_oak' || t === 'mega_spruce' || t === 'mega_pine' || t === 'mega_jungle') {
+    if (t === 'dark_oak' || t === 'pale_oak' || t === 'mega_spruce' || t === 'mega_pine' || t === 'mega_jungle') {
       // 2x2 trunk: every column needs ground no more than 3 blocks below the origin
       for (const [dx, dz] of [[1, 0], [0, 1], [1, 1]]) { const g = this.groundAt(x + dx, z + dz); if (g < sy - 3 || g > sy + 3) return null; }
     }
@@ -2192,7 +2200,7 @@ class WorldGen {
     let rs = (hash2(this.seed + 131, x, z) * 4294967296) >>> 0;
     const rnd = () => { rs = (rs + 0x6D2B79F5) | 0; let t = Math.imul(rs ^ (rs >>> 15), 1 | rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     const nextInt = (n) => (rnd() * n) | 0;
-    let vineChance = 0, propagules = false, mossOnRoots = false, trunkVines = false, podzol = false;
+    let vineChance = 0, propagules = false, mossOnRoots = false, trunkVines = false, podzol = false, paleMoss = false;
     // FoliagePlacer.placeLeavesRow: the square of `range` around (cx, cy + yo, cz) (one more column
     // on the + sides for a 2x2 trunk), minus the cells skip(|dx|, yo, |dz|, range, large) drops
     const row = (cx, cy, cz, range, yo, large, id, skip) => {
@@ -2355,8 +2363,11 @@ class WorldGen {
         vineChance = 0.25; trunkVines = true;
         break;
       }
-      case 'dark_oak': {
-        // DarkOakTrunkPlacer(6, 2, 1) + DarkOakFoliagePlacer(0, 0)
+      case 'dark_oak': case 'pale_oak': {
+        // DarkOakTrunkPlacer(6, 2, 1) + DarkOakFoliagePlacer(0, 0); the pale oak is the same build in
+        // pale wood, with moss hanging from its crown and now and then a creaking heart in the trunk
+        const pale = type === 'pale_oak', LG = pale ? B.PALE_OAK_LOG : B.DARK_LOG, LV = pale ? B.PALE_OAK_LEAVES : B.DARK_LEAVES;
+        if (pale) paleMoss = true;
         const h = 6 + nextInt(3) + nextInt(2);
         for (let d = 0; d < 4; d++) { const cx = x + (d & 1), cz = z + (d >> 1); soil(cx, this.groundAt(cx, cz), cz); }
         const dir = nextInt(4), sx = [1, -1, 0, 0][dir], sz = [0, 0, 1, -1][dir];
@@ -2369,15 +2380,16 @@ class WorldGen {
           for (let d = 0; d < 4; d++) {
             const cx = j1 + (d & 1), cz = k1 + (d >> 1);
             // the 2x2 trunk reaches down to the ground of each of its columns
-            if (i2 === 0 && j1 === x && k1 === z) for (let gy = this.groundAt(cx, cz) + 1; gy < yy; gy++) put(cx, gy, cz, B.DARK_LOG, 0);
-            put(cx, yy, cz, B.DARK_LOG, 0);
+            if (i2 === 0 && j1 === x && k1 === z) for (let gy = this.groundAt(cx, cz) + 1; gy < yy; gy++) put(cx, gy, cz, LG, 0);
+            put(cx, yy, cz, LG, 0);
           }
         }
+        if (pale && nextInt(4) === 0) log(j1 + nextInt(2), sy + 2 + nextInt(Math.max(1, h - 4)), k1 + nextInt(2), B.CREAKING_HEART);
         const att = [[j1, l1, k1, true]];
         for (let l2 = -1; l2 <= 2; l2++) for (let i3 = -1; i3 <= 2; i3++) {
           if ((l2 < 0 || l2 > 1 || i3 < 0 || i3 > 1) && nextInt(3) <= 0) {
             const n = nextInt(3) + 2;
-            for (let k2 = 0; k2 < n; k2++) put(x + l2, l1 - k2 - 1, z + i3, B.DARK_LOG, 0);
+            for (let k2 = 0; k2 < n; k2++) put(x + l2, l1 - k2 - 1, z + i3, LG, 0);
             att.push([j1 + l2, l1, k1 + i3, false]);
           }
         }
@@ -2388,13 +2400,13 @@ class WorldGen {
             return false;
           };
           if (dbl) {
-            row(ax, ay, az, 2, -1, true, B.DARK_LEAVES, sk);
-            rowSigned(ax, ay, az, 3, 0, true, B.DARK_LEAVES, (dx, yy, dz, r) => (dx === -r || dx >= r) && (dz === -r || dz >= r));
-            row(ax, ay, az, 2, 1, true, B.DARK_LEAVES, sk);
-            if (nextInt(2)) row(ax, ay, az, 0, 2, true, B.DARK_LEAVES, sk);
+            row(ax, ay, az, 2, -1, true, LV, sk);
+            rowSigned(ax, ay, az, 3, 0, true, LV, (dx, yy, dz, r) => (dx === -r || dx >= r) && (dz === -r || dz >= r));
+            row(ax, ay, az, 2, 1, true, LV, sk);
+            if (nextInt(2)) row(ax, ay, az, 0, 2, true, LV, sk);
           } else {
-            row(ax, ay, az, 2, -1, false, B.DARK_LEAVES, sk);
-            row(ax, ay, az, 1, 0, false, B.DARK_LEAVES, sk);
+            row(ax, ay, az, 2, -1, false, LV, sk);
+            row(ax, ay, az, 1, 0, false, LV, sk);
           }
         }
         break;
@@ -2610,7 +2622,7 @@ class WorldGen {
     // decorations on the surviving leaves: Minecraft's leave vine decorator (vines hanging down
     // up to five blocks) and hanging propagules under mangrove leaves (two free blocks below)
     const deco = [];
-    if (vineChance || propagules || mossOnRoots || trunkVines) {
+    if (vineChance || propagules || mossOnRoots || trunkVines || paleMoss) {
       const taken = new Set(), props = new Set();
       const free = (xx, yy, zz) => {
         const k = key(xx, yy, zz);
@@ -2645,6 +2657,15 @@ class WorldGen {
             if (yy === ly) deco.push(vx, yy, vz, B.VINE, hang[s][2], lx, ly, lz);   // held by the leaf
             else deco.push(vx, yy, vz, B.VINE, hang[s][2], vx, yy + 1, vz);        // by the vine above
             taken.add(key(vx, yy, vz));
+          }
+        }
+        // pale moss: strands of 1-4 under a fifth of the crown's lowest leaves, the last one a tip
+        if (paleMoss && hash3(this.seed + 141, lx, ly, lz) < 0.2 && free(lx, ly - 1, lz)) {
+          let n = 1 + ((hash3(this.seed + 142, lx, ly, lz) * 4) | 0), yy = ly - 1;
+          while (n > 1 && !free(lx, yy - n + 1, lz)) n--;
+          for (let k = 0; k < n; k++, yy--) {
+            if (!free(lx, yy, lz)) break;
+            deco.push(lx, yy, lz, k === n - 1 ? B.PALE_HANGING_MOSS_TIP : B.PALE_HANGING_MOSS, 0, lx, yy + 1, lz); taken.add(key(lx, yy, lz));
           }
         }
         if (propagules && hash3(this.seed + 139, lx, ly, lz) < 0.14 && free(lx, ly - 1, lz) && free(lx, ly - 2, lz)) {
@@ -2709,7 +2730,9 @@ class WorldGen {
     for (let i = 0; i < deco.length; i += 8) {
       const sup = this.getB(deco[i + 5], deco[i + 6], deco[i + 7]), id = deco[i + 3];
       if (sup >= 0) {
+        const moss = id === B.PALE_HANGING_MOSS || id === B.PALE_HANGING_MOSS_TIP;
         const ok = id === B.MOSS_CARPET ? /ROOTS/.test(B_KEY[sup] || '') : id === B.VINE && deco[i + 6] > deco[i + 1] ? sup === B.VINE :
+          moss && sup === B.PALE_HANGING_MOSS ? true :
           (FLAGS[sup] & BF_LEAVES) !== 0 || (id === B.VINE && /_LOG$|^LOG$/.test(B_KEY[sup] || ''));
         if (!ok) continue;
       }
@@ -2725,6 +2748,16 @@ class WorldGen {
   // ---------------------------------------------------------------- vegetation (maincraft rules)
   vegetation() {
     const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0, TOP = this.TOP;
+    // pale garden floor: drifts of pale moss (a block noise picks the drifts), carpets on most of it
+    for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
+      if (this.BIO[z * 16 + x] !== BI.PALE_GARDEN) continue;
+      const y = TOP[z * 16 + x], wx = x0 + x, wz = z0 + z, i = CI(x, y, z);
+      if (y <= SEA || ids[i] !== B.GRASS) continue;
+      const v = this.nMisc.n2(wx * 0.06 + 517.3, wz * 0.06 - 291.9) + (hash2(this.seed + 143, wx, wz) - 0.5) * 0.3;
+      if (v < 0.05) continue;
+      ids[i] = B.PALE_MOSS_BLOCK; meta[i] = 0;
+      if (ids[i + 256] === 0 && v > 0.15 && hash2(this.seed + 144, wx, wz) < 0.55) ids[i + 256] = B.PALE_MOSS_CARPET;
+    }
     // underwater decoration, and the original's bamboo and mushroom-field columns
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
       const y = TOP[z * 16 + x];
@@ -2811,6 +2844,7 @@ class WorldGen {
       case 'brown_mushroom': return B.BROWN_MUSHROOM;
       case 'red_mushroom': return B.RED_MUSHROOM;
       case 'blue_orchid': return B.BLUE_ORCHID;
+      case 'eyeblossom': return r1 < 0.5 ? B.CLOSED_EYEBLOSSOM : B.OPEN_EYEBLOSSOM;
       case 'forest_flowers': return pickF;
       case 'flower_default': return r1 < 2 / 3 ? B.POPPY : B.DANDELION;
       case 'flower_plains': {
@@ -2837,7 +2871,7 @@ class WorldGen {
   // canSurvive of the plants on the block below (Minecraft's BushBlock and friends)
   plantStays(id, below, lx, y, lz) {
     const dirt = below === B.GRASS || below === B.DIRT || below === B.PODZOL || below === B.COARSE_DIRT || below === B.ROOTED_DIRT ||
-      below === B.MOSS_BLOCK || below === B.MUD || below === B.SNOWY_GRASS || below === B.MYCELIUM;
+      below === B.MOSS_BLOCK || below === B.PALE_MOSS_BLOCK || below === B.MUD || below === B.SNOWY_GRASS || below === B.MYCELIUM;
     if (id === B.DEAD_BUSH) return dirt || below === B.SAND || below === B.RED_SAND || below === B.TERRACOTTA || /TERRACOTTA$/.test(B_KEY[below] || '');
     if (id === B.PUMPKIN || id === B.MELON) return below === B.GRASS;
     if (id === B.BROWN_MUSHROOM || id === B.RED_MUSHROOM) {
@@ -2957,39 +2991,88 @@ class WorldGen {
     return true;
   }
 
+  // Cave biome of a 4x4x4 cell (0 none): own rules on the column climate and the depth below the
+  // surface. Lush caves under humid land, dripstone caves under far inland, the deep dark low down
+  // under mountains (low erosion); a 3D region noise breaks each into separate cave systems.
+  caveBiomes() {
+    const x0 = this.x0, z0 = this.z0, TOP = this.TOP, G = this.cbio || (this.cbio = new Uint8Array(16 * (WORLD_H >> 2)));
+    G.fill(0);
+    const o = this._cbo || (this._cbo = {});
+    for (let qz = 0; qz < 4; qz++) for (let qx = 0; qx < 4; qx++) {
+      const wx = x0 + qx * 4 + 2, wz = z0 + qz * 4 + 2;
+      this.climate(wx, wz, o);
+      const top = TOP[(qz * 4 + 2) * 16 + qx * 4 + 2];
+      for (let qy = 1; qy < (WORLD_H >> 2) - 1; qy++) {
+        const y = WORLD_MIN_Y + qy * 4 + 2, depth = top - y;
+        if (depth < 14) continue;
+        const reg = this.nCave.n3(wx / 80, y / 44, wz / 80), reg2 = this.nCave.n3(wx / 80 + 300, y / 44, wz / 80 - 200);
+        let b = 0;
+        if (y < -18 && o.e < -0.2) { if (this.nCave.n3(wx / 96 + 700, y / 52, wz / 96 + 90) > -0.15) b = BI.DEEP_DARK; }
+        else if (o.hu > 0.3 && reg > -0.05) b = BI.LUSH_CAVES;
+        else if (o.c > 0.45 && reg2 > -0.05) b = BI.DRIPSTONE_CAVES;
+        else if (reg > 0.45) b = BI.LUSH_CAVES;              // small pockets anywhere
+        else if (reg2 > 0.48) b = BI.DRIPSTONE_CAVES;
+        G[(qy * 4 + qz) * 4 + qx] = b;
+      }
+    }
+    return G;
+  }
   caveDecor() {
     const ids = this.ids, meta = this.meta, x0 = this.x0, z0 = this.z0, TOP = this.TOP, seed = this.seed;
+    const G = this.caveBiomes();
+    const STONY = (b) => b === B.STONE || b === B.DEEPSLATE || b === B.TUFF || b === B.GRANITE || b === B.DIORITE || b === B.ANDESITE;
+    // a pointed dripstone column of n from cell i stepping by d (-256 down from a ceiling, +256 up
+    // from a floor): thick at the root, a tip at the free end
+    const spike = (i, d, n) => {
+      for (let k = 0; k < n; k++) if (ids[i + k * d] !== 0) { n = k; break; }
+      for (let k = 0; k < n; k++) {
+        const j = i + k * d, left = n - 1 - k;
+        ids[j] = B.POINTED_DRIPSTONE;
+        meta[j] = (left === 0 ? 1 : left === 1 ? 2 : k === 0 && n >= 4 ? 4 : 3) | (d > 0 ? 8 : 0);
+      }
+    };
     for (let z = 0; z < 16; z++) for (let x = 0; x < 16; x++) {
       const wx = x0 + x, wz = z0 + z, top = TOP[z * 16 + x];
       for (let y = top - 6; y > WORLD_MIN_Y + 6; y--) {
         const i = CI(x, y, z);
         if (ids[i] !== 0) continue;
         const below = ids[i - 256], above = ids[i + 256];
-        const floor = below === B.STONE || below === B.DEEPSLATE || below === B.TUFF || below === B.GRANITE || below === B.DIORITE || below === B.ANDESITE || below === B.GRAVEL;
-        const ceil = above === B.STONE || above === B.DEEPSLATE || above === B.TUFF || above === B.GRANITE || above === B.DIORITE || above === B.ANDESITE;
+        const floor = STONY(below) || below === B.GRAVEL, ceil = STONY(above);
+        const cb = G[(((y - WORLD_MIN_Y) >> 2) * 4 + (z >> 2)) * 4 + (x >> 2)];
+        const r = hash3(seed + 51, wx, y, wz);
         if (!floor && !ceil) {
-          // glow lichen on walls
-          if (y < 40 && hash3(seed + 50, wx, y, wz) < 0.012) {
-            let bits = 0;
-            if (x < 15 && OPAQUE[ids[i + 1]]) bits |= 8; if (x > 0 && OPAQUE[ids[i - 1]]) bits |= 2;
-            if (z < 15 && OPAQUE[ids[i + 16]]) bits |= 1; if (z > 0 && OPAQUE[ids[i - 16]]) bits |= 4;
-            if (bits) { ids[i] = B.GLOW_LICHEN; meta[i] = bits; }
-          }
+          let bits = 0;
+          if (x < 15 && OPAQUE[ids[i + 1]]) bits |= 8; if (x > 0 && OPAQUE[ids[i - 1]]) bits |= 2;
+          if (z < 15 && OPAQUE[ids[i + 16]]) bits |= 1; if (z > 0 && OPAQUE[ids[i - 16]]) bits |= 4;
+          if (!bits) continue;
+          if (cb === BI.DEEP_DARK) { if (r < 0.12) { ids[i] = B.SCULK_VEIN; meta[i] = bits; } }
+          else if (cb === BI.LUSH_CAVES) { if (r < 0.05) { ids[i] = B.GLOW_LICHEN; meta[i] = bits; } }
+          else if (y < 40 && r < 0.012) { ids[i] = B.GLOW_LICHEN; meta[i] = bits; }
           continue;
         }
-        const reg = this.nCave.n3(wx / 70, y / 40, wz / 70), reg2 = this.nCave.n3(wx / 70 + 300, y / 40, wz / 70 - 200);
-        const r = hash3(seed + 51, wx, y, wz);
-        if (reg > 0.42 && y < top - 14) {
-          // lush cave
+        if (cb === BI.LUSH_CAVES) {
           if (floor) {
-            ids[i - 256] = r < 0.05 ? B.CLAY : B.MOSS_BLOCK;
-            if (r < 0.1) ids[i] = B.FLOWERING_AZALEA_LEAVES;
-            else if (r < 0.28) ids[i] = B.MOSS_CARPET;
-            else if (r < 0.45) ids[i] = r < 0.36 ? B.TALL_GRASS : B.FERN;
-          } else if (ceil) {
+            ids[i - 256] = r < 0.04 ? B.CLAY : r < 0.07 ? B.ROOTED_DIRT : B.MOSS_BLOCK;
+            const r2 = hash3(seed + 56, wx, y, wz);
+            if (r2 < 0.04) ids[i] = r2 < 0.015 ? B.FLOWERING_AZALEA : B.AZALEA;
+            else if (r2 < 0.07 && ids[i + 256] === 0) {
+              // big dripleaf: a stem of 0-2 and the leaf on top, facing a random side
+              const n = (hash3(seed + 57, wx, y, wz) * 3) | 0, f = (hash3(seed + 58, wx, y, wz) * 4) | 0;
+              let k = 0;
+              for (; k < n && ids[i + (k + 1) * 256] === 0; k++) { ids[i + k * 256] = B.BIG_DRIPLEAF_STEM; meta[i + k * 256] = f; }
+              ids[i + k * 256] = B.BIG_DRIPLEAF; meta[i + k * 256] = f;
+            } else if (r2 < 0.1 && ids[i + 256] === 0) {
+              const f = (hash3(seed + 58, wx, y, wz) * 4) | 0;
+              ids[i] = B.SMALL_DRIPLEAF; meta[i] = f; ids[i + 256] = B.SMALL_DRIPLEAF; meta[i + 256] = f | 4;
+            } else if (r2 < 0.32) ids[i] = B.MOSS_CARPET;
+            else if (r2 < 0.5) ids[i] = r2 < 0.42 ? B.TALL_GRASS : B.FERN;
+          } else {
             ids[i + 256] = B.MOSS_BLOCK;
-            if (r < 0.3) {
-              const len = 1 + ((hash3(seed + 52, wx, y, wz) * 6) | 0);
+            const r2 = hash3(seed + 59, wx, y, wz);
+            if (r2 < 0.006) ids[i] = B.SPORE_BLOSSOM;
+            else if (r2 < 0.05) ids[i] = B.HANGING_ROOTS;
+            else if (r2 < 0.28) {
+              const len = 1 + ((hash3(seed + 52, wx, y, wz) * 7) | 0);
               for (let k = 0; k < len; k++) {
                 const j = i - k * 256;
                 if (ids[j] !== 0) break;
@@ -2997,15 +3080,27 @@ class WorldGen {
               }
             }
           }
-        } else if (reg2 > 0.45) {
-          // dripstone cave
+        } else if (cb === BI.DRIPSTONE_CAVES) {
           if (floor) {
-            if (r < 0.4) ids[i - 256] = B.DRIPSTONE;
-            if (r < 0.07) { const len = 1 + ((hash3(seed + 54, wx, y, wz) * 3) | 0); for (let k = 0; k < len; k++) { const j = i + k * 256; if (ids[j] !== 0) break; ids[j] = B.DRIPSTONE; } }
-          } else if (ceil) {
-            if (r < 0.4) ids[i + 256] = B.DRIPSTONE;
-            if (r < 0.07) { const len = 1 + ((hash3(seed + 55, wx, y, wz) * 3) | 0); for (let k = 0; k < len; k++) { const j = i - k * 256; if (ids[j] !== 0) break; ids[j] = B.DRIPSTONE; } }
+            if (r < 0.55) ids[i - 256] = B.DRIPSTONE;
+            if (r < 0.06) spike(i, 256, 1 + ((hash3(seed + 54, wx, y, wz) * 5) | 0));
+          } else {
+            if (r < 0.55) ids[i + 256] = B.DRIPSTONE;
+            if (r < 0.09) spike(i, -256, 1 + ((hash3(seed + 55, wx, y, wz) * 6) | 0));
           }
+        } else if (cb === BI.DEEP_DARK) {
+          // sculk spreads in patches (a block noise), with sensors, shriekers and catalysts on it
+          const v = this.vn.f2(wx * 0.11 + y * 0.37, wz * 0.11 - y * 0.29);
+          if (floor) {
+            if (v > 0.3) {
+              ids[i - 256] = B.SCULK;
+              const r2 = hash3(seed + 60, wx, y, wz);
+              if (r2 < 0.02) ids[i] = B.SCULK_SENSOR;
+              else if (r2 < 0.026) ids[i] = B.SCULK_SHRIEKER;
+              else if (r2 < 0.03) ids[i - 256] = B.SCULK_CATALYST;
+            } else if (v > 0.2) { ids[i] = B.SCULK_VEIN; meta[i] = 16; }
+          } else if (v > 0.35) ids[i + 256] = B.SCULK;
+          else if (v > 0.25) { ids[i] = B.SCULK_VEIN; meta[i] = 32; }
         }
       }
     }

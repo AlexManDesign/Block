@@ -566,7 +566,7 @@ class Mesher {
         return;
       }
       case SH.VINE: case SH.LICHEN: {
-        const lt = this.maxLight(p), s = lt >> 4, b = shape === SH.LICHEN ? Math.max(lt & 15, 7) : lt & 15;
+        const lt = this.maxLight(p), s = lt >> 4, b = id === B.GLOW_LICHEN ? Math.max(lt & 15, 7) : lt & 15;
         const X = x * 16, Y = y * 16, Z = z * 16, e = 0.8;
         const t = texs[2];
         const bits = m || 1;

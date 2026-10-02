@@ -113,6 +113,12 @@ class World {
     return s ? s.light[((y & 15) << 8) | ((z & 15) << 4) | (x & 15)] : 0xF0;
   }
   isLoaded(x, z) { const c = this.col(x >> 4, z >> 4); return !!(c && c.state); }
+  // biome at a block: the cave biome of its 4x4x4 cell underground, else the surface biome
+  biomeAt3(x, y, z) {
+    const c = this.col(x >> 4, z >> 4), G = c && c.caveBiomes;
+    if (G && y > WORLD_MIN_Y && y < WORLD_MAX_Y) { const b = G[(((y - WORLD_MIN_Y) >> 2) * 4 + ((z & 15) >> 2)) * 4 + ((x & 15) >> 2)]; if (b) return b; }
+    return this.biomeAt(x, z);
+  }
   biomeAt(x, z) { const c = this.col(x >> 4, z >> 4); return c && c.biomes ? c.biomes[((z & 15) << 4) | (x & 15)] : 0; }
 
   // ------------------------------------------------------------------ worker messages
@@ -159,7 +165,7 @@ class World {
     let top = -1;
     for (let s = SECTIONS - 1; s >= 0; s--) if (c.secs[s]) { top = s; break; }
     for (let s = 0; s < top; s++) if (!c.secs[s]) c.secs[s] = new Section(false);
-    c.biomes = d.biomes;
+    c.biomes = d.biomes; c.caveBiomes = d.caveBiomes;
     // fluid springs start flowing once the column and its neighbours are lit (see gameTick)
     if (d.springs && d.springs.length) { c.springs = d.springs; this.springCols.add(c); }
     if (d.spawners && d.spawners.length) { c.spawners = d.spawners; this.spawnerCols.add(c); }
