@@ -230,82 +230,41 @@ const MC_VEG = {};
   V('WINDSWEPT_HILLS WINDSWEPT_GRAVELLY_HILLS WINDSWEPT_FOREST SNOWY_PLAINS STONY_SHORE BEACH RIVER', [['grass', { n: 1 }], ['flower_default', { r: 32 }], ...mush, ...extra]);
 })();
 
-// ---------------------------------------------------------------- multi-noise biome lookup
-// Nearest parameter point (sum of squared distances to each parameter interval), searched with a
-// small bounding-box tree like Minecraft's Climate.RTree.
-const MC_TO_BIOME = {};
-const BIOME_TREE = (function () {
-  if (typeof MC_BIOME_POINTS === 'undefined') return null;
-  const bin = atob(MC_BIOME_POINTS), u8 = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-  const a = new Int16Array(u8.buffer);
-  const N = a.length / 11, D = 5;
-  const leaves = [];
-  for (let i = 0; i < N; i++) {
-    const box = new Float64Array(D * 2);
-    for (let d = 0; d < D * 2; d++) box[d] = a[i * 11 + 1 + d] / 10000;
-    const name = MC_BIOME_NAMES[a[i * 11]].toUpperCase();
-    leaves.push({ box, biome: BI[name] !== undefined ? BI[name] : BI.PLAINS, kids: null });
-  }
-  const center = (n, d) => (n.box[d * 2] + n.box[d * 2 + 1]) / 2;
-  const bound = (kids) => {
-    const box = new Float64Array(D * 2);
-    for (let d = 0; d < D; d++) { box[d * 2] = Infinity; box[d * 2 + 1] = -Infinity; }
-    for (const k of kids) for (let d = 0; d < D; d++) { if (k.box[d * 2] < box[d * 2]) box[d * 2] = k.box[d * 2]; if (k.box[d * 2 + 1] > box[d * 2 + 1]) box[d * 2 + 1] = k.box[d * 2 + 1]; }
-    return { box, biome: -1, kids };
-  };
-  const cost = (b) => { let s = 0; for (let d = 0; d < D; d++) s += b[d * 2 + 1] - b[d * 2]; return s; };
-  const bucket = (nodes) => {
-    const size = Math.pow(10, Math.floor(Math.log(nodes.length - 0.01) / Math.LN10));
-    const out = [];
-    for (let i = 0; i < nodes.length; i += size) out.push(bound(nodes.slice(i, i + size)));
-    return out;
-  };
-  const build = (nodes) => {
-    if (nodes.length === 1) return nodes[0];
-    if (nodes.length <= 10) return bound(nodes.slice().sort((p, q) => {
-      let sp = 0, sq = 0; for (let d = 0; d < D; d++) { sp += Math.abs(center(p, d)); sq += Math.abs(center(q, d)); } return sp - sq;
-    }));
-    let best = Infinity, bestD = 0;
-    for (let d = 0; d < D; d++) {
-      const sorted = nodes.slice().sort((p, q) => center(p, d) - center(q, d));
-      let c = 0; for (const b of bucket(sorted)) c += cost(b.box);
-      if (c < best) { best = c; bestD = d; }
-    }
-    const sorted = nodes.slice().sort((p, q) => center(p, bestD) - center(q, bestD));
-    const groups = bucket(sorted).sort((p, q) => Math.abs(center(p, bestD)) - Math.abs(center(q, bestD)));
-    return bound(groups.map(g => build(g.kids)));
-  };
-  return build(leaves);
-})();
-function biomeDist(box, q) {
-  let s = 0;
-  for (let d = 0; d < 5; d++) {
-    const v = q[d], lo = box[d * 2], hi = box[d * 2 + 1];
-    const e = v < lo ? lo - v : v > hi ? v - hi : 0;
-    s += e * e;
-  }
-  return s;
+// ---------------------------------------------------------------- land biome rules
+// Own rules: the land biome follows the height the terrain reached (peaks, slopes, windswept hills),
+// the flat wet lowland (swamps), and otherwise a temperature x humidity table whose cells pick a
+// variant by weirdness (a third climate axis independent of the other two).
+// Table cell: a biome key, or [key if w > split, split, key otherwise] (a nested cell may follow).
+const LAND_TABLE = [
+  // humidity: dry ............................................................................ wet
+  [['ICE_SPIKES', 0.3, 'SNOWY_PLAINS'], 'SNOWY_PLAINS', ['SNOWY_TAIGA', -0.2, 'SNOWY_PLAINS'], 'SNOWY_TAIGA', 'SNOWY_TAIGA'],          // frozen
+  ['PLAINS', 'PLAINS', ['TAIGA', 0, 'FOREST'], 'TAIGA', ['OLD_GROWTH_PINE_TAIGA', 0.3, ['TAIGA', -0.3, 'OLD_GROWTH_SPRUCE_TAIGA']]],   // cold
+  [['FLOWER_FOREST', 0.4, 'PLAINS'], ['SUNFLOWER_PLAINS', 0.5, 'PLAINS'], 'FOREST', ['OLD_GROWTH_BIRCH_FOREST', 0.4, 'BIRCH_FOREST'], 'DARK_FOREST'],   // temperate
+  ['SAVANNA', 'SAVANNA', ['FOREST', 0, 'PLAINS'], 'SPARSE_JUNGLE', ['BAMBOO_JUNGLE', 0.3, 'JUNGLE']],                              // warm
+  ['DESERT', 'DESERT', 'DESERT', 'SAVANNA', 'JUNGLE'],                                                                            // hot
+];
+function landCell(cell, w) {
+  while (typeof cell !== 'string') cell = w > cell[1] ? cell[0] : cell[2];
+  return BI[cell];
 }
-let _biomeLast = null;
-function biomeSearch(node, q, best, bestD) {
-  if (!node.kids) return node;
-  for (const k of node.kids) {
-    const dk = biomeDist(k.box, q);
-    if (dk >= bestD) continue;
-    const r = k.kids ? biomeSearch(k, q, best, bestD) : k;
-    const dr = r === k && !k.kids ? dk : biomeDist(r.box, q);
-    if (dr < bestD) { bestD = dr; best = r; if (dr === 0) return best; }
+function landBiome(o) {
+  const ti = o.ti, hs = o.h - SEA, w = o.w, e = o.e, hu = o.hu;
+  const hi = hu < -0.4 ? 0 : hu < -0.1 ? 1 : hu < 0.15 ? 2 : hu < 0.4 ? 3 : 4;
+  if (hs >= 80) return ti >= 3 ? BI.STONY_PEAKS : w < 0 ? BI.JAGGED_PEAKS : BI.FROZEN_PEAKS;
+  if (hs >= 40 && e < -0.1) {
+    if (ti <= 1) return hi <= 1 ? BI.SNOWY_SLOPES : BI.GROVE;
+    if (ti === 2) return hi <= 1 ? (w > 0.3 ? BI.CHERRY_GROVE : BI.MEADOW) : hi === 2 ? BI.MEADOW : BI.GROVE;
+    if (ti === 3) return hi <= 2 ? BI.SAVANNA_PLATEAU : BI.JUNGLE;
+    return e < -0.4 ? BI.ERODED_BADLANDS : BI.BADLANDS;
   }
-  return best;
-}
-function lookupBiome(q) {
-  if (!BIOME_TREE) return BI.PLAINS;
-  let best = _biomeLast, bestD = best ? biomeDist(best.box, q) : Infinity;
-  if (bestD === 0) return best.biome;
-  best = biomeSearch(BIOME_TREE, q, best, bestD);
-  _biomeLast = best;
-  return best.biome;
+  if (hs >= 30 && e > 0.1) {
+    if (ti <= 2) return hi === 0 ? BI.WINDSWEPT_GRAVELLY_HILLS : hi >= 3 ? BI.WINDSWEPT_FOREST : BI.WINDSWEPT_HILLS;
+    if (hi <= 2) return BI.WINDSWEPT_SAVANNA;
+  }
+  if (o.k6 > 0.5 && hs < 6 && ti > 0 && hi >= 2) return ti <= 2 ? BI.SWAMP : BI.MANGROVE_SWAMP;
+  // the hot dry belt rises into banded badlands
+  if (ti === 4 && hi >= 2 && hi <= 3 && hs >= 15) return hi === 3 ? BI.WOODED_BADLANDS : e > 0.1 ? BI.ERODED_BADLANDS : BI.BADLANDS;
+  return landCell(LAND_TABLE[ti][hi], w);
 }
 
 const CORAL_BLOCKS = [B.TUBE_CORAL_BLOCK, B.BRAIN_CORAL_BLOCK, B.BUBBLE_CORAL_BLOCK, B.FIRE_CORAL_BLOCK, B.HORN_CORAL_BLOCK];
@@ -352,22 +311,22 @@ const SHIPWRECK_OCEAN = ['with_mast', 'upsidedown_full', 'upsidedown_fronthalf',
   'sideways_backhalf_degraded', 'rightsideup_full_degraded', 'rightsideup_fronthalf_degraded', 'rightsideup_backhalf_degraded'];
 const SHIP_LOOT = { supply_chest: LOOT.SHIPWRECK_SUPPLY, map_chest: LOOT.SHIPWRECK_MAP, treasure_chest: LOOT.SHIPWRECK_TREASURE };
 const STRUCTURE_SETS = [
-  { salt: 14357618, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.iglooStart(x, z); } },
-  { salt: 165745295, spacing: 24, separation: 4, reach: 2, start: function (x, z) { return this.shipwreckStart(x, z); } },
-  { salt: 14357621, spacing: 20, separation: 8, reach: 3, start: function (x, z) { return this.oceanRuinStart(x, z); } },
-  { salt: 14357617, spacing: 32, separation: 8, reach: 2, start: function (x, z) { return this.desertPyramidStart(x, z); } },
-  { salt: 14357620, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.swampHutStart(x, z); } },
+  { salt: 38810541, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.iglooStart(x, z); } },
+  { salt: 61294733, spacing: 24, separation: 4, reach: 2, start: function (x, z) { return this.shipwreckStart(x, z); } },
+  { salt: 29467103, spacing: 20, separation: 8, reach: 3, start: function (x, z) { return this.oceanRuinStart(x, z); } },
+  { salt: 47120389, spacing: 32, separation: 8, reach: 2, start: function (x, z) { return this.desertPyramidStart(x, z); } },
+  { salt: 55301927, spacing: 32, separation: 8, reach: 1, start: function (x, z) { return this.swampHutStart(x, z); } },
 ];
 // jigsaw structures (worldgen/structure + structure_set): start pools by biome, depth, placement
-const STRUCTURE_SETS_VIL = { salt: 10387312, spacing: 34, separation: 8, reach: 7, depth: 6, types: [
+const STRUCTURE_SETS_VIL = { salt: 52918417, spacing: 34, separation: 8, reach: 7, depth: 6, types: [
   { pool: 'village/plains/town_centers', biomes: [BI.PLAINS, BI.MEADOW] }, { pool: 'village/desert/town_centers', biomes: [BI.DESERT] },
   { pool: 'village/savanna/town_centers', biomes: [BI.SAVANNA] }, { pool: 'village/snowy/town_centers', biomes: [BI.SNOWY_PLAINS] },
   { pool: 'village/taiga/town_centers', biomes: [BI.TAIGA] }], start: function (x, z) { return this.jigsawStart(STRUCTURE_SETS_VIL, x, z); } };
 // pillager outposts: frequency 0.2, never within 10 chunks of a village placement chunk
-const STRUCTURE_SETS_OUTPOST = { salt: 165745296, spacing: 32, separation: 8, reach: 7, depth: 7, types: [{ pool: 'pillager_outpost/base_plates',
+const STRUCTURE_SETS_OUTPOST = { salt: 73810259, spacing: 32, separation: 8, reach: 7, depth: 7, types: [{ pool: 'pillager_outpost/base_plates',
   biomes: [BI.DESERT, BI.PLAINS, BI.SAVANNA, BI.SNOWY_PLAINS, BI.TAIGA, BI.MEADOW, BI.FROZEN_PEAKS, BI.JAGGED_PEAKS, BI.STONY_PEAKS, BI.SNOWY_SLOPES, BI.CHERRY_GROVE, BI.GROVE] }],
   start: function (x, z) {
-    if (hash2(this.seed + 165745296 * 7, x, z) >= 0.2) return null;
+    if (hash2(this.seed + 73810259 * 7, x, z) >= 0.2) return null;
     const V = STRUCTURE_SETS_VIL;
     for (let rz = Math.floor((z - 10) / V.spacing); rz <= Math.floor((z + 10) / V.spacing); rz++)
       for (let rx = Math.floor((x - 10) / V.spacing); rx <= Math.floor((x + 10) / V.spacing); rx++) {
@@ -507,17 +466,7 @@ class WorldGen {
       if (o.e < -0.18) return BI.STONY_SHORE;
       if (this.nMisc.n2(x * 0.011 + 401.7, z * 0.011 - 233.1) * 0.5 + 0.5 > 0.35) return BI.BEACH;
     }
-    // the same weirdness the terrain was shaped with (Minecraft: peaks / valleys and the biome
-    // slices come from one value); the valley slice itself is the river, decided above
-    let sw = clamp1(o.w);
-    if (sw > -0.06 && sw < 0.06) sw = sw < 0 ? -0.06 : 0.06;
-    const q = this._q || (this._q = new Float64Array(5));
-    q[0] = o.t; q[1] = clamp1(o.hu * 0.82); q[2] = spline(SPL_CONT_PARAM, o.c < 0.05 ? 0.05 : o.c);
-    // hot land is shifted toward higher erosion (deserts over badlands), but never into zone 6:
-    // swamps / mangroves only where the terrain above really is the flat erosion-6 lowland
-    const e15 = o.e * 1.5;
-    q[3] = clamp1(o.t > 0.5 ? Math.min(e15 + 0.42, Math.max(e15, 0.5)) : e15); q[4] = sw;
-    return lookupBiome(q);
+    return landBiome(o);
   }
   // biome at quart resolution (4x4 columns, like Minecraft's biome storage)
   biomeAt(x, z) {
@@ -1170,7 +1119,7 @@ class WorldGen {
   // 4..11 sections down to a basement laboratory
   iglooStart(cx, cz) {
     if (!IGLOO_BIOMES.has(this.biomeAt(cx * 16, cz * 16))) return null;
-    const rnd = mulberry(hash2i(this.seed + 14357618 * 3, cx, cz)), rot = (rnd() * 4) | 0;
+    const rnd = mulberry(hash2i(this.seed + 38810541 * 3, cx, cz)), rot = (rnd() * 4) | 0;
     const X = cx * 16, Z = cz * 16, out = [];
     const PIV = { 'igloo/top': [3, 5], 'igloo/middle': [1, 1], 'igloo/bottom': [3, 7] };
     const OFF = { 'igloo/top': [0, 0, 0], 'igloo/middle': [2, -3, 4], 'igloo/bottom': [0, -3, -2] };
@@ -1207,7 +1156,7 @@ class WorldGen {
     const bio = this.biomeAt(cx * 16, cz * 16), bp = BPROP[bio];
     const beached = bio === BI.BEACH || bio === BI.SNOWY_BEACH;
     if (!beached && !(bp && bp.ocean && bio !== BI.RIVER && bio !== BI.FROZEN_RIVER)) return null;
-    const rnd = mulberry(hash2i(this.seed + 165745295 * 3, cx, cz)), rot = (rnd() * 4) | 0;
+    const rnd = mulberry(hash2i(this.seed + 61294733 * 3, cx, cz)), rot = (rnd() * 4) | 0;
     const list = beached ? SHIPWRECK_BEACHED : SHIPWRECK_OCEAN, name = 'shipwreck/' + list[(rnd() * list.length) | 0];
     const T = this.tpl(name), X = cx * 16, Z = cz * 16;
     let sum = 0, mn = 1e9;
@@ -1224,7 +1173,7 @@ class WorldGen {
     const bio = this.biomeAt(cx * 16, cz * 16);
     const warm = RUIN_WARM.has(bio), cold = RUIN_COLD.has(bio);
     if (!warm && !cold) return null;
-    const rnd = mulberry(hash2i(this.seed + 14357621 * 3, cx, cz)), ri = (n) => (rnd() * n) | 0, nI = (a, b) => a + ri(b - a + 1);
+    const rnd = mulberry(hash2i(this.seed + 29467103 * 3, cx, cz)), ri = (n) => (rnd() * n) | 0, nI = (a, b) => a + ri(b - a + 1);
     const X = cx * 16, Z = cz * 16, out = [];
     let salt = 0;
     const add = (x, z, rot, large, integrity) => {
@@ -1325,7 +1274,7 @@ class WorldGen {
   // a terracotta-patterned hall and the hidden chamber with 4 loot chests over a TNT trap
   desertPyramidStart(cx, cz) {
     if (this.biomeAt(cx * 16 + 8, cz * 16 + 8) !== BI.DESERT) return null;
-    const rnd = mulberry(hash2i(this.seed + 14357617 * 3, cx, cz));
+    const rnd = mulberry(hash2i(this.seed + 47120389 * 3, cx, cz));
     const dir = (rnd() * 4) | 0, X = cx * 16, Z = cz * 16, box = [X, 64, Z, X + 20, 78, Z + 20];
     let low = 1e9;
     for (let z = box[2]; z <= box[5]; z++) for (let x = box[0]; x <= box[3]; x++) low = Math.min(low, this.surfH(x, z));
@@ -1379,7 +1328,7 @@ class WorldGen {
   // ground level, crafting table and a potted mushroom inside
   swampHutStart(cx, cz) {
     if (this.biomeAt(cx * 16 + 8, cz * 16 + 8) !== BI.SWAMP) return null;
-    const rnd = mulberry(hash2i(this.seed + 14357620 * 3, cx, cz));
+    const rnd = mulberry(hash2i(this.seed + 55301927 * 3, cx, cz));
     const dir = (rnd() * 4) | 0, X = cx * 16, Z = cz * 16, box = [X, 64, Z, X + 6, 70, Z + 8];
     let sum = 0, n = 0;
     for (let z = box[2]; z <= box[5]; z++) for (let x = box[0]; x <= box[3]; x++) { sum += this.surfH(x, z); n++; }
