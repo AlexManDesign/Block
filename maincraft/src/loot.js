@@ -74,6 +74,28 @@ const LOOT_TABLES = {
   VILLAGE_SAVANNA_HOUSE: [[3, 8, [['GOLD_INGOT', 1, 1, 1], ['TALL_GRASS', 5, 1, 1], ['BREAD', 10, 1, 4], ['WHEAT_SEEDS', 10, 1, 5], ['EMERALD', 2, 1, 4], ['ACACIA_SAPLING', 10, 1, 2], ['TORCH', 1, 1, 2], ['BUCKET', 1, 1, 1]]]],
   VILLAGE_SNOWY_HOUSE: [[3, 8, [['BLUE_ICE', 1, 1, 1], ['SNOW', 4, 1, 1], ['POTATO', 2, 1, 7], ['BREAD', 4, 1, 4], ['BEETROOT_SEEDS', 5, 1, 5], ['BEETROOT', 5, 1, 5], ['FURNACE', 1, 1, 1], ['EMERALD', 1, 1, 4], ['SNOW', 10, 1, 3], ['COAL', 5, 1, 4]]]],
   VILLAGE_TAIGA_HOUSE: [[3, 8, [['IRON_INGOT', 1, 1, 2], ['FERN', 2, 1, 1], ['LARGE_FERN', 2, 1, 1], ['POTATO', 10, 1, 7], ['SWEET_BERRIES', 5, 1, 7], ['BREAD', 6, 1, 4], ['PUMPKIN_SEEDS', 5, 1, 5], ['PUMPKIN', 1, 1, 1], ['EMERALD', 1, 1, 4], ['SPRUCE_SAPLING', 5, 1, 5], ['SPRUCE_LOG', 10, 1, 5]]]],
+  // added with the jungle temple, ruined portals, mansion, monument and stronghold (appended: older chests keep their tables)
+  RUINED_PORTAL: [
+    [4, 8, [['OBSIDIAN', 8, 1, 2], ['FLINT', 8, 1, 4], ['IRON_INGOT', 6, 1, 3], ['FLINT_AND_STEEL', 4, 1, 1], ['GOLD_INGOT', 10, 2, 8],
+      ['GOLDEN_APPLE', 2, 1, 1], ['GOLDEN_CARROT', 4, 4, 12], ['GOLDEN_SWORD', 3, 1, 1], ['GOLDEN_AXE', 3, 1, 1], ['GOLDEN_PICKAXE', 3, 1, 1],
+      ['GOLD_BLOCK', 1, 1, 2]]],
+  ],
+  WOODLAND_MANSION: [
+    [1, 3, [['GOLDEN_APPLE', 3, 1, 1], ['DIAMOND', 2, 1, 2], ['IRON_PICKAXE', 3, 1, 1], ['DIAMOND_HOE', 2, 1, 1], ['BOOKSHELF', 4, 1, 2], ['', 6, 1, 1]]],
+    [2, 6, [['IRON_INGOT', 10, 1, 4], ['GOLD_INGOT', 6, 1, 4], ['BREAD', 14, 1, 3], ['WHEAT', 14, 1, 4], ['BUCKET', 6, 1, 1], ['COAL', 10, 1, 4],
+      ['MELON_SEEDS', 6, 2, 4], ['PUMPKIN_SEEDS', 6, 2, 4], ['BEETROOT_SEEDS', 6, 2, 4], ['EMERALD', 3, 1, 2]]],
+    [3, 4, [['BONE', 10, 1, 8], ['GUNPOWDER', 10, 1, 8], ['ROTTEN_FLESH', 10, 1, 8], ['STRING', 10, 1, 8]]],
+  ],
+  MONUMENT_TREASURE: [
+    [3, 5, [['GOLD_INGOT', 10, 3, 8], ['PRISMARINE', 8, 2, 6], ['SEA_LANTERN', 6, 1, 3], ['DIAMOND', 3, 1, 2], ['EMERALD', 5, 1, 4], ['RAW_SALMON', 6, 2, 5], ['SPONGE', 4, 1, 2]]],
+  ],
+  STRONGHOLD_LIBRARY: [
+    [2, 6, [['BOOKSHELF', 10, 1, 3], ['SUGAR_CANE', 14, 2, 7], ['FEATHER', 8, 1, 4], ['LEATHER', 6, 1, 3], ['ENDER_PEARL', 3, 1, 1], ['GOLDEN_APPLE', 1, 1, 1]]],
+  ],
+  STRONGHOLD_STORE: [
+    [2, 4, [['IRON_INGOT', 10, 1, 5], ['GOLD_INGOT', 5, 1, 3], ['REDSTONE_TORCH', 6, 1, 4], ['BREAD', 15, 1, 3], ['APPLE', 15, 1, 3], ['IRON_PICKAXE', 3, 1, 1],
+      ['IRON_SWORD', 3, 1, 1], ['ENDER_PEARL', 4, 1, 2], ['DIAMOND', 2, 1, 2], ['COAL', 10, 3, 8]]],
+  ],
 };
 const LOOT = {}, LOOT_DATA = [null];
 for (const k in LOOT_TABLES) { LOOT[k] = LOOT_DATA.length; LOOT_DATA.push(LOOT_TABLES[k]); }

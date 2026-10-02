@@ -593,6 +593,7 @@ class WorldGen {
     for (let dz = 0; dz < 16; dz++) for (let dx = 0; dx < 16; dx++) BIO[dz * 16 + dx] = this.biomeAtBlock(x0 + dx, z0 + dz);
     this.vilGround = null;
     this.beard = this.villageBeard();
+    this.structureTreeBoxes();
     this.fillTerrain();
     this.surface();
     this.caves();
@@ -2764,7 +2765,7 @@ class WorldGen {
       if (y <= WORLD_MIN_Y + 1 || y >= WORLD_MAX_Y - 3) continue;
       const bio = this.BIO[z * 16 + x], ob = ORIG_BIOME[bio], wx = x0 + x, wz = z0 + z;
       const above = ids[CI(x, y + 1, z)];
-      if (y < SEA) { if (above === B.WATER) this.waterDecor(x, z, y, ob); continue; }
+      if (y < SEA) { if (above === B.WATER && !this.inVillage(wx, y + 1, wz)) this.waterDecor(x, z, y, ob); continue; }
       if (above !== 0 || (ob !== BI.BAMBOO_JUNGLE && ob !== BI.MUSHROOM_FIELDS)) continue;
       const plant = this.plantAt(bio, ob, x, z, wx, wz, y), ground = ids[CI(x, y, z)];
       if (!plant) continue;
@@ -2987,7 +2988,7 @@ class WorldGen {
     if (n > 25) n = 25;
     if (n < 1) return false;
     const top = Math.min(SEA - 1, fy + 1 + Math.floor(hash2(this.seed + 45, x * 9 - 3, z * 9 + 7) * n));
-    for (let y = fy + 1; y <= top; y++) this.ids[CI(lx, y, lz)] = B.KELP;
+    for (let y = fy + 1; y <= top; y++) { const i = CI(lx, y, lz); if (this.ids[i] !== B.WATER) break; this.ids[i] = B.KELP; }
     return true;
   }
 
