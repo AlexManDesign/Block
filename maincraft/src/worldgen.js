@@ -1880,9 +1880,10 @@ class WorldGen {
         // a 2x2 giant: a long cone (spruce) or a short crown at the very top (pine), podzol around
         const h = 14 + nextInt(14), top = sy + h, mega = type === 'mega_spruce';
         giant(h, B.SPRUCE_LOG);
-        const low = mega ? sy + Math.floor(h * 0.35) : top - 5 - nextInt(3), maxR = mega ? 4.5 : 3.5;
-        for (let y = top + 1; y >= low; y--) {
-          const t = (top + 1 - y) / Math.max(1, top + 1 - low), r = t * maxR - ((top - y) % 3 === 0 ? 0.8 : 0);
+        const low = mega ? sy + Math.floor(h * 0.35) : top - 5 - nextInt(3), maxR = mega ? 4.5 : 3.5, cap = top + 2;
+        // the crown closes over the trunk: at least the 2x2 at the top, widening downward in tiers
+        for (let y = cap; y >= low; y--) {
+          const t = (cap - y) / Math.max(1, cap - low), r = 1 + t * (maxR - 1) - ((cap - y) % 3 === 2 ? 0.8 : 0);
           for (let dx = -5; dx <= 6; dx++) for (let dz = -5; dz <= 6; dz++) {
             const ex = dx - 0.5, ez = dz - 0.5;
             if (ex * ex + ez * ez <= r * r + 0.5) put(x + dx, y, z + dz, B.SPRUCE_LEAVES, 1);

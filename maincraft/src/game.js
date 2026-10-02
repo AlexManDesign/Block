@@ -738,6 +738,8 @@ class Game {
     this.breakingPlayer = true;
     w.breakBlock(x, y, z, false);
     this.breakingPlayer = false;
+    // ice broken by hand in survival melts: still water where something (ground or water) holds it
+    if (id === B.ICE && this.mode === 'survival' && w.getBlock(x, y - 1, z) !== 0 && !w.getBlock(x, y, z)) w.setBlock(x, y, z, B.WATER, 0);
   }
   onBlockBroken(x, y, z, id, m, byUpdate) {
     // a broken chest spills its contents in every mode (Containers.dropContents)
