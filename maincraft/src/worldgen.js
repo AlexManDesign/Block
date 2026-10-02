@@ -1431,8 +1431,15 @@ class WorldGen {
   }
   vilAssemble(first, cx, cy, cz, rnd, MAXD) {
     const D = 80, pieces = [first];
+    // a building (rigid template with a real footprint) also claims the ground under it, so no
+    // lower piece (a farm on a lower street) ends up beneath its floor
+    const claim = (e, b) => {
+      if (e[0] !== 0 || e[3] !== 0) return b;
+      const T = this.vilTpl(e[1]);
+      return T.sx * T.sz >= 9 ? [b[0], b[1] - 32, b[2], b[3], b[4], b[5]] : b;
+    };
     // free space: an outer box minus placed boxes (VoxelShape ONLY_FIRST joins), shared as in Minecraft
-    const outer = { o: [cx - D, cy - D, cz - D, cx + D + 1, cy + D + 1, cz + D + 1], holes: [box6(first.box)] };
+    const outer = { o: [cx - D, cy - D, cz - D, cx + D + 1, cy + D + 1, cz + D + 1], holes: [box6(claim(first.e, first.box))] };
     const fits = (sh, b) => {
       const a = [b[0] + 0.25, b[1] + 0.25, b[2] + 0.25, b[3] + 0.75, b[4] + 0.75, b[5] + 0.75], o = sh.o;
       if (a[0] < o[0] || a[1] < o[1] || a[2] < o[2] || a[3] > o[3] || a[4] > o[4] || a[5] > o[5]) return false;
@@ -1485,8 +1492,9 @@ class WorldGen {
               const b3 = WorldGen.vilElBox(this, e1, ox, y1, oz, r1);
               const bt = b3.slice();
               if (exp > 0) bt[4] = Math.max(bt[4], bt[1] + Math.max(exp + 1, b3[4] - b3[1]));
-              if (!fits(sh, bt)) continue;
-              sh.holes.push(box6(bt));
+              const bc = sh === free ? claim(e1, bt) : bt;
+              if (!fits(sh, bc)) continue;
+              sh.holes.push(box6(bc));
               const gd = rigid1 ? piece.gd - l1 : 1;   // StructurePoolElement.getGroundLevelDelta() is 1
               const p1 = { e: e1, x: ox, y: y1, z: oz, rot: r1, box: bt, gd, junctions: [] };
               let i3;
