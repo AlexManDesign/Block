@@ -4985,10 +4985,12 @@ WorldGen.prototype.mineSegment = function (p) {
   }
 };
 
-// ===================================================================== crypts (dungeons)
-// A small stone-brick crypt sealed in rock: cracked and mossy bricks, a chiselled pedestal with a
-// monster spawner, one or two chests set into the walls, cobwebs in the upper corners. Kept only
-// where the rock around is solid and a cave or tunnel opens into it at one to five places.
+// ===================================================================== dungeons
+// A monster den dug into the rock: a cobblestone room with rounded corners (solid corner columns),
+// a vaulted ceiling (its outer ring one lower), a floor of mossy cobble, cobble and gravel, the
+// spawner in the middle, one or two chests standing against the walls, a heap of bones in a corner
+// and cobwebs up under the vault. Kept only where the rock around is solid and a cave or tunnel
+// opens into it at one to five places.
 WorldGen.prototype.dungeons = function () {
   const ids = this.ids, meta = this.meta;
   const rnd = mulberry(hash2i(this.seed + 1301, this.cx, this.cz)), ri = (n) => (rnd() * n) | 0;
@@ -5005,24 +5007,35 @@ WorldGen.prototype.dungeons = function () {
       if ((x === ax || x === bx || z === az || z === bz) && air(x, oy, z) && air(x, oy + 1, z)) open++;
     }
     if (open < 1 || open > 5) return;
-    const brick = () => { const r = rnd(); return r < 0.2 ? B.CRACKED_STONE_BRICKS : r < 0.45 ? B.MOSSY_STONE_BRICKS : B.STONE_BRICKS; };
+    const stone = () => rnd() < 0.4 ? B.MOSSY : B.COBBLE;
+    const floor = () => { const r = rnd(); return r < 0.55 ? B.MOSSY : r < 0.88 ? B.COBBLE : B.GRAVEL; };
     for (let x = ax; x <= bx; x++) for (let z = az; z <= bz; z++) for (let y = oy - 1; y <= oy + H; y++) {
       const i = CI(x, y, z), wall = x === ax || x === bx || z === az || z === bz;
-      if (!wall && y >= oy && y < oy + H) { ids[i] = 0; meta[i] = 0; continue; }
+      // rounded corners: the cells next to the corners stay solid inside the room
+      const corner = (x === ax + 1 || x === bx - 1) && (z === az + 1 || z === bz - 1);
+      // the vault: the outer ring of the top layer is solid
+      const vault = y === oy + H - 1 && (x === ax + 1 || x === bx - 1 || z === az + 1 || z === bz - 1);
+      if (!wall && y >= oy && y < oy + H && !corner && !vault) { ids[i] = 0; meta[i] = 0; continue; }
       if (wall && y >= oy && y < oy + 2 && ids[i] === 0) continue;       // the openings stay open
-      ids[i] = brick(); meta[i] = 0;
+      ids[i] = y === oy - 1 ? floor() : stone(); meta[i] = 0;
     }
-    for (const [x, z] of [[ax + 1, az + 1], [bx - 1, az + 1], [ax + 1, bz - 1], [bx - 1, bz - 1]]) if (rnd() < 0.5) ids[CI(x, oy + H - 1, z)] = B.COBWEB;
-    // chests set into the walls
+    // chests on the floor against a wall, facing into the room
     let chests = 1 + ri(2);
-    for (let t = 0; t < 8 && chests > 0; t++) {
-      const side = ri(4), k = side < 2 ? ax + 1 + ri(bx - ax - 1) : az + 1 + ri(bz - az - 1);
-      const [x, z, face] = side === 0 ? [k, az, 0] : side === 1 ? [k, bz, 2] : side === 2 ? [ax, k, 3] : [bx, k, 1];
+    for (let t = 0; t < 10 && chests > 0; t++) {
+      const side = ri(4), k = side < 2 ? ax + 2 + ri(bx - ax - 3) : az + 2 + ri(bz - az - 3);
+      const [x, z, face] = side === 0 ? [k, az + 1, 0] : side === 1 ? [k, bz - 1, 2] : side === 2 ? [ax + 1, k, 3] : [bx - 1, k, 1];
+      if (Math.abs(x - ox) + Math.abs(z - oz) < 2) continue;
       const i = CI(x, oy, z);
-      if (ids[i] === 0 || ids[i] === B.CHEST) continue;
+      if (ids[i] !== 0) continue;
       ids[i] = B.CHEST; meta[i] = face | (LOOT.SIMPLE_DUNGEON << 2); chests--;
     }
-    ids[CI(ox, oy - 1, oz)] = B.CHISELED_STONE_BRICKS;
+    // a heap of bones beside a corner column, cobwebs under the vault
+    const cx2 = rnd() < 0.5 ? ax + 2 : bx - 2, cz2 = rnd() < 0.5 ? az + 1 : bz - 1;
+    if (ids[CI(cx2, oy, cz2)] === 0 && rnd() < 0.6) ids[CI(cx2, oy, cz2)] = B.BONE_BLOCK;
+    for (let x = ax + 2; x <= bx - 2; x++) for (let z = az + 2; z <= bz - 2; z++) {
+      const i = CI(x, oy + H - 2, z);
+      if (ids[i] === 0 && (x === ax + 2 || x === bx - 2 || z === az + 2 || z === bz - 2) && rnd() < 0.15) ids[i] = B.COBWEB;
+    }
     const i = CI(ox, oy, oz);
     ids[i] = B.SPAWNER; meta[i] = [SPAWNER_MOB.skeleton, SPAWNER_MOB.zombie, SPAWNER_MOB.zombie, SPAWNER_MOB.spider][ri(4)];
     this.spawnerList.push(this.x0 + ox, oy, this.z0 + oz);
