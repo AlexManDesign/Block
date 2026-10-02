@@ -913,7 +913,7 @@ class Renderer {
 
   makeDyn() {
     const gl = this.gl;
-    const d = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), vao3: gl.createVertexArray(), cap: 0 };
+    const d = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), vao3: gl.createVertexArray(), cap: 0, off: 0 };
     gl.bindVertexArray(d.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, d.vbo);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 36, 0);
@@ -935,17 +935,28 @@ class Renderer {
     return b;
   }
   f32(v) { const b = this.scratch(v.length); b.set(v); return b.subarray(0, v.length); }
-  uploadDyn(arr) {
-    const gl = this.gl, d = this.dyn;
+  // Appends the vertices behind the ones already written (a ring): every draw of the frame keeps its
+  // own range, so an upload never overwrites data a pending draw still reads, which would make the
+  // GPU wait or copy. When full, the buffer is re-specified (the driver hands out fresh storage).
+  // Returns the first vertex for the given stride; offsets are kept a multiple of both strides.
+  uploadDyn(arr, stride) {
+    const gl = this.gl, d = this.dyn, n = arr.byteLength;
     gl.bindBuffer(gl.ARRAY_BUFFER, d.vbo);
-    if (arr.byteLength > d.cap) { d.cap = Math.max(arr.byteLength, d.cap * 2, 65536); gl.bufferData(gl.ARRAY_BUFFER, d.cap, gl.DYNAMIC_DRAW); }
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, arr);
+    let off = Math.ceil(d.off / 360) * 360;
+    if (off + n > d.cap) {
+      d.cap = Math.max(d.cap, n * 4, 1 << 20);
+      gl.bufferData(gl.ARRAY_BUFFER, d.cap, gl.DYNAMIC_DRAW);
+      off = 0;
+    }
+    gl.bufferSubData(gl.ARRAY_BUFFER, off, arr);
+    d.off = off + n;
+    return off / stride;
   }
   drawDynSprite(arr, count) {
     const gl = this.gl;
-    this.uploadDyn(arr);
+    const first = this.uploadDyn(arr, 36);
     gl.bindVertexArray(this.dyn.vao);
-    gl.drawArrays(gl.TRIANGLES, 0, count);
+    gl.drawArrays(gl.TRIANGLES, first, count);
     gl.bindVertexArray(null);
   }
   // draw triangles with the array-texture program. arr: [x,y,z,u,v,layer,r,g,b,a]*n (camera relative)
@@ -958,9 +969,9 @@ class Renderer {
     gl.uniform1f(p.u.uAlphaRef, alphaRef);
     gl.uniform3f(p.u.uMul, 1, 1, 1);
     gl.uniform1i(p.u.uTex, 0);
-    this.uploadDyn(arr);
+    const first = this.uploadDyn(arr, 40);
     gl.bindVertexArray(this.dyn.vao3);
-    gl.drawArrays(gl.TRIANGLES, 0, count);
+    gl.drawArrays(gl.TRIANGLES, first, count);
     gl.bindVertexArray(null);
   }
   drawEnt(arr, count, tex, env) {
@@ -971,9 +982,9 @@ class Renderer {
     gl.uniform3fv(p.u.uFogColor, env.fogColor);
     gl.uniform1i(p.u.uTex, 3);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tex); gl.activeTexture(gl.TEXTURE0);
-    this.uploadDyn(arr);
+    const first = this.uploadDyn(arr, 40);
     gl.bindVertexArray(this.dyn.vao3);
-    gl.drawArrays(gl.TRIANGLES, 0, count);
+    gl.drawArrays(gl.TRIANGLES, first, count);
     gl.bindVertexArray(null);
   }
 

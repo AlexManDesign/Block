@@ -23,7 +23,8 @@ WorldGen.prototype.ownBuilder = function (p) {
   const world = (x, y, z) => { const o = WorldGen.tplPos(x, z, rot, 0, 0); return [p.x + o[0], p.y + y, p.z + o[1]]; };
   const W = {
     at, world,
-    set(x, y, z, id, m) { const i = at(x, y, z); if (i >= 0) { ids[i] = id; meta[i] = id ? rotMeta(id, m || 0, rot) : 0; } },
+    // a block that can hold water (ladder, stairs, fence...) set into water is waterlogged
+    set(x, y, z, id, m) { const i = at(x, y, z); if (i >= 0) { if (WET[id] && isWaterId(ids[i])) id = WET[id]; ids[i] = id; meta[i] = id ? rotMeta(dryId(id), m || 0, rot) : 0; } },
     get(x, y, z) { const i = at(x, y, z); return i >= 0 ? ids[i] : -1; },
     // a random 0..1 for a cell, the same in every chunk
     r(x, y, z, k) { const w = world(x, y, z); return hash3(seed + 7001 + (k || 0) * 13, w[0], w[1], w[2]); },
@@ -536,7 +537,13 @@ WorldGen.prototype.bogShack = function (p) {
   // porch railing and a ladder down from it
   for (let x = 0; x <= 8; x++) if (x !== 4) W.set(x, 1, 0, B.MANGROVE_PLANKS_FENCE);
   W.set(0, 1, 1, B.MANGROVE_PLANKS_FENCE); W.set(8, 1, 1, B.MANGROVE_PLANKS_FENCE);
-  for (let y = 0; y >= -4; y--) W.set(4, y, 0, B.LADDER, 2);
+  // the ladder hangs on a post under the deck edge and reaches down to the ground
+  W.down(4, -1, 1, B.MANGROVE_LOG);
+  for (let y = 0; y >= -8; y--) {
+    const c = W.get(4, y, 0);
+    if (y < 0 && c > 0 && !isLiquidId(c) && !(FLAGS[c] & BF_REPLACE)) break;
+    W.set(4, y, 0, B.LADDER, 2);
+  }
   W.set(4, 0, 1, B.SPRUCE_PLANKS);
   // thatched roof: three stepped layers of hay
   W.fill(0, 4, 1, 8, 4, 8, B.HAY_BLOCK); W.fill(1, 5, 2, 7, 5, 7, B.HAY_BLOCK); W.fill(2, 6, 3, 6, 6, 6, B.HAY_BLOCK); W.fill(3, 7, 4, 5, 7, 5, B.HAY_BLOCK);

@@ -4218,7 +4218,8 @@ WorldGen.prototype.ownBuilder = function (p) {
   const world = (x, y, z) => { const o = WorldGen.tplPos(x, z, rot, 0, 0); return [p.x + o[0], p.y + y, p.z + o[1]]; };
   const W = {
     at, world,
-    set(x, y, z, id, m) { const i = at(x, y, z); if (i >= 0) { ids[i] = id; meta[i] = id ? rotMeta(id, m || 0, rot) : 0; } },
+    // a block that can hold water (ladder, stairs, fence...) set into water is waterlogged
+    set(x, y, z, id, m) { const i = at(x, y, z); if (i >= 0) { if (WET[id] && isWaterId(ids[i])) id = WET[id]; ids[i] = id; meta[i] = id ? rotMeta(dryId(id), m || 0, rot) : 0; } },
     get(x, y, z) { const i = at(x, y, z); return i >= 0 ? ids[i] : -1; },
     // a random 0..1 for a cell, the same in every chunk
     r(x, y, z, k) { const w = world(x, y, z); return hash3(seed + 7001 + (k || 0) * 13, w[0], w[1], w[2]); },
@@ -4731,7 +4732,13 @@ WorldGen.prototype.bogShack = function (p) {
   // porch railing and a ladder down from it
   for (let x = 0; x <= 8; x++) if (x !== 4) W.set(x, 1, 0, B.MANGROVE_PLANKS_FENCE);
   W.set(0, 1, 1, B.MANGROVE_PLANKS_FENCE); W.set(8, 1, 1, B.MANGROVE_PLANKS_FENCE);
-  for (let y = 0; y >= -4; y--) W.set(4, y, 0, B.LADDER, 2);
+  // the ladder hangs on a post under the deck edge and reaches down to the ground
+  W.down(4, -1, 1, B.MANGROVE_LOG);
+  for (let y = 0; y >= -8; y--) {
+    const c = W.get(4, y, 0);
+    if (y < 0 && c > 0 && !isLiquidId(c) && !(FLAGS[c] & BF_REPLACE)) break;
+    W.set(4, y, 0, B.LADDER, 2);
+  }
   W.set(4, 0, 1, B.SPRUCE_PLANKS);
   // thatched roof: three stepped layers of hay
   W.fill(0, 4, 1, 8, 4, 8, B.HAY_BLOCK); W.fill(1, 5, 2, 7, 5, 7, B.HAY_BLOCK); W.fill(2, 6, 3, 6, 6, 6, B.HAY_BLOCK); W.fill(3, 7, 4, 5, 7, 5, B.HAY_BLOCK);
@@ -12655,7 +12662,7 @@ class Renderer {
 
   makeDyn() {
     const gl = this.gl;
-    const d = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), vao3: gl.createVertexArray(), cap: 0 };
+    const d = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), vao3: gl.createVertexArray(), cap: 0, off: 0 };
     gl.bindVertexArray(d.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, d.vbo);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 36, 0);
@@ -12677,17 +12684,28 @@ class Renderer {
     return b;
   }
   f32(v) { const b = this.scratch(v.length); b.set(v); return b.subarray(0, v.length); }
-  uploadDyn(arr) {
-    const gl = this.gl, d = this.dyn;
+  // Appends the vertices behind the ones already written (a ring): every draw of the frame keeps its
+  // own range, so an upload never overwrites data a pending draw still reads, which would make the
+  // GPU wait or copy. When full, the buffer is re-specified (the driver hands out fresh storage).
+  // Returns the first vertex for the given stride; offsets are kept a multiple of both strides.
+  uploadDyn(arr, stride) {
+    const gl = this.gl, d = this.dyn, n = arr.byteLength;
     gl.bindBuffer(gl.ARRAY_BUFFER, d.vbo);
-    if (arr.byteLength > d.cap) { d.cap = Math.max(arr.byteLength, d.cap * 2, 65536); gl.bufferData(gl.ARRAY_BUFFER, d.cap, gl.DYNAMIC_DRAW); }
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, arr);
+    let off = Math.ceil(d.off / 360) * 360;
+    if (off + n > d.cap) {
+      d.cap = Math.max(d.cap, n * 4, 1 << 20);
+      gl.bufferData(gl.ARRAY_BUFFER, d.cap, gl.DYNAMIC_DRAW);
+      off = 0;
+    }
+    gl.bufferSubData(gl.ARRAY_BUFFER, off, arr);
+    d.off = off + n;
+    return off / stride;
   }
   drawDynSprite(arr, count) {
     const gl = this.gl;
-    this.uploadDyn(arr);
+    const first = this.uploadDyn(arr, 36);
     gl.bindVertexArray(this.dyn.vao);
-    gl.drawArrays(gl.TRIANGLES, 0, count);
+    gl.drawArrays(gl.TRIANGLES, first, count);
     gl.bindVertexArray(null);
   }
   // draw triangles with the array-texture program. arr: [x,y,z,u,v,layer,r,g,b,a]*n (camera relative)
@@ -12700,9 +12718,9 @@ class Renderer {
     gl.uniform1f(p.u.uAlphaRef, alphaRef);
     gl.uniform3f(p.u.uMul, 1, 1, 1);
     gl.uniform1i(p.u.uTex, 0);
-    this.uploadDyn(arr);
+    const first = this.uploadDyn(arr, 40);
     gl.bindVertexArray(this.dyn.vao3);
-    gl.drawArrays(gl.TRIANGLES, 0, count);
+    gl.drawArrays(gl.TRIANGLES, first, count);
     gl.bindVertexArray(null);
   }
   drawEnt(arr, count, tex, env) {
@@ -12713,9 +12731,9 @@ class Renderer {
     gl.uniform3fv(p.u.uFogColor, env.fogColor);
     gl.uniform1i(p.u.uTex, 3);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tex); gl.activeTexture(gl.TEXTURE0);
-    this.uploadDyn(arr);
+    const first = this.uploadDyn(arr, 40);
     gl.bindVertexArray(this.dyn.vao3);
-    gl.drawArrays(gl.TRIANGLES, 0, count);
+    gl.drawArrays(gl.TRIANGLES, first, count);
     gl.bindVertexArray(null);
   }
 
