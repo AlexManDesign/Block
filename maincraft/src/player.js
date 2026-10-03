@@ -154,7 +154,7 @@ class Player {
       if (this.hitWall && this.onLadder) v[1] = 0.2;
       v[0] *= f; v[1] *= 0.8; v[2] *= f;
       fluidFall();
-      if (this.hitWall && !this.collidesAt(world, p[0] + v[0], p[1] + v[1] + 0.6 - p[1] + y0, p[2] + v[2])) v[1] = 0.3;
+      if (this.hitWall && this.isFree(world, p[0] + v[0], p[1] + v[1] + 0.6 - p[1] + y0, p[2] + v[2])) v[1] = 0.3;
     } else if (this.inLava && !this.flying) {
       moveRelative(0.02);
       const y0 = p[1];
@@ -162,7 +162,7 @@ class Player {
       if (fluid.lava <= 0.4) { v[0] *= 0.5; v[1] *= 0.8; v[2] *= 0.5; fluidFall(); }
       else { v[0] *= 0.5; v[1] *= 0.5; v[2] *= 0.5; }
       v[1] -= 0.02;
-      if (this.hitWall && !this.collidesAt(world, p[0] + v[0], p[1] + v[1] + 0.6 - p[1] + y0, p[2] + v[2])) v[1] = 0.3;
+      if (this.hitWall && this.isFree(world, p[0] + v[0], p[1] + v[1] + 0.6 - p[1] + y0, p[2] + v[2])) v[1] = 0.3;
     } else {
       const below = bAt(p[0], p[1] - 0.5, p[2]);
       const bf = below === B.ICE || below === B.PACKED_ICE ? 0.98 : below === B.BLUE_ICE ? 0.989 : below === B.SLIME_BLOCK ? 0.8 : 0.6;
@@ -220,6 +220,15 @@ class Player {
     return { water, lava };
   }
   collidesAt(world, x, y, z) { return this.collides(world, x, y, z, this.h); }
+  // Entity.isFree: no collision and no fluid of any height in the cells the box touches
+  // (Level.containsAnyLiquid)
+  isFree(world, px, py, pz) {
+    if (this.collides(world, px, py, pz, this.h)) return false;
+    const hw = PLAYER_W / 2;
+    for (let y = Math.floor(py); y < Math.ceil(py + this.h); y++) for (let z = Math.floor(pz - hw); z < Math.ceil(pz + hw); z++)
+      for (let x = Math.floor(px - hw); x < Math.ceil(px + hw); x++) if (isLiquidId(world.getBlock(x, y, z))) return false;
+    return true;
+  }
   // Entity.move: cobweb slow-down, sneaking stops at edges, collision Y first then X and Z, step
   // up to 0.6 blocks, collided velocity components cleared, soul sand speed factor.
   move(world, v, shift, wasGround) {
