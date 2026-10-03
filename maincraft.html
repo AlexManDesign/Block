@@ -11417,7 +11417,7 @@ class World {
   // a block changed: it and its six neighbours get a tick, after the delay of what is there
   // (water 5, lava 30, falling blocks 2, anything else 1)
   scheduleAround(x, y, z) {
-    const d = (xx, yy, zz) => { const id = this.getBlock(xx, yy, zz); return id === B.WATER ? 5 : id === B.LAVA ? 30 : (FLAGS[id] & BF_FALL) ? 2 : 1; };
+    const d = (xx, yy, zz) => { const id = this.getBlock(xx, yy, zz); return isWaterId(id) ? 5 : id === B.LAVA ? 30 : (FLAGS[id] & BF_FALL) ? 2 : 1; };
     this.schedule(x, y, z, d(x, y, z));
     for (const [dx, dy, dz] of FACE_DIR) this.schedule(x + dx, y + dy, z + dz, d(x + dx, y + dy, z + dz));
   }
@@ -11551,6 +11551,8 @@ class World {
       return;
     }
     if (id === B.WATER || id === B.LAVA) this.fluidUpdate(x, y, z, id);
+    // water plants and waterlogged blocks hold a water source, which spreads like one
+    else if (FLAGS[id] & (BF_AQUATIC | BF_WET)) this.spread(x, y, z, B.WATER, 0);
   }
 
   // Minecraft's FlowingFluid. meta: bits 0-2 level (0 = source, amount = 8 - level), bit 3 falling
