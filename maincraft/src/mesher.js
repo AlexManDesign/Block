@@ -702,15 +702,20 @@ class Mesher {
     return 0;
   }
   cornerHeight(p, dx, dz, isW) {
-    // average over the 4 blocks around corner (dx,dz in {0,1})
+    // Minecraft's corner height: the cell and its two side neighbours at the corner (dx,dz in
+    // {0,1}), plus the diagonal one only when a side neighbour holds fluid, so water never takes
+    // height across a corner closed by two blocks; heights of 0.8 and more weigh ten times
+    const sx = dx ? 1 : -1, sz = dz ? 1 : -1;
+    const hx = this.fluidHeightAt(p + sx * SX, isW), hz = this.fluidHeightAt(p + sz * SZ, isW);
+    if (hx === 2 || hz === 2) return 1;
     let sum = 0, w = 0;
-    for (let k = 0; k < 4; k++) {
-      const ox = (k & 1) ? dx : dx - 1, oz = (k & 2) ? dz : dz - 1;
-      const h = this.fluidHeightAt(p + ox * SX + oz * SZ, isW);
-      if (h === 2) return 1;
-      if (h < 0) continue;
-      if (h >= 0.8) { sum += h * 10; w += 10; } else { sum += h; w += 1; }
+    const add = (h) => { if (h < 0) return; if (h >= 0.8) { sum += h * 10; w += 10; } else { sum += h; w += 1; } };
+    if (hx > 0 || hz > 0) {
+      const hd = this.fluidHeightAt(p + sx * SX + sz * SZ, isW);
+      if (hd === 2) return 1;
+      add(hd);
     }
+    add(this.fluidHeightAt(p, isW)); add(hx); add(hz);
     return w ? sum / w : 8 / 9;
   }
   fluid(ids, meta, light, p, id, x, y, z, forceSource) {
