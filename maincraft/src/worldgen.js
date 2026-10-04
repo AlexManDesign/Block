@@ -1825,9 +1825,19 @@ class WorldGen {
     const line = (ax, ay, az, bx, by, bz, id) => {
       const dx = bx - ax, dy = by - ay, dz = bz - az, n = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
       const axis = Math.abs(dy) >= Math.abs(dx) && Math.abs(dy) >= Math.abs(dz) ? 0 : Math.abs(dx) >= Math.abs(dz) ? 1 : 2;
-      for (let k = 0; k <= n; k++) {
-        const px = Math.round(ax + (n ? dx * k / n : 0)), py = Math.round(ay + (n ? dy * k / n : 0)), pz = Math.round(az + (n ? dz * k / n : 0));
-        put(px, py, pz, id | (axis << 16), 0);
+      let cx = Math.round(ax), cy = Math.round(ay), cz = Math.round(az);
+      put(cx, cy, cz, id | (axis << 16), 0);
+      for (let k = 1; k <= n; k++) {
+        const px = Math.round(ax + dx * k / n), py = Math.round(ay + dy * k / n), pz = Math.round(az + dz * k / n);
+        // one coordinate at a time (sideways, then up or down): every log rests on the one before it
+        // by a face, never only by an edge or a corner. A mostly upright line stays upright; in a
+        // sideways one each log lies along its own sideways step and the steps up keep the line's
+        // direction, so bark shows along the branch and end grain only at its tip
+        while (cx !== px || cy !== py || cz !== pz) {
+          let a;
+          if (cx !== px) { cx += Math.sign(px - cx); a = 1; } else if (cz !== pz) { cz += Math.sign(pz - cz); a = 2; } else { cy += Math.sign(py - cy); a = axis; }
+          put(cx, cy, cz, id | ((axis === 0 ? 0 : a) << 16), 0);
+        }
       }
     };
     switch (type) {
