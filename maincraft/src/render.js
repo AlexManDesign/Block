@@ -454,6 +454,12 @@ class Renderer {
     this.freeTrans(m);
     if (m.slot !== undefined) { this.originFree.push(m.slot); m.slot = undefined; }
   }
+  // Every section mesh carries the same fields from the start, so all of them share one hidden
+  // class: the visibility walk and the draw loops read these fields on thousands of meshes a frame
+  newMesh(vbo, vao, vis) {
+    return { vbo, vao, counts: null, vis, cap: 0, slot: undefined, gc: null, cx: 0, cz: 0, sy: 0,
+      tvao: null, tibo: null, tcap: 0, tc: null, tg: null, tfirst: 0, tn: 0, tkey: -1 };
+  }
   uploadSection(c, sy, d) {
     const gl = this.gl;
     this.upN = (this.upN || 0) + 1; this.upBytes = (this.upBytes || 0) + d.data.byteLength;
@@ -461,11 +467,12 @@ class Renderer {
     const total = d.counts[0] + d.counts[1] + d.counts[2];
     if (!total) {
       if (m) this.freeSectionMesh(m);
-      c.meshes[sy] = { vbo: null, vao: null, counts: [0, 0, 0], vis: d.vis, cap: 0 };
+      const e = this.newMesh(null, null, d.vis); e.counts = [0, 0, 0];
+      c.meshes[sy] = e;
       return;
     }
     if (!m || !m.vbo) {
-      m = { vbo: gl.createBuffer(), vao: gl.createVertexArray(), counts: null, vis: null, cap: 0 };
+      m = this.newMesh(gl.createBuffer(), gl.createVertexArray(), null);
       m.slot = this.originSlot(c, sy);
       gl.bindVertexArray(m.vao);
       this.bindOrigin(m.slot);
