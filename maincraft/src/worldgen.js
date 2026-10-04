@@ -2028,18 +2028,24 @@ class WorldGen {
         const nr = 4 + nextInt(3), a0 = rnd() * Math.PI * 2;
         for (let k = 0; k < nr; k++) {
           const a = a0 + k * Math.PI * 2 / nr, ca = Math.cos(a), sa = Math.sin(a);
-          let px = x, pz = z;
-          for (let s2 = 1, yy = oy - 1; s2 <= 7 && yy > sy - 4; s2++) {
-            const rx = x + Math.round(ca * Math.min(s2, 3)), rz = z + Math.round(sa * Math.min(s2, 3));
-            if (!rootCell(rx, yy, rz)) break;
+          // the root walks from the trunk one face at a time (out, then down), so each piece rests
+          // on the one before it; it ends where it enters the ground
+          let cx = x, cy = oy, cz = z, done = false;            // from the side of the lowest trunk log
+          const step = (rx, yy, rz) => {
+            if (!rootCell(rx, yy, rz)) return true;
             const gy = this.groundAt(rx, rz), ob = ORIG_BIOME[this.colInfo(rx, rz).biome];
             const wet = yy <= SEA && (yy > gy || (yy === gy && this.poolAt(ob, rx, rz, gy)));
             root(rx, yy, rz, yy <= gy && !wet ? B.MUDDY_MANGROVE_ROOTS : wet ? B.MANGROVE_ROOTS_WET : B.MANGROVE_ROOTS);
-            if (yy <= gy) break;
-            px = rx; pz = rz;
+            return yy <= gy;
+          };
+          for (let s2 = 1, yy = oy - 1; s2 <= 7 && yy > sy - 4 && !done; s2++) {
+            const rx = x + Math.round(ca * Math.min(s2, 3)), rz = z + Math.round(sa * Math.min(s2, 3));
+            while (!done && (cx !== rx || cy !== yy || cz !== rz)) {
+              if (cx !== rx) cx += Math.sign(rx - cx); else if (cz !== rz) cz += Math.sign(rz - cz); else cy += Math.sign(yy - cy);
+              done = step(cx, cy, cz);
+            }
             if (s2 >= 2) yy--;
           }
-          void px; void pz;
         }
         mossOnRoots = true;
         const height = tall ? 6 + nextInt(6) : 3 + nextInt(4), top = oy + height;
