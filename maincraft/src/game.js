@@ -308,8 +308,11 @@ class Game {
     e.fov = this.fovCur;
     e.sway = Settings.sway ? 1 : 0;
     // underwater / lava
-    const eye = this.cam;
-    const ib = this.world ? this.world.getBlock(Math.floor(eye[0]), Math.floor(eye[1]), Math.floor(eye[2])) : 0;
+    // the camera is in a fluid only below its surface (Camera.getFluidInCamera): a shallow flowing
+    // cell around the eye with its surface lower down does not count
+    const eye = this.cam, ex = Math.floor(eye[0]), ey = Math.floor(eye[1]), ez = Math.floor(eye[2]);
+    const fh = this.world ? this.world.fluidHeight(ex, ey, ez) : -1;
+    const ib = fh >= 0 && eye[1] < ey + fh ? this.world.getBlock(ex, ey, ez) : 0;
     e.underwater = false;
     if (isWaterId(ib)) {
       // Minecraft's underwater fog (FogRenderer): the biome's water fog colour (blended over 5 s

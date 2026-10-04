@@ -1888,7 +1888,8 @@ class WorldGen {
         const low = spruce ? sy + 2 + nextInt(2) : top - 3 - nextInt(2), maxR = spruce ? 3 : 2;
         for (let y = top; y >= low; y--) {
           const t = (top - y) / Math.max(1, top - low), tier = (top - y) % 2;     // every other row steps in: tiers
-          const r = Math.max(0, Math.round(t * maxR + 0.3) - tier);
+          // at least a ring around the trunk on every row, up to the top: no bare log above the crown
+          const r = Math.max(1, Math.round(t * maxR + 0.3) - tier);
           for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
             const d = Math.abs(dx) + Math.abs(dz);
             if (d > r + (r > 1 ? 1 : 0)) continue;

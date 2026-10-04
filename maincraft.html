@@ -3523,7 +3523,8 @@ class WorldGen {
         const low = spruce ? sy + 2 + nextInt(2) : top - 3 - nextInt(2), maxR = spruce ? 3 : 2;
         for (let y = top; y >= low; y--) {
           const t = (top - y) / Math.max(1, top - low), tier = (top - y) % 2;     // every other row steps in: tiers
-          const r = Math.max(0, Math.round(t * maxR + 0.3) - tier);
+          // at least a ring around the trunk on every row, up to the top: no bare log above the crown
+          const r = Math.max(1, Math.round(t * maxR + 0.3) - tier);
           for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
             const d = Math.abs(dx) + Math.abs(dz);
             if (d > r + (r > 1 ? 1 : 0)) continue;
@@ -9216,7 +9217,8 @@ class WorldGen {
         const low = spruce ? sy + 2 + nextInt(2) : top - 3 - nextInt(2), maxR = spruce ? 3 : 2;
         for (let y = top; y >= low; y--) {
           const t = (top - y) / Math.max(1, top - low), tier = (top - y) % 2;     // every other row steps in: tiers
-          const r = Math.max(0, Math.round(t * maxR + 0.3) - tier);
+          // at least a ring around the trunk on every row, up to the top: no bare log above the crown
+          const r = Math.max(1, Math.round(t * maxR + 0.3) - tier);
           for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
             const d = Math.abs(dx) + Math.abs(dz);
             if (d > r + (r > 1 ? 1 : 0)) continue;
@@ -11037,6 +11039,18 @@ class World {
     if (!c || !c.state) return 0;
     const s = c.secs[(y - WORLD_MIN_Y) >> 4];
     return s ? s.ids[((y & 15) << 8) | ((z & 15) << 4) | (x & 15)] : 0;
+  }
+  // height of the fluid surface in a cell as a fraction of the block (FluidState.getHeight): 1 with
+  // more of the same fluid above, else its amount / 9 (sources, falling fluid, water plants and
+  // waterlogged blocks 8/9); -1 without fluid
+  fluidHeight(x, y, z) {
+    const id = this.getBlock(x, y, z), w = isWaterId(id);
+    if (!w && id !== B.LAVA) return -1;
+    const up = this.getBlock(x, y + 1, z);
+    if (w ? isWaterId(up) : up === B.LAVA) return 1;
+    if (FLAGS[id] & (BF_AQUATIC | BF_WET)) return 8 / 9;
+    const m = this.getMeta(x, y, z);
+    return (m & 8) ? 8 / 9 : (8 - (m & 7)) / 9;
   }
   getMeta(x, y, z) {
     if (y < WORLD_MIN_Y || y >= WORLD_MAX_Y) return 0;
@@ -13260,7 +13274,9 @@ class Player {
     // ---- fluids and blocks around the body
     const fluid = this.fluidDepth(world);
     this.inWater = fluid.water > 0; this.inLava = fluid.lava > 0;
-    this.headInWater = isWaterId(bAt(p[0], p[1] + this.eyeOffset, p[2]));
+    // Entity.updateFluidOnEyes: the point 1/9 below the eye is under the water surface of its cell
+    const eyY = p[1] + this.eyeOffset - 1 / 9, eyB = Math.floor(eyY);
+    this.headInWater = isWaterId(bAt(p[0], eyY, p[2])) && eyB + world.fluidHeight(Math.floor(p[0]), eyB, Math.floor(p[2])) > eyY;
     const feet = bAt(p[0], p[1], p[2]);
     this.onLadder = !this.flying && ((FLAGS[feet] & BF_CLIMB) !== 0 || SHAPE[feet] === SH.LADDER || SHAPE[feet] === SH.VINE);
     this.inWeb = !this.flying && (feet === B.COBWEB || bAt(p[0], p[1] + 1.1, p[2]) === B.COBWEB);
@@ -16121,8 +16137,11 @@ class Game {
     e.fov = this.fovCur;
     e.sway = Settings.sway ? 1 : 0;
     // underwater / lava
-    const eye = this.cam;
-    const ib = this.world ? this.world.getBlock(Math.floor(eye[0]), Math.floor(eye[1]), Math.floor(eye[2])) : 0;
+    // the camera is in a fluid only below its surface (Camera.getFluidInCamera): a shallow flowing
+    // cell around the eye with its surface lower down does not count
+    const eye = this.cam, ex = Math.floor(eye[0]), ey = Math.floor(eye[1]), ez = Math.floor(eye[2]);
+    const fh = this.world ? this.world.fluidHeight(ex, ey, ez) : -1;
+    const ib = fh >= 0 && eye[1] < ey + fh ? this.world.getBlock(ex, ey, ez) : 0;
     e.underwater = false;
     if (isWaterId(ib)) {
       // Minecraft's underwater fog (FogRenderer): the biome's water fog colour (blended over 5 s

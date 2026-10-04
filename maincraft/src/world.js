@@ -97,6 +97,18 @@ class World {
     const s = c.secs[(y - WORLD_MIN_Y) >> 4];
     return s ? s.ids[((y & 15) << 8) | ((z & 15) << 4) | (x & 15)] : 0;
   }
+  // height of the fluid surface in a cell as a fraction of the block (FluidState.getHeight): 1 with
+  // more of the same fluid above, else its amount / 9 (sources, falling fluid, water plants and
+  // waterlogged blocks 8/9); -1 without fluid
+  fluidHeight(x, y, z) {
+    const id = this.getBlock(x, y, z), w = isWaterId(id);
+    if (!w && id !== B.LAVA) return -1;
+    const up = this.getBlock(x, y + 1, z);
+    if (w ? isWaterId(up) : up === B.LAVA) return 1;
+    if (FLAGS[id] & (BF_AQUATIC | BF_WET)) return 8 / 9;
+    const m = this.getMeta(x, y, z);
+    return (m & 8) ? 8 / 9 : (8 - (m & 7)) / 9;
+  }
   getMeta(x, y, z) {
     if (y < WORLD_MIN_Y || y >= WORLD_MAX_Y) return 0;
     const c = this.col(x >> 4, z >> 4);

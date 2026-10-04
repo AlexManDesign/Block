@@ -92,7 +92,9 @@ class Player {
     // ---- fluids and blocks around the body
     const fluid = this.fluidDepth(world);
     this.inWater = fluid.water > 0; this.inLava = fluid.lava > 0;
-    this.headInWater = isWaterId(bAt(p[0], p[1] + this.eyeOffset, p[2]));
+    // Entity.updateFluidOnEyes: the point 1/9 below the eye is under the water surface of its cell
+    const eyY = p[1] + this.eyeOffset - 1 / 9, eyB = Math.floor(eyY);
+    this.headInWater = isWaterId(bAt(p[0], eyY, p[2])) && eyB + world.fluidHeight(Math.floor(p[0]), eyB, Math.floor(p[2])) > eyY;
     const feet = bAt(p[0], p[1], p[2]);
     this.onLadder = !this.flying && ((FLAGS[feet] & BF_CLIMB) !== 0 || SHAPE[feet] === SH.LADDER || SHAPE[feet] === SH.VINE);
     this.inWeb = !this.flying && (feet === B.COBWEB || bAt(p[0], p[1] + 1.1, p[2]) === B.COBWEB);
