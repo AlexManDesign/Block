@@ -67,8 +67,10 @@ class Game {
     this.hideHud = false;
     this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, lavaT: 0, invT: 0, lastHurt: 0, poisonT: 0, poisonAcc: 0 };
     this.atkT = 10; this.atkBarV = -1; this.lastHeld = null;
+    // column offsets around the player, nearest first: [dx, dz, dx² + dz²], integers only (an array
+    // holding a fraction would hand out dx and dz as doubles)
     this.spiral = [];
-    for (let dz = -40; dz <= 40; dz++) for (let dx = -40; dx <= 40; dx++) this.spiral.push([dx, dz, Math.hypot(dx, dz)]);
+    for (let dz = -40; dz <= 40; dz++) for (let dx = -40; dx <= 40; dx++) this.spiral.push([dx, dz, dx * dx + dz * dz]);
     this.spiral.sort((a, b) => a[2] - b[2]);
     this.lastSpace = 0; this.lastW = 0;
     this.saveTimer = 0;
@@ -212,7 +214,7 @@ class Game {
     const SP = this.spiral;
     for (let i = 0; i < SP.length; i++) {
       const e = SP[i];
-      if (e[2] > L + 0.5) break;
+      if (e[2] > (L + 0.5) * (L + 0.5)) break;
       if (w.genInFlight >= maxGen) break;
       const cx = pcx + e[0], cz = pcz + e[1];
       if (!w.col(cx, cz)) w.requestColumn(cx, cz);
@@ -243,7 +245,7 @@ class Game {
     const maxMesh = w.pool.workers.length * 4;
     for (let i = 0; i < SP.length; i++) {
       const e = SP[i];
-      if (e[2] > R + 0.5) break;
+      if (e[2] > (R + 0.5) * (R + 0.5)) break;
       if (w.meshInFlight >= maxMesh) break;
       const c = w.col(pcx + e[0], pcz + e[1]);
       if (!c || c.state !== 2 || !c.dirty) continue;
@@ -505,7 +507,7 @@ class Game {
     const pcx = Math.floor(p[0]) >> 4, pcz = Math.floor(p[2]) >> 4, R = Math.min(Settings.renderDist, 27);
     for (let i = 0; i < this.spiral.length; i++) {
       const e = this.spiral[i];
-      if (e[2] > R) break;
+      if (e[2] > R * R) break;
       const c = w.col(pcx + e[0], pcz + e[1]);
       if (!c || c.state !== 2 || c.dirty || c.meshBusy) return false;
     }

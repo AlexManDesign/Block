@@ -16,6 +16,9 @@ class Section {
 
 class Column {
   constructor(cx, cz) {
+    // integer fields: coordinates that arrive as doubles (from arrays holding fractions too) would
+    // make V8 keep these fields as boxed doubles, and every read of them allocate
+    cx |= 0; cz |= 0;
     this.cx = cx; this.cz = cz; this.key = colKey(cx, cz);
     this.secs = new Array(SECTIONS).fill(null);
     this.state = 0;          // 0 requested, 1 have blocks + sky init, 2 fully lit
@@ -153,6 +156,7 @@ class World {
   }
 
   requestColumn(cx, cz) {
+    cx |= 0; cz |= 0;
     const k = colKey(cx, cz);
     if (this.cols.has(k)) return;
     const slot = ((cx & COL_MASK) << 6) | (cz & COL_MASK);
