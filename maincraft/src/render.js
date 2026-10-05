@@ -669,14 +669,33 @@ class Renderer {
       if (!this.graphBuild && (this.graphDirty || L.ccx !== ccx || L.csy !== csy || L.ccz !== ccz)) this.graphBegin(world, ccx, csy, ccz, renderDist, noCull);
       if (this.graphBuild) this.graphRun(world, 1.5);
     }
-    const fc = this.fogCull, fogEnd = fc ? fc.end : 0, fogY = fc ? fc.y : null;
+    // A section goes into the frame's list when it is in view and not wholly in fog. Both tests are
+    // written out here: handing freshly computed numbers to a helper call makes V8 box each one,
+    // and with thousands of sections a frame that was the biggest source of garbage.
+    // The fog test (as in Sodium) only skips what changes no pixel: every point of the section in
+    // full fog (terrain fog distance = max(horizontal distance, |dy| / 2)) and the section wholly
+    // below the eye, where every ray to it points down and the sky shader draws exactly the fog
+    // colour (no sunset glow, see renderWorld); seen from above the clouds, terrain reaching into
+    // the cloud layer is kept, as it would hide cloud behind it.
+    const fc = this.fogCull, fogF = fc ? fc.end + 1 : 0, fogY = fc ? fc.y : 0, F = this.frustum;
+    const camX = cam[0], camY = cam[1], camZ = cam[2];
+    let fogCulled = 0;
     const take = (c, cx, cz, sy) => {
       const m = c.meshes[sy];
       if (!m || !m.vbo || m.vstamp === fr) return;
       m.vstamp = fr;
-      const bx = cx * 16 - cam[0], by = WORLD_MIN_Y + sy * 16 - cam[1], bz = cz * 16 - cam[2];
-      if (!this.boxVisible(bx, by, bz, bx + 16, by + 16, bz + 16)) return;
-      if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) { this.stats.fogCulled++; return; }
+      const x0 = cx * 16 - camX, y0 = WORLD_MIN_Y + sy * 16 - camY, z0 = cz * 16 - camZ, x1 = x0 + 16, y1 = y0 + 16, z1 = z0 + 16;
+      for (let i = 0; i < 24; i += 4) {
+        const a = F[i], b = F[i + 1], d = F[i + 2];
+        if (a * (a > 0 ? x1 : x0) + b * (b > 0 ? y1 : y0) + d * (d > 0 ? z1 : z0) + F[i + 3] < 0) return;
+      }
+      if (fc) {
+        const wy0 = WORLD_MIN_Y + sy * 16;
+        if (wy0 + 17 <= fogY && !(fogY > 191 && wy0 + 16 > 191)) {
+          const dx = x0 > 0 ? x0 : x1 < 0 ? -x1 : 0, dz = z0 > 0 ? z0 : z1 < 0 ? -z1 : 0, dy = (fogY - (wy0 + 17)) * 0.5;
+          if (dx * dx + dz * dz >= fogF * fogF || dy >= fogF) { fogCulled++; return; }
+        }
+      }
       list[n++] = m; m.cx = cx; m.cz = cz; m.sy = sy;
     };
     // the sections around the camera, nearest first
@@ -691,6 +710,7 @@ class Renderer {
       if (world.col(c.cx, c.cz) !== c) continue;          // unloaded since
       take(c, c.cx, c.cz, GS[i]);
     }
+    this.stats.fogCulled += fogCulled;
     this.visCount = n;
   }
   // Starts a walk over the section graph from the camera section: across a section only between
@@ -751,22 +771,6 @@ class Renderer {
       this.graphList = { cols: B.cols, sys: B.sys, n: B.n, ccx: B.ccx, csy: B.csy, ccz: B.ccz, rd: B.rd, noCull: B.noCull };
       this.graphBuild = null;
     }
-  }
-
-  // A section is skipped when every point of it is in full fog (the terrain fog distance is
-  // max(horizontal distance, |dy| / 2)) and it lies wholly below the eye: every ray to it points
-  // down, where the sky shader draws exactly the fog colour (no sunset glow, see renderWorld), so
-  // the pixel is the same with or without it.
-  fullyFogged(cx, sy, cz, cam, fogEnd, eyeY) {
-    const y0 = WORLD_MIN_Y + sy * 16;
-    if (y0 + 17 > eyeY) return false;
-    // seen from above the clouds, terrain reaching into the cloud layer would hide cloud behind it
-    if (eyeY > 191 && y0 + 16 > 191) return false;
-    const x0 = cx * 16, z0 = cz * 16;
-    const dx = cam[0] < x0 ? x0 - cam[0] : cam[0] > x0 + 16 ? cam[0] - x0 - 16 : 0;
-    const dz = cam[2] < z0 ? z0 - cam[2] : cam[2] > z0 + 16 ? cam[2] - z0 - 16 : 0;
-    const dy = eyeY - (y0 + 17);
-    return Math.max(Math.hypot(dx, dz), dy * 0.5) >= fogEnd + 1;
   }
 
   // ---------------------------------------------------------------- terrain passes

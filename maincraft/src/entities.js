@@ -1529,7 +1529,7 @@ class Entities {
       const px = -part.pivot[0], py = -(part.pivot[1] - (part.creepy && e.aggro ? 5 : 0)), pz = part.pivot[2];
       const crx = Math.cos(-rx), srx = Math.sin(-rx), cry = Math.cos(-ry), sry = Math.sin(-ry), crz = Math.cos(rz), srz = Math.sin(rz);
       const sneakBody = sneak && m === MODELS.player;
-      const M = (x, y, z) => {
+      const M = (x, y, z, o) => {
         // part rotation Z, Y, X (MC order: Z*Y*X applied to vertex -> X first)
         let y1 = y * crx - z * srx, z1 = y * srx + z * crx; y = y1; z = z1;
         let x1 = x * cry + z * sry; z1 = -x * sry + z * cry; x = x1; z = z1;
@@ -1540,14 +1540,14 @@ class Entities {
         if (sneakBody) wy -= 0.12;
         if (death) { const yy = wy * Math.cos(death) - wx * Math.sin(death); wx = wy * Math.sin(death) + wx * Math.cos(death); wy = yy; }
         const rx2 = wx * cy - wz * sy, rz2 = wx * sy + wz * cy;
-        return [EP[0] + rx2 - cam[0], EP[1] + wy - cam[1], EP[2] + rz2 - cam[2]];
+        o[0] = EP[0] + rx2 - cam[0]; o[1] = EP[1] + wy - cam[1]; o[2] = EP[2] + rz2 - cam[2];
       };
       g.pushModelBox(dst, M, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
       // the skeleton's bow in its right hand: the item sprite (0.9 block) held at the hand,
       // across the arm, so it points forward with the arm down and stands upright when aiming
       if (heldOut && an === 'armR' && m.heldItem) {
         const layer = g.assets.layers[m.heldItem], h = 7.2, s2 = Math.SQRT1_2 * h, cy0 = -9, cz0 = -0.5;
-        const P = (a, b) => M(0, cy0 + (-a + b) * s2, cz0 + (a + b) * s2);   // a: texture right, b: texture up
+        const P = (a, b) => { const o = [0, 0, 0]; M(0, cy0 + (-a + b) * s2, cz0 + (a + b) * s2, o); return o; };   // a: texture right, b: texture up
         const q = [[P(-1, -1), 0, 1], [P(1, -1), 1, 1], [P(1, 1), 1, 0], [P(-1, 1), 0, 0]];
         const c = tint ? [li * tint[0], li * tint[1], li * tint[2]] : [li, li, li];
         for (const k of [0, 1, 2, 0, 2, 3]) heldOut.push(q[k][0][0], q[k][0][1], q[k][0][2], q[k][1], q[k][2], layer, c[0], c[1], c[2], 1);

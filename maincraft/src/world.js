@@ -759,7 +759,8 @@ class World {
             continue;
           }
           if (k === 1) {
-            ids.set(sec.ids.subarray(row, row + 16), dst); meta.set(sec.meta.subarray(row, row + 16), dst); light.set(sec.light.subarray(row, row + 16), dst);
+            const si = sec.ids, sm = sec.meta, sl = sec.light;
+            for (let x = 0; x < 16; x++) { ids[dst + x] = si[row + x]; meta[dst + x] = sm[row + x]; light[dst + x] = sl[row + x]; }
           } else {
             const li = row | (k === 0 ? 15 : 0);
             ids[dst] = sec.ids[li]; meta[dst] = sec.meta[li]; light[dst] = sec.light[li];

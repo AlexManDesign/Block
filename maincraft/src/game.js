@@ -208,11 +208,14 @@ class Game {
     const R = Math.min(Settings.renderDist, 27), L = R + 3; // +3: lit needs sky-init neighbours, meshing needs lit neighbours
     const maxGen = w.pool.workers.length * 3;
     // request columns
-    for (const [dx, dz, d] of this.spiral) {
-      if (d > L + 0.5) break;
+    // (index loops over the spiral and the column grid lookup: no per-cell objects every frame)
+    const SP = this.spiral;
+    for (let i = 0; i < SP.length; i++) {
+      const e = SP[i];
+      if (e[2] > L + 0.5) break;
       if (w.genInFlight >= maxGen) break;
-      const cx = pcx + dx, cz = pcz + dz;
-      if (!w.cols.has(colKey(cx, cz))) w.requestColumn(cx, cz);
+      const cx = pcx + e[0], cz = pcz + e[1];
+      if (!w.col(cx, cz)) w.requestColumn(cx, cz);
     }
     // unload far columns
     if ((this.frameN & 31) === 0) {
@@ -238,10 +241,11 @@ class Game {
     }
     // meshing
     const maxMesh = w.pool.workers.length * 4;
-    for (const [dx, dz, d] of this.spiral) {
-      if (d > R + 0.5) break;
+    for (let i = 0; i < SP.length; i++) {
+      const e = SP[i];
+      if (e[2] > R + 0.5) break;
       if (w.meshInFlight >= maxMesh) break;
-      const c = w.col(pcx + dx, pcz + dz);
+      const c = w.col(pcx + e[0], pcz + e[1]);
       if (!c || c.state !== 2 || !c.dirty) continue;
       let ok = true;
       for (let k = 0; k < 9 && ok; k++) { const n = w.col(c.cx + (k % 3) - 1, c.cz + ((k / 3) | 0) - 1); if (!n || n.state !== 2) ok = false; }
@@ -499,9 +503,10 @@ class Game {
     const w = this.world, p = this.player.pos;
     if (w.genInFlight || w.meshInFlight || this.meshQueue.length) return false;
     const pcx = Math.floor(p[0]) >> 4, pcz = Math.floor(p[2]) >> 4, R = Math.min(Settings.renderDist, 27);
-    for (const [dx, dz, d] of this.spiral) {
-      if (d > R) break;
-      const c = w.col(pcx + dx, pcz + dz);
+    for (let i = 0; i < this.spiral.length; i++) {
+      const e = this.spiral[i];
+      if (e[2] > R) break;
+      const c = w.col(pcx + e[0], pcz + e[1]);
       if (!c || c.state !== 2 || c.dirty || c.meshBusy) return false;
     }
     return true;
@@ -1395,12 +1400,12 @@ class Game {
       if (!tex) return;
       const ev = [];
       const sw2 = swingA;
-      const M = (x, y, z) => {
+      const M = (x, y, z, o) => {
         // arm local -> view: rotate around x by -60deg-swing, around y by 20deg, translate
         const ax = -1.05 - sw2 * 0.5, ay = 0.45 + sw2 * 0.3;
         let y1 = y * Math.cos(ax) - z * Math.sin(ax), z1 = y * Math.sin(ax) + z * Math.cos(ax);
         let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
-        return [x2 + 0.56 + bx - sw2 * 0.2, y1 - 0.62 + by + sw2 * 0.15, z2 - 0.72 - sw2 * 0.15];
+        o[0] = x2 + 0.56 + bx - sw2 * 0.2; o[1] = y1 - 0.62 + by + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
       };
       this.pushModelBox(ev, M, -0.1, -0.6, -0.1, 0.1, 0.0, 0.1, 40, 16, 4, 12, 4, 64, 64, li);
       gl.enable(gl.CULL_FACE);
@@ -1440,11 +1445,12 @@ class Game {
     gl.enable(gl.CULL_FACE);
   }
 
-  // MC-style box with standard skin unwrap. M maps local coords -> camera relative.
-  // The 8 corners are transformed once and shared by the faces (no per-face temporaries).
+  // MC-style box with standard skin unwrap. M(x, y, z, o) maps local coords to camera relative
+  // ones, written into o. The 8 corners are transformed once and shared by the faces, through one
+  // reused buffer (no per-corner or per-face temporaries).
   pushModelBox(out, M, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
-    const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24));
-    for (let k = 0; k < 8; k++) { const q = M(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
+    const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24)), q = this._mbQ || (this._mbQ = new Float64Array(3));
+    for (let k = 0; k < 8; k++) { M(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0, q); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
     // uv rects [u0, v0, u1, v1] of +x, -x, top, bottom, back (+z), front (-z)
     R[0] = u; R[1] = v + d; R[2] = u + d; R[3] = v + d + h;
     R[4] = u + d + w; R[5] = v + d; R[6] = u + d + w + d; R[7] = v + d + h;

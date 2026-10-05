@@ -11734,7 +11734,8 @@ class World {
             continue;
           }
           if (k === 1) {
-            ids.set(sec.ids.subarray(row, row + 16), dst); meta.set(sec.meta.subarray(row, row + 16), dst); light.set(sec.light.subarray(row, row + 16), dst);
+            const si = sec.ids, sm = sec.meta, sl = sec.light;
+            for (let x = 0; x < 16; x++) { ids[dst + x] = si[row + x]; meta[dst + x] = sm[row + x]; light[dst + x] = sl[row + x]; }
           } else {
             const li = row | (k === 0 ? 15 : 0);
             ids[dst] = sec.ids[li]; meta[dst] = sec.meta[li]; light[dst] = sec.light[li];
@@ -12478,14 +12479,33 @@ class Renderer {
       if (!this.graphBuild && (this.graphDirty || L.ccx !== ccx || L.csy !== csy || L.ccz !== ccz)) this.graphBegin(world, ccx, csy, ccz, renderDist, noCull);
       if (this.graphBuild) this.graphRun(world, 1.5);
     }
-    const fc = this.fogCull, fogEnd = fc ? fc.end : 0, fogY = fc ? fc.y : null;
+    // A section goes into the frame's list when it is in view and not wholly in fog. Both tests are
+    // written out here: handing freshly computed numbers to a helper call makes V8 box each one,
+    // and with thousands of sections a frame that was the biggest source of garbage.
+    // The fog test (as in Sodium) only skips what changes no pixel: every point of the section in
+    // full fog (terrain fog distance = max(horizontal distance, |dy| / 2)) and the section wholly
+    // below the eye, where every ray to it points down and the sky shader draws exactly the fog
+    // colour (no sunset glow, see renderWorld); seen from above the clouds, terrain reaching into
+    // the cloud layer is kept, as it would hide cloud behind it.
+    const fc = this.fogCull, fogF = fc ? fc.end + 1 : 0, fogY = fc ? fc.y : 0, F = this.frustum;
+    const camX = cam[0], camY = cam[1], camZ = cam[2];
+    let fogCulled = 0;
     const take = (c, cx, cz, sy) => {
       const m = c.meshes[sy];
       if (!m || !m.vbo || m.vstamp === fr) return;
       m.vstamp = fr;
-      const bx = cx * 16 - cam[0], by = WORLD_MIN_Y + sy * 16 - cam[1], bz = cz * 16 - cam[2];
-      if (!this.boxVisible(bx, by, bz, bx + 16, by + 16, bz + 16)) return;
-      if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) { this.stats.fogCulled++; return; }
+      const x0 = cx * 16 - camX, y0 = WORLD_MIN_Y + sy * 16 - camY, z0 = cz * 16 - camZ, x1 = x0 + 16, y1 = y0 + 16, z1 = z0 + 16;
+      for (let i = 0; i < 24; i += 4) {
+        const a = F[i], b = F[i + 1], d = F[i + 2];
+        if (a * (a > 0 ? x1 : x0) + b * (b > 0 ? y1 : y0) + d * (d > 0 ? z1 : z0) + F[i + 3] < 0) return;
+      }
+      if (fc) {
+        const wy0 = WORLD_MIN_Y + sy * 16;
+        if (wy0 + 17 <= fogY && !(fogY > 191 && wy0 + 16 > 191)) {
+          const dx = x0 > 0 ? x0 : x1 < 0 ? -x1 : 0, dz = z0 > 0 ? z0 : z1 < 0 ? -z1 : 0, dy = (fogY - (wy0 + 17)) * 0.5;
+          if (dx * dx + dz * dz >= fogF * fogF || dy >= fogF) { fogCulled++; return; }
+        }
+      }
       list[n++] = m; m.cx = cx; m.cz = cz; m.sy = sy;
     };
     // the sections around the camera, nearest first
@@ -12500,6 +12520,7 @@ class Renderer {
       if (world.col(c.cx, c.cz) !== c) continue;          // unloaded since
       take(c, c.cx, c.cz, GS[i]);
     }
+    this.stats.fogCulled += fogCulled;
     this.visCount = n;
   }
   // Starts a walk over the section graph from the camera section: across a section only between
@@ -12560,22 +12581,6 @@ class Renderer {
       this.graphList = { cols: B.cols, sys: B.sys, n: B.n, ccx: B.ccx, csy: B.csy, ccz: B.ccz, rd: B.rd, noCull: B.noCull };
       this.graphBuild = null;
     }
-  }
-
-  // A section is skipped when every point of it is in full fog (the terrain fog distance is
-  // max(horizontal distance, |dy| / 2)) and it lies wholly below the eye: every ray to it points
-  // down, where the sky shader draws exactly the fog colour (no sunset glow, see renderWorld), so
-  // the pixel is the same with or without it.
-  fullyFogged(cx, sy, cz, cam, fogEnd, eyeY) {
-    const y0 = WORLD_MIN_Y + sy * 16;
-    if (y0 + 17 > eyeY) return false;
-    // seen from above the clouds, terrain reaching into the cloud layer would hide cloud behind it
-    if (eyeY > 191 && y0 + 16 > 191) return false;
-    const x0 = cx * 16, z0 = cz * 16;
-    const dx = cam[0] < x0 ? x0 - cam[0] : cam[0] > x0 + 16 ? cam[0] - x0 - 16 : 0;
-    const dz = cam[2] < z0 ? z0 - cam[2] : cam[2] > z0 + 16 ? cam[2] - z0 - 16 : 0;
-    const dy = eyeY - (y0 + 17);
-    return Math.max(Math.hypot(dx, dz), dy * 0.5) >= fogEnd + 1;
   }
 
   // ---------------------------------------------------------------- terrain passes
@@ -15104,7 +15109,7 @@ class Entities {
       const px = -part.pivot[0], py = -(part.pivot[1] - (part.creepy && e.aggro ? 5 : 0)), pz = part.pivot[2];
       const crx = Math.cos(-rx), srx = Math.sin(-rx), cry = Math.cos(-ry), sry = Math.sin(-ry), crz = Math.cos(rz), srz = Math.sin(rz);
       const sneakBody = sneak && m === MODELS.player;
-      const M = (x, y, z) => {
+      const M = (x, y, z, o) => {
         // part rotation Z, Y, X (MC order: Z*Y*X applied to vertex -> X first)
         let y1 = y * crx - z * srx, z1 = y * srx + z * crx; y = y1; z = z1;
         let x1 = x * cry + z * sry; z1 = -x * sry + z * cry; x = x1; z = z1;
@@ -15115,14 +15120,14 @@ class Entities {
         if (sneakBody) wy -= 0.12;
         if (death) { const yy = wy * Math.cos(death) - wx * Math.sin(death); wx = wy * Math.sin(death) + wx * Math.cos(death); wy = yy; }
         const rx2 = wx * cy - wz * sy, rz2 = wx * sy + wz * cy;
-        return [EP[0] + rx2 - cam[0], EP[1] + wy - cam[1], EP[2] + rz2 - cam[2]];
+        o[0] = EP[0] + rx2 - cam[0]; o[1] = EP[1] + wy - cam[1]; o[2] = EP[2] + rz2 - cam[2];
       };
       g.pushModelBox(dst, M, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
       // the skeleton's bow in its right hand: the item sprite (0.9 block) held at the hand,
       // across the arm, so it points forward with the arm down and stands upright when aiming
       if (heldOut && an === 'armR' && m.heldItem) {
         const layer = g.assets.layers[m.heldItem], h = 7.2, s2 = Math.SQRT1_2 * h, cy0 = -9, cz0 = -0.5;
-        const P = (a, b) => M(0, cy0 + (-a + b) * s2, cz0 + (a + b) * s2);   // a: texture right, b: texture up
+        const P = (a, b) => { const o = [0, 0, 0]; M(0, cy0 + (-a + b) * s2, cz0 + (a + b) * s2, o); return o; };   // a: texture right, b: texture up
         const q = [[P(-1, -1), 0, 1], [P(1, -1), 1, 1], [P(1, 1), 1, 0], [P(-1, 1), 0, 0]];
         const c = tint ? [li * tint[0], li * tint[1], li * tint[2]] : [li, li, li];
         for (const k of [0, 1, 2, 0, 2, 3]) heldOut.push(q[k][0][0], q[k][0][1], q[k][0][2], q[k][1], q[k][2], layer, c[0], c[1], c[2], 1);
@@ -15954,7 +15959,7 @@ const Settings = {
 
 const DAY_LEN = 1200;
 // water fog colours of the biomes (Minecraft's water_fog_color); the rest use 0x050533
-const BUILD_ID = '6ef8cab';   // filled in by build.py
+const BUILD_ID = 'f0b0cc3';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -16145,11 +16150,14 @@ class Game {
     const R = Math.min(Settings.renderDist, 27), L = R + 3; // +3: lit needs sky-init neighbours, meshing needs lit neighbours
     const maxGen = w.pool.workers.length * 3;
     // request columns
-    for (const [dx, dz, d] of this.spiral) {
-      if (d > L + 0.5) break;
+    // (index loops over the spiral and the column grid lookup: no per-cell objects every frame)
+    const SP = this.spiral;
+    for (let i = 0; i < SP.length; i++) {
+      const e = SP[i];
+      if (e[2] > L + 0.5) break;
       if (w.genInFlight >= maxGen) break;
-      const cx = pcx + dx, cz = pcz + dz;
-      if (!w.cols.has(colKey(cx, cz))) w.requestColumn(cx, cz);
+      const cx = pcx + e[0], cz = pcz + e[1];
+      if (!w.col(cx, cz)) w.requestColumn(cx, cz);
     }
     // unload far columns
     if ((this.frameN & 31) === 0) {
@@ -16175,10 +16183,11 @@ class Game {
     }
     // meshing
     const maxMesh = w.pool.workers.length * 4;
-    for (const [dx, dz, d] of this.spiral) {
-      if (d > R + 0.5) break;
+    for (let i = 0; i < SP.length; i++) {
+      const e = SP[i];
+      if (e[2] > R + 0.5) break;
       if (w.meshInFlight >= maxMesh) break;
-      const c = w.col(pcx + dx, pcz + dz);
+      const c = w.col(pcx + e[0], pcz + e[1]);
       if (!c || c.state !== 2 || !c.dirty) continue;
       let ok = true;
       for (let k = 0; k < 9 && ok; k++) { const n = w.col(c.cx + (k % 3) - 1, c.cz + ((k / 3) | 0) - 1); if (!n || n.state !== 2) ok = false; }
@@ -16436,9 +16445,10 @@ class Game {
     const w = this.world, p = this.player.pos;
     if (w.genInFlight || w.meshInFlight || this.meshQueue.length) return false;
     const pcx = Math.floor(p[0]) >> 4, pcz = Math.floor(p[2]) >> 4, R = Math.min(Settings.renderDist, 27);
-    for (const [dx, dz, d] of this.spiral) {
-      if (d > R) break;
-      const c = w.col(pcx + dx, pcz + dz);
+    for (let i = 0; i < this.spiral.length; i++) {
+      const e = this.spiral[i];
+      if (e[2] > R) break;
+      const c = w.col(pcx + e[0], pcz + e[1]);
       if (!c || c.state !== 2 || c.dirty || c.meshBusy) return false;
     }
     return true;
@@ -17332,12 +17342,12 @@ class Game {
       if (!tex) return;
       const ev = [];
       const sw2 = swingA;
-      const M = (x, y, z) => {
+      const M = (x, y, z, o) => {
         // arm local -> view: rotate around x by -60deg-swing, around y by 20deg, translate
         const ax = -1.05 - sw2 * 0.5, ay = 0.45 + sw2 * 0.3;
         let y1 = y * Math.cos(ax) - z * Math.sin(ax), z1 = y * Math.sin(ax) + z * Math.cos(ax);
         let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
-        return [x2 + 0.56 + bx - sw2 * 0.2, y1 - 0.62 + by + sw2 * 0.15, z2 - 0.72 - sw2 * 0.15];
+        o[0] = x2 + 0.56 + bx - sw2 * 0.2; o[1] = y1 - 0.62 + by + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
       };
       this.pushModelBox(ev, M, -0.1, -0.6, -0.1, 0.1, 0.0, 0.1, 40, 16, 4, 12, 4, 64, 64, li);
       gl.enable(gl.CULL_FACE);
@@ -17377,11 +17387,12 @@ class Game {
     gl.enable(gl.CULL_FACE);
   }
 
-  // MC-style box with standard skin unwrap. M maps local coords -> camera relative.
-  // The 8 corners are transformed once and shared by the faces (no per-face temporaries).
+  // MC-style box with standard skin unwrap. M(x, y, z, o) maps local coords to camera relative
+  // ones, written into o. The 8 corners are transformed once and shared by the faces, through one
+  // reused buffer (no per-corner or per-face temporaries).
   pushModelBox(out, M, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
-    const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24));
-    for (let k = 0; k < 8; k++) { const q = M(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
+    const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24)), q = this._mbQ || (this._mbQ = new Float64Array(3));
+    for (let k = 0; k < 8; k++) { M(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0, q); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
     // uv rects [u0, v0, u1, v1] of +x, -x, top, bottom, back (+z), front (-z)
     R[0] = u; R[1] = v + d; R[2] = u + d; R[3] = v + d + h;
     R[4] = u + d + w; R[5] = v + d; R[6] = u + d + w + d; R[7] = v + d + h;
