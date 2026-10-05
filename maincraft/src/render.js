@@ -450,6 +450,7 @@ class Renderer {
   }
   freeSectionMesh(m) {
     const gl = this.gl;
+    this.graphDirty = true;
     if (m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); m.vbo = m.vao = null; }
     this.freeTrans(m);
     if (m.slot !== undefined) { this.originFree.push(m.slot); m.slot = undefined; }
@@ -457,12 +458,13 @@ class Renderer {
   // Every section mesh carries the same fields from the start, so all of them share one hidden
   // class: the visibility walk and the draw loops read these fields on thousands of meshes a frame
   newMesh(vbo, vao, vis) {
-    return { vbo, vao, counts: null, vis, cap: 0, slot: undefined, gc: null, cx: 0, cz: 0, sy: 0,
+    return { vbo, vao, counts: null, vis, cap: 0, slot: undefined, gc: null, cx: 0, cz: 0, sy: 0, vstamp: 0,
       tvao: null, tibo: null, tcap: 0, tc: null, tg: null, tfirst: 0, tn: 0, tkey: -1 };
   }
   uploadSection(c, sy, d) {
     const gl = this.gl;
     this.upN = (this.upN || 0) + 1; this.upBytes = (this.upBytes || 0) + d.data.byteLength;
+    this.graphDirty = true;                     // new meshes and visibility data: walk the section graph again
     let m = c.meshes[sy];
     const total = d.counts[0] + d.counts[1] + d.counts[2];
     if (!total) {
@@ -634,56 +636,113 @@ class Renderer {
     return true;
   }
 
-  // occlusion-culled BFS over sections from the camera section
+  // Visible sections. As Minecraft's section occlusion graph: which sections can be seen from the
+  // camera's section through open space does not depend on the view direction, so it is found by
+  // a walk from that section (graphBegin / graphRun) that runs in the background, a slice of time
+  // per frame, whenever the camera enters another section or meshes change. Each frame only tests
+  // the finished list against the view and the fog, plus the sections right around the camera
+  // directly, so edits and the nearest sections never wait for a walk. After a jump (teleport,
+  // new render distance) the walk runs at once.
   collectVisible(world, cam, renderDist) {
     this.frame++;
-    const fr = this.frame;
-    const list = this.visList;
+    const fr = this.frame, list = this.visList;
     let n = 0;
     const ccx = Math.floor(cam[0]) >> 4, ccz = Math.floor(cam[2]) >> 4;
     let csy = (Math.floor(cam[1]) - WORLD_MIN_Y) >> 4;
     if (csy < 0) csy = 0; if (csy >= SECTIONS) csy = SECTIONS - 1;
-    const Q = this.bfsQ || (this.bfsQ = new Int32Array(1 << 18));
-    let qh = 0, qt = 0;
-    const startCol = world.col(ccx, ccz);
-    if (!startCol) { this.visCount = 0; return; }
-    if (!startCol.visFrame) startCol.visFrame = new Uint32Array(SECTIONS);
-    startCol.visFrame[csy] = fr;
-    Q[qt++] = ccx; Q[qt++] = ccz; Q[qt++] = csy; Q[qt++] = -1; Q[qt++] = 0;
-    const R2 = (renderDist + 0.5) * (renderDist + 0.5);
-    const noCull = this.noOcclusion;
-    // fog occlusion (as in Sodium), only where it changes no pixel: see fullyFogged()
+    if (!world.col(ccx, ccz)) { this.visCount = 0; return; }
+    const noCull = !!this.noOcclusion, L = this.graphList, B = this.graphBuild;
+    const away = (o, k) => !o || o.rd !== renderDist || o.noCull !== noCull || Math.max(Math.abs(ccx - o.ccx), Math.abs(ccz - o.ccz), Math.abs(csy - o.csy)) > k;
+    if (away(L, 2)) {
+      if (away(B, 0)) this.graphBegin(world, ccx, csy, ccz, renderDist, noCull);
+      this.graphRun(world, Infinity);
+    } else {
+      if (B && away(B, 2)) this.graphBuild = null;
+      if (!this.graphBuild && (this.graphDirty || L.ccx !== ccx || L.csy !== csy || L.ccz !== ccz)) this.graphBegin(world, ccx, csy, ccz, renderDist, noCull);
+      if (this.graphBuild) this.graphRun(world, 1.5);
+    }
     const fc = this.fogCull, fogEnd = fc ? fc.end : 0, fogY = fc ? fc.y : null;
-    while (qh < qt) {
-      const cx = Q[qh], cz = Q[qh + 1], sy = Q[qh + 2], from = Q[qh + 3], dirs = Q[qh + 4];
-      qh += 5;
-      const c = world.col(cx, cz);
+    const take = (c, cx, cz, sy) => {
       const m = c.meshes[sy];
-      if (m && m.vbo) {
-        if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) this.stats.fogCulled++;
-        else list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
-      }
-      const vis = m && m.vis;
+      if (!m || !m.vbo || m.vstamp === fr) return;
+      m.vstamp = fr;
+      const bx = cx * 16 - cam[0], by = WORLD_MIN_Y + sy * 16 - cam[1], bz = cz * 16 - cam[2];
+      if (!this.boxVisible(bx, by, bz, bx + 16, by + 16, bz + 16)) return;
+      if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) { this.stats.fogCulled++; return; }
+      list[n++] = m; m.cx = cx; m.cz = cz; m.sy = sy;
+    };
+    // the sections around the camera, nearest first
+    for (let r = 0; r <= 2; r++) for (let dy = -r; dy <= r; dy++) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== r) continue;
+      const sy = csy + dy, c = sy >= 0 && sy < SECTIONS ? world.col(ccx + dx, ccz + dz) : null;
+      if (c && c.state >= 2) take(c, ccx + dx, ccz + dz, sy);
+    }
+    const G = this.graphList, GC = G.cols, GS = G.sys;
+    for (let i = 0; i < G.n; i++) {
+      const c = GC[i];
+      if (world.col(c.cx, c.cz) !== c) continue;          // unloaded since
+      take(c, c.cx, c.cz, GS[i]);
+    }
+    this.visCount = n;
+  }
+  // Starts a walk over the section graph from the camera section: across a section only between
+  // faces its visibility data connects, never back toward the camera, within the render distance.
+  // A section reached again through another face is walked on again from there, so what lies past
+  // it is found whichever way the walk came first. Sections with a mesh are listed in the order
+  // they are reached (near to far).
+  graphBegin(world, ccx, csy, ccz, renderDist, noCull) {
+    const B = this.graphBuild = { id: (this.graphId = (this.graphId || 0) + 1), ccx, csy, ccz, rd: renderDist, noCull,
+      q: this.graphQ || (this.graphQ = new Int32Array(1 << 21)), qc: this.graphQC || (this.graphQC = []), qh: 0, qt: 0,
+      cols: [], sys: [], n: 0 };
+    this.graphDirty = false;
+    const c = world.col(ccx, ccz);
+    c.gMark[csy] = B.id; c.gFaces[csy] = 63;
+    B.cols.push(c); B.sys.push(csy); B.n = 1;
+    B.qc[0] = c;
+    B.q[0] = ccx; B.q[1] = ccz; B.q[2] = csy; B.q[3] = -1; B.q[4] = 0; B.qt = 5;
+  }
+  graphRun(world, budget) {
+    const B = this.graphBuild, Q = B.q, QC = B.qc, id = B.id, R2 = (B.rd + 0.5) * (B.rd + 0.5), noCull = B.noCull;
+    const t0 = performance.now();
+    let qh = B.qh, qt = B.qt, steps = 0;
+    while (qh < qt) {
+      if ((++steps & 255) === 0 && performance.now() - t0 > budget) break;
+      const c = QC[qh / 5], cx = Q[qh], cz = Q[qh + 1], sy = Q[qh + 2], from = Q[qh + 3], dirs = Q[qh + 4];
+      qh += 5;
+      if (world.col(cx, cz) !== c) continue;
+      const m = c.meshes[sy], vis = m && m.vis;
       for (let d = 0; d < 6; d++) {
         if (dirs & (1 << OPP6[d])) continue;
         if (from >= 0 && vis && !noCull && !(vis[from] & (1 << d))) continue;
         const nx = cx + DX6[d], ny = sy + DY6[d], nz = cz + DZ6[d];
         if (ny < 0 || ny >= SECTIONS) continue;
-        const ddx = nx - ccx, ddz = nz - ccz;
+        const ddx = nx - B.ccx, ddz = nz - B.ccz;
         if (ddx * ddx + ddz * ddz > R2) continue;
         const nc = world.col(nx, nz);
         if (!nc || nc.state < 2) continue;
-        if (!nc.visFrame) nc.visFrame = new Uint32Array(SECTIONS);
-        if (nc.visFrame[ny] === fr) continue;
-        // frustum test in camera-relative coords
-        const bx = nx * 16 - cam[0], by = WORLD_MIN_Y + ny * 16 - cam[1], bz = nz * 16 - cam[2];
-        if (!this.boxVisible(bx, by, bz, bx + 16, by + 16, bz + 16)) continue;
-        nc.visFrame[ny] = fr;
-        if (qt + 5 > Q.length) break;
+        const f = 1 << OPP6[d];
+        if (nc.gMark[ny] === id) {
+          if (nc.gFaces[ny] & f) continue;
+          nc.gFaces[ny] |= f;
+        } else {
+          nc.gMark[ny] = id;
+          // a section open on every side (empty, or no visibility data) passes the same way
+          // whichever face it is entered by
+          const nm = nc.meshes[ny];
+          nc.gFaces[ny] = nm && nm.vis && !noCull ? f : 63;
+          if (nm && nm.vbo) { B.cols.push(nc); B.sys.push(ny); B.n++; }
+        }
+        if (qt + 5 > Q.length) continue;
+        QC[qt / 5] = nc;
         Q[qt++] = nx; Q[qt++] = nz; Q[qt++] = ny; Q[qt++] = OPP6[d]; Q[qt++] = dirs | (1 << d);
       }
     }
-    this.visCount = n;
+    B.qh = qh; B.qt = qt;
+    if (qh >= qt) {
+      QC.length = 0;
+      this.graphList = { cols: B.cols, sys: B.sys, n: B.n, ccx: B.ccx, csy: B.csy, ccz: B.ccz, rd: B.rd, noCull: B.noCull };
+      this.graphBuild = null;
+    }
   }
 
   // A section is skipped when every point of it is in full fog (the terrain fog distance is
