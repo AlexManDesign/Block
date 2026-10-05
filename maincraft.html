@@ -11002,8 +11002,7 @@ class Column {
     this.meshBusy = 0;       // bitmask of sections with a mesh job in flight
     this.meshed = 0;         // bitmask of sections that have (possibly empty) meshes
     this.meshes = new Array(SECTIONS).fill(null);
-    this.gMark = new Uint32Array(SECTIONS);      // section graph walk (render.js): last walk that reached each section
-    this.gFaces = new Uint8Array(SECTIONS);      // and the faces it entered by in that walk
+    this.visFrame = new Uint32Array(SECTIONS);   // last frame each section was reached by the visibility walk
     this.edits = null;       // Map localIndex -> id | meta<<16 (player modifications)
     this.biomes = null;
     this.emitters = null;
@@ -11860,7 +11859,6 @@ const M4 = {
   },
 };
 
-// the same visibility data (which faces of a section connect through it): 6 bitmasks or none
 // A growable vertex buffer of floats kept from frame to frame (models, sprites): push takes one
 // vertex of 10 floats, like an array's push, without making a new array every frame.
 class VBuf {
@@ -11874,12 +11872,6 @@ class VBuf {
     this.n = n + 10;
   }
   view() { return this.a.subarray(0, this.n); }
-}
-
-function sameVis(a, b) {
-  if (!a || !b) return !a === !b;
-  for (let i = 0; i < 6; i++) if (a[i] !== b[i]) return false;
-  return true;
 }
 
 const TERRAIN_VS = `#version 300 es
@@ -12073,7 +12065,6 @@ class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this.flicker = 0; this.flickerT = 0; this.flickerTarget = 0;
     this.visList = []; this.visCount = 0;
-    this.visN = 0; this.visFogged = 0; this.visP = new Float64Array(3);   // collectVisible / takeSection
     this.frame = 0;
     this.stats = { draws: 0, quads: 0, sections: 0 };
     this.initProfiler();
@@ -12294,7 +12285,7 @@ class Renderer {
   // Every section mesh carries the same fields from the start, so all of them share one hidden
   // class: the visibility walk and the draw loops read these fields on thousands of meshes a frame
   newMesh(vbo, vao, vis) {
-    return { vbo, vao, counts: null, vis, cap: 0, slot: undefined, gc: null, cx: 0, cz: 0, sy: 0, vstamp: 0,
+    return { vbo, vao, counts: null, vis, cap: 0, slot: undefined, gc: null, cx: 0, cz: 0, sy: 0,
       tvao: null, tibo: null, tcap: 0, tc: null, tg: null, tfirst: 0, tn: 0, tkey: -1 };
   }
   uploadSection(c, sy, d) {
@@ -12302,9 +12293,6 @@ class Renderer {
     this.upN = (this.upN || 0) + 1; this.upBytes = (this.upBytes || 0) + d.data.byteLength;
     let m = c.meshes[sy];
     const total = d.counts[0] + d.counts[1] + d.counts[2];
-    // the section graph changes only when a section gains or loses its mesh or the way through it
-    // changes; a mesh rebuilt with the same openings (grass spreading, water flowing) keeps it
-    if ((m && m.vbo ? 1 : 0) !== (total ? 1 : 0) || !sameVis(m && m.vis, d.vis)) this.graphDirty = true;
     if (!total) {
       if (m) this.freeSectionMesh(m);
       const e = this.newMesh(null, null, d.vis); e.counts = [0, 0, 0];
@@ -12474,135 +12462,70 @@ class Renderer {
     return true;
   }
 
-  // Visible sections. As Minecraft's section occlusion graph: which sections can be seen from the
-  // camera's section through open space does not depend on the view direction, so it is found by
-  // a walk from that section (graphBegin / graphRun) that runs in the background, a slice of time
-  // per frame, whenever the camera enters another section or meshes change. Each frame only tests
-  // the finished list against the view and the fog, plus the sections right around the camera
-  // directly, so edits and the nearest sections never wait for a walk. After a jump (teleport,
-  // new render distance) the walk runs at once.
+  // occlusion-culled BFS over sections from the camera section
   collectVisible(world, cam, renderDist) {
     this.frame++;
     const fr = this.frame;
+    const list = this.visList;
+    let n = 0;
     const ccx = Math.floor(cam[0]) >> 4, ccz = Math.floor(cam[2]) >> 4;
     let csy = (Math.floor(cam[1]) - WORLD_MIN_Y) >> 4;
     if (csy < 0) csy = 0; if (csy >= SECTIONS) csy = SECTIONS - 1;
-    if (!world.col(ccx, ccz)) { this.visCount = 0; return; }
-    const noCull = !!this.noOcclusion, L = this.graphList, B = this.graphBuild;
-    const away = (o, k) => !o || o.rd !== renderDist || o.noCull !== noCull || Math.max(Math.abs(ccx - o.ccx), Math.abs(ccz - o.ccz), Math.abs(csy - o.csy)) > k;
-    if (away(L, 2)) {
-      if (away(B, 0)) this.graphBegin(world, ccx, csy, ccz, renderDist, noCull);
-      this.graphRun(world, Infinity);
-    } else {
-      if (B && away(B, 2)) this.graphBuild = null;
-      if (!this.graphBuild && (this.graphDirty || L.ccx !== ccx || L.csy !== csy || L.ccz !== ccz)) this.graphBegin(world, ccx, csy, ccz, renderDist, noCull);
-      if (this.graphBuild) this.graphRun(world, 1.5);
-    }
-    // per-frame values for takeSection, in a reused buffer: [fog test on, fog end + 1, eye y]
-    const fc = this.fogCull, P = this.visP;
-    P[0] = fc ? 1 : 0; P[1] = fc ? fc.end + 1 : 0; P[2] = fc ? fc.y : 0;
-    this.visN = 0; this.visFogged = 0;
-    // the sections around the camera, nearest first
-    for (let r = 0; r <= 2; r++) for (let dy = -r; dy <= r; dy++) for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
-      if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== r) continue;
-      const sy = csy + dy, c = sy >= 0 && sy < SECTIONS ? world.col(ccx + dx, ccz + dz) : null;
-      if (c && c.state >= 2) this.takeSection(c, ccx + dx, ccz + dz, sy, cam, fr);
-    }
-    const G = this.graphList, GC = G.cols, GS = G.sys;
-    for (let i = 0; i < G.n; i++) {
-      const c = GC[i];
-      if (world.col(c.cx, c.cz) !== c) continue;          // unloaded since
-      this.takeSection(c, c.cx, c.cz, GS[i], cam, fr);
-    }
-    this.stats.fogCulled += this.visFogged;
-    this.visCount = this.visN;
-  }
-  // A section goes into the frame's list when it is in view and not wholly in fog. A plain method
-  // (compiled once; a closure made every frame would start unoptimized every frame and box every
-  // number it computes), with both tests written out.
-  // The fog test (as in Sodium) only skips what changes no pixel: every point of the section in
-  // full fog (terrain fog distance = max(horizontal distance, |dy| / 2)) and the section wholly
-  // below the eye, where every ray to it points down and the sky shader draws exactly the fog
-  // colour (no sunset glow, see renderWorld); seen from above the clouds, terrain reaching into
-  // the cloud layer is kept, as it would hide cloud behind it.
-  takeSection(c, cx, cz, sy, cam, fr) {
-    const m = c.meshes[sy];
-    if (!m || !m.vbo || m.vstamp === fr) return;
-    m.vstamp = fr;
-    const F = this.frustum;
-    const x0 = cx * 16 - cam[0], y0 = WORLD_MIN_Y + sy * 16 - cam[1], z0 = cz * 16 - cam[2], x1 = x0 + 16, y1 = y0 + 16, z1 = z0 + 16;
-    for (let i = 0; i < 24; i += 4) {
-      const a = F[i], b = F[i + 1], d = F[i + 2];
-      if (a * (a > 0 ? x1 : x0) + b * (b > 0 ? y1 : y0) + d * (d > 0 ? z1 : z0) + F[i + 3] < 0) return;
-    }
-    const P = this.visP;
-    if (P[0]) {
-      const wy0 = WORLD_MIN_Y + sy * 16, eyeY = P[2], f = P[1];
-      if (wy0 + 17 <= eyeY && !(eyeY > 191 && wy0 + 16 > 191)) {
-        const dx = x0 > 0 ? x0 : x1 < 0 ? -x1 : 0, dz = z0 > 0 ? z0 : z1 < 0 ? -z1 : 0, dy = (eyeY - (wy0 + 17)) * 0.5;
-        if (dx * dx + dz * dz >= f * f || dy >= f) { this.visFogged++; return; }
-      }
-    }
-    this.visList[this.visN++] = m; m.cx = cx; m.cz = cz; m.sy = sy;
-  }
-  // Starts a walk over the section graph from the camera section: across a section only between
-  // faces its visibility data connects, never back toward the camera, within the render distance.
-  // A section reached again through another face is walked on again from there, so what lies past
-  // it is found whichever way the walk came first. Sections with a mesh are listed in the order
-  // they are reached (near to far).
-  graphBegin(world, ccx, csy, ccz, renderDist, noCull) {
-    const B = this.graphBuild = { id: (this.graphId = (this.graphId || 0) + 1), ccx, csy, ccz, rd: renderDist, noCull,
-      q: this.graphQ || (this.graphQ = new Int32Array(1 << 21)), qc: this.graphQC || (this.graphQC = []), qh: 0, qt: 0,
-      cols: [], sys: [], n: 0 };
-    this.graphDirty = false;
-    const c = world.col(ccx, ccz);
-    c.gMark[csy] = B.id; c.gFaces[csy] = 63;
-    B.cols.push(c); B.sys.push(csy); B.n = 1;
-    B.qc[0] = c;
-    B.q[0] = ccx; B.q[1] = ccz; B.q[2] = csy; B.q[3] = -1; B.q[4] = 0; B.qt = 5;
-  }
-  graphRun(world, budget) {
-    const B = this.graphBuild, Q = B.q, QC = B.qc, id = B.id, R2 = (B.rd + 0.5) * (B.rd + 0.5), noCull = B.noCull;
-    const t0 = performance.now();
-    let qh = B.qh, qt = B.qt, steps = 0;
+    const Q = this.bfsQ || (this.bfsQ = new Int32Array(1 << 18));
+    let qh = 0, qt = 0;
+    const startCol = world.col(ccx, ccz);
+    if (!startCol) { this.visCount = 0; return; }
+    startCol.visFrame[csy] = fr;
+    Q[qt++] = ccx; Q[qt++] = ccz; Q[qt++] = csy; Q[qt++] = -1; Q[qt++] = 0;
+    const R2 = (renderDist + 0.5) * (renderDist + 0.5);
+    const noCull = this.noOcclusion;
+    // fog occlusion (as in Sodium), only where it changes no pixel: see fullyFogged()
+    const fc = this.fogCull, fogEnd = fc ? fc.end : 0, fogY = fc ? fc.y : null;
     while (qh < qt) {
-      if ((++steps & 255) === 0 && performance.now() - t0 > budget) break;
-      const c = QC[qh / 5], cx = Q[qh], cz = Q[qh + 1], sy = Q[qh + 2], from = Q[qh + 3], dirs = Q[qh + 4];
+      const cx = Q[qh], cz = Q[qh + 1], sy = Q[qh + 2], from = Q[qh + 3], dirs = Q[qh + 4];
       qh += 5;
-      if (world.col(cx, cz) !== c) continue;
-      const m = c.meshes[sy], vis = m && m.vis;
+      const c = world.col(cx, cz);
+      const m = c.meshes[sy];
+      if (m && m.vbo) {
+        if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) this.stats.fogCulled++;
+        else list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
+      }
+      const vis = m && m.vis;
       for (let d = 0; d < 6; d++) {
         if (dirs & (1 << OPP6[d])) continue;
         if (from >= 0 && vis && !noCull && !(vis[from] & (1 << d))) continue;
         const nx = cx + DX6[d], ny = sy + DY6[d], nz = cz + DZ6[d];
         if (ny < 0 || ny >= SECTIONS) continue;
-        const ddx = nx - B.ccx, ddz = nz - B.ccz;
+        const ddx = nx - ccx, ddz = nz - ccz;
         if (ddx * ddx + ddz * ddz > R2) continue;
         const nc = world.col(nx, nz);
         if (!nc || nc.state < 2) continue;
-        const f = 1 << OPP6[d];
-        if (nc.gMark[ny] === id) {
-          if (nc.gFaces[ny] & f) continue;
-          nc.gFaces[ny] |= f;
-        } else {
-          nc.gMark[ny] = id;
-          // a section open on every side (empty, or no visibility data) passes the same way
-          // whichever face it is entered by
-          const nm = nc.meshes[ny];
-          nc.gFaces[ny] = nm && nm.vis && !noCull ? f : 63;
-          if (nm && nm.vbo) { B.cols.push(nc); B.sys.push(ny); B.n++; }
-        }
-        if (qt + 5 > Q.length) continue;
-        QC[qt / 5] = nc;
+        if (nc.visFrame[ny] === fr) continue;
+        // frustum test in camera-relative coords
+        const bx = nx * 16 - cam[0], by = WORLD_MIN_Y + ny * 16 - cam[1], bz = nz * 16 - cam[2];
+        if (!this.boxVisible(bx, by, bz, bx + 16, by + 16, bz + 16)) continue;
+        nc.visFrame[ny] = fr;
+        if (qt + 5 > Q.length) break;
         Q[qt++] = nx; Q[qt++] = nz; Q[qt++] = ny; Q[qt++] = OPP6[d]; Q[qt++] = dirs | (1 << d);
       }
     }
-    B.qh = qh; B.qt = qt;
-    if (qh >= qt) {
-      QC.length = 0;
-      this.graphList = { cols: B.cols, sys: B.sys, n: B.n, ccx: B.ccx, csy: B.csy, ccz: B.ccz, rd: B.rd, noCull: B.noCull };
-      this.graphBuild = null;
-    }
+    this.visCount = n;
+  }
+
+  // A section is skipped when every point of it is in full fog (the terrain fog distance is
+  // max(horizontal distance, |dy| / 2)) and it lies wholly below the eye: every ray to it points
+  // down, where the sky shader draws exactly the fog colour (no sunset glow, see renderWorld), so
+  // the pixel is the same with or without it.
+  fullyFogged(cx, sy, cz, cam, fogEnd, eyeY) {
+    const y0 = WORLD_MIN_Y + sy * 16;
+    if (y0 + 17 > eyeY) return false;
+    // seen from above the clouds, terrain reaching into the cloud layer would hide cloud behind it
+    if (eyeY > 191 && y0 + 16 > 191) return false;
+    const x0 = cx * 16, z0 = cz * 16;
+    const dx = cam[0] < x0 ? x0 - cam[0] : cam[0] > x0 + 16 ? cam[0] - x0 - 16 : 0;
+    const dz = cam[2] < z0 ? z0 - cam[2] : cam[2] > z0 + 16 ? cam[2] - z0 - 16 : 0;
+    const dy = eyeY - (y0 + 17);
+    return Math.max(Math.hypot(dx, dz), dy * 0.5) >= fogEnd + 1;
   }
 
   // ---------------------------------------------------------------- terrain passes
@@ -15995,7 +15918,7 @@ function handXform(P, x, y, z, o) {
   let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
   o[0] = x2 + 0.56 + P[1] - sw2 * 0.2; o[1] = y1 - 0.62 + P[2] + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
 }
-const BUILD_ID = 'b54be0b';   // filled in by build.py
+const BUILD_ID = '65aa296';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
