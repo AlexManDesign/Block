@@ -17,6 +17,7 @@ const Settings = {
 
 const DAY_LEN = 1200;
 // water fog colours of the biomes (Minecraft's water_fog_color); the rest use 0x050533
+const BUILD_ID = '@BUILD@';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -547,7 +548,7 @@ class Game {
     let gsum = 0; for (const k of names) gsum += Gv(k);
     const cv = r.canvas, w = this.world, pb = w.biomeAt(Math.floor(b.pos[0]), Math.floor(b.pos[2]));
     const L = [];
-    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры) ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
+    L.push(`== БЕНЧМАРК (12 с, полный оборот камеры) · сборка ${BUILD_ID} ==${b.loadedAll ? '' : '  [ВНИМАНИЕ: мир не успел догрузиться за 45 с]'}`);
     L.push(`Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${b.pos.map(v => v.toFixed(1)).join(' ')} · pitch ${b.pitch.toFixed(2)} · биом ${BIOME_LIST[pb] ? BIOME_LIST[pb][0] : '?'}`);
     L.push(`GPU: ${r.gpuName || '?'}`);
     L.push(`${navigator.userAgent}`);
@@ -1494,7 +1495,7 @@ class Game {
     const lt = w.getLight(x, y, z);
     const bid = w.biomeAt3(x, y + 1, z);
     const dirs = ['S (+Z)', 'W (-X)', 'N (-Z)', 'E (+X)'];
-    let t = `Maincraft WebGL2  ${this.fps} fps\n`;
+    let t = `Maincraft WebGL2 · сборка ${BUILD_ID}  ${this.fps} fps\n`;
     t += `XYZ: ${p.pos[0].toFixed(2)} / ${p.pos[1].toFixed(2)} / ${p.pos[2].toFixed(2)}\n`;
     t += `Chunk: ${x >> 4} ${z >> 4}  Facing: ${dirs[p.facingDir()]}\n`;
     t += `Biome: ${BIOME_LIST[bid] ? (CUR_LANG === "ru" ? BIOME_LIST[bid][2] : BIOME_LIST[bid][1]) : '?'}\n`;
@@ -1546,7 +1547,7 @@ class Game {
   }
   copyPerfReport() {
     const p = this.player, w = this.world, b = w.biomeAt(Math.floor(p.pos[0]), Math.floor(p.pos[2]));
-    const head = `Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${p.pos.map(v => v.toFixed(1)).join(' ')} · yaw ${p.yaw.toFixed(2)} pitch ${p.pitch.toFixed(2)} · биом ${BIOME_LIST[b] ? BIOME_LIST[b][0] : '?'} · ${this.mode}${p.flying ? ' (полёт)' : ''}\n${navigator.userAgent}\n`;
+    const head = `Maincraft · сборка ${BUILD_ID} · seed ${this.meta && this.meta.seed} · XYZ ${p.pos.map(v => v.toFixed(1)).join(' ')} · yaw ${p.yaw.toFixed(2)} pitch ${p.pitch.toFixed(2)} · биом ${BIOME_LIST[b] ? BIOME_LIST[b][0] : '?'} · ${this.mode}${p.flying ? ' (полёт)' : ''}\n${navigator.userAgent}\n`;
     const text = head + this.perfReport();
     console.log(text);
     const done = () => { this.copiedT = performance.now() + 2500; };

@@ -4,7 +4,7 @@
 usage: python3 build.py [out.html]
 requires: Pillow
 """
-import base64, io, json, os, random, re, sys
+import hashlib, base64, io, json, os, random, re, sys
 from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -482,6 +482,8 @@ def main():
             parts.append('// ---- ' + f + ' ----\n' + code)
         return '\n'.join(parts)
     html = re.sub(r'/\*@INCLUDE ([^*]+)\*/', inc, html)
+    # build id: a short hash of the inlined sources, shown in F3 and benchmark reports
+    html = html.replace('@BUILD@', hashlib.sha1(html.encode('utf-8')).hexdigest()[:7])
     html = html.replace('"@ASSETS@"', json.dumps(assets, separators=(',', ':')))
     open(OUT, 'w', encoding='utf-8').write(html)
     print('wrote', OUT, len(html) // 1024, 'KB,', count, 'texture layers')
