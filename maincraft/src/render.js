@@ -46,6 +46,13 @@ const M4 = {
   },
 };
 
+// the same visibility data (which faces of a section connect through it): 6 bitmasks or none
+function sameVis(a, b) {
+  if (!a || !b) return !a === !b;
+  for (let i = 0; i < 6; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 const TERRAIN_VS = `#version 300 es
 precision highp float; precision highp int;
 layout(location=0) in uvec3 aV;
@@ -450,7 +457,6 @@ class Renderer {
   }
   freeSectionMesh(m) {
     const gl = this.gl;
-    this.graphDirty = true;
     if (m.vbo) { gl.deleteBuffer(m.vbo); gl.deleteVertexArray(m.vao); m.vbo = m.vao = null; }
     this.freeTrans(m);
     if (m.slot !== undefined) { this.originFree.push(m.slot); m.slot = undefined; }
@@ -464,9 +470,11 @@ class Renderer {
   uploadSection(c, sy, d) {
     const gl = this.gl;
     this.upN = (this.upN || 0) + 1; this.upBytes = (this.upBytes || 0) + d.data.byteLength;
-    this.graphDirty = true;                     // new meshes and visibility data: walk the section graph again
     let m = c.meshes[sy];
     const total = d.counts[0] + d.counts[1] + d.counts[2];
+    // the section graph changes only when a section gains or loses its mesh or the way through it
+    // changes; a mesh rebuilt with the same openings (grass spreading, water flowing) keeps it
+    if ((m && m.vbo ? 1 : 0) !== (total ? 1 : 0) || !sameVis(m && m.vis, d.vis)) this.graphDirty = true;
     if (!total) {
       if (m) this.freeSectionMesh(m);
       const e = this.newMesh(null, null, d.vis); e.counts = [0, 0, 0];
