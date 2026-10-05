@@ -11861,6 +11861,21 @@ const M4 = {
 };
 
 // the same visibility data (which faces of a section connect through it): 6 bitmasks or none
+// A growable vertex buffer of floats kept from frame to frame (models, sprites): push takes one
+// vertex of 10 floats, like an array's push, without making a new array every frame.
+class VBuf {
+  constructor() { this.a = new Float32Array(4096); this.n = 0; }
+  get length() { return this.n; }
+  push(x, y, z, u, v, l, r, g, b, al) {
+    let a = this.a;
+    const n = this.n;
+    if (n + 10 > a.length) { const b2 = new Float32Array(a.length * 2); b2.set(a); this.a = a = b2; }
+    a[n] = x; a[n + 1] = y; a[n + 2] = z; a[n + 3] = u; a[n + 4] = v; a[n + 5] = l; a[n + 6] = r; a[n + 7] = g; a[n + 8] = b; a[n + 9] = al;
+    this.n = n + 10;
+  }
+  view() { return this.a.subarray(0, this.n); }
+}
+
 function sameVis(a, b) {
   if (!a || !b) return !a === !b;
   for (let i = 0; i < 6; i++) if (a[i] !== b[i]) return false;
@@ -13823,6 +13838,24 @@ function slimeChunk(cx, cz, seed) {
   return (t >>> 0) % 10 === 0;
 }
 
+// A model part's vertex, local -> camera relative (written into o). P holds the part's parameters
+// (see buildModel): rotation Z, Y, X as cos/sin pairs (MC order: Z*Y*X applied to the vertex, X
+// first), the pivot, the model scale, the swim pitch, the sneak drop, the death tilt, the body
+// yaw and the entity and camera positions.
+function modelXform(P, x, y, z, o) {
+  let y1 = y * P[0] - z * P[1], z1 = y * P[1] + z * P[0]; y = y1; z = z1;
+  let x1 = x * P[2] + z * P[3]; z1 = -x * P[3] + z * P[2]; x = x1; z = z1;
+  x1 = x * P[4] - y * P[5]; y1 = x * P[5] + y * P[4]; x = x1; y = y1;
+  x += P[6]; y += P[7]; z += P[8];
+  let wy = (24 + y) / 16 * P[9], wx = x / 16 * P[10], wz = z / 16 * P[10];
+  if (P[11]) { const yy = wy - P[14]; const y2 = yy * P[12] - wz * P[13]; wz = yy * P[13] + wz * P[12]; wy = y2 + P[14]; }
+  if (P[15]) wy -= 0.12;
+  const death = P[16];
+  if (death) { const yy = wy * Math.cos(death) - wx * Math.sin(death); wx = wy * Math.sin(death) + wx * Math.cos(death); wy = yy; }
+  const rx2 = wx * P[17] - wz * P[18], rz2 = wx * P[18] + wz * P[17];
+  o[0] = P[19] + rx2 - P[22]; o[1] = P[20] + wy - P[23]; o[2] = P[21] + rz2 - P[24];
+}
+
 class Entities {
   constructor(game) {
     this.game = game;
@@ -14971,9 +15004,14 @@ class Entities {
   // ------------------------------------------------------------------ rendering
   render(env, cam) {
     const g = this.game, r = g.r;
-    const byTex = new Map(), transTex = new Map();
-    const add = (tex, arr, map) => { map = map || byTex; let a = map.get(tex); if (!a) map.set(tex, a = []); a.push(arr); };
-    const R2 = (env.renderDist * 16) ** 2, al = this.alpha ?? 1, fireV = [];
+    // vertices go straight into one reused buffer per texture (opaque and translucent), cleared
+    // here every frame
+    const byTex = this.vbOpaque || (this.vbOpaque = new Map()), transTex = this.vbTrans || (this.vbTrans = new Map());
+    for (const b of byTex.values()) b.n = 0;
+    for (const b of transTex.values()) b.n = 0;
+    const vb = (tex, map) => { let b = map.get(tex); if (!b) map.set(tex, b = new VBuf()); return b; };
+    const R2 = (env.renderDist * 16) ** 2, al = this.alpha ?? 1, fireV = this.vbFire || (this.vbFire = new VBuf());
+    fireV.n = 0;
     const lerpA = (a, b) => { let d = b - a; while (d > Math.PI) d -= 6.2832; while (d < -Math.PI) d += 6.2832; return a + d * al; };
     for (const e of this.mobs) {
       // state between the last two simulation ticks
@@ -14992,14 +15030,10 @@ class Entities {
       const fz = e.fuse > 0 ? Math.min(1, e.fuse / 1.5) : 0, wf = fz && ((fz * 10) | 0) % 2 ? 1 + Math.max(0.5, fz) : 0;
       const tint = e.hurtT > 0 || e.deathT > 0 ? [1, 0.45, 0.45] : wf ? [wf, wf, wf] : null;
       const m = MODELS[e.type];
-      const v = [], tv = [];
-      this.buildModel(v, m, e, cam, li, tint, tv, fireV);
-      add(m.tex, v);
-      if (tv.length) add(m.tex, tv, transTex);
+      this.buildModel(vb(m.tex, byTex), m, e, cam, li, tint, vb(m.tex, transTex), fireV);
       if (e.type === 'sheep' && !e.sheared) {
-        const fv = [], c = sheepTint(e);
-        this.buildModel(fv, m.fur, e, cam, li, c ? (tint ? c.map((k, i) => k * tint[i]) : c) : tint);
-        add('sheep_fur', fv);
+        const c = sheepTint(e);
+        this.buildModel(vb('sheep_fur', byTex), m.fur, e, cam, li, c ? (tint ? c.map((k, i) => k * tint[i]) : c) : tint);
       }
     }
     // SpawnerRenderer: the spawner's mob turning inside the cage, scaled to fit (0.53125 / its
@@ -15010,40 +15044,34 @@ class Entities {
       let sp = st.spin - st.ospin; if (sp < 0) sp += 360;
       const yaw = (st.ospin + sp * al) * 10 * Math.PI / 180, f = 0.53125 / Math.max(1, d.w, d.h);
       const e = { type, rpos: [st.x + 0.5, st.y + 0.2, st.z + 0.5], ryaw: yaw, rhead: yaw, rwalk: 0, walkAmt: 0, rpitch: -Math.PI / 6, dispScale: f };
-      const v = [];
-      this.buildModel(v, m, e, cam, g.lightAt(st.x + 0.5, st.y + 0.5, st.z + 0.5, env), null);
-      add(m.tex, v);
+      this.buildModel(vb(m.tex, byTex), m, e, cam, g.lightAt(st.x + 0.5, st.y + 0.5, st.z + 0.5, env), null);
     }
     if (g.camMode) {
       const p = g.player;
       const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, swing: g.swingT };
-      const v = [];
-      this.buildModel(v, MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null);
-      add('player', v);
+      this.buildModel(vb('player', byTex), MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null);
     }
     const gl = r.gl;
     const flush = (map) => {
-      for (const [tex, list] of map) {
+      for (const [tex, b] of map) {
+        if (!b.n) continue;
         const t = r.entityTexture(tex);
-        if (!t) continue;
-        let n = 0; for (const a of list) n += a.length;
-        const all = r.scratch(n); let o = 0;
-        for (const a of list) { all.set(a, o); o += a.length; }
-        r.drawEnt(all.subarray(0, n), n / 10, t, env);
+        if (t) r.drawEnt(b.view(), b.n / 10, t, env);
       }
     };
     gl.disable(gl.CULL_FACE);
     flush(byTex);
-    if (transTex.size) {
+    let anyTrans = false; for (const b of transTex.values()) if (b.n) anyTrans = true;
+    if (anyTrans) {
       // translucent shells (slime jelly) after the opaque bodies
       gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
       flush(transTex);
       gl.depthMask(true); gl.disable(gl.BLEND);
     }
     gl.enable(gl.CULL_FACE);
-    if (fireV.length) {
+    if (fireV.n) {
       gl.disable(gl.CULL_FACE);
-      r.drawArr(r.f32(fireV), fireV.length / 10, env, 0.5);
+      r.drawArr(fireV.view(), fireV.n / 10, env, 0.5);
       gl.enable(gl.CULL_FACE);
     }
     this.renderItems(env, cam);
@@ -15116,25 +15144,18 @@ class Entities {
       const px = -part.pivot[0], py = -(part.pivot[1] - (part.creepy && e.aggro ? 5 : 0)), pz = part.pivot[2];
       const crx = Math.cos(-rx), srx = Math.sin(-rx), cry = Math.cos(-ry), sry = Math.sin(-ry), crz = Math.cos(rz), srz = Math.sin(rz);
       const sneakBody = sneak && m === MODELS.player;
-      const M = (x, y, z, o) => {
-        // part rotation Z, Y, X (MC order: Z*Y*X applied to vertex -> X first)
-        let y1 = y * crx - z * srx, z1 = y * srx + z * crx; y = y1; z = z1;
-        let x1 = x * cry + z * sry; z1 = -x * sry + z * cry; x = x1; z = z1;
-        x1 = x * crz - y * srz; y1 = x * srz + y * crz; x = x1; y = y1;
-        x += px; y += py; z += pz;
-        let wy = (24 + y) / 16 * scaleY * S * syy, wx = x / 16 * S * sxz * scaleXZ, wz = z / 16 * S * sxz * scaleXZ;
-        if (sp) { const yy = wy - pY; const y2 = yy * cpt - wz * spt; wz = yy * spt + wz * cpt; wy = y2 + pY; }
-        if (sneakBody) wy -= 0.12;
-        if (death) { const yy = wy * Math.cos(death) - wx * Math.sin(death); wx = wy * Math.sin(death) + wx * Math.cos(death); wy = yy; }
-        const rx2 = wx * cy - wz * sy, rz2 = wx * sy + wz * cy;
-        o[0] = EP[0] + rx2 - cam[0]; o[1] = EP[1] + wy - cam[1]; o[2] = EP[2] + rz2 - cam[2];
-      };
-      g.pushModelBox(dst, M, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
+      // the part's transform parameters for modelXform (one reused buffer, no closure per part)
+      const XP = this.xp || (this.xp = new Float64Array(28));
+      XP[0] = crx; XP[1] = srx; XP[2] = cry; XP[3] = sry; XP[4] = crz; XP[5] = srz; XP[6] = px; XP[7] = py; XP[8] = pz;
+      XP[9] = scaleY * S * syy; XP[10] = S * sxz * scaleXZ; XP[11] = sp ? 1 : 0; XP[12] = cpt; XP[13] = spt; XP[14] = pY;
+      XP[15] = sneakBody ? 1 : 0; XP[16] = death; XP[17] = cy; XP[18] = sy;
+      XP[19] = EP[0]; XP[20] = EP[1]; XP[21] = EP[2]; XP[22] = cam[0]; XP[23] = cam[1]; XP[24] = cam[2];
+      g.pushModelBox(dst, modelXform, XP, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
       // the skeleton's bow in its right hand: the item sprite (0.9 block) held at the hand,
       // across the arm, so it points forward with the arm down and stands upright when aiming
       if (heldOut && an === 'armR' && m.heldItem) {
         const layer = g.assets.layers[m.heldItem], h = 7.2, s2 = Math.SQRT1_2 * h, cy0 = -9, cz0 = -0.5;
-        const P = (a, b) => { const o = [0, 0, 0]; M(0, cy0 + (-a + b) * s2, cz0 + (a + b) * s2, o); return o; };   // a: texture right, b: texture up
+        const XP = this.xp, P = (a, b) => { const o = [0, 0, 0]; modelXform(XP, 0, cy0 + (-a + b) * s2, cz0 + (a + b) * s2, o); return o; };   // a: texture right, b: texture up
         const q = [[P(-1, -1), 0, 1], [P(1, -1), 1, 1], [P(1, 1), 1, 0], [P(-1, 1), 0, 0]];
         const c = tint ? [li * tint[0], li * tint[1], li * tint[2]] : [li, li, li];
         for (const k of [0, 1, 2, 0, 2, 3]) heldOut.push(q[k][0][0], q[k][0][1], q[k][0][2], q[k][1], q[k][2], layer, c[0], c[1], c[2], 1);
@@ -15966,7 +15987,15 @@ const Settings = {
 
 const DAY_LEN = 1200;
 // water fog colours of the biomes (Minecraft's water_fog_color); the rest use 0x050533
-const BUILD_ID = '410761a';   // filled in by build.py
+// the empty hand's arm, local -> view: rotate around x by -60 deg minus the swing, around y by
+// 20 deg, translate (P: [swing, view bob x, view bob y])
+function handXform(P, x, y, z, o) {
+  const sw2 = P[0], ax = -1.05 - sw2 * 0.5, ay = 0.45 + sw2 * 0.3;
+  let y1 = y * Math.cos(ax) - z * Math.sin(ax), z1 = y * Math.sin(ax) + z * Math.cos(ax);
+  let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
+  o[0] = x2 + 0.56 + P[1] - sw2 * 0.2; o[1] = y1 - 0.62 + P[2] + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
+}
+const BUILD_ID = 'b54be0b';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -17349,19 +17378,14 @@ class Game {
       // arm from the player skin
       const tex = r.entityTexture('player');
       if (!tex) return;
-      const ev = [];
-      const sw2 = swingA;
-      const M = (x, y, z, o) => {
-        // arm local -> view: rotate around x by -60deg-swing, around y by 20deg, translate
-        const ax = -1.05 - sw2 * 0.5, ay = 0.45 + sw2 * 0.3;
-        let y1 = y * Math.cos(ax) - z * Math.sin(ax), z1 = y * Math.sin(ax) + z * Math.cos(ax);
-        let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
-        o[0] = x2 + 0.56 + bx - sw2 * 0.2; o[1] = y1 - 0.62 + by + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
-      };
-      this.pushModelBox(ev, M, -0.1, -0.6, -0.1, 0.1, 0.0, 0.1, 40, 16, 4, 12, 4, 64, 64, li);
+      const ev = this.handVB || (this.handVB = new VBuf());
+      ev.n = 0;
+      const HP = this.handXP || (this.handXP = new Float64Array(3));
+      HP[0] = swingA; HP[1] = bx; HP[2] = by;
+      this.pushModelBox(ev, handXform, HP, -0.1, -0.6, -0.1, 0.1, 0.0, 0.1, 40, 16, 4, 12, 4, 64, 64, li);
       gl.enable(gl.CULL_FACE);
       const saveVP = r.vp; r.vp = proj;
-      r.drawEnt(r.f32(ev), ev.length / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });
+      r.drawEnt(ev.view(), ev.n / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });
       r.vp = saveVP;
       return;
     }
@@ -17396,12 +17420,12 @@ class Game {
     gl.enable(gl.CULL_FACE);
   }
 
-  // MC-style box with standard skin unwrap. M(x, y, z, o) maps local coords to camera relative
-  // ones, written into o. The 8 corners are transformed once and shared by the faces, through one
+  // MC-style box with standard skin unwrap. M(MP, x, y, z, o) maps local coords to camera relative
+  // ones, written into o (MP: its parameters; a plain function, not a closure made per call). The 8 corners are transformed once and shared by the faces, through one
   // reused buffer (no per-corner or per-face temporaries).
-  pushModelBox(out, M, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
+  pushModelBox(out, M, MP, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
     const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24)), q = this._mbQ || (this._mbQ = new Float64Array(3));
-    for (let k = 0; k < 8; k++) { M(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0, q); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
+    for (let k = 0; k < 8; k++) { M(MP, k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0, q); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
     // uv rects [u0, v0, u1, v1] of +x, -x, top, bottom, back (+z), front (-z)
     R[0] = u; R[1] = v + d; R[2] = u + d; R[3] = v + d + h;
     R[4] = u + d + w; R[5] = v + d; R[6] = u + d + w + d; R[7] = v + d + h;

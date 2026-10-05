@@ -236,6 +236,24 @@ function slimeChunk(cx, cz, seed) {
   return (t >>> 0) % 10 === 0;
 }
 
+// A model part's vertex, local -> camera relative (written into o). P holds the part's parameters
+// (see buildModel): rotation Z, Y, X as cos/sin pairs (MC order: Z*Y*X applied to the vertex, X
+// first), the pivot, the model scale, the swim pitch, the sneak drop, the death tilt, the body
+// yaw and the entity and camera positions.
+function modelXform(P, x, y, z, o) {
+  let y1 = y * P[0] - z * P[1], z1 = y * P[1] + z * P[0]; y = y1; z = z1;
+  let x1 = x * P[2] + z * P[3]; z1 = -x * P[3] + z * P[2]; x = x1; z = z1;
+  x1 = x * P[4] - y * P[5]; y1 = x * P[5] + y * P[4]; x = x1; y = y1;
+  x += P[6]; y += P[7]; z += P[8];
+  let wy = (24 + y) / 16 * P[9], wx = x / 16 * P[10], wz = z / 16 * P[10];
+  if (P[11]) { const yy = wy - P[14]; const y2 = yy * P[12] - wz * P[13]; wz = yy * P[13] + wz * P[12]; wy = y2 + P[14]; }
+  if (P[15]) wy -= 0.12;
+  const death = P[16];
+  if (death) { const yy = wy * Math.cos(death) - wx * Math.sin(death); wx = wy * Math.sin(death) + wx * Math.cos(death); wy = yy; }
+  const rx2 = wx * P[17] - wz * P[18], rz2 = wx * P[18] + wz * P[17];
+  o[0] = P[19] + rx2 - P[22]; o[1] = P[20] + wy - P[23]; o[2] = P[21] + rz2 - P[24];
+}
+
 class Entities {
   constructor(game) {
     this.game = game;
@@ -1384,9 +1402,14 @@ class Entities {
   // ------------------------------------------------------------------ rendering
   render(env, cam) {
     const g = this.game, r = g.r;
-    const byTex = new Map(), transTex = new Map();
-    const add = (tex, arr, map) => { map = map || byTex; let a = map.get(tex); if (!a) map.set(tex, a = []); a.push(arr); };
-    const R2 = (env.renderDist * 16) ** 2, al = this.alpha ?? 1, fireV = [];
+    // vertices go straight into one reused buffer per texture (opaque and translucent), cleared
+    // here every frame
+    const byTex = this.vbOpaque || (this.vbOpaque = new Map()), transTex = this.vbTrans || (this.vbTrans = new Map());
+    for (const b of byTex.values()) b.n = 0;
+    for (const b of transTex.values()) b.n = 0;
+    const vb = (tex, map) => { let b = map.get(tex); if (!b) map.set(tex, b = new VBuf()); return b; };
+    const R2 = (env.renderDist * 16) ** 2, al = this.alpha ?? 1, fireV = this.vbFire || (this.vbFire = new VBuf());
+    fireV.n = 0;
     const lerpA = (a, b) => { let d = b - a; while (d > Math.PI) d -= 6.2832; while (d < -Math.PI) d += 6.2832; return a + d * al; };
     for (const e of this.mobs) {
       // state between the last two simulation ticks
@@ -1405,14 +1428,10 @@ class Entities {
       const fz = e.fuse > 0 ? Math.min(1, e.fuse / 1.5) : 0, wf = fz && ((fz * 10) | 0) % 2 ? 1 + Math.max(0.5, fz) : 0;
       const tint = e.hurtT > 0 || e.deathT > 0 ? [1, 0.45, 0.45] : wf ? [wf, wf, wf] : null;
       const m = MODELS[e.type];
-      const v = [], tv = [];
-      this.buildModel(v, m, e, cam, li, tint, tv, fireV);
-      add(m.tex, v);
-      if (tv.length) add(m.tex, tv, transTex);
+      this.buildModel(vb(m.tex, byTex), m, e, cam, li, tint, vb(m.tex, transTex), fireV);
       if (e.type === 'sheep' && !e.sheared) {
-        const fv = [], c = sheepTint(e);
-        this.buildModel(fv, m.fur, e, cam, li, c ? (tint ? c.map((k, i) => k * tint[i]) : c) : tint);
-        add('sheep_fur', fv);
+        const c = sheepTint(e);
+        this.buildModel(vb('sheep_fur', byTex), m.fur, e, cam, li, c ? (tint ? c.map((k, i) => k * tint[i]) : c) : tint);
       }
     }
     // SpawnerRenderer: the spawner's mob turning inside the cage, scaled to fit (0.53125 / its
@@ -1423,40 +1442,34 @@ class Entities {
       let sp = st.spin - st.ospin; if (sp < 0) sp += 360;
       const yaw = (st.ospin + sp * al) * 10 * Math.PI / 180, f = 0.53125 / Math.max(1, d.w, d.h);
       const e = { type, rpos: [st.x + 0.5, st.y + 0.2, st.z + 0.5], ryaw: yaw, rhead: yaw, rwalk: 0, walkAmt: 0, rpitch: -Math.PI / 6, dispScale: f };
-      const v = [];
-      this.buildModel(v, m, e, cam, g.lightAt(st.x + 0.5, st.y + 0.5, st.z + 0.5, env), null);
-      add(m.tex, v);
+      this.buildModel(vb(m.tex, byTex), m, e, cam, g.lightAt(st.x + 0.5, st.y + 0.5, st.z + 0.5, env), null);
     }
     if (g.camMode) {
       const p = g.player;
       const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, swing: g.swingT };
-      const v = [];
-      this.buildModel(v, MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null);
-      add('player', v);
+      this.buildModel(vb('player', byTex), MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null);
     }
     const gl = r.gl;
     const flush = (map) => {
-      for (const [tex, list] of map) {
+      for (const [tex, b] of map) {
+        if (!b.n) continue;
         const t = r.entityTexture(tex);
-        if (!t) continue;
-        let n = 0; for (const a of list) n += a.length;
-        const all = r.scratch(n); let o = 0;
-        for (const a of list) { all.set(a, o); o += a.length; }
-        r.drawEnt(all.subarray(0, n), n / 10, t, env);
+        if (t) r.drawEnt(b.view(), b.n / 10, t, env);
       }
     };
     gl.disable(gl.CULL_FACE);
     flush(byTex);
-    if (transTex.size) {
+    let anyTrans = false; for (const b of transTex.values()) if (b.n) anyTrans = true;
+    if (anyTrans) {
       // translucent shells (slime jelly) after the opaque bodies
       gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
       flush(transTex);
       gl.depthMask(true); gl.disable(gl.BLEND);
     }
     gl.enable(gl.CULL_FACE);
-    if (fireV.length) {
+    if (fireV.n) {
       gl.disable(gl.CULL_FACE);
-      r.drawArr(r.f32(fireV), fireV.length / 10, env, 0.5);
+      r.drawArr(fireV.view(), fireV.n / 10, env, 0.5);
       gl.enable(gl.CULL_FACE);
     }
     this.renderItems(env, cam);
@@ -1529,25 +1542,18 @@ class Entities {
       const px = -part.pivot[0], py = -(part.pivot[1] - (part.creepy && e.aggro ? 5 : 0)), pz = part.pivot[2];
       const crx = Math.cos(-rx), srx = Math.sin(-rx), cry = Math.cos(-ry), sry = Math.sin(-ry), crz = Math.cos(rz), srz = Math.sin(rz);
       const sneakBody = sneak && m === MODELS.player;
-      const M = (x, y, z, o) => {
-        // part rotation Z, Y, X (MC order: Z*Y*X applied to vertex -> X first)
-        let y1 = y * crx - z * srx, z1 = y * srx + z * crx; y = y1; z = z1;
-        let x1 = x * cry + z * sry; z1 = -x * sry + z * cry; x = x1; z = z1;
-        x1 = x * crz - y * srz; y1 = x * srz + y * crz; x = x1; y = y1;
-        x += px; y += py; z += pz;
-        let wy = (24 + y) / 16 * scaleY * S * syy, wx = x / 16 * S * sxz * scaleXZ, wz = z / 16 * S * sxz * scaleXZ;
-        if (sp) { const yy = wy - pY; const y2 = yy * cpt - wz * spt; wz = yy * spt + wz * cpt; wy = y2 + pY; }
-        if (sneakBody) wy -= 0.12;
-        if (death) { const yy = wy * Math.cos(death) - wx * Math.sin(death); wx = wy * Math.sin(death) + wx * Math.cos(death); wy = yy; }
-        const rx2 = wx * cy - wz * sy, rz2 = wx * sy + wz * cy;
-        o[0] = EP[0] + rx2 - cam[0]; o[1] = EP[1] + wy - cam[1]; o[2] = EP[2] + rz2 - cam[2];
-      };
-      g.pushModelBox(dst, M, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
+      // the part's transform parameters for modelXform (one reused buffer, no closure per part)
+      const XP = this.xp || (this.xp = new Float64Array(28));
+      XP[0] = crx; XP[1] = srx; XP[2] = cry; XP[3] = sry; XP[4] = crz; XP[5] = srz; XP[6] = px; XP[7] = py; XP[8] = pz;
+      XP[9] = scaleY * S * syy; XP[10] = S * sxz * scaleXZ; XP[11] = sp ? 1 : 0; XP[12] = cpt; XP[13] = spt; XP[14] = pY;
+      XP[15] = sneakBody ? 1 : 0; XP[16] = death; XP[17] = cy; XP[18] = sy;
+      XP[19] = EP[0]; XP[20] = EP[1]; XP[21] = EP[2]; XP[22] = cam[0]; XP[23] = cam[1]; XP[24] = cam[2];
+      g.pushModelBox(dst, modelXform, XP, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
       // the skeleton's bow in its right hand: the item sprite (0.9 block) held at the hand,
       // across the arm, so it points forward with the arm down and stands upright when aiming
       if (heldOut && an === 'armR' && m.heldItem) {
         const layer = g.assets.layers[m.heldItem], h = 7.2, s2 = Math.SQRT1_2 * h, cy0 = -9, cz0 = -0.5;
-        const P = (a, b) => { const o = [0, 0, 0]; M(0, cy0 + (-a + b) * s2, cz0 + (a + b) * s2, o); return o; };   // a: texture right, b: texture up
+        const XP = this.xp, P = (a, b) => { const o = [0, 0, 0]; modelXform(XP, 0, cy0 + (-a + b) * s2, cz0 + (a + b) * s2, o); return o; };   // a: texture right, b: texture up
         const q = [[P(-1, -1), 0, 1], [P(1, -1), 1, 1], [P(1, 1), 1, 0], [P(-1, 1), 0, 0]];
         const c = tint ? [li * tint[0], li * tint[1], li * tint[2]] : [li, li, li];
         for (const k of [0, 1, 2, 0, 2, 3]) heldOut.push(q[k][0][0], q[k][0][1], q[k][0][2], q[k][1], q[k][2], layer, c[0], c[1], c[2], 1);

@@ -17,6 +17,14 @@ const Settings = {
 
 const DAY_LEN = 1200;
 // water fog colours of the biomes (Minecraft's water_fog_color); the rest use 0x050533
+// the empty hand's arm, local -> view: rotate around x by -60 deg minus the swing, around y by
+// 20 deg, translate (P: [swing, view bob x, view bob y])
+function handXform(P, x, y, z, o) {
+  const sw2 = P[0], ax = -1.05 - sw2 * 0.5, ay = 0.45 + sw2 * 0.3;
+  let y1 = y * Math.cos(ax) - z * Math.sin(ax), z1 = y * Math.sin(ax) + z * Math.cos(ax);
+  let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
+  o[0] = x2 + 0.56 + P[1] - sw2 * 0.2; o[1] = y1 - 0.62 + P[2] + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
+}
 const BUILD_ID = '@BUILD@';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
@@ -1400,19 +1408,14 @@ class Game {
       // arm from the player skin
       const tex = r.entityTexture('player');
       if (!tex) return;
-      const ev = [];
-      const sw2 = swingA;
-      const M = (x, y, z, o) => {
-        // arm local -> view: rotate around x by -60deg-swing, around y by 20deg, translate
-        const ax = -1.05 - sw2 * 0.5, ay = 0.45 + sw2 * 0.3;
-        let y1 = y * Math.cos(ax) - z * Math.sin(ax), z1 = y * Math.sin(ax) + z * Math.cos(ax);
-        let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
-        o[0] = x2 + 0.56 + bx - sw2 * 0.2; o[1] = y1 - 0.62 + by + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
-      };
-      this.pushModelBox(ev, M, -0.1, -0.6, -0.1, 0.1, 0.0, 0.1, 40, 16, 4, 12, 4, 64, 64, li);
+      const ev = this.handVB || (this.handVB = new VBuf());
+      ev.n = 0;
+      const HP = this.handXP || (this.handXP = new Float64Array(3));
+      HP[0] = swingA; HP[1] = bx; HP[2] = by;
+      this.pushModelBox(ev, handXform, HP, -0.1, -0.6, -0.1, 0.1, 0.0, 0.1, 40, 16, 4, 12, 4, 64, 64, li);
       gl.enable(gl.CULL_FACE);
       const saveVP = r.vp; r.vp = proj;
-      r.drawEnt(r.f32(ev), ev.length / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });
+      r.drawEnt(ev.view(), ev.n / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });
       r.vp = saveVP;
       return;
     }
@@ -1447,12 +1450,12 @@ class Game {
     gl.enable(gl.CULL_FACE);
   }
 
-  // MC-style box with standard skin unwrap. M(x, y, z, o) maps local coords to camera relative
-  // ones, written into o. The 8 corners are transformed once and shared by the faces, through one
+  // MC-style box with standard skin unwrap. M(MP, x, y, z, o) maps local coords to camera relative
+  // ones, written into o (MP: its parameters; a plain function, not a closure made per call). The 8 corners are transformed once and shared by the faces, through one
   // reused buffer (no per-corner or per-face temporaries).
-  pushModelBox(out, M, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
+  pushModelBox(out, M, MP, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
     const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24)), q = this._mbQ || (this._mbQ = new Float64Array(3));
-    for (let k = 0; k < 8; k++) { M(k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0, q); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
+    for (let k = 0; k < 8; k++) { M(MP, k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0, q); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
     // uv rects [u0, v0, u1, v1] of +x, -x, top, bottom, back (+z), front (-z)
     R[0] = u; R[1] = v + d; R[2] = u + d; R[3] = v + d + h;
     R[4] = u + d + w; R[5] = v + d; R[6] = u + d + w + d; R[7] = v + d + h;

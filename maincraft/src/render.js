@@ -47,6 +47,21 @@ const M4 = {
 };
 
 // the same visibility data (which faces of a section connect through it): 6 bitmasks or none
+// A growable vertex buffer of floats kept from frame to frame (models, sprites): push takes one
+// vertex of 10 floats, like an array's push, without making a new array every frame.
+class VBuf {
+  constructor() { this.a = new Float32Array(4096); this.n = 0; }
+  get length() { return this.n; }
+  push(x, y, z, u, v, l, r, g, b, al) {
+    let a = this.a;
+    const n = this.n;
+    if (n + 10 > a.length) { const b2 = new Float32Array(a.length * 2); b2.set(a); this.a = a = b2; }
+    a[n] = x; a[n + 1] = y; a[n + 2] = z; a[n + 3] = u; a[n + 4] = v; a[n + 5] = l; a[n + 6] = r; a[n + 7] = g; a[n + 8] = b; a[n + 9] = al;
+    this.n = n + 10;
+  }
+  view() { return this.a.subarray(0, this.n); }
+}
+
 function sameVis(a, b) {
   if (!a || !b) return !a === !b;
   for (let i = 0; i < 6; i++) if (a[i] !== b[i]) return false;
