@@ -11894,6 +11894,8 @@ uniform mat3 uShipRot; uniform vec3 uShipRel;   // a vessel: its turn and its wh
 #endif
 out vec3 vUV; out vec3 vLit; out float vFog;
 flat out vec3 vTint; flat out float vOvl;
+// the same depths in the depth-only and the colour pass of cut-out terrain (depthFunc EQUAL)
+invariant gl_Position;
 void main(){
   uint w0 = aV.x, w1 = aV.y, w2 = aV.z;
   vec3 p = vec3(float(w0 & 1023u), float((w0 >> 10) & 1023u), float((w0 >> 20) & 1023u)) * 0.03125;
@@ -11945,6 +11947,20 @@ void main(){
 #else
   o = vec4(rgb, 1.0);
 #endif
+}`;
+
+// depth-only pass of cut-out terrain: the alpha test alone. It declares and (behind a uniform that
+// is never set) reads every input of TERRAIN_FS, so both programs get the same vertex stage when
+// the driver builds it per program: the depths must match exactly for the EQUAL test after it.
+const TERRAIN_DEPTH_FS = `#version 300 es
+precision mediump float; precision mediump sampler2DArray;
+uniform sampler2DArray uTex; uniform float uNever;
+in vec3 vUV; in vec3 vLit; in float vFog;
+flat in vec3 vTint; flat in float vOvl;
+out vec4 o;
+void main(){
+  if (texture(uTex, vUV).a < 0.5) discard;
+  o = uNever > 0.5 ? vec4(vLit * vTint, vFog + vOvl) : vec4(0.0);
 }`;
 
 const SKY_VS = `#version 300 es
@@ -12044,6 +12060,7 @@ class Renderer {
     this.assets = assets;
     this.progSolid = this.program(TERRAIN_VS, TERRAIN_FS, '');
     this.progCutout = this.program(TERRAIN_VS, TERRAIN_FS, '#define CUTOUT\n');
+    this.progCutoutDepth = this.program(TERRAIN_VS, TERRAIN_DEPTH_FS, '');
     this.progShip = this.program(TERRAIN_VS, TERRAIN_FS, '#define SHIP\n#define CUTOUT\n');
     this.progTrans = this.program(TERRAIN_VS, TERRAIN_FS, '#define TRANS\n');
     this.progSky = this.program(SKY_VS, SKY_FS, '');
@@ -12205,7 +12222,7 @@ class Renderer {
   }
   resetPassStats() {
     const P = () => ({ sec: 0, draws: 0, quads: 0, skipped: 0 });
-    this.pstat = [P(), P(), P()];
+    this.pstat = [P(), P(), P()]; this.psNull = P();
     this.stats.fogCulled = 0;
   }
   gpuBegin(name) {
@@ -12247,6 +12264,7 @@ class Renderer {
     this.multiDraw = this.gl.getExtension('WEBGL_multi_draw');
     this.rangeCnt = new Int32Array(8); this.rangeOff = new Int32Array(8);
     this.dirCull = true;
+    this.cutoutPrepass = true;   // cut-out terrain: depth-only pass first (see renderWorld)
   }
   initQuadIndex(maxQuads) {
     const gl = this.gl;
@@ -12565,7 +12583,7 @@ class Renderer {
   // Draws one pass of every visible section. Quads are grouped by facing (-X,+X,-Y,+Y,-Z,+Z,other);
   // groups that face away from the camera for the whole section are skipped (directional culling),
   // the rest go out in one multi-draw per section.
-  drawPass(pass, cam) {
+  drawPass(pass, cam, noStats) {
     const gl = this.gl, list = this.visList, n = this.visCount, md = this.multiDraw;
     const p = pass === 0 ? this.progSolid : pass === 1 ? this.progCutout : this.progTrans;
     const RC = this.rangeCnt, RO = this.rangeOff;
@@ -12575,7 +12593,7 @@ class Renderer {
       const m = list[back ? n - 1 - k : k];
       const cnt = m.counts[pass];
       if (!cnt) continue;
-      const ps = this.pstat[pass];
+      const ps = noStats ? this.psNull : this.pstat[pass];
       ps.sec++;
       if (back && m.tvao && m.tkey !== -1) {
         ps.skipped += cnt - m.tn / 6;
@@ -12613,6 +12631,7 @@ class Renderer {
       if (md) { md.multiDrawElementsWEBGL(gl.TRIANGLES, RC, 0, gl.UNSIGNED_INT, RO, 0, r); draws++; }
       else for (let q = 0; q < r; q++) { gl.drawElements(gl.TRIANGLES, RC[q], gl.UNSIGNED_INT, RO[q]); draws++; }
     }
+    if (noStats) return;
     this.stats.draws += draws; this.stats.quads += quads;
     this.pstat[pass].draws += draws; this.pstat[pass].quads += quads;
   }
@@ -12662,8 +12681,21 @@ class Renderer {
     this.bindTerrain(this.progSolid, cam, env, time, tick);
     this.drawPass(0, cam);
     this.gpuBegin('cutout');
+    // Cut-out terrain (leaves, plants) in two passes: depth only with the alpha test, then colour
+    // where the depth is equal. Leaves stack many layers deep and their alpha test keeps the GPU
+    // from rejecting hidden fragments early, so in one pass every layer ran the full shader; now
+    // only the cheap test runs per layer and the full shader once per visible pixel (the colour
+    // pass writes no depth, so hidden fragments are rejected before shading). Same picture.
+    if (this.cutoutPrepass) {
+      gl.colorMask(false, false, false, false);
+      this.bindTerrain(this.progCutoutDepth, cam, env, time, tick);
+      this.drawPass(1, cam, true);
+      gl.colorMask(true, true, true, true);
+      gl.depthFunc(gl.EQUAL); gl.depthMask(false);
+    }
     this.bindTerrain(this.progCutout, cam, env, time, tick);
     this.drawPass(1, cam);
+    gl.depthFunc(gl.LEQUAL); gl.depthMask(true);
     this.cpuTerrain = performance.now() - tc;
     // sky after the opaque terrain: it only shades pixels the terrain left empty
     this.gpuBegin('sky');
@@ -15980,7 +16012,7 @@ function heldXform(P, x, y, z, o) {
   const y1 = y * HELD_CX - z0 * HELD_SX, z1 = y * HELD_SX + z0 * HELD_CX;
   o[0] = x1 + P[0]; o[1] = y1 + P[1]; o[2] = z1 + P[2];
 }
-const BUILD_ID = '32a1082';   // filled in by build.py
+const BUILD_ID = '2f1de2f';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
