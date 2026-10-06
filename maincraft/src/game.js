@@ -891,6 +891,11 @@ class Game {
       if (dryId(id) === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
       if (id === B.FURNACE || id === B.FURNACE_LIT) { UI.openFurnace(tg.x, tg.y, tg.z); return; }
       if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { this.explode(tg.x + 0.5, tg.y + 0.5, tg.z + 0.5, 4, tg); return; }
+      // an axe strips a log or wood (the axis stays)
+      if (STRIPPED_OF[id] && hid && isItem(hid) && (itemDef(hid)[5] || {}).tool === 'axe') {
+        w.setBlock(tg.x, tg.y, tg.z, STRIPPED_OF[id], m);
+        this.swing(); this.damageTool(); return;
+      }
       // shears carve a pumpkin (face toward the player) and it drops 4 seeds, as in Minecraft
       if (id === B.PUMPKIN && hid === IT.SHEARS) {
         w.setBlock(tg.x, tg.y, tg.z, B.CARVED_PUMPKIN, (p.facingDir() + 2) & 3);

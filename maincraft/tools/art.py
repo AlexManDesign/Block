@@ -424,11 +424,44 @@ def pale_garden(load):
     return out
 
 
+# ------------------------------------------------------------------ small items
+def nugget(base, dark, light):
+    im = new()
+    # three lumps of different sizes
+    for (x, y, w, h) in ((3, 8, 5, 4), (8, 5, 4, 4), (9, 10, 4, 3)):
+        rect(im, x, y, x + w - 1, y + h - 1, base)
+        rect(im, x, y + h - 1, x + w - 1, y + h - 1, dark)
+        rect(im, x + w - 1, y, x + w - 1, y + h - 1, dark)
+        rect(im, x, y, x, y, light)
+    return im
+
+
+def small_items(load):
+    out = {}
+    out['item_charcoal'] = recolor(load('item_coal'), (92, 68, 50), 0.55)
+    out['item_gold_nugget'] = nugget((236, 196, 52), (176, 128, 24), (255, 246, 170))
+    out['item_iron_nugget'] = nugget((196, 196, 200), (128, 128, 136), (244, 244, 248))
+    paper = new()
+    rect(paper, 3, 2, 12, 13, (234, 230, 214)); rect(paper, 13, 3, 13, 14, (170, 164, 146)); rect(paper, 4, 14, 13, 14, (170, 164, 146))
+    for y in (5, 7, 9, 11):
+        rect(paper, 5, y, 10, y, (200, 196, 182))
+    out['item_paper'] = paper
+    book = new()
+    rect(book, 3, 2, 12, 13, (124, 72, 40))
+    rect(book, 3, 2, 4, 13, (88, 50, 28))            # spine
+    rect(book, 12, 3, 12, 13, (236, 230, 210))        # page edges
+    rect(book, 3, 13, 11, 13, (236, 230, 210))
+    rect(book, 6, 5, 10, 7, (196, 160, 90))           # label
+    rect(book, 6, 5, 10, 5, (220, 190, 120))
+    out['item_book'] = book
+    return out
+
+
 def all_textures(load):
     """name -> image, and name -> [frames] for animated ones"""
     static, anim = {}, {}
     for f in (barrel, blast_furnace, smoker, cartography_table, fletching_table, smithing_table, loom, lectern, grindstone, stonecutter,
-              composter, pointed_dripstone, azalea, pale_garden):
+              composter, pointed_dripstone, azalea, pale_garden, small_items):
         static.update(f(load))
     for f in (bell, lantern, brewing_stand, cauldron, beetroots, dripleaf, spore_blossom):
         static.update(f())

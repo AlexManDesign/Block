@@ -11,6 +11,7 @@ function matches(tag, id) {
   if (tag === 'wool') return /^WOOL_/.test(B_KEY[id] || '');
   if (tag === 'stonetool') return id === B.COBBLE || id === B.COBBLED_DEEPSLATE || id === B.BLACKSTONE;
   if (tag === 'sand') return id === B.SAND || id === B.RED_SAND;
+  if (tag === 'coal') return id === IT.COAL || id === IT.CHARCOAL;
   if (tag === 'woodslab') return SHAPE[id] === SH.SLAB && /PLANKS/.test(B_KEY[BASE[id]] || '');
   return tag === id;
 }
@@ -34,11 +35,11 @@ function matches(tag, id) {
   R(['##', '##'], { '#': P }, B.CRAFTING_TABLE);
   R(['###', '# #', '###'], { '#': 'stonetool' }, B.FURNACE);
   R(['###', '# #', '###'], { '#': P }, B.CHEST);
-  R(['C', 'S'], { C: IT.COAL, S }, B.TORCH, 4);
+  R(['C', 'S'], { C: 'coal', S }, B.TORCH, 4);
   R([' #S', '# S', ' #S'], { '#': S, S: IT.STRING }, IT.BOW);
   R(['F', 'S', 'E'], { F: IT.FLINT, S, E: IT.FEATHER }, IT.ARROW, 4);
   if (B.BARREL) R(['PSP', 'P P', 'PSP'], { P, S: 'woodslab' }, B.BARREL);
-  if (B.CAMPFIRE) R([' S ', 'SCS', 'LLL'], { S, C: IT.COAL, L: ANY_LOG }, B.CAMPFIRE);
+  if (B.CAMPFIRE) R([' S ', 'SCS', 'LLL'], { S, C: 'coal', L: ANY_LOG }, B.CAMPFIRE);
   R(['# #', '###', '# #'], { '#': S }, B.LADDER, 3);
   R([' S ', 'SPS', ' S '], { S, P }, B.SHIP_WHEEL);
   for (const [mat, tier, key] of [[P, 'WOODEN'], ['stonetool', 'STONE'], [IT.IRON_INGOT, 'IRON'], [IT.GOLD_INGOT, 'GOLDEN'], [IT.DIAMOND, 'DIAMOND']].map(a => [a[0], 0, a[1]])) {
@@ -58,8 +59,35 @@ function matches(tag, id) {
   RS([IT.BONE], IT.BONE_MEAL, 3);
   RS([IT.SUGAR_CANE_ITEM || B.SUGAR_CANE], IT.SUGAR);
   R(['###', '#A#', '###'], { '#': IT.GOLD_INGOT, A: IT.APPLE }, IT.GOLDEN_APPLE);
-  // (Minecraft uses 8 gold nuggets; there are no nuggets here)
-  R(['###', '#C#', '###'], { '#': IT.GOLD_INGOT, C: IT.CARROT }, IT.GOLDEN_CARROT);
+  R(['###', '#C#', '###'], { '#': IT.GOLD_NUGGET, C: IT.CARROT }, IT.GOLDEN_CARROT);
+  // nuggets, lantern, paper, book, bookshelf
+  for (const [ing, nug] of [[IT.GOLD_INGOT, IT.GOLD_NUGGET], [IT.IRON_INGOT, IT.IRON_NUGGET]]) { RS([ing], nug, 9); R(['###', '###', '###'], { '#': nug }, ing); }
+  if (B.LANTERN) R(['###', '#T#', '###'], { '#': IT.IRON_NUGGET, T: B.TORCH }, B.LANTERN);
+  R(['###'], { '#': IT.SUGAR_CANE_ITEM || B.SUGAR_CANE }, IT.PAPER, 3);
+  RS([IT.PAPER, IT.PAPER, IT.PAPER, IT.LEATHER], IT.BOOK);
+  R(['###', 'BBB', '###'], { '#': P, B: IT.BOOK }, B.BOOKSHELF);
+  // dyes: from flowers and plants as in Minecraft, and mixed
+  const D = k => IT[k + '_DYE'];
+  for (const [f, c, n] of [['DANDELION', 'YELLOW'], ['SUNFLOWER', 'YELLOW', 2], ['POPPY', 'RED'], ['RED_TULIP', 'RED'], ['ROSE_BUSH', 'RED', 2],
+    ['BLUE_ORCHID', 'LIGHT_BLUE'], ['ALLIUM', 'MAGENTA'], ['LILAC', 'MAGENTA', 2], ['AZURE_BLUET', 'LIGHT_GRAY'], ['OXEYE_DAISY', 'LIGHT_GRAY'],
+    ['WHITE_TULIP', 'LIGHT_GRAY'], ['ORANGE_TULIP', 'ORANGE'], ['PINK_TULIP', 'PINK'], ['PEONY', 'PINK', 2], ['CORNFLOWER', 'BLUE'],
+    ['LILY_OF_THE_VALLEY', 'WHITE'], ['WITHER_ROSE', 'BLACK']]) if (B[f]) RS([B[f]], D(c), n || 1);
+  RS([IT.BEETROOT], D('RED')); RS([IT.BONE_MEAL], D('WHITE'));
+  for (const [a, b, out, n] of [['RED', 'YELLOW', 'ORANGE', 2], ['RED', 'WHITE', 'PINK', 2], ['BLUE', 'WHITE', 'LIGHT_BLUE', 2], ['GREEN', 'WHITE', 'LIME', 2],
+    ['BLACK', 'WHITE', 'GRAY', 2], ['GRAY', 'WHITE', 'LIGHT_GRAY', 2], ['BLUE', 'GREEN', 'CYAN', 2], ['RED', 'BLUE', 'PURPLE', 2], ['PURPLE', 'PINK', 'MAGENTA', 2]])
+    RS([D(a), D(b)], D(out), n);
+  RS([D('BLACK'), D('WHITE'), D('WHITE')], D('LIGHT_GRAY'), 3);
+  RS([D('BLUE'), D('RED'), D('PINK')], D('MAGENTA'), 3);
+  RS([D('BLUE'), D('RED'), D('RED'), D('WHITE')], D('MAGENTA'), 4);
+  // dyed blocks: wool, stained glass and panes, terracotta, concrete powder; beds by wool colour
+  for (const [k] of DYE_COLORS) {
+    const dye = D(k), wool = B['WOOL_' + k], terra = k === 'WHITE' ? B.TERRA_WHITE : k === 'ORANGE' ? B.TERRA_ORANGE : B[k + '_TERRACOTTA'];
+    if (wool) { RS(['wool', dye], wool); R(['WWW', '###'], { W: wool, '#': P }, k === 'RED' ? B.BED : B['BED_' + k]); }
+    if (B[k + '_STAINED_GLASS']) R(['###', '#D#', '###'], { '#': B.GLASS, D: dye }, B[k + '_STAINED_GLASS'], 8);
+    if (B[k + '_STAINED_GLASS_PANE']) R(['###', '#D#', '###'], { '#': B.GLASS_PANE, D: dye }, B[k + '_STAINED_GLASS_PANE'], 8);
+    if (terra) R(['###', '#D#', '###'], { '#': B.TERRACOTTA, D: dye }, terra, 8);
+    if (B[k + '_CONCRETE_POWDER']) RS([dye, 'sand', 'sand', 'sand', 'sand', B.GRAVEL, B.GRAVEL, B.GRAVEL, B.GRAVEL], B[k + '_CONCRETE_POWDER'], 8);
+  }
   RS([IT.MELON_SLICE], IT.MELON_SEEDS); RS([B.PUMPKIN], IT.PUMPKIN_SEEDS, 4);
   R(['###', '###', '###'], { '#': IT.MELON_SLICE }, B.MELON);
   const storage = [[IT.COAL, 'COAL_BLOCK'], [IT.IRON_INGOT, 'IRON_BLOCK'], [IT.GOLD_INGOT, 'GOLD_BLOCK'], [IT.DIAMOND, 'DIAMOND_BLOCK'], [IT.EMERALD, 'EMERALD_BLOCK'], [IT.COPPER_INGOT, 'COPPER_BLOCK'], [IT.WHEAT, 'HAY_BLOCK']];
@@ -77,7 +105,6 @@ function matches(tag, id) {
   R(['###', '###'], { '#': B.GLASS }, B.GLASS_PANE, 16);
   R(['###', '###'], { '#': IT.IRON_INGOT }, B.IRON_BARS, 16);
   R(['P', 'T'], { P: B.CARVED_PUMPKIN, T: B.TORCH }, B.JACK_O_LANTERN);
-  R(['WWW', '###'], { W: 'wool', '#': P }, B.BED);
   R(['#S#', '#S#'], { '#': P, S }, B.OAK_FENCE, 3);
   R(['S#S', 'S#S'], { '#': P, S }, B.OAK_GATE);
   R(['##', '##', '##'], { '#': P }, B.OAK_DOOR, 3);
@@ -158,11 +185,13 @@ const SMELT = {};
   s(B.GOLD, IT.GOLD_INGOT); s(B.DEEPSLATE_GOLD_ORE, IT.GOLD_INGOT); s(IT.RAW_COPPER, IT.COPPER_INGOT); s(B.CLAY, B.TERRACOTTA);
   s(IT.CLAY_BALL, IT.BRICK_ITEM); s(IT.PORKCHOP, IT.COOKED_PORKCHOP); s(IT.BEEF, IT.COOKED_BEEF); s(IT.MUTTON, IT.COOKED_MUTTON);
   s(IT.CHICKEN, IT.COOKED_CHICKEN); s(IT.RAW_COD, IT.COOKED_COD); s(IT.RAW_SALMON, IT.COOKED_SALMON); s(IT.POTATO, IT.BAKED_POTATO);
-  s(B.COBBLED_DEEPSLATE, B.DEEPSLATE); s(B.STONE, B.SMOOTH_STONE); s(B.LOG, IT.COAL);
+  s(B.COBBLED_DEEPSLATE, B.DEEPSLATE); s(B.STONE, B.SMOOTH_STONE); s(B.CACTUS, IT.GREEN_DYE); s(B.SEA_PICKLE, IT.LIME_DYE);
+  // every log and wood burns down to charcoal
+  for (let id = 1; id < NB; id++) if (matches(ANY_LOG, id)) s(id, IT.CHARCOAL);
   s(B.STONE_BRICKS, B.CRACKED_STONE_BRICKS); s(B.NETHERRACK, B.NETHER_BRICKS); s(B.WET_SPONGE, B.SPONGE);
 })();
 function fuelValue(id) {
-  if (id === IT.COAL) return 80; if (id === B.COAL_BLOCK) return 800; if (id === IT.LAVA_BUCKET) return 1000;
+  if (id === IT.COAL || id === IT.CHARCOAL) return 80; if (id === B.COAL_BLOCK) return 800; if (id === IT.LAVA_BUCKET) return 1000;
   if (id === IT.STICK) return 5; const k = B_KEY[id] || '';
   if (/PLANKS|LOG|WOOD|STEM|FENCE|GATE|BOOKSHELF|CRAFTING|CHEST|LADDER|SLAB|STAIRS/.test(k) && !/STONE|BRICK|DEEPSLATE|QUARTZ|SANDSTONE|PRISMARINE|PURPUR|BLACKSTONE|TUFF|COPPER|MUD|NETHER|GRANITE|DIORITE|ANDESITE|MOSSY|END/.test(k)) return 15;
   if (/SAPLING/.test(k)) return 5;

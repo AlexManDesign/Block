@@ -640,6 +640,9 @@ class World {
   updateBlock(x, y, z) {
     if (!this.isLoaded(x, z)) return;
     const id = this.getBlock(x, y, z);
+    // concrete powder touching water sets into concrete (ConcretePowderBlock)
+    const cc = CONCRETE_OF[id];
+    if (cc) for (const [dx, dy, dz] of FACE_DIR) if (isWaterId(this.getBlock(x + dx, y + dy, z + dz))) { this.setBlock(x, y, z, cc, 0); return; }
     if (FLAGS[id] & BF_FALL) {
       const b = this.getBlock(x, y - 1, z);
       if (b === 0 || SHAPE[b] === SH.WATER || SHAPE[b] === SH.LAVA || (FLAGS[b] & BF_REPLACE)) {

@@ -141,6 +141,14 @@ const SPAWNER_MOB = { pig: 0, zombie: 1, skeleton: 2, spider: 3, cave_spider: 4 
 const SPAWNER_TYPES = ['pig', 'zombie', 'skeleton', 'spider', 'cave_spider'];
 
 // water / aquatic helpers
+// concrete powder -> its concrete; log / wood / stem -> its stripped kind (an axe strips it)
+const CONCRETE_OF = new Uint16Array(NBX), STRIPPED_OF = new Uint16Array(NBX);
+for (let id = 1; id < B_KEY.length; id++) {
+  const k = B_KEY[id] || '', c = /^(.+)_CONCRETE_POWDER$/.exec(k);
+  if (c && B[c[1] + '_CONCRETE']) CONCRETE_OF[id] = B[c[1] + '_CONCRETE'];
+  const s = k === 'LOG' ? 'STRIPPED_OAK_LOG' : k === 'DARK_LOG' ? 'STRIPPED_DARK_OAK_LOG' : /^(?!STRIPPED_).*_(LOG|WOOD|STEM|HYPHAE)$/.test(k) ? 'STRIPPED_' + k : '';
+  if (s && B[s] && k !== 'MUSHROOM_STEM' && k !== 'BIG_DRIPLEAF_STEM') STRIPPED_OF[id] = B[s];
+}
 function isWaterId(id) { return id === B.WATER || (FLAGS[id] & (BF_AQUATIC | BF_WET)) !== 0; }
 function isLavaId(id) { return id === B.LAVA; }
 function isLiquidId(id) { return id === B.WATER || id === B.LAVA || (FLAGS[id] & (BF_AQUATIC | BF_WET)) !== 0; }
@@ -271,6 +279,17 @@ ITEM_TABLE.push(['SPAWN_EGG_SALMON', 'Salmon Spawn Egg', 'Яйцо призыв�
 ITEM_TABLE.push(['SPAWN_EGG_SHARK', 'Shark Spawn Egg', 'Яйцо призыва акулы', 'item_spawn_egg_shark', 64, { mob: 'shark' }]);
 ITEM_TABLE.push(['BEETROOT', 'Beetroot', 'Свёкла', 'item_beetroot', 64, { food: 1 }]);
 ITEM_TABLE.push(['BEETROOT_SEEDS', 'Beetroot Seeds', 'Семена свёклы', 'item_beetroot_seeds', 64]);
+// the 16 dyes (Minecraft's colour order), nuggets, charcoal, paper, book
+const DYE_COLORS = [['WHITE', 'White', 'Белый'], ['ORANGE', 'Orange', 'Оранжевый'], ['MAGENTA', 'Magenta', 'Пурпурный'],
+  ['LIGHT_BLUE', 'Light Blue', 'Голубой'], ['YELLOW', 'Yellow', 'Жёлтый'], ['LIME', 'Lime', 'Лаймовый'], ['PINK', 'Pink', 'Розовый'],
+  ['GRAY', 'Gray', 'Серый'], ['LIGHT_GRAY', 'Light Gray', 'Светло-серый'], ['CYAN', 'Cyan', 'Бирюзовый'], ['PURPLE', 'Purple', 'Фиолетовый'],
+  ['BLUE', 'Blue', 'Синий'], ['BROWN', 'Brown', 'Коричневый'], ['GREEN', 'Green', 'Зелёный'], ['RED', 'Red', 'Красный'], ['BLACK', 'Black', 'Чёрный']];
+for (const [k, en, ru] of DYE_COLORS) ITEM_TABLE.push([k + '_DYE', en + ' Dye', ru + ' краситель', 'item_' + k.toLowerCase() + '_dye', 64]);
+ITEM_TABLE.push(['GOLD_NUGGET', 'Gold Nugget', 'Золотой самородок', 'item_gold_nugget', 64]);
+ITEM_TABLE.push(['IRON_NUGGET', 'Iron Nugget', 'Железный самородок', 'item_iron_nugget', 64]);
+ITEM_TABLE.push(['CHARCOAL', 'Charcoal', 'Древесный уголь', 'item_charcoal', 64]);
+ITEM_TABLE.push(['PAPER', 'Paper', 'Бумага', 'item_paper', 64]);
+ITEM_TABLE.push(['BOOK', 'Book', 'Книга', 'item_book', 64]);
 const IT = {};
 for (let i = 0; i < ITEM_TABLE.length; i++) IT[ITEM_TABLE[i][0]] = ITEM_BASE + i;
 function isItem(id) { return id >= ITEM_BASE && id < WET_BASE; }
