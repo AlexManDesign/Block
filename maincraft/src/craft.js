@@ -38,6 +38,7 @@ function matches(tag, id) {
   R(['C', 'S'], { C: 'coal', S }, B.TORCH, 4);
   R([' #S', '# S', ' #S'], { '#': S, S: IT.STRING }, IT.BOW);
   R(['F', 'S', 'E'], { F: IT.FLINT, S, E: IT.FEATHER }, IT.ARROW, 4);
+  R(['# #', '###'], { '#': P }, IT.BOAT);
   // redstone
   R(['R', 'S'], { R: IT.REDSTONE, S }, B.REDSTONE_TORCH);
   R(['S', 'C'], { S, C: B.COBBLE }, B.LEVER);

@@ -170,6 +170,7 @@ class Game {
     this.ents = new Entities(this);
     this.ships = this.ships || new Ships(this);
     this.ships.ship = null;
+    this.boats = new Boats(this);
     this.r.buildClouds(meta.seed | 0);
     const p = this.player;
     p.vel = [0, 0, 0]; p.flying = false; p.fallDist = 0;
@@ -185,6 +186,7 @@ class Game {
       this.needSpawnDrop = true;
     }
     this.pendingShip = meta.ship || null;
+    this.pendingBoats = meta.boats || null;
     this.playing = true;
     this.loadingWorld = true;
     this.updateHotbar();
@@ -241,6 +243,7 @@ class Game {
       lastPlayed: Date.now(), time: this.time, mode: this.mode, inv: this.inv, sel: this.sel,
       player: { pos: p.pos.slice(), yaw: p.yaw, pitch: p.pitch, flying: p.flying }, spawn: this.spawn, surv: { ...this.surv },
       ship: this.ships ? this.ships.serialize() : null,
+      boats: this.boats ? this.boats.serialize() : null,
     });
     await DB.putWorld(this.meta);
     if (await DB.saveCols(this.meta.id, entries)) {
@@ -686,6 +689,20 @@ class Game {
     if (!w.isLoaded(Math.floor(p.pos[0]), Math.floor(p.pos[2]))) return;
     // a vessel saved under way comes back once the world around it is there
     if (this.pendingShip && !this.loadingWorld) { this.ships.restore(this.pendingShip); this.pendingShip = null; }
+    if (this.pendingBoats && !this.loadingWorld) { this.boats.restore(this.pendingBoats); this.pendingBoats = null; }
+    // boats drift; the one being ridden takes the movement keys and carries the player
+    if (this.boats && this.boats.riding) {
+      this.boats.update(dt, inp.keys);
+      p.interp(1);
+      if (this.mode === 'survival') this.survivalTick(dt);
+      this.updateCamera();
+      this.interact(dt);
+      this.ents.update(dt);
+      this.tickFurnaces(dt);
+      this.updateParticles(dt);
+      return;
+    }
+    if (this.boats) this.boats.update(dt, null);
     if (this.ships && this.ships.ship) {
       // at the wheel: the keys steer the vessel, the player rides along
       this.ships.update(dt, inp.keys);
@@ -809,6 +826,11 @@ class Game {
     if (!this.ents) return false;
     const p = this.player, eye = p.eye(), l = p.look();
     const hit = this.ents.raycastMob(eye, l, 3.5);
+    // a boat in front of the mob and the block takes the hit
+    const bh = this.boats && this.boats.raycast(eye, l, 3.5);
+    if (bh && (!hit || bh.t < hit.t) && (!this.target || bh.t < this.target.t)) {
+      this.boats.hit(bh.b, attackStats(this.inv[this.sel]).dmg); this.swing(); return true;
+    }
     if (!hit || (this.target && this.target.t < hit.t)) return false;
     // Player.attack: base damage scaled by the attack strength (cooldown) of the held item
     const a = attackStats(this.inv[this.sel]), f = this.attackStrength(a.speed);
@@ -867,6 +889,25 @@ class Game {
     const w = this.world, p = this.player, tg = this.target;
     const held = this.inv[this.sel];
     const hid = held ? held.id : 0;
+    // boats: board one under the crosshair, or put one on the water (or ground) in front
+    if (this.boats) {
+      const eye = p.eye(), l = p.look(), bh = this.boats.raycast(eye, l, 3.5);
+      if (bh && (!tg || bh.t < tg.t) && !this.boats.riding) { this.boats.board(bh.b); this.swing(); return; }
+      if (hid === IT.BOAT) {
+        let at = null;
+        for (let t = 0.5; t <= 5 && !at; t += 0.1) {
+          const x = eye[0] + l[0] * t, y = eye[1] + l[1] * t, z = eye[2] + l[2] * t;
+          if (tg && t > tg.t) break;
+          if (isWaterId(w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)))) at = [x, Math.floor(y) + 0.6, z];
+        }
+        if (!at && tg && tg.face === 2) at = [tg.x + 0.5, tg.y + 1, tg.z + 0.5];
+        if (at && !entCollides(w, at[0], at[1], at[2], BOAT_W, BOAT_H)) {
+          this.boats.place(at[0], at[1], at[2], p.yaw);
+          this.consumeHeld(); this.swing();
+        }
+        return;
+      }
+    }
     // feeding an animal its breeding food comes before eating it yourself
     if (hid && this.ents) {
       const h = this.ents.raycastMob(p.eye(), p.look(), 3.5);
@@ -1402,6 +1443,7 @@ class Game {
     let t = performance.now();
     r.renderWorld(w, cam, vy, vpch, env, time, tick);
     if (this.ships) this.ships.render(cam, env, time, tick);
+    if (this.boats) this.boats.render(cam, env);
     const gl = r.gl;
     this.perfT('rWorld', performance.now() - t);
     // clouds

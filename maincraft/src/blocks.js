@@ -319,6 +319,7 @@ ITEM_TABLE.push(['PAPER', 'Paper', 'Бумага', 'item_paper', 64]);
 ITEM_TABLE.push(['BOOK', 'Book', 'Книга', 'item_book', 64]);
 ITEM_TABLE.push(['COCOA_BEANS', 'Cocoa Beans', 'Какао-бобы', 'item_cocoa_beans', 64]);
 ITEM_TABLE.push(['REDSTONE', 'Redstone Dust', 'Красная пыль', 'item_redstone', 64]);
+ITEM_TABLE.push(['BOAT', 'Boat', 'Лодка', 'item_boat', 1]);
 const IT = {};
 for (let i = 0; i < ITEM_TABLE.length; i++) IT[ITEM_TABLE[i][0]] = ITEM_BASE + i;
 function isItem(id) { return id >= ITEM_BASE && id < WET_BASE; }
