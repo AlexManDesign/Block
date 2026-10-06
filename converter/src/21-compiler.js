@@ -32,7 +32,8 @@ const signatures={
  object:['','r'],assign:['rr','r'],define:['rrri','r'],regex:['ii','r'],func:['riiirr','r'],
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
- setFunctionName:['rri','r'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ setFunctionName:['rri','r'],fromInt32:['i','r'],
+ pushIntrinsic:['rr','i'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -107,10 +108,10 @@ class Compiler {
   out(0x20,0,0x20,1,0x20,2,0x20,3);
   fn.node.params.forEach((p,i)=>{
    out(0x20,2,0x41,...i32(i));call('arg');
-   const repr=this.paramRepr(fn,i);if(repr==='f')call('toNumberValue');else if(repr==='i')call('truth');
+   const repr=this.paramRepr(fn,i);if(repr==='f')call('toNumberValue');else if(repr==='n'){call('toNumberValue');call('int32');}else if(repr==='i')call('truth');
   });
   out(0x10,...u32(this.imports.length+2*id+1));
-  const ret=reprOf(fn.ret);if(ret==='f')call('number');else if(ret==='i')call('boolean');
+  const ret=reprOf(fn.ret);if(ret==='f')call('number');else if(ret==='n')call('fromInt32');else if(ret==='i')call('boolean');
   return {code,locals:[]};
  }
 }

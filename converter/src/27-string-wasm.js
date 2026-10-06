@@ -32,6 +32,27 @@ function addStringRuntime(def){
  });
  def('stringAlloc',[I32],[REF],f=>{f.get(0);f.get(0);f.call('stringAllocate');});
  def('stringLength',[REF],[I32],f=>length(f,0));
+ // Decimal text of an int32 (no host call).
+ def('intToString',[I32],[REF],f=>{
+  const u=f.local(I32),n=f.local(I32),t=f.local(I32),out=f.local(),at=f.local(I32),neg=f.local(I32);
+  f.get(0);f.int(0);f.out(0x48);f.tee(neg);f.if(()=>{f.int(0);f.get(0);f.out(0x6b);},()=>f.get(0),I32);f.tee(u);f.set(t);
+  f.int(1);f.set(n);
+  f.block('end',end=>f.block('loop',loop=>{f.get(t);f.int(10);f.out(0x49);f.branch(end,true);f.get(t);f.int(10);f.out(0x6e);f.set(t);f.get(n);f.int(1);f.out(0x6a);f.set(n);f.branch(loop);}));
+  f.get(n);f.get(neg);f.out(0x6a);f.call('stringAlloc');f.set(out);
+  f.get(neg);f.if(()=>{f.get(out);f.int(0);f.int(45);f.call('stringSet');});
+  f.get(n);f.get(neg);f.out(0x6a);f.set(at);
+  f.block('end',end=>f.block('loop',loop=>{
+   f.get(at);f.int(1);f.out(0x6b);f.set(at);f.get(out);f.get(at);f.get(u);f.int(10);f.out(0x70);f.int(48);f.out(0x6a);f.call('stringSet');
+   f.get(u);f.int(10);f.out(0x6e);f.tee(u);f.out(0x45);f.branch(end,true);f.branch(loop);
+  }));
+  f.get(out);
+ });
+ // String(x) for numbers: int32 values in WASM, everything else via the host.
+ def('numberToString',[F64],[REF],f=>{
+  const i=f.local(I32);f.get(0);f.out(0xfc,0x02);f.tee(i);f.out(0xb7);f.get(0);f.out(0x61);
+  f.if(()=>{f.get(i);f.call('intToString');},()=>{f.get(0);f.call('hostNumberToString');},REF);
+ });
+ def('stringFromCharCode',[I32],[REF],f=>{const s=f.local();f.int(1);f.call('stringAlloc');f.tee(s);f.int(0);f.get(0);f.int(0xffff);f.out(0x71);f.call('stringSet');f.get(s);});
  def('stringSet',[REF,I32,I32],[],f=>{buffer(f,0);f.field(0,STRING,1);f.get(1);f.out(0x6a);f.get(2);f.out(0xfb,0x0e,...u32(UTF16));});
  def('stringUnit',[REF,I32],[I32],f=>unit(f,0,1));
  def('stringRange',[REF,I32,I32],[REF],f=>{

@@ -9092,7 +9092,8 @@ const signatures={
  object:['','r'],assign:['rr','r'],define:['rrri','r'],regex:['ii','r'],func:['riiirr','r'],
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
- setFunctionName:['rri','r'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ setFunctionName:['rri','r'],fromInt32:['i','r'],
+ pushIntrinsic:['rr','i'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -9167,10 +9168,10 @@ class Compiler {
   out(0x20,0,0x20,1,0x20,2,0x20,3);
   fn.node.params.forEach((p,i)=>{
    out(0x20,2,0x41,...i32(i));call('arg');
-   const repr=this.paramRepr(fn,i);if(repr==='f')call('toNumberValue');else if(repr==='i')call('truth');
+   const repr=this.paramRepr(fn,i);if(repr==='f')call('toNumberValue');else if(repr==='n'){call('toNumberValue');call('int32');}else if(repr==='i')call('truth');
   });
   out(0x10,...u32(this.imports.length+2*id+1));
-  const ret=reprOf(fn.ret);if(ret==='f')call('number');else if(ret==='i')call('boolean');
+  const ret=reprOf(fn.ret);if(ret==='f')call('number');else if(ret==='n')call('fromInt32');else if(ret==='i')call('boolean');
   return {code,locals:[]};
  }
 }
@@ -16120,6 +16121,27 @@ function addStringRuntime(def){
  });
  def('stringAlloc',[I32],[REF],f=>{f.get(0);f.get(0);f.call('stringAllocate');});
  def('stringLength',[REF],[I32],f=>length(f,0));
+ // Decimal text of an int32 (no host call).
+ def('intToString',[I32],[REF],f=>{
+  const u=f.local(I32),n=f.local(I32),t=f.local(I32),out=f.local(),at=f.local(I32),neg=f.local(I32);
+  f.get(0);f.int(0);f.out(0x48);f.tee(neg);f.if(()=>{f.int(0);f.get(0);f.out(0x6b);},()=>f.get(0),I32);f.tee(u);f.set(t);
+  f.int(1);f.set(n);
+  f.block('end',end=>f.block('loop',loop=>{f.get(t);f.int(10);f.out(0x49);f.branch(end,true);f.get(t);f.int(10);f.out(0x6e);f.set(t);f.get(n);f.int(1);f.out(0x6a);f.set(n);f.branch(loop);}));
+  f.get(n);f.get(neg);f.out(0x6a);f.call('stringAlloc');f.set(out);
+  f.get(neg);f.if(()=>{f.get(out);f.int(0);f.int(45);f.call('stringSet');});
+  f.get(n);f.get(neg);f.out(0x6a);f.set(at);
+  f.block('end',end=>f.block('loop',loop=>{
+   f.get(at);f.int(1);f.out(0x6b);f.set(at);f.get(out);f.get(at);f.get(u);f.int(10);f.out(0x70);f.int(48);f.out(0x6a);f.call('stringSet');
+   f.get(u);f.int(10);f.out(0x6e);f.tee(u);f.out(0x45);f.branch(end,true);f.branch(loop);
+  }));
+  f.get(out);
+ });
+ // String(x) for numbers: int32 values in WASM, everything else via the host.
+ def('numberToString',[F64],[REF],f=>{
+  const i=f.local(I32);f.get(0);f.out(0xfc,0x02);f.tee(i);f.out(0xb7);f.get(0);f.out(0x61);
+  f.if(()=>{f.get(i);f.call('intToString');},()=>{f.get(0);f.call('hostNumberToString');},REF);
+ });
+ def('stringFromCharCode',[I32],[REF],f=>{const s=f.local();f.int(1);f.call('stringAlloc');f.tee(s);f.int(0);f.get(0);f.int(0xffff);f.out(0x71);f.call('stringSet');f.get(s);});
  def('stringSet',[REF,I32,I32],[],f=>{buffer(f,0);f.field(0,STRING,1);f.get(1);f.out(0x6a);f.get(2);f.out(0xfb,0x0e,...u32(UTF16));});
  def('stringUnit',[REF,I32],[I32],f=>unit(f,0,1));
  def('stringRange',[REF,I32,I32],[REF],f=>{
@@ -16306,6 +16328,7 @@ function environmentWasm(){
  // so the bridge never has to call back into WASM to classify them.
  host('hostGetRaw',[REF,REF],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
  for(let n=0;n<=8;n++)host('hostCall'+n,[REF,REF,I32,...Array(n).fill(REF)],[REF]);
+ host('hostNumberToString',[F64],[REF]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -16327,6 +16350,7 @@ function environmentWasm(){
   f.get(i);f.out(0x45,0x45);f.get(0);f.out(0xbd,0x50,0x72,0x71); // not -0
   f.if(()=>{f.get(i);f.out(0xfb,0x1c,0xfb,0x1b);},()=>{f.get(0);f.out(0x23,6);f.create(NUMBER);},REF);
  });
+ def('fromInt32',[I32],[REF],f=>{f.get(0);f.int(0x40000000);f.out(0x6a);f.int(0);f.out(0x4e);f.if(()=>{f.get(0);f.out(0xfb,0x1c,0xfb,0x1b);},()=>{f.get(0);f.out(0xb7);f.call('number');},REF);});
  def('isNumber',[REF],[I32],f=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x14,0x6c);f.if(()=>f.int(1),()=>{f.test(0,NUMBER);f.if(()=>{f.field(0,NUMBER,1);f.out(0x23,6,0xd3);},()=>f.int(0),I32);},I32);});
  def('toNumber',[REF],[F64],f=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x14,0x6c);f.if(()=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x16,0x6c,0xfb,0x1d,0xb7);},()=>f.field(0,NUMBER,0),F64);});
  // ECMAScript ToInt32 for doubles. Powers of two keep the remainder exact;
@@ -16595,6 +16619,13 @@ function addObjectRuntime(def){
   f.get(1);f.call('isString');f.out(0x45);f.if(()=>host(f,'hostObjectDefine',4));
   f.get(0);f.get(1);f.get(2);f.call('objectStore');f.drop();f.get(0);
  });
+ // 1 when o.push is the original Array.prototype.push on a plain WASM array.
+ def('pushIntrinsic',[REF,REF],[I32],f=>{
+  f.get(0);f.call('isObject');f.out(0x45);f.if(()=>{f.int(0);f.ret();});
+  array(f,0);f.out(0x45);f.if(()=>{f.int(0);f.ret();});forwarded(f,0);f.if(()=>{f.int(0);f.ret();});
+  f.call('prototypeFlags');f.int(16);f.out(0x71,0x45);f.if(()=>{f.int(0);f.ret();});
+  f.get(0);f.get(1);f.call('objectFind');f.out(0xd1);
+ });
  def('push',[REF,REF],[REF],f=>{
   forwarded(f,0);f.if(()=>{f.get(0);f.get(1);f.call('hostArrayPush');f.ret();});
   f.field(0,OBJECT,LENGTH);f.int(MAX_DENSE);f.out(0x4f);f.if(()=>{f.get(0);f.get(1);f.call('hostArrayPush');f.ret();});
@@ -16788,6 +16819,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   if(objectChain&&keys.every(k=>k==='__proto__'||getDescriptor(objectPrototype,k)?.writable===true))flags|=1;
   if(objectChain&&arrayChain&&!keys.some(index)&&!getNames(arrayPrototype).some(index))flags|=2;
   if(objectChain&&keys.length===baseKeys.length&&keys.every((k,i)=>k===baseKeys[i]))flags|=8;
+  if(arrayChain&&getDescriptor(arrayPrototype,'push')?.value===arrayPush&&(flags&2))flags|=16;
   return flags;
  }
  // Prototype lookup for a key an ordinary WASM object does not have.
@@ -16818,7 +16850,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   hostProperty:(o,k,s)=>{if(o==null)throw new TypeError('Cannot access '+String(k)+' of '+o);return ref(o,k,!!s);},
   hostStringRead:(o,k)=>o[k],hostStringWrite:(o,k,v,s)=>setProperty(o,k,v,!!s),
   hostEqual:(a,b)=>+(a===b),hostTemplateString:v=>{if(typeof v==='symbol')throw new TypeError('Cannot convert Symbol to string');return String(v);},
-  hostToNumeric:v=>typeof v==='bigint'?v:+v,hostToNumber:v=>+v,hostIncrement:(v,d)=>typeof v==='bigint'?v+BigInt(d):v+d,
+  hostNumberToString:v=>String(v),hostToNumeric:v=>typeof v==='bigint'?v:+v,hostToNumber:v=>+v,hostIncrement:(v,d)=>typeof v==='bigint'?v+BigInt(d):v+d,
   hostTruth:v=>+!!v,hostUpdate:(r,value,d,post)=>{let n=typeof value==='bigint'?value:+value;const previous=n;n=typeof n==='bigint'?n+BigInt(d):n+d;write(r,n);return post?previous:n;},
   fail:(code,k)=>{if(code===1)throw new SyntaxError('Duplicate binding: '+pool[k]);if(code===2)throw new ReferenceError('Binding is not initialized');if(code===3)throw new TypeError('Assignment to import binding');if(code===4)throw new TypeError('Assignment to constant variable');if(code===5)throw new RangeError('Invalid string length or repeat count');if(code===6)throw new RangeError('Invalid array length');if(code===7)throw new TypeError('Cannot delete array length');throw new Error('Environment runtime error '+code);},
  };
@@ -17080,7 +17112,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
+  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
   globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
   globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
   globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
@@ -17126,7 +17158,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag};
- const nativeNames=new Set(['scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['intToString','numberToString','stringFromCharCode','pushIntrinsic','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;
@@ -17145,6 +17177,8 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  imports.int32=environment.int32;imports.has=environment.has;
  // Numeric helpers of the typed tier take and return f64: no boxing at all.
  imports.fmod=(a,b)=>a%b;imports.pow=(a,b)=>a**b;
+ // Typed array elements for the typed tier: plain JS numbers both ways.
+ imports.taGetF=(a,i)=>a[i];imports.taGetI=(a,i)=>a[i]|0;imports.taSetF=(a,i,v)=>{a[i]=v;};imports.taSetI=(a,i,v)=>{a[i]=v;};imports.taLength=a=>a.length;
  for(const name of ['random','atan2','pow','acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'])imports['math_'+name]=Math[name];
  for(const name of ['isString','stringLength','stringConcat','stringCompare','stringRead','stringCharCodeAt','stringCharAt','stringSlice','stringSubstring','stringIndexOf','stringLastIndexOf','stringIncludes','stringStartsWith','stringEndsWith','stringRepeat'])imports[name]=environment[name];
  const bytes=typeof binary==='string'?Uint8Array.from(atob(binary),c=>c.charCodeAt(0)):binary;
@@ -17292,7 +17326,7 @@ class ScopeAnalysis {
  constructor(){
   this.root=new Scope('root',null,null,null);this.root.forced=true;
   this.globals=new Map();this.scriptErrors=new Map();this.modules=new Map();this.functions=new Map();
-  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;
+  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;this.stringPrototype=false;
  }
  // ---- pass 1: scopes and declarations ----
  declare(scope,name,kind,node){
@@ -17544,6 +17578,8 @@ class ScopeAnalysis {
    case'BinaryExpression':case'LogicalExpression':this.expression(n.left,scope,fn);this.expression(n.right,scope,fn);return;
    case'MemberExpression':
     if(n.object.type==='Identifier')n.object._memberObject=true;
+    // Code that touches String.prototype may replace the methods compiled inline.
+    if(n.object.type==='Identifier'&&n.object.name==='String'&&!n.computed&&n.property.name==='prototype')this.stringPrototype=true;
     this.expression(n.object,scope,fn);if(n.computed)this.expression(n.property,scope,fn);
     // Reads of global functions through window.* make them reachable from anywhere.
     if(n.object.type==='Identifier'&&!n.object._ref?.binding&&['window','globalThis','self','top','parent','frames'].includes(n.object.name)){if(n.computed)this.globalEscapes=true;else this.globalReads.add(n.property.name);}
@@ -17638,20 +17674,27 @@ exports["patternNames"]=patternNames;
 // typed values (types.mjs). A local binding is a WASM local; a captured
 // binding is element `slot` of a scope record reached from a known record by
 // a fixed number of parent links. Values have one of three representations:
-// 'r' boxed (externref), 'f' a JS number as f64, 'i' a boolean as i32.
+// 'r' boxed (externref), 'f' a JS number as f64, 'n' an int32 number as i32,
+// 'i' a boolean as i32.
 const REF=require("./wasm.mjs")["REF"];
 const I32=require("./wasm.mjs")["I32"];
 const F64=require("./wasm.mjs")["F64"];
 const u32=require("./wasm.mjs")["u32"];
 const hops=require("./scope.mjs")["hops"];
 const NUM=require("./types.mjs")["NUM"];
+const INT=require("./types.mjs")["INT"];
+const NU=require("./types.mjs")["NU"];
+const STR=require("./types.mjs")["STR"];
+const TAI=require("./types.mjs")["TAI"];
 const BOOL=require("./types.mjs")["BOOL"];
 
 const SCOPE=3; // scope record type index in the program module
 const GLOBAL_CONSTANTS=new Map([['undefined',undefined],['NaN',NaN],['Infinity',Infinity]]);
-const VALUE_TYPE={r:REF,f:F64,i:I32};
-const reprOf=t=>t===NUM?'f':t===BOOL?'i':'r';
-const numeric=t=>t===NUM||t===BOOL;
+const VALUE_TYPE={r:REF,f:F64,i:I32,n:I32};
+const reprOf=t=>t===NUM?'f':t===INT?'n':t===BOOL?'i':'r';
+const numeric=t=>t===NUM||t===INT||t===BOOL||t===NU;
+const number=t=>t===NUM||t===INT;
+const I32_COMPARE={'<':0x48,'>':0x4a,'<=':0x4c,'>=':0x4e,'==':0x46,'===':0x46,'!=':0x47,'!==':0x47};
 const F64_OPS={'+':0xa0,'-':0xa1,'*':0xa2,'/':0xa3};
 const F64_COMPARE={'<':0x63,'>':0x64,'<=':0x65,'>=':0x66,'==':0x61,'===':0x61,'!=':0x62,'!==':0x62};
 const I32_OPS={'&':0x71,'|':0x72,'^':0x73,'<<':0x74,'>>':0x75,'>>>':0x76};
@@ -17695,17 +17738,117 @@ const bindings={
  // without checks.
  convert(from,to,t){
   if(from===to)return;
-  if(to==='r'){this.rt(from==='f'?'number':'boolean');return;}
+  if(to==='r'){this.rt(from==='f'?'number':from==='n'?'fromInt32':'boolean');return;}
   if(to==='f'){
-   if(from==='i'){this.out(0xb7);return;}
+   if(from==='i'||from==='n'){this.out(0xb7);return;}
    if(t===BOOL){this.rt('truth');this.out(0xb7);return;}
-   this.rt(t===NUM?'toNumber':'toNumberValue');return;
+   this.rt(number(t)?'toNumber':'toNumberValue');return;
+  }
+  if(to==='n'){
+   // An int-typed value converts exactly; anything else gets ToInt32.
+   if(from==='i')return;
+   if(from==='r'){if(t===BOOL){this.rt('truth');return;}this.rt(number(t)?'toNumber':'toNumberValue');}
+   if(t===INT)this.out(0xaa);else this.toInt32();
+   return;
   }
   // to 'i': JavaScript truthiness.
+  if(from==='n'){this.out(0x45,0x45);return;}
   if(from==='f'){const v=this.local(F64);this.tee(v);this.f64(0);this.out(0x62);this.get(v);this.get(v);this.out(0x61,0x71);return;}
   this.rt('truth');
  },
- emitAs(n,to,hint=''){this.convert(this.natural(n,hint),to,n._t);},
+ emitAs(n,to,hint=''){
+  if(n._elem&&to!=='r'&&!this.dynamicOnly){this.elementAs(n,to);return;}
+  if(to==='n'&&!this.dynamicOnly&&n._t!==INT&&this.wrapsToInt32(n,0)){this.int32Wrap(n);return;}
+  this.convert(this.natural(n,hint),to,n._t);
+ },
+ // ---- strings ----
+ // Pushes ToString(n) when n's static type allows it without user code.
+ stringOf(n){
+  switch(n._t){
+   case STR:this.natural(n);return true;
+   case INT:this.emitAs(n,'n');this.rt('intToString');return true;
+   case NUM:this.emitAs(n,'f');this.rt('numberToString');return true;
+   case BOOL:this.emitAs(n,'i');this.ifElse(()=>this.lit('true'),()=>this.lit('false'),REF);return true;
+  }
+  return false;
+ },
+ concat(left,right){
+  const direct=t=>t===STR||t===INT||t===NUM||t===BOOL;
+  if(!direct(left._t)||!direct(right._t))return null;
+  this.stringOf(left);this.stringOf(right);this.rt('stringConcat');return 'r';
+ },
+ template(n){
+  this.lit(n.quasis[0].value.cooked);
+  n.expressions.forEach((e,i)=>{
+   if(!this.stringOf(e)){this.expression(e);this.rt('templateString');}
+   this.rt('stringConcat');
+   const next=n.quasis[i+1].value.cooked;if(next){this.lit(next);this.rt('stringConcat');}
+  });
+ },
+ // String.prototype methods on a string receiver, in WASM. Arguments are
+ // evaluated first and converted afterwards, as the methods do.
+ stringMethod(n){
+  const {name}=n._strMethod,args=n.arguments,search=['indexOf','lastIndexOf','includes','startsWith','endsWith'].includes(name);
+  if(!['charCodeAt','charAt','slice','substring','repeat','concat'].includes(name)&&!search)return null;
+  if(search&&(!args.length||args[0]._t!==STR)||name==='concat'&&args.some(a=>a._t!==STR))return null;
+  const s=this.local();this.natural(n.callee.object);this.set(s);
+  const values=args.map(a=>{const r=this.natural(a),x=this.local(VALUE_TYPE[r]);this.set(x);return {x,r,t:a._t};});
+  const number=(i,missing)=>{if(i>=values.length){this.f64(missing);return;}const v=values[i];this.get(v.x);this.convert(v.r,'f',v.t);};
+  this.get(s);
+  switch(name){
+   case'charCodeAt':number(0,NaN);this.rt('stringCharCodeAt');return 'f';
+   case'charAt':number(0,NaN);this.rt('stringCharAt');return 'r';
+   case'slice':case'substring':number(0,NaN);number(1,Infinity);this.rt(name==='slice'?'stringSlice':'stringSubstring');return 'r';
+   case'repeat':number(0,NaN);this.rt('stringRepeat');return 'r';
+   case'concat':for(const v of values){this.get(v.x);this.rt('stringConcat');}return 'r';
+  }
+  this.get(values[0].x);number(1,name==='endsWith'?Infinity:NaN);
+  this.rt('string'+name[0].toUpperCase()+name.slice(1));
+  return name==='indexOf'||name==='lastIndexOf'?'n':'i';
+ },
+ // A typed array element in a numeric context: one host call, no boxing.
+ // Out of bounds it is NaN (or 0 after ToInt32), exactly what undefined
+ // becomes there.
+ elementAs(n,repr){
+  this.expression(n.object);this.emitAs(n.property,'f');
+  if(repr==='n'||repr==='i'&&n._elem===TAI){this.rt('taGetI');if(repr==='i')this.out(0x45,0x45);return;}
+  this.rt('taGetF');this.convert('f',repr,NU);
+ },
+ // a[i] = v / a[i] op= v / a[i]++ on a typed array receiver.
+ assignElement(n){
+  const m=n.left,o=this.local(),i=this.local(F64);
+  this.expression(m.object);this.set(o);this.emitAs(m.property,'f');this.set(i);
+  let r;
+  if(n.operator==='=')r=this.natural(n.right);
+  else if(['&&=','||=','??='].includes(n.operator))return null;
+  else r=this.binaryAny(n.operator.slice(0,-1),{type:'Emit',_t:NUM,emit:()=>{this.get(o);this.get(i);this.rt('taGetF');return 'f';}},n.right,n._t);
+  return this.storeElement(o,i,r);
+ },
+ storeElement(o,i,r){
+  const v=this.local(VALUE_TYPE[r]);this.set(v);this.get(o);this.get(i);this.get(v);
+  if(r==='f')this.rt('taSetF');else if(r==='r'){this.integer(+this.strict);this.rt('setIndex');this.out(0x1a);}else this.rt('taSetI');
+  this.get(v);return r;
+ },
+ updateElement(n){
+  const m=n.argument,o=this.local(),i=this.local(F64),old=this.local(F64),value=this.local(F64);
+  this.expression(m.object);this.set(o);this.emitAs(m.property,'f');this.set(i);
+  this.get(o);this.get(i);this.rt('taGetF');this.tee(old);this.f64(n.operator==='++'?1:-1);this.out(0xa0);this.set(value);
+  this.get(o);this.get(i);this.get(value);this.rt('taSetF');this.get(n.prefix?value:old);return 'f';
+ },
+ // ToInt32 of sums/differences of int32 values (exact in f64 up to 2^53) and
+ // of x >>> y equals wrapping i32 arithmetic on the same bits.
+ wrapsToInt32(n,depth){
+  if(depth>20)return false;
+  if(n._t===INT)return true;
+  if(n.type!=='BinaryExpression')return false;
+  if(n.operator==='>>>')return true;
+  return (n.operator==='+'||n.operator==='-')&&n._t===NUM&&this.wrapsToInt32(n.left,depth+1)&&this.wrapsToInt32(n.right,depth+1);
+ },
+ int32Wrap(n){
+  if(n._t===INT){this.convert(this.natural(n),'n',INT);return;}
+  if(n.operator==='>>>'){this.operandsAs(n.left,n.right,'n');this.out(0x76);return;}
+  this.int32Wrap(n.left);this.int32Wrap(n.right);this.out(n.operator==='+'?0x6a:0x6b);
+ },
  condition(n){this.emitAs(n,'i');},
  // ToInt32 of the f64 on the stack, inline for the common in-range case.
  toInt32(){
@@ -17820,22 +17963,28 @@ const bindings={
    const t=n._t;
    switch(n.type){
     case'Literal':
-     if(typeof n.value==='number'){this.f64(n.value);return 'f';}
+     if(typeof n.value==='number'){if(t===INT){this.integer(n.value);return 'n';}this.f64(n.value);return 'f';}
      if(typeof n.value==='boolean'){this.integer(+n.value);return 'i';}
      break;
     case'Identifier':return this.readNatural(n);
     case'UnaryExpression':
      if(n.operator==='!'){this.condition(n.argument);this.out(0x45);return 'i';}
+     if(n.operator==='-'&&t===INT&&n.argument.type==='Literal'){this.integer(-n.argument.value);return 'n';}
+     if(n.operator==='+'&&t===INT){this.emitAs(n.argument,'n');return 'n';}
      if(n.operator==='+'&&t===NUM){this.emitAs(n.argument,'f');return 'f';}
      if(n.operator==='-'&&t===NUM){this.emitAs(n.argument,'f');this.out(0x9a);return 'f';}
-     if(n.operator==='~'&&t===NUM){this.emitAs(n.argument,'f');this.toInt32();this.integer(-1);this.out(0x73,0xb7);return 'f';}
+     if(n.operator==='~'&&t===INT){this.emitAs(n.argument,'n');this.integer(-1);this.out(0x73);return 'n';}
      if(n.operator==='void'){const r=this.natural(n.argument);this.out(0x1a);this.lit(undefined);return r&&'r';}
      break;
-    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix);if(this.plainMember(n.argument))return this.updateMember(n);break;
-    case'AssignmentExpression':if(n.left.type==='Identifier')return this.assignNatural(n);if(this.plainMember(n.left))return this.assignMember(n);break;
+    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix);if(n.argument._elem)return this.updateElement(n);if(this.plainMember(n.argument))return this.updateMember(n);break;
+    case'AssignmentExpression':{
+     if(n.left.type==='Identifier')return this.assignNatural(n);
+     if(n.left._elem){const r=this.assignElement(n);if(r)return r;}
+     if(this.plainMember(n.left))return this.assignMember(n);break;
+    }
     case'BinaryExpression':{const r=this.binaryNatural(n.operator,n.left,n.right,t);if(r)return r;break;}
     case'LogicalExpression':
-     if(numeric(t)&&n.left._t===t&&n.right._t===t){
+     if(number(t)&&number(n.left._t)&&number(n.right._t)||t===BOOL&&n.left._t===t&&n.right._t===t){
       const repr=reprOf(t),v=this.local(VALUE_TYPE[repr]);this.emitAs(n.left,repr);this.tee(v);
       if(n.operator==='??'){this.out(0x1a);this.get(v);return repr;}
       this.convert(repr,'i',t);
@@ -17850,10 +17999,16 @@ const bindings={
     case'CallExpression':{
      if(n._direct&&!n.optional)return this.directCall(n,n._direct);
      if(n._math&&!n.optional){const r=this.math(n);if(r)return r;}
+     if(n._strMethod){const r=this.stringMethod(n);if(r)return r;}
+     if(n._fromCharCode){this.emitAs(n.arguments[0],'n');this.rt('stringFromCharCode');return 'r';}
      if(this.callValue(n))return 'r';
      break;
     }
-    case'MemberExpression':if(this.plainMember(n)){this.memberGet(n);return 'r';}break;
+    case'TemplateLiteral':this.template(n);return 'r';
+    case'MemberExpression':
+     if(n._taLength){this.expression(n.object);this.rt('taLength');return 'f';}
+     if(n._strLength){this.expression(n.object);this.rt('stringLength');return 'n';}
+     if(this.plainMember(n)){this.memberGet(n);return 'r';}break;
     case'ObjectExpression':this.objectLiteral(n);return 'r';
     case'Emit':return n.emit();
    }
@@ -17915,6 +18070,7 @@ const bindings={
   const callee=n.callee;
   if(n.optional||n.arguments.length>8||n.arguments.some(a=>a.type==='SpreadElement'))return false;
   if(callee.type==='Super'||callee.type==='ChainExpression'||callee.type==='MemberExpression'&&!this.plainMember(callee))return false;
+  if(callee.type==='MemberExpression'&&!callee.computed&&callee.property.name==='push'&&n.arguments.length)return this.pushCall(n);
   if(callee.type==='MemberExpression'){const self=this.local();this.expression(callee.object);this.tee(self);this.set(self);
    this.get(self);if(!callee.computed)this.lit(callee.property.name);else{const r=this.natural(callee.property);if(r==='f'){this.rt('getIndex');this.get(self);this.args8(n);return true;}this.convert(r,'r',callee.property._t);}
    this.rt('getProp');this.get(self);
@@ -17922,31 +18078,51 @@ const bindings={
   this.args8(n);return true;
  },
  args8(n){for(const a of n.arguments)this.expression(a);this.rt('call'+n.arguments.length);},
+ // o.push(...): a WASM array with the original Array.prototype.push grows in
+ // WASM. Whether that applies is decided before the arguments are evaluated,
+ // where the method lookup happens in JS.
+ pushCall(n){
+  const self=this.local(),fast=this.local(I32),fn=this.local();
+  this.expression(n.callee.object);this.set(self);
+  this.get(self);this.lit('push');this.rt('pushIntrinsic');this.tee(fast);
+  this.ifElse(()=>this.out(0xd0,REF),()=>{this.get(self);this.lit('push');this.rt('getProp');},REF);this.set(fn);
+  const args=n.arguments.map(a=>{const x=this.local();this.expression(a);this.set(x);return x;});
+  this.get(fast);
+  this.ifElse(()=>{for(const x of args){this.get(self);this.get(x);this.rt('push');this.out(0x1a);}this.get(self);this.lit('length');this.rt('getProp');},
+   ()=>{this.get(fn);this.get(self);for(const x of args)this.get(x);this.rt('call'+args.length);},REF);
+  return true;
+ },
  // Numeric binary operators on statically numeric operands; null otherwise.
  binaryNatural(op,left,right,t){
   if(this.dynamicOnly)return null;
   const a=left._t,b=right._t;
+  if(a===NU&&b===NU&&['==','===','!=','!=='].includes(op))return null;
+  if(a===STR&&b===STR&&I32_COMPARE[op]!==undefined){this.natural(left);this.natural(right);this.rt('stringCompare');this.integer(0);this.out(I32_COMPARE[op]);return 'i';}
+  if(op==='+'&&t===STR)return this.concat(left,right);
   if(F64_COMPARE[op]!==undefined&&numeric(a)&&numeric(b)){
-   if((op==='==='||op==='!==')&&a!==b){this.natural(left);this.out(0x1a);this.natural(right);this.out(0x1a);this.integer(op==='!=='?1:0);return 'i';}
-   if(a===BOOL&&b===BOOL&&(op==='==='||op==='!=='||op==='=='||op==='!=')){this.emitAs(left,'i');this.emitAs(right,'i');this.out(op[0]==='!'?0x47:0x46);return 'i';}
+   // A number is never strictly equal to a boolean.
+   if((op==='==='||op==='!==')&&(a===BOOL)!==(b===BOOL)){this.natural(left);this.out(0x1a);this.natural(right);this.out(0x1a);this.integer(op==='!=='?1:0);return 'i';}
+   if(a!==NUM&&b!==NUM){this.operandsAs(left,right,a===BOOL&&b===BOOL?'i':'n');this.out(I32_COMPARE[op]);return 'i';}
    this.operands(left,right);this.out(F64_COMPARE[op]);return 'i';
   }
+  if(t===INT&&I32_OPS[op]!==undefined){this.operandsAs(left,right,'n');this.out(I32_OPS[op]);return 'n';}
+  if(op==='>>>'&&t===NUM){this.operandsAs(left,right,'n');this.out(0x76,0xb8);return 'f';}
   if(t!==NUM)return null;
   if(F64_OPS[op]!==undefined){this.operands(left,right);this.out(F64_OPS[op]);return 'f';}
   if(op==='%'){this.operands(left,right);this.remainder();return 'f';}
   if(op==='**'){this.operands(left,right);this.rt('pow');return 'f';}
-  if(I32_OPS[op]!==undefined){
-   const x=this.local(F64);this.operands(left,right);this.set(x);this.toInt32();this.get(x);this.toInt32();
-   this.out(I32_OPS[op],op==='>>>'?0xb8:0xb7);return 'f';
-  }
   return null;
  },
  // Evaluates both operands, then converts them to f64 (ToNumber happens
  // after both operands are evaluated, as the language requires).
- operands(left,right){
+ operands(left,right){this.operandsAs(left,right,'f');},
+ operandsAs(left,right,repr){
+  if(repr==='n'&&left._t!==INT&&this.wrapsToInt32(left,0)){this.int32Wrap(left);this.emitAs(right,'n');return;}
+  // Converting a value of a numeric type cannot run user code: no need to wait.
+  if(numeric(left._t)){this.emitAs(left,repr);this.emitAs(right,repr);return;}
   const a=this.natural(left);
-  if(a==='r'&&left._t!==NUM){const x=this.local();this.set(x);const b=this.natural(right),y=this.local(VALUE_TYPE[b]);this.set(y);this.get(x);this.convert('r','f',left._t);this.get(y);this.convert(b,'f',right._t);return;}
-  this.convert(a,'f',left._t);this.emitAs(right,'f');
+  if(a==='r'&&!numeric(left._t)){const x=this.local();this.set(x);const b=this.natural(right),y=this.local(VALUE_TYPE[b]);this.set(y);this.get(x);this.convert('r',repr,left._t);this.get(y);this.convert(b,repr,right._t);return;}
+  this.convert(a,repr,left._t);this.emitAs(right,repr);
  },
  // JS remainder: exact for int32 operands inline, otherwise the host's %.
  remainder(){
@@ -17965,9 +18141,9 @@ const bindings={
   const name=n._math,args=n.arguments;
   if(args.some(a=>a.type==='SpreadElement'))return null;
   // Arguments are evaluated first, then converted with ToNumber in order.
-  const all=()=>{
-   const values=args.map(a=>{const r=this.natural(a),x=this.local(VALUE_TYPE[r]);this.set(x);return [x,r,a._t];});
-   return values.map(([x,r,t])=>{if(r==='f')return x;const y=this.local(F64);this.get(x);this.convert(r,'f',t);this.set(y);return y;});
+  const all=(repr='f')=>{
+   const values=args.map(a=>{if(numeric(a._t)){const x=this.local(VALUE_TYPE[repr]);this.emitAs(a,repr);this.set(x);return [x,repr,a._t];}const r=this.natural(a),x=this.local(VALUE_TYPE[r]);this.set(x);return [x,r,a._t];});
+   return values.map(([x,r,t])=>{if(r===repr)return x;const y=this.local(VALUE_TYPE[repr]);this.get(x);this.convert(r,repr,t);this.set(y);return y;});
   };
   if(MATH_UNARY[name]!==undefined&&args.length>=1){const [x,...rest]=all();this.get(x);this.out(MATH_UNARY[name]);return 'f';}
   if((name==='min'||name==='max')&&args.length>=1){const xs=all();this.get(xs[0]);for(const x of xs.slice(1)){this.get(x);this.out(name==='min'?0xa4:0xa5);}return 'f';}
@@ -17978,8 +18154,8 @@ const bindings={
   }
   if(name==='sign'&&args.length>=1){const [x]=all();this.get(x);this.f64(0);this.out(0x64);this.ifElse(()=>this.f64(1),()=>{this.get(x);this.f64(0);this.out(0x63);this.ifElse(()=>this.f64(-1),()=>this.get(x),F64);},F64);return 'f';}
   if(name==='fround'&&args.length>=1){const [x]=all();this.get(x);this.out(0xb6,0xbb);return 'f';}
-  if(name==='imul'&&args.length>=2){const [x,y]=all();this.get(x);this.toInt32();this.get(y);this.toInt32();this.out(0x6c,0xb7);return 'f';}
-  if(name==='clz32'&&args.length>=1){const [x]=all();this.get(x);this.toInt32();this.out(0x67,0xb8);return 'f';}
+  if(name==='imul'&&args.length>=2){const [x,y]=all('n');this.get(x);this.get(y);this.out(0x6c);return 'n';}
+  if(name==='clz32'&&args.length>=1){const [x]=all('n');this.get(x);this.out(0x67);return 'n';}
   if(MATH_IMPORTED1.has(name)&&args.length>=1){const [x]=all();this.get(x);this.rt('math_'+name);return 'f';}
   if(MATH_IMPORTED2.has(name)&&args.length>=2){const [x,y]=all();this.get(x);this.get(y);this.rt('math_'+name);return 'f';}
   if(name==='random'){all();this.rt('math_random');return 'f';}
@@ -17988,7 +18164,12 @@ const bindings={
  // Direct call of a statically known function: no JS, no argument array.
  directCall(n,fn){
   const params=fn.node.params;
-  this.recordAt(fn.scope.parent);this.lit(undefined);this.out(0xd0,REF);this.lit(undefined);
+  // `this` and new.target are undefined for a plain call; a callee that never
+  // reads them gets null and saves two constant loads.
+  this.recordAt(fn.scope.parent);
+  if(fn.usesThis)this.lit(undefined);else this.out(0xd0,REF);
+  this.out(0xd0,REF);
+  if(fn.usesThis)this.lit(undefined);else this.out(0xd0,REF);
   params.forEach((p,i)=>{
    const repr=this.c.paramRepr(fn,i);
    if(i<n.arguments.length)this.emitAs(n.arguments[i],repr);
@@ -18201,13 +18382,29 @@ exports["VALUE_TYPE"]=VALUE_TYPE;
 },
 35:function(module,exports,require){
 // Whole-program type inference over the resolved bindings (scope.mjs).
-// Lattice: bottom < num | bool < any. num is a JS number kept as f64, bool an
-// i32; any is the boxed dynamic value. Types are sound for the closed world
+// Lattice: bottom < int < num < any, bottom < bool < any. num is a JS number
+// kept as f64, int a number known to be an int32 (kept as i32, never -0), bool
+// an i32; any is the boxed dynamic value. Types are sound for the closed world
 // of the compiled page: every call of a non-escaping function is a known
 // direct call, so its parameter types are the join of the argument types.
-const NUM='num',BOOL='bool',ANY='any';
-const join=(a,b)=>a===b?a:a==null?b:b==null?a:ANY;
-const numeric=t=>t===NUM||t===BOOL;
+// Typed arrays: tai has int32 elements (Int8/16/32, Uint8/16, Uint8Clamped),
+// taf other numbers (Uint32, Float32/64). An element read is nu: a number, or
+// undefined out of bounds; in numeric contexts both act like NaN.
+// str is a string (the runtime's own UTF-16 string).
+const NUM='num',INT='int',BOOL='bool',ANY='any',NU='nu',TAI='tai',TAF='taf',STR='str';
+// String.prototype methods compiled to WASM, and their result types.
+const STRING_RESULTS={charCodeAt:'num',charAt:'str',slice:'str',substring:'str',repeat:'str',concat:'str',indexOf:'int',lastIndexOf:'int',includes:'bool',startsWith:'bool',endsWith:'bool',toUpperCase:'str',toLowerCase:'str',trim:'str',trimStart:'str',trimEnd:'str',padStart:'str',padEnd:'str'};
+const NUMBERS=new Set([NUM,INT,NU]);
+const join=(a,b)=>{
+ if(a===b)return a;if(a==null)return b;if(b==null)return a;
+ if(NUMBERS.has(a)&&NUMBERS.has(b))return a===NU||b===NU?NU:NUM;
+ if((a===TAI||a===TAF)&&(b===TAI||b===TAF))return TAF;
+ return ANY;
+};
+const numeric=t=>t===NUM||t===INT||t===BOOL||t===NU;
+const TYPED_ARRAYS={Int8Array:TAI,Uint8Array:TAI,Uint8ClampedArray:TAI,Int16Array:TAI,Uint16Array:TAI,Int32Array:TAI,Uint32Array:TAF,Float32Array:TAF,Float64Array:TAF};
+const typedArray=t=>t===TAI||t===TAF;
+const isInt32=v=>typeof v==='number'&&(v|0)===v&&!Object.is(v,-0);
 const ARITHMETIC=new Set(['-','*','/','%','**']),BITWISE=new Set(['&','|','^','<<','>>']);
 const RELATIONAL=new Set(['<','>','<=','>=','==','!=','===','!==','in','instanceof']);
 const MATH=new Set(['abs','acos','acosh','asin','asinh','atan','atan2','atanh','cbrt','ceil','clz32','cos','cosh','exp','expm1','floor','fround','hypot','imul','log','log10','log1p','log2','max','min','pow','random','round','sign','sin','sinh','sqrt','tan','tanh','trunc']);
@@ -18437,7 +18634,8 @@ class TypeInference {
  }
  exprType(n){
   switch(n.type){
-   case'Literal':return typeof n.value==='number'?NUM:typeof n.value==='boolean'?BOOL:ANY;
+   case'Literal':return typeof n.value==='number'?(isInt32(n.value)?INT:NUM):typeof n.value==='boolean'?BOOL:typeof n.value==='string'?STR:ANY;
+   case'TemplateLiteral':n.expressions.forEach(e=>this.expr(e));return STR;
    case'Identifier':{
     const b=n._ref?.binding;
     if(!b)return n.name==='NaN'||n.name==='Infinity'?NUM:ANY;
@@ -18446,8 +18644,10 @@ class TypeInference {
    case'UnaryExpression':{
     const t=this.expr(n.argument);
     if(n.operator==='!'||n.operator==='delete')return BOOL;
-    if(n.operator==='+')return NUM;
-    if(n.operator==='-'||n.operator==='~')return numeric(t)?NUM:t==null?null:ANY;
+    if(n.operator==='+')return t===INT?INT:NUM;
+    if(n.operator==='-'&&n.argument.type==='Literal'&&typeof n.argument.value==='number')return isInt32(-n.argument.value)?INT:NUM;
+    if(n.operator==='~')return numeric(t)?INT:t==null?null:ANY;
+    if(n.operator==='-')return numeric(t)?NUM:t==null?null:ANY;
     return ANY;
    }
    case'UpdateExpression':{
@@ -18473,13 +18673,30 @@ class TypeInference {
      return t;
     }
     if(n.left.type==='ArrayPattern'||n.left.type==='ObjectPattern'){const t=this.expr(n.right);this.pattern(n.left);return t;}
-    this.expr(n.left);const r=this.expr(n.right);
+    const l=this.expr(n.left),r=this.expr(n.right);
     if(n.operator==='=')return r;
     if(['&&=','||=','??='].includes(n.operator))return ANY;
-    return this.binaryType(n.operator.slice(0,-1),ANY,r);
+    return this.binaryType(n.operator.slice(0,-1),l===NU?NU:ANY,r);
    }
    case'CallExpression':return this.call(n);
    case'ChainExpression':this.expr(n.expression);return ANY;
+   case'NewExpression':{
+    n.arguments.forEach(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
+    if(n.callee.type==='Identifier'&&TYPED_ARRAYS[n.callee.name]&&this.builtin(n.callee,n.callee.name))return TYPED_ARRAYS[n.callee.name];
+    this.expr(n.callee);return ANY;
+   }
+   case'MemberExpression':{
+    if(n.optional||n.object.type==='Super'){children(n,c=>{if(c.type!=='PrivateIdentifier')this.expr(c);});return ANY;}
+    const o=this.expr(n.object);
+    if(n.computed){
+     const k=this.expr(n.property);
+     if(typedArray(o)&&numeric(k)){if(this.annotate)n._elem=o;return NU;}
+     return ANY;
+    }
+    if(typedArray(o)&&n.property.name==='length'){if(this.annotate)n._taLength=true;return NUM;}
+    if(o===STR&&n.property.name==='length'){if(this.annotate)n._strLength=true;return INT;}
+    return ANY;
+   }
    case'FunctionExpression':case'ArrowFunctionExpression':return ANY;
    case'ClassExpression':case'ClassDeclaration':
     if(n.superClass)this.expr(n.superClass);
@@ -18492,11 +18709,15 @@ class TypeInference {
  }
  binaryType(op,a,b){
   if(RELATIONAL.has(op))return BOOL;
-  if(a==null||b==null)return a==null&&b==null?null:numeric(a)||numeric(b)?(op==='+'?null:NUM):null;
+  // A string operand makes + a concatenation.
+  if(op==='+'&&(a===STR||b===STR))return STR;
+  const bits=BITWISE.has(op);
+  if(a==null||b==null)return a==null&&b==null?null:numeric(a)||numeric(b)?(op==='+'?null:bits?INT:NUM):null;
   if(op==='>>>')return NUM;
   if(op==='+')return numeric(a)&&numeric(b)?NUM:ANY;
   // Mixing a Number with a BigInt throws, so one numeric operand fixes the result.
-  if(ARITHMETIC.has(op)||BITWISE.has(op))return numeric(a)||numeric(b)?NUM:ANY;
+  if(bits)return numeric(a)||numeric(b)?INT:ANY;
+  if(ARITHMETIC.has(op))return numeric(a)||numeric(b)?NUM:ANY;
   return ANY;
  }
  call(n){
@@ -18515,14 +18736,23 @@ class TypeInference {
    }
    if(fn&&fn.direct&&!n.arguments.some(x=>x.type==='SpreadElement')){n._direct=fn;return fn.ret??null;}
    if(!b&&(NUMBER_GLOBALS.has(callee.name)||BOOL_GLOBALS.has(callee.name))&&this.builtin(callee,callee.name))return NUMBER_GLOBALS.has(callee.name)?NUM:BOOL;
+   if(!b&&callee.name==='String'&&this.builtin(callee,'String'))return STR;
    return ANY;
   }
   if(callee.type==='MemberExpression'&&!callee.computed&&!callee.optional&&this.builtin(callee.object,'Math')&&MATH.has(callee.property.name)){
    n.arguments.forEach(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
    if(n.arguments.some(a=>a.type==='SpreadElement'))return NUM;
-   n._math=callee.property.name;return NUM;
+   n._math=callee.property.name;return callee.property.name==='imul'||callee.property.name==='clz32'?INT:NUM;
   }
-  this.expr(callee);n.arguments.forEach(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
+  const receiver=callee.type==='MemberExpression'&&!callee.computed&&!callee.optional?this.expr(callee.object):this.expr(callee);
+  const argTypes=n.arguments.map(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
+  if(callee.type==='MemberExpression'&&!callee.computed&&!callee.optional&&!n.optional&&!this.a.stringPrototype&&!n.arguments.some(a=>a.type==='SpreadElement')){
+   const name=callee.property.name;
+   if(receiver===STR&&Object.hasOwn(STRING_RESULTS,name)){if(this.annotate)n._strMethod={name,args:argTypes};return STRING_RESULTS[name];}
+   if(name==='fromCharCode'&&this.builtin(callee.object,'String')){if(this.annotate&&argTypes.length===1)n._fromCharCode=true;return STR;}
+  }
+  // slice/subarray of a typed array keep its element kind.
+  if(callee.type==='MemberExpression'&&!callee.computed&&typedArray(receiver)&&['slice','subarray'].includes(callee.property.name))return receiver;
   return ANY;
  }
 }
@@ -18540,6 +18770,11 @@ function collect(p,out=[]){
 
 exports["TypeInference"]=TypeInference;
 exports["NUM"]=NUM;
+exports["INT"]=INT;
+exports["NU"]=NU;
+exports["STR"]=STR;
+exports["TAI"]=TAI;
+exports["TAF"]=TAF;
 exports["BOOL"]=BOOL;
 exports["ANY"]=ANY;
 }

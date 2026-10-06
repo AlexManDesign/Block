@@ -56,7 +56,7 @@ class ScopeAnalysis {
  constructor(){
   this.root=new Scope('root',null,null,null);this.root.forced=true;
   this.globals=new Map();this.scriptErrors=new Map();this.modules=new Map();this.functions=new Map();
-  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;
+  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;this.stringPrototype=false;
  }
  // ---- pass 1: scopes and declarations ----
  declare(scope,name,kind,node){
@@ -308,6 +308,8 @@ class ScopeAnalysis {
    case'BinaryExpression':case'LogicalExpression':this.expression(n.left,scope,fn);this.expression(n.right,scope,fn);return;
    case'MemberExpression':
     if(n.object.type==='Identifier')n.object._memberObject=true;
+    // Code that touches String.prototype may replace the methods compiled inline.
+    if(n.object.type==='Identifier'&&n.object.name==='String'&&!n.computed&&n.property.name==='prototype')this.stringPrototype=true;
     this.expression(n.object,scope,fn);if(n.computed)this.expression(n.property,scope,fn);
     // Reads of global functions through window.* make them reachable from anywhere.
     if(n.object.type==='Identifier'&&!n.object._ref?.binding&&['window','globalThis','self','top','parent','frames'].includes(n.object.name)){if(n.computed)this.globalEscapes=true;else this.globalReads.add(n.property.name);}

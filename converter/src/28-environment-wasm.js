@@ -72,6 +72,7 @@ function environmentWasm(){
  // so the bridge never has to call back into WASM to classify them.
  host('hostGetRaw',[REF,REF],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
  for(let n=0;n<=8;n++)host('hostCall'+n,[REF,REF,I32,...Array(n).fill(REF)],[REF]);
+ host('hostNumberToString',[F64],[REF]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -93,6 +94,7 @@ function environmentWasm(){
   f.get(i);f.out(0x45,0x45);f.get(0);f.out(0xbd,0x50,0x72,0x71); // not -0
   f.if(()=>{f.get(i);f.out(0xfb,0x1c,0xfb,0x1b);},()=>{f.get(0);f.out(0x23,6);f.create(NUMBER);},REF);
  });
+ def('fromInt32',[I32],[REF],f=>{f.get(0);f.int(0x40000000);f.out(0x6a);f.int(0);f.out(0x4e);f.if(()=>{f.get(0);f.out(0xfb,0x1c,0xfb,0x1b);},()=>{f.get(0);f.out(0xb7);f.call('number');},REF);});
  def('isNumber',[REF],[I32],f=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x14,0x6c);f.if(()=>f.int(1),()=>{f.test(0,NUMBER);f.if(()=>{f.field(0,NUMBER,1);f.out(0x23,6,0xd3);},()=>f.int(0),I32);},I32);});
  def('toNumber',[REF],[F64],f=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x14,0x6c);f.if(()=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x16,0x6c,0xfb,0x1d,0xb7);},()=>f.field(0,NUMBER,0),F64);});
  // ECMAScript ToInt32 for doubles. Powers of two keep the remainder exact;

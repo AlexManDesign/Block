@@ -119,6 +119,13 @@ function addObjectRuntime(def){
   f.get(1);f.call('isString');f.out(0x45);f.if(()=>host(f,'hostObjectDefine',4));
   f.get(0);f.get(1);f.get(2);f.call('objectStore');f.drop();f.get(0);
  });
+ // 1 when o.push is the original Array.prototype.push on a plain WASM array.
+ def('pushIntrinsic',[REF,REF],[I32],f=>{
+  f.get(0);f.call('isObject');f.out(0x45);f.if(()=>{f.int(0);f.ret();});
+  array(f,0);f.out(0x45);f.if(()=>{f.int(0);f.ret();});forwarded(f,0);f.if(()=>{f.int(0);f.ret();});
+  f.call('prototypeFlags');f.int(16);f.out(0x71,0x45);f.if(()=>{f.int(0);f.ret();});
+  f.get(0);f.get(1);f.call('objectFind');f.out(0xd1);
+ });
  def('push',[REF,REF],[REF],f=>{
   forwarded(f,0);f.if(()=>{f.get(0);f.get(1);f.call('hostArrayPush');f.ret();});
   f.field(0,OBJECT,LENGTH);f.int(MAX_DENSE);f.out(0x4f);f.if(()=>{f.get(0);f.get(1);f.call('hostArrayPush');f.ret();});

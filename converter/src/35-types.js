@@ -1,11 +1,27 @@
 // Whole-program type inference over the resolved bindings (scope.mjs).
-// Lattice: bottom < num | bool < any. num is a JS number kept as f64, bool an
-// i32; any is the boxed dynamic value. Types are sound for the closed world
+// Lattice: bottom < int < num < any, bottom < bool < any. num is a JS number
+// kept as f64, int a number known to be an int32 (kept as i32, never -0), bool
+// an i32; any is the boxed dynamic value. Types are sound for the closed world
 // of the compiled page: every call of a non-escaping function is a known
 // direct call, so its parameter types are the join of the argument types.
-const NUM='num',BOOL='bool',ANY='any';
-const join=(a,b)=>a===b?a:a==null?b:b==null?a:ANY;
-const numeric=t=>t===NUM||t===BOOL;
+// Typed arrays: tai has int32 elements (Int8/16/32, Uint8/16, Uint8Clamped),
+// taf other numbers (Uint32, Float32/64). An element read is nu: a number, or
+// undefined out of bounds; in numeric contexts both act like NaN.
+// str is a string (the runtime's own UTF-16 string).
+const NUM='num',INT='int',BOOL='bool',ANY='any',NU='nu',TAI='tai',TAF='taf',STR='str';
+// String.prototype methods compiled to WASM, and their result types.
+const STRING_RESULTS={charCodeAt:'num',charAt:'str',slice:'str',substring:'str',repeat:'str',concat:'str',indexOf:'int',lastIndexOf:'int',includes:'bool',startsWith:'bool',endsWith:'bool',toUpperCase:'str',toLowerCase:'str',trim:'str',trimStart:'str',trimEnd:'str',padStart:'str',padEnd:'str'};
+const NUMBERS=new Set([NUM,INT,NU]);
+const join=(a,b)=>{
+ if(a===b)return a;if(a==null)return b;if(b==null)return a;
+ if(NUMBERS.has(a)&&NUMBERS.has(b))return a===NU||b===NU?NU:NUM;
+ if((a===TAI||a===TAF)&&(b===TAI||b===TAF))return TAF;
+ return ANY;
+};
+const numeric=t=>t===NUM||t===INT||t===BOOL||t===NU;
+const TYPED_ARRAYS={Int8Array:TAI,Uint8Array:TAI,Uint8ClampedArray:TAI,Int16Array:TAI,Uint16Array:TAI,Int32Array:TAI,Uint32Array:TAF,Float32Array:TAF,Float64Array:TAF};
+const typedArray=t=>t===TAI||t===TAF;
+const isInt32=v=>typeof v==='number'&&(v|0)===v&&!Object.is(v,-0);
 const ARITHMETIC=new Set(['-','*','/','%','**']),BITWISE=new Set(['&','|','^','<<','>>']);
 const RELATIONAL=new Set(['<','>','<=','>=','==','!=','===','!==','in','instanceof']);
 const MATH=new Set(['abs','acos','acosh','asin','asinh','atan','atan2','atanh','cbrt','ceil','clz32','cos','cosh','exp','expm1','floor','fround','hypot','imul','log','log10','log1p','log2','max','min','pow','random','round','sign','sin','sinh','sqrt','tan','tanh','trunc']);
@@ -235,7 +251,8 @@ class TypeInference {
  }
  exprType(n){
   switch(n.type){
-   case'Literal':return typeof n.value==='number'?NUM:typeof n.value==='boolean'?BOOL:ANY;
+   case'Literal':return typeof n.value==='number'?(isInt32(n.value)?INT:NUM):typeof n.value==='boolean'?BOOL:typeof n.value==='string'?STR:ANY;
+   case'TemplateLiteral':n.expressions.forEach(e=>this.expr(e));return STR;
    case'Identifier':{
     const b=n._ref?.binding;
     if(!b)return n.name==='NaN'||n.name==='Infinity'?NUM:ANY;
@@ -244,8 +261,10 @@ class TypeInference {
    case'UnaryExpression':{
     const t=this.expr(n.argument);
     if(n.operator==='!'||n.operator==='delete')return BOOL;
-    if(n.operator==='+')return NUM;
-    if(n.operator==='-'||n.operator==='~')return numeric(t)?NUM:t==null?null:ANY;
+    if(n.operator==='+')return t===INT?INT:NUM;
+    if(n.operator==='-'&&n.argument.type==='Literal'&&typeof n.argument.value==='number')return isInt32(-n.argument.value)?INT:NUM;
+    if(n.operator==='~')return numeric(t)?INT:t==null?null:ANY;
+    if(n.operator==='-')return numeric(t)?NUM:t==null?null:ANY;
     return ANY;
    }
    case'UpdateExpression':{
@@ -271,13 +290,30 @@ class TypeInference {
      return t;
     }
     if(n.left.type==='ArrayPattern'||n.left.type==='ObjectPattern'){const t=this.expr(n.right);this.pattern(n.left);return t;}
-    this.expr(n.left);const r=this.expr(n.right);
+    const l=this.expr(n.left),r=this.expr(n.right);
     if(n.operator==='=')return r;
     if(['&&=','||=','??='].includes(n.operator))return ANY;
-    return this.binaryType(n.operator.slice(0,-1),ANY,r);
+    return this.binaryType(n.operator.slice(0,-1),l===NU?NU:ANY,r);
    }
    case'CallExpression':return this.call(n);
    case'ChainExpression':this.expr(n.expression);return ANY;
+   case'NewExpression':{
+    n.arguments.forEach(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
+    if(n.callee.type==='Identifier'&&TYPED_ARRAYS[n.callee.name]&&this.builtin(n.callee,n.callee.name))return TYPED_ARRAYS[n.callee.name];
+    this.expr(n.callee);return ANY;
+   }
+   case'MemberExpression':{
+    if(n.optional||n.object.type==='Super'){children(n,c=>{if(c.type!=='PrivateIdentifier')this.expr(c);});return ANY;}
+    const o=this.expr(n.object);
+    if(n.computed){
+     const k=this.expr(n.property);
+     if(typedArray(o)&&numeric(k)){if(this.annotate)n._elem=o;return NU;}
+     return ANY;
+    }
+    if(typedArray(o)&&n.property.name==='length'){if(this.annotate)n._taLength=true;return NUM;}
+    if(o===STR&&n.property.name==='length'){if(this.annotate)n._strLength=true;return INT;}
+    return ANY;
+   }
    case'FunctionExpression':case'ArrowFunctionExpression':return ANY;
    case'ClassExpression':case'ClassDeclaration':
     if(n.superClass)this.expr(n.superClass);
@@ -290,11 +326,15 @@ class TypeInference {
  }
  binaryType(op,a,b){
   if(RELATIONAL.has(op))return BOOL;
-  if(a==null||b==null)return a==null&&b==null?null:numeric(a)||numeric(b)?(op==='+'?null:NUM):null;
+  // A string operand makes + a concatenation.
+  if(op==='+'&&(a===STR||b===STR))return STR;
+  const bits=BITWISE.has(op);
+  if(a==null||b==null)return a==null&&b==null?null:numeric(a)||numeric(b)?(op==='+'?null:bits?INT:NUM):null;
   if(op==='>>>')return NUM;
   if(op==='+')return numeric(a)&&numeric(b)?NUM:ANY;
   // Mixing a Number with a BigInt throws, so one numeric operand fixes the result.
-  if(ARITHMETIC.has(op)||BITWISE.has(op))return numeric(a)||numeric(b)?NUM:ANY;
+  if(bits)return numeric(a)||numeric(b)?INT:ANY;
+  if(ARITHMETIC.has(op))return numeric(a)||numeric(b)?NUM:ANY;
   return ANY;
  }
  call(n){
@@ -313,14 +353,23 @@ class TypeInference {
    }
    if(fn&&fn.direct&&!n.arguments.some(x=>x.type==='SpreadElement')){n._direct=fn;return fn.ret??null;}
    if(!b&&(NUMBER_GLOBALS.has(callee.name)||BOOL_GLOBALS.has(callee.name))&&this.builtin(callee,callee.name))return NUMBER_GLOBALS.has(callee.name)?NUM:BOOL;
+   if(!b&&callee.name==='String'&&this.builtin(callee,'String'))return STR;
    return ANY;
   }
   if(callee.type==='MemberExpression'&&!callee.computed&&!callee.optional&&this.builtin(callee.object,'Math')&&MATH.has(callee.property.name)){
    n.arguments.forEach(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
    if(n.arguments.some(a=>a.type==='SpreadElement'))return NUM;
-   n._math=callee.property.name;return NUM;
+   n._math=callee.property.name;return callee.property.name==='imul'||callee.property.name==='clz32'?INT:NUM;
   }
-  this.expr(callee);n.arguments.forEach(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
+  const receiver=callee.type==='MemberExpression'&&!callee.computed&&!callee.optional?this.expr(callee.object):this.expr(callee);
+  const argTypes=n.arguments.map(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
+  if(callee.type==='MemberExpression'&&!callee.computed&&!callee.optional&&!n.optional&&!this.a.stringPrototype&&!n.arguments.some(a=>a.type==='SpreadElement')){
+   const name=callee.property.name;
+   if(receiver===STR&&Object.hasOwn(STRING_RESULTS,name)){if(this.annotate)n._strMethod={name,args:argTypes};return STRING_RESULTS[name];}
+   if(name==='fromCharCode'&&this.builtin(callee.object,'String')){if(this.annotate&&argTypes.length===1)n._fromCharCode=true;return STR;}
+  }
+  // slice/subarray of a typed array keep its element kind.
+  if(callee.type==='MemberExpression'&&!callee.computed&&typedArray(receiver)&&['slice','subarray'].includes(callee.property.name))return receiver;
   return ANY;
  }
 }
@@ -338,5 +387,10 @@ function collect(p,out=[]){
 
 exports["TypeInference"]=TypeInference;
 exports["NUM"]=NUM;
+exports["INT"]=INT;
+exports["NU"]=NU;
+exports["STR"]=STR;
+exports["TAI"]=TAI;
+exports["TAF"]=TAF;
 exports["BOOL"]=BOOL;
 exports["ANY"]=ANY;

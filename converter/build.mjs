@@ -2,6 +2,7 @@
 // Each src file "NN-name.js" is the body of bundle factory NN (CommonJS style:
 // require("./x.mjs") / exports[...]). Third-party factories stay untouched.
 // Usage: node build.mjs            -> writes js-wasm-converter.html
+//        node build.mjs --out f.html -> writes another file (template unchanged)
 //        node build.mjs --extract  -> (once) splits own factories into src/
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,5 +67,6 @@ for (let i = 0; i < ids.length; i++) deps[i] ??= {};
 const body = ids.map(id => `${id}:function(module,exports,require){\n${factories.get(id)}}`).join(',\n') + '\n';
 const depsLine = 'const dependencies=' + JSON.stringify(deps.slice(0, ids.length)) + parts.depsLine.slice(parts.depsLine.indexOf(',cache='));
 const out = html.slice(0, parts.start) + body + html.slice(parts.end, parts.depsAt) + depsLine + html.slice(parts.depsLineEnd);
-fs.writeFileSync(HTML, out);
-console.log('built', path.basename(HTML), (out.length / 1024).toFixed(0) + ' KB,', ids.length, 'modules');
+const outAt = process.argv.indexOf('--out'), target = outAt >= 0 ? path.resolve(process.argv[outAt + 1]) : HTML;
+fs.writeFileSync(target, out);
+console.log('built', path.basename(target), (out.length / 1024).toFixed(0) + ' KB,', ids.length, 'modules');
