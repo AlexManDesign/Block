@@ -571,6 +571,8 @@ class World {
       if (sh === SH.LILY) return below === B.WATER;
       return SOLID[below] === 1;
     }
+    // a cocoa pod hangs on a jungle log in its facing direction
+    if (id === B.COCOA) { const d = m & 3; return isJungleLog(this.getBlock(x + DIRX_W[d], y, z + DIRZ_W[d])); }
     if (sh === SH.CRYSTAL) {
       const n = FACE_DIR[m % 6];
       return OPAQUE[this.getBlock(x - n[0], y - n[1], z - n[2])] === 1;

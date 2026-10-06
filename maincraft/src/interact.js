@@ -215,6 +215,8 @@ function dropsFor(id, m, item) {
   // away by water or broken by hand drops nothing
   if (k === 'SNOW' || k === 'SNOW_LAYER') return t && t.tool === 'shovel' ? [{ id, count: 1 }] : [];
   if (k === 'GRAVEL') return r < 0.1 ? [{ id: IT.FLINT, count: 1 }] : [{ id, count: 1 }];
+  // cocoa: 3 beans when ripe (age 2), else 1
+  if (k === 'COCOA') return [{ id: IT.COCOA_BEANS, count: (m >> 2) >= 2 ? 3 : 1 }];
   if (k === 'WHEAT_3') return [{ id: IT.WHEAT, count: 1 }, { id: IT.WHEAT_SEEDS, count: 1 + ((Math.random() * 3) | 0) }];
   if (k === 'BEETROOTS_3') return [{ id: IT.BEETROOT, count: 1 }, { id: IT.BEETROOT_SEEDS, count: 1 + ((Math.random() * 3) | 0) }];
   if (/LAPIS_ORE|REDSTONE_ORE/.test(k)) return [{ id, count: 1 }];

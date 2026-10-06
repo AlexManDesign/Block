@@ -1802,7 +1802,7 @@ class WorldGen {
     let rs = (hash2(this.seed + 131, x, z) * 4294967296) >>> 0;
     const rnd = () => { rs = (rs + 0x6D2B79F5) | 0; let t = Math.imul(rs ^ (rs >>> 15), 1 | rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     const nextInt = (n) => (rnd() * n) | 0;
-    let vineChance = 0, propagules = false, mossOnRoots = false, trunkVines = false, podzol = false, paleMoss = false;
+    let vineChance = 0, propagules = false, mossOnRoots = false, trunkVines = false, podzol = false, paleMoss = false, cocoa = false;
     const straight = (h, id) => { for (let y = sy + 1; y <= sy + h; y++) log(x, y, z, id); soil(x, sy, z); };
     // 2x2 trunk, every column down to its own ground
     const giant = (h, id) => {
@@ -1859,7 +1859,7 @@ class WorldGen {
           ball(ex, by + 2, ez, 1.6, 1.2, 1.6, P[5]);
         }
         if (type !== 'oak') vineChance = 0.25;
-        if (type === 'jungle') trunkVines = true;
+        if (type === 'jungle') { trunkVines = true; cocoa = true; }
         break;
       }
       case 'birch': case 'super_birch': {
@@ -2088,7 +2088,7 @@ class WorldGen {
     // decorations on the surviving leaves: Minecraft's leave vine decorator (vines hanging down
     // up to five blocks) and hanging propagules under mangrove leaves (two free blocks below)
     const deco = [];
-    if (vineChance || propagules || mossOnRoots || trunkVines || paleMoss) {
+    if (vineChance || propagules || mossOnRoots || trunkVines || paleMoss || cocoa) {
       const taken = new Set(), props = new Set();
       const free = (xx, yy, zz) => {
         const k = key(xx, yy, zz);
@@ -2101,6 +2101,22 @@ class WorldGen {
         if (TB.kind[j] !== 3) continue;
         const rx = TB.x[j], ry = TB.y[j] + 1, rz = TB.z[j];
         if (hash3(this.seed + 133, rx, ry, rz) < 0.5 && free(rx, ry, rz)) { deco.push(rx, ry, rz, B.MOSS_CARPET, 0, rx, ry - 1, rz); taken.add(key(rx, ry, rz)); }
+      }
+      // CocoaDecorator: one jungle tree in five carries pods on the lowest three logs of its trunk,
+      // a side in four, of a random age; they hang facing the log (before the trunk vines take the sides)
+      if (cocoa && hash3(this.seed + 143, x, sy, z) < 0.2) {
+        let low = Infinity;
+        for (let j = 0; j < n; j++) if (TB.kind[j] === 0 && TB.id[j] === B.JUNGLE_LOG && TB.y[j] < low) low = TB.y[j];
+        for (let j = 0; j < n; j++) {
+          if (TB.kind[j] !== 0 || TB.id[j] !== B.JUNGLE_LOG || TB.y[j] - low > 2) continue;
+          const lx = TB.x[j], ly = TB.y[j], lz = TB.z[j];
+          for (let s = 0; s < 4; s++) {
+            const px = lx + hang[s][0], pz = lz + hang[s][1];
+            if (hash3(this.seed + 144 + s, lx, ly, lz) >= 0.25 || !free(px, ly, pz)) continue;
+            const age = (hash3(this.seed + 148, px, ly, pz) * 3) | 0;
+            deco.push(px, ly, pz, B.COCOA, [3, 1, 0, 2][s] | (age << 2), lx, ly, lz); taken.add(key(px, ly, pz));
+          }
+        }
       }
       // TrunkVineDecorator: a vine on each free side of every log, two times in three
       if (trunkVines) for (let j = 0; j < n; j++) {

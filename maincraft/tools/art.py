@@ -454,6 +454,17 @@ def small_items(load):
     rect(book, 6, 5, 10, 7, (196, 160, 90))           # label
     rect(book, 6, 5, 10, 5, (220, 190, 120))
     out['item_book'] = book
+    # cocoa pods: green when young, yellow, then ripe brown; vertical ribs and a lighter rim
+    for age, (base, rib) in enumerate((((112, 150, 50), (86, 120, 36)), ((196, 150, 56), (160, 112, 40)), ((150, 84, 40), (112, 58, 28)))):
+        pod = noisy(base, 0.08, 160 + age)
+        for x in range(0, 16, 3):
+            rect(pod, x, 0, x, 15, rib)
+        rect(pod, 0, 0, 15, 0, shade(base, 1.18)[:3])
+        out['cocoa_stage%d' % age] = pod
+    beans = new()
+    for (x, y) in ((3, 5), (8, 3), (5, 9), (10, 8)):
+        rect(beans, x, y, x + 2, y + 3, (110, 62, 32)); rect(beans, x + 1, y, x + 1, y + 3, (78, 42, 22)); rect(beans, x, y, x, y, (150, 92, 52))
+    out['item_cocoa_beans'] = beans
     return out
 
 

@@ -68,7 +68,7 @@ const RT = (function () {
     else if (/SAPLING$/.test(k)) kind[id] = 3;
     if ((FLAGS[id] & BF_LEAVES) || /PLANKS|LOG|WOOL|WOOD|BOOKSHELF/.test(k)) flam[id] = 1;
   }
-  kind[B.DIRT] = 4; kind[B.GRASS] = 5; kind[B.FIRE] = 6; kind[B.FARMLAND] = 7; kind[B.FARMLAND_MOIST] = 7;
+  kind[B.DIRT] = 4; kind[B.GRASS] = 5; kind[B.FIRE] = 6; kind[B.FARMLAND] = 7; kind[B.FARMLAND_MOIST] = 7; kind[B.COCOA] = 8;
   return { kind, next, flam };
 })();
 
@@ -939,6 +939,12 @@ class Game {
       if (td && td.tool === 'shovel' && id === B.GRASS && !w.getBlock(tg.x, tg.y + 1, tg.z)) {
         w.setBlock(tg.x, tg.y, tg.z, B.DIRT_PATH, 0); Sfx.block(B.DIRT, 'place'); this.swing(); this.damageTool(); return;
       }
+      // cocoa beans go on the side of a jungle log (the pod faces the log)
+      if (hid === IT.COCOA_BEANS && isJungleLog(id) && tg.face !== 2 && tg.face !== 3) {
+        const n = FACE_N[tg.face], px = tg.x + n[0], pz = tg.z + n[2];
+        if (!w.getBlock(px, tg.y, pz)) { w.setBlock(px, tg.y, pz, B.COCOA, [1, 3, 0, 0, 2, 0][tg.face]); this.consumeHeld(); this.swing(); }
+        return;
+      }
       const seeds = { [IT.WHEAT_SEEDS]: B.WHEAT_0, [IT.BEETROOT_SEEDS]: B.BEETROOTS_0, [IT.CARROT]: B.CARROTS_0, [IT.POTATO]: B.POTATOES_0, [IT.PUMPKIN_SEEDS]: B.PUMPKIN_STEM_0, [IT.MELON_SEEDS]: B.MELON_STEM_0 };
       if (seeds[hid] && (id === B.FARMLAND || id === B.FARMLAND_MOIST) && tg.face === 2 && !w.getBlock(tg.x, tg.y + 1, tg.z)) {
         w.setBlock(tg.x, tg.y + 1, tg.z, seeds[hid], 0); this.consumeHeld(); this.swing(); return;
@@ -1225,6 +1231,11 @@ class Game {
           if (RT.flam[w.getBlock(nx, ny, nz)] && Math.random() < 0.3) w.setBlock(nx, ny, nz, B.FIRE, 0);
         }
         return;
+      case 8: { // cocoa: one age in five random ticks (CocoaBlock), up to 2
+        const m = w.getMeta(x, y, z);
+        if ((m >> 2) < 2 && Math.random() < 0.2) w.setBlock(x, y, z, id, m + 4);
+        return;
+      }
       case 7: { // farmland: moist within 4 blocks of water
         let wet = false;
         for (let dz = -4; dz <= 4 && !wet; dz++) for (let dx = -4; dx <= 4 && !wet; dx++) if (w.getBlock(x + dx, y, z + dz) === B.WATER) wet = true;

@@ -72,7 +72,7 @@ function matches(tag, id) {
     ['BLUE_ORCHID', 'LIGHT_BLUE'], ['ALLIUM', 'MAGENTA'], ['LILAC', 'MAGENTA', 2], ['AZURE_BLUET', 'LIGHT_GRAY'], ['OXEYE_DAISY', 'LIGHT_GRAY'],
     ['WHITE_TULIP', 'LIGHT_GRAY'], ['ORANGE_TULIP', 'ORANGE'], ['PINK_TULIP', 'PINK'], ['PEONY', 'PINK', 2], ['CORNFLOWER', 'BLUE'],
     ['LILY_OF_THE_VALLEY', 'WHITE'], ['WITHER_ROSE', 'BLACK']]) if (B[f]) RS([B[f]], D(c), n || 1);
-  RS([IT.BEETROOT], D('RED')); RS([IT.BONE_MEAL], D('WHITE'));
+  RS([IT.BEETROOT], D('RED')); RS([IT.BONE_MEAL], D('WHITE')); RS([IT.COCOA_BEANS], D('BROWN'));
   for (const [a, b, out, n] of [['RED', 'YELLOW', 'ORANGE', 2], ['RED', 'WHITE', 'PINK', 2], ['BLUE', 'WHITE', 'LIGHT_BLUE', 2], ['GREEN', 'WHITE', 'LIME', 2],
     ['BLACK', 'WHITE', 'GRAY', 2], ['GRAY', 'WHITE', 'LIGHT_GRAY', 2], ['BLUE', 'GREEN', 'CYAN', 2], ['RED', 'BLUE', 'PURPLE', 2], ['PURPLE', 'PINK', 'MAGENTA', 2]])
     RS([D(a), D(b)], D(out), n);

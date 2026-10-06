@@ -110,6 +110,8 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     if (key === 'SCULK_SENSOR' || key === 'SCULK_CATALYST' || key === 'SCULK_SHRIEKER') { h = 1.5; tool = 0; }
     if (key === 'POINTED_DRIPSTONE') { h = 1.5; tool = 1; }
     if (key === 'CREAKING_HEART') { h = 10; tool = 2; }
+    if (key === 'COCOA') { h = 0.2; tool = 2; }
+    if (key === 'SHIP_WHEEL') { h = 2; tool = 2; }
     if (sh === SH.WATER || sh === SH.LAVA) h = -1;
     HARD[id] = h; TOOL[id] = tool;
   }
@@ -149,6 +151,7 @@ for (let id = 1; id < B_KEY.length; id++) {
   const s = k === 'LOG' ? 'STRIPPED_OAK_LOG' : k === 'DARK_LOG' ? 'STRIPPED_DARK_OAK_LOG' : /^(?!STRIPPED_).*_(LOG|WOOD|STEM|HYPHAE)$/.test(k) ? 'STRIPPED_' + k : '';
   if (s && B[s] && k !== 'MUSHROOM_STEM' && k !== 'BIG_DRIPLEAF_STEM') STRIPPED_OF[id] = B[s];
 }
+function isJungleLog(id) { return id === B.JUNGLE_LOG || id === B.JUNGLE_WOOD || id === B.STRIPPED_JUNGLE_LOG || id === B.STRIPPED_JUNGLE_WOOD; }
 function isWaterId(id) { return id === B.WATER || (FLAGS[id] & (BF_AQUATIC | BF_WET)) !== 0; }
 function isLavaId(id) { return id === B.LAVA; }
 function isLiquidId(id) { return id === B.WATER || id === B.LAVA || (FLAGS[id] & (BF_AQUATIC | BF_WET)) !== 0; }
@@ -290,6 +293,7 @@ ITEM_TABLE.push(['IRON_NUGGET', 'Iron Nugget', 'Железный самород�
 ITEM_TABLE.push(['CHARCOAL', 'Charcoal', 'Древесный уголь', 'item_charcoal', 64]);
 ITEM_TABLE.push(['PAPER', 'Paper', 'Бумага', 'item_paper', 64]);
 ITEM_TABLE.push(['BOOK', 'Book', 'Книга', 'item_book', 64]);
+ITEM_TABLE.push(['COCOA_BEANS', 'Cocoa Beans', 'Какао-бобы', 'item_cocoa_beans', 64]);
 const IT = {};
 for (let i = 0; i < ITEM_TABLE.length; i++) IT[ITEM_TABLE[i][0]] = ITEM_BASE + i;
 function isItem(id) { return id >= ITEM_BASE && id < WET_BASE; }

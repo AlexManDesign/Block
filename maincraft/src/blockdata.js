@@ -713,4 +713,5 @@ const BLOCK_TABLE = [
   ["CLOSED_EYEBLOSSOM", "Closed Eyeblossom", "Закрытый глазоцвет", "closed_eyeblossom", "x", "", 0, "", "n"],
   ["CREAKING_HEART", "Creaking Heart", "Сердце скрипуна", "creaking_heart_top,creaking_heart", "", "Y", 0, "", "n"],
   ["SHIP_WHEEL", "Ship Wheel", "Штурвал", "spruce_planks", "model", "O", 0, "", "f"],
+  ["COCOA", "Cocoa", "Какао", "cocoa_stage2", "model", "", 0, "", ""],
 ];

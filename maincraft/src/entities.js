@@ -305,6 +305,11 @@ class Entities {
         if (SOLID[w.getBlock(bx, cy, bz)]) { y = cy + 1; landed = true; break; }
       }
       f.y = y;
+      // concrete powder sets as soon as it falls into water (FallingBlockEntity / ConcretePowderBlock)
+      if (CONCRETE_OF[f.id]) {
+        const cy = Math.floor(y + 0.01);
+        if (isWaterId(w.getBlock(bx, cy, bz))) { w.setBlock(bx, cy, bz, CONCRETE_OF[f.id], 0); F.splice(i, 1); continue; }
+      }
       if (y < WORLD_MIN_Y - 8 || f.t > 600) { F.splice(i, 1); continue; }
       if (landed) { this.landFalling(f, bx, Math.round(y), bz); F.splice(i, 1); }
     }

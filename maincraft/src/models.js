@@ -193,6 +193,20 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     ]));
   }
 
+  // cocoa: a ribbed pod hanging from the log on its north side by a short stalk, bigger with age
+  // (meta: the log's direction 0-3 | age 0-2 << 2)
+  {
+    const pods = [[4, 5], [6, 7], [8, 9]].map(([w, h], age) => {
+      const t = 'cocoa_stage' + age, x0 = 8 - w / 2, y1 = 12, y0 = y1 - h, z0 = 1;
+      return add([
+        box([x0, y0, z0], [x0 + w, y1, z0 + w], t),
+        box([7.5, y1, 0], [8.5, 15, 2], t, { uv: { e: [0, 0, 2, 3], w: [0, 0, 2, 3], u: [0, 0, 1, 2], d: [0, 0, 1, 2], s: [0, 0, 1, 3], n: [0, 0, 1, 3] } }),
+      ]);
+    });
+    MODEL_VAR.COCOA = [];
+    for (let m = 0; m < 12; m++) MODEL_VAR.COCOA[m] = [[pods[Math.min(2, m >> 2)], 0, FACING_Y[m & 3]]];
+  }
+
   // selection boxes: the bounds of each variant's elements, turned like the parts
   const turn = (p, rx, ry) => {
     let [x, y, z] = [p[0] - 8, p[1] - 8, p[2] - 8], t;
