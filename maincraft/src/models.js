@@ -207,6 +207,73 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     for (let m = 0; m < 12; m++) MODEL_VAR.COCOA[m] = [[pods[Math.min(2, m >> 2)], 0, FACING_Y[m & 3]]];
   }
 
+  // ---- redstone ----
+  // the stub of a redstone torch standing on a base at height y0 (top 5 pixels of the torch texture)
+  const stub = (x, z, y0, tex) => box([x, y0, z], [x + 2, y0 + 5, z + 2], tex,
+    { uv: { e: [7, 6, 9, 11], w: [7, 6, 9, 11], s: [7, 6, 9, 11], n: [7, 6, 9, 11], u: [7, 6, 9, 8], d: [7, 13, 9, 15] } });
+  // lever (meta: face 0 floor / 1 wall / 2 ceiling << 2 | facing, +16 on): a stone base and a handle
+  // tilted one way or the other; built on the floor, turned onto walls and ceilings
+  {
+    const lever = [0, 1].map(on => add([
+      box([5, 0, 4], [11, 3, 12], 'cobblestone'),
+      box([7, 1, 7], [9, 11, 9], 'lever_handle', { r: [[8, 1, 8], 0, on ? -40 : 40, 0] }),
+    ]));
+    MODEL_VAR.LEVER = [];
+    for (let m = 0; m < 32; m++) {
+      const face = (m >> 2) & 3, f = m & 3, M = lever[(m >> 4) & 1];
+      MODEL_VAR.LEVER[m] = [[M, face === 1 ? 90 : face === 2 ? 180 : 0, FACING_Y[f]]];
+    }
+  }
+  // repeater (meta: output facing | delay << 2 | on << 4 | locked << 5): a stone slab, a torch at
+  // the input end and one that sits further back the longer the delay
+  {
+    const rep = [];
+    for (let k = 0; k < 8; k++) {
+      const delay = k & 3, on = k >> 2, t = on ? 'redstone_torch' : 'redstone_torch_off';
+      rep.push(add([box([0, 0, 0], [16, 2, 16], { u: on ? 'repeater_on' : 'repeater', d: 'smooth_stone', side: 'smooth_stone' }),
+        stub(7, 11, 2, t), stub(7, 2 + delay * 2, 2, t)]));
+    }
+    MODEL_VAR.REPEATER = [];
+    for (let m = 0; m < 64; m++) MODEL_VAR.REPEATER[m] = [[rep[((m >> 2) & 3) | (((m >> 4) & 1) << 2)], 0, FACING_Y[m & 3]]];
+  }
+  // comparator (meta: output facing | subtract << 2 | output 0-15 << 3): two rear torches lit while
+  // it outputs, a front torch lit in subtract mode
+  {
+    const cmp = [];
+    for (let k = 0; k < 4; k++) {
+      const sub = k & 1, on = k >> 1;
+      cmp.push(add([box([0, 0, 0], [16, 2, 16], { u: on ? 'comparator_on' : 'comparator', d: 'smooth_stone', side: 'smooth_stone' }),
+        stub(3, 11, 2, on ? 'redstone_torch' : 'redstone_torch_off'), stub(11, 11, 2, on ? 'redstone_torch' : 'redstone_torch_off'),
+        stub(7, 2, 0, sub ? 'redstone_torch' : 'redstone_torch_off')]));
+    }
+    MODEL_VAR.COMPARATOR = [];
+    for (let m = 0; m < 128; m++) MODEL_VAR.COMPARATOR[m] = [[cmp[((m >> 2) & 1) | ((m >> 3) ? 2 : 0)], 0, FACING_Y[m & 3]]];
+  }
+  // six-way blocks built facing up, turned like the barrel (0-3 horizontal, 4 up, 5 down)
+  const six = (M, d) => d === 4 ? [M, 0, 0] : d === 5 ? [M, 180, 0] : [M, 90, FACING_Y[d]];
+  // observer (meta: facing toward the watched block | on << 3)
+  {
+    const obs = [0, 1].map(on => add([box([0, 0, 0], [16, 16, 16], { u: 'observer_front', d: on ? 'observer_back_on' : 'observer_back', side: 'observer_side' })]));
+    MODEL_VAR.OBSERVER = [];
+    for (let m = 0; m < 16; m++) MODEL_VAR.OBSERVER[m] = [six(obs[(m >> 3) & 1], m & 7)];
+  }
+  // pistons (meta: facing | extended << 3) and the head (meta: facing | sticky << 3)
+  {
+    const base = st => add([box([0, 0, 0], [16, 16, 16], { u: st ? 'piston_top_sticky' : 'piston_top', d: 'piston_bottom', side: 'piston_side' })]);
+    const ext = add([box([0, 0, 0], [16, 12, 16], { u: 'piston_inner', d: 'piston_bottom', side: 'piston_side' })]);
+    const head = st => add([
+      box([0, 12, 0], [16, 16, 16], { u: st ? 'piston_top_sticky' : 'piston_top', d: 'piston_top', side: 'piston_side' }),
+      box([6, 0, 6], [10, 12, 10], 'piston_side', { uv: { e: [0, 0, 4, 12], w: [0, 0, 4, 12], s: [0, 0, 4, 12], n: [0, 0, 4, 12] }, skip: ['u', 'd'] }),
+    ]);
+    const B0 = [base(0), base(1)], H = [head(0), head(1)];
+    for (const [key, st] of [['PISTON', 0], ['STICKY_PISTON', 1]]) {
+      MODEL_VAR[key] = [];
+      for (let m = 0; m < 16; m++) MODEL_VAR[key][m] = [six((m >> 3) & 1 ? ext : B0[st], m & 7)];
+    }
+    MODEL_VAR.PISTON_HEAD = [];
+    for (let m = 0; m < 16; m++) MODEL_VAR.PISTON_HEAD[m] = [six(H[(m >> 3) & 1], m & 7)];
+  }
+
   // selection boxes: the bounds of each variant's elements, turned like the parts
   const turn = (p, rx, ry) => {
     let [x, y, z] = [p[0] - 8, p[1] - 8, p[2] - 8], t;

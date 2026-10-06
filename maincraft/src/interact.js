@@ -114,6 +114,13 @@ function placementFor(world, heldId, hit, fd, player) {
     case SH.MODEL:
       // models.js meta: facing toward the player; lanterns hang under a ceiling; barrels face the player's look
       if (heldId === B.LANTERN) m = hit.face === 3 ? 1 : 0;
+      // lever: on the floor, a wall (pointing out of it) or the ceiling
+      else if (heldId === B.LEVER) m = hit.face === 2 ? fd : hit.face === 3 ? 8 | fd : 4 | [3, 1, 0, 0, 0, 2][hit.face];
+      // repeater / comparator: output away from the player; observer: watching the way the player looks
+      else if (heldId === B.REPEATER || heldId === B.COMPARATOR) m = fd;
+      else if (heldId === B.OBSERVER) m = player && player.pitch < -0.8 ? 5 : player && player.pitch > 0.8 ? 4 : fd;
+      // pistons face the player
+      else if (heldId === B.PISTON || heldId === B.STICKY_PISTON) m = player && player.pitch < -0.8 ? 4 : player && player.pitch > 0.8 ? 5 : (fd + 2) & 3;
       else if (heldId === B.POINTED_DRIPSTONE) m = hit.face === 3 ? 1 : 9;   // tip, hanging down or standing up
       else if (heldId === B.BARREL) m = player && player.pitch < -0.8 ? 4 : player && player.pitch > 0.8 ? 5 : (fd + 2) & 3;
       else if (heldId === B.BREWING_STAND || heldId === B.CAULDRON || heldId === B.COMPOSTER) m = 0;
@@ -215,11 +222,18 @@ function dropsFor(id, m, item) {
   // away by water or broken by hand drops nothing
   if (k === 'SNOW' || k === 'SNOW_LAYER') return t && t.tool === 'shovel' ? [{ id, count: 1 }] : [];
   if (k === 'GRAVEL') return r < 0.1 ? [{ id: IT.FLINT, count: 1 }] : [{ id, count: 1 }];
+  // redstone parts drop what places them
+  if (k === 'REDSTONE_WIRE') return [{ id: IT.REDSTONE, count: 1 }];
+  if (k === 'REDSTONE_TORCH_OFF') return [{ id: B.REDSTONE_TORCH, count: 1 }];
+  if (k === 'REDSTONE_LAMP_ON') return [{ id: B.REDSTONE_LAMP, count: 1 }];
+  if (k === 'PISTON_HEAD') return [];
+  if (k === 'PISTON' || k === 'STICKY_PISTON' || k === 'OBSERVER') return [{ id, count: 1 }];
+  if (k === 'REDSTONE_ORE' || k === 'DEEPSLATE_REDSTONE_ORE') return [{ id: IT.REDSTONE, count: 4 + (Math.random() * 2 | 0) }];
   // cocoa: 3 beans when ripe (age 2), else 1
   if (k === 'COCOA') return [{ id: IT.COCOA_BEANS, count: (m >> 2) >= 2 ? 3 : 1 }];
   if (k === 'WHEAT_3') return [{ id: IT.WHEAT, count: 1 }, { id: IT.WHEAT_SEEDS, count: 1 + ((Math.random() * 3) | 0) }];
   if (k === 'BEETROOTS_3') return [{ id: IT.BEETROOT, count: 1 }, { id: IT.BEETROOT_SEEDS, count: 1 + ((Math.random() * 3) | 0) }];
-  if (/LAPIS_ORE|REDSTONE_ORE/.test(k)) return [{ id, count: 1 }];
+  if (/LAPIS_ORE/.test(k)) return [{ id, count: 1 }];
   if (SHAPE[id] === SH.WATER || SHAPE[id] === SH.LAVA) return [];
   if (map[k] && !(shears && (k === 'TALL_GRASS' || k === 'FERN'))) {
     const e = map[k];

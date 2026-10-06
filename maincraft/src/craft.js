@@ -38,6 +38,16 @@ function matches(tag, id) {
   R(['C', 'S'], { C: 'coal', S }, B.TORCH, 4);
   R([' #S', '# S', ' #S'], { '#': S, S: IT.STRING }, IT.BOW);
   R(['F', 'S', 'E'], { F: IT.FLINT, S, E: IT.FEATHER }, IT.ARROW, 4);
+  // redstone
+  R(['R', 'S'], { R: IT.REDSTONE, S }, B.REDSTONE_TORCH);
+  R(['S', 'C'], { S, C: B.COBBLE }, B.LEVER);
+  R(['TRT', '###'], { T: B.REDSTONE_TORCH, R: IT.REDSTONE, '#': B.STONE }, B.REPEATER);
+  // (Minecraft uses nether quartz; a quartz block here, there is no Nether)
+  R([' T ', 'TQT', '###'], { T: B.REDSTONE_TORCH, Q: B.QUARTZ, '#': B.STONE }, B.COMPARATOR);
+  R([' R ', 'RGR', ' R '], { R: IT.REDSTONE, G: B.GLOW }, B.REDSTONE_LAMP);
+  R(['PPP', 'CIC', 'CRC'], { P, C: 'stonetool', I: IT.IRON_INGOT, R: IT.REDSTONE }, B.PISTON);
+  R(['S', 'P'], { S: IT.SLIME_BALL, P: B.PISTON }, B.STICKY_PISTON);
+  R(['CCC', 'RRQ', 'CCC'], { C: 'stonetool', R: IT.REDSTONE, Q: B.QUARTZ }, B.OBSERVER);
   if (B.BARREL) R(['PSP', 'P P', 'PSP'], { P, S: 'woodslab' }, B.BARREL);
   if (B.CAMPFIRE) R([' S ', 'SCS', 'LLL'], { S, C: 'coal', L: ANY_LOG }, B.CAMPFIRE);
   R(['# #', '###', '# #'], { '#': S }, B.LADDER, 3);
@@ -90,7 +100,7 @@ function matches(tag, id) {
   }
   RS([IT.MELON_SLICE], IT.MELON_SEEDS); RS([B.PUMPKIN], IT.PUMPKIN_SEEDS, 4);
   R(['###', '###', '###'], { '#': IT.MELON_SLICE }, B.MELON);
-  const storage = [[IT.COAL, 'COAL_BLOCK'], [IT.IRON_INGOT, 'IRON_BLOCK'], [IT.GOLD_INGOT, 'GOLD_BLOCK'], [IT.DIAMOND, 'DIAMOND_BLOCK'], [IT.EMERALD, 'EMERALD_BLOCK'], [IT.COPPER_INGOT, 'COPPER_BLOCK'], [IT.WHEAT, 'HAY_BLOCK']];
+  const storage = [[IT.COAL, 'COAL_BLOCK'], [IT.IRON_INGOT, 'IRON_BLOCK'], [IT.GOLD_INGOT, 'GOLD_BLOCK'], [IT.DIAMOND, 'DIAMOND_BLOCK'], [IT.EMERALD, 'EMERALD_BLOCK'], [IT.COPPER_INGOT, 'COPPER_BLOCK'], [IT.WHEAT, 'HAY_BLOCK'], [IT.REDSTONE, 'REDSTONE_BLOCK']];
   for (const [it, b] of storage) if (B[b]) { R(['###', '###', '###'], { '#': it }, B[b]); RS([B[b]], it, 9); }
   R(['##', '##'], { '#': IT.CLAY_BALL }, B.CLAY);
   R(['##', '##'], { '#': IT.BRICK_ITEM }, B.BRICK);
@@ -185,7 +195,7 @@ const SMELT = {};
   s(B.GOLD, IT.GOLD_INGOT); s(B.DEEPSLATE_GOLD_ORE, IT.GOLD_INGOT); s(IT.RAW_COPPER, IT.COPPER_INGOT); s(B.CLAY, B.TERRACOTTA);
   s(IT.CLAY_BALL, IT.BRICK_ITEM); s(IT.PORKCHOP, IT.COOKED_PORKCHOP); s(IT.BEEF, IT.COOKED_BEEF); s(IT.MUTTON, IT.COOKED_MUTTON);
   s(IT.CHICKEN, IT.COOKED_CHICKEN); s(IT.RAW_COD, IT.COOKED_COD); s(IT.RAW_SALMON, IT.COOKED_SALMON); s(IT.POTATO, IT.BAKED_POTATO);
-  s(B.COBBLED_DEEPSLATE, B.DEEPSLATE); s(B.STONE, B.SMOOTH_STONE); s(B.CACTUS, IT.GREEN_DYE); s(B.SEA_PICKLE, IT.LIME_DYE);
+  s(B.COBBLED_DEEPSLATE, B.DEEPSLATE); s(B.STONE, B.SMOOTH_STONE); s(B.CACTUS, IT.GREEN_DYE); s(B.REDSTONE_ORE, IT.REDSTONE); s(B.DEEPSLATE_REDSTONE_ORE, IT.REDSTONE); s(B.SEA_PICKLE, IT.LIME_DYE);
   // every log and wood burns down to charcoal
   for (let id = 1; id < NB; id++) if (matches(ANY_LOG, id)) s(id, IT.CHARCOAL);
   s(B.STONE_BRICKS, B.CRACKED_STONE_BRICKS); s(B.NETHERRACK, B.NETHER_BRICKS); s(B.WET_SPONGE, B.SPONGE);

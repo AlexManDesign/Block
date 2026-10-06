@@ -468,11 +468,94 @@ def small_items(load):
     return out
 
 
+# ------------------------------------------------------------------ redstone
+def redstone(load):
+    out = {}
+    r = rng(170)
+    # dust: grey-white (the mesher tints it by the signal strength), a centre blob and a strip
+    dot = new()
+    for y in range(4, 12):
+        for x in range(4, 12):
+            dx, dy = x - 7.5, y - 7.5
+            if dx * dx + dy * dy < 13 + r.random() * 6:
+                v = 200 + int(r.random() * 55)
+                dot.load()[x, y] = (v, v, v, 255)
+    out['redstone_dust_dot'] = dot
+    line = new()
+    for y in range(16):
+        for x in range(6, 10):
+            if (x in (6, 9)) and r.random() < 0.45:
+                continue
+            v = 200 + int(r.random() * 55)
+            line.load()[x, y] = (v, v, v, 255)
+    out['redstone_dust_line'] = line
+    # torch that has gone out: the flame dark
+    t = load('torch').copy(); px = t.load()
+    for y in range(16):
+        for x in range(16):
+            c = px[x, y]
+            if c[3] and y < 8 and (c[0] > 150 or c[1] > 150):
+                px[x, y] = (96, 28, 22, c[3])
+    out['redstone_torch_off'] = t
+    handle = new(); rect(handle, 7, 0, 8, 15, (110, 80, 46)); rect(handle, 7, 0, 7, 15, (138, 104, 62))
+    out['lever_handle'] = handle
+    # lamp: a framed glass panel, dark when off, glowing when on
+    for name, glass, glow in (('redstone_lamp', (92, 58, 34), (130, 86, 50)), ('redstone_lamp_on', (238, 196, 112), (255, 238, 180))):
+        im = noisy(glass, 0.12, 171)
+        rect(im, 0, 0, 15, 0, (70, 50, 36)); rect(im, 0, 15, 15, 15, (70, 50, 36)); rect(im, 0, 0, 0, 15, (70, 50, 36)); rect(im, 15, 0, 15, 15, (70, 50, 36))
+        for (x, y) in ((4, 4), (10, 5), (6, 10), (11, 11), (3, 12), (8, 7)):
+            rect(im, x, y, x + 1, y + 1, glow)
+        out[name] = im
+    # repeater and comparator tops: smooth stone with the signal path drawn in red
+    stone = load('smooth_stone')
+    for name, col in (('repeater', (110, 20, 16)), ('repeater_on', (240, 40, 24))):
+        im = stone.copy()
+        rect(im, 7, 1, 8, 14, col); rect(im, 5, 3, 10, 3, col); rect(im, 6, 2, 9, 2, col)
+        out[name] = im
+    for name, col in (('comparator', (110, 20, 16)), ('comparator_on', (240, 40, 24))):
+        im = stone.copy()
+        rect(im, 3, 3, 4, 13, col); rect(im, 11, 3, 12, 13, col); rect(im, 3, 13, 12, 13, col); rect(im, 7, 1, 8, 6, col)
+        out[name] = im
+    # observer: stone faces; a face with two slits, an output dot behind, arrows on the sides
+    cob = load('cobblestone'); dark = (40, 40, 44)
+    front = recolor(stone, (120, 120, 124), 0.5); rect(front, 3, 6, 6, 8, dark); rect(front, 9, 6, 12, 8, dark); rect(front, 2, 11, 13, 12, dark)
+    out['observer_front'] = front
+    back = recolor(stone, (110, 110, 114), 0.5); rect(back, 6, 6, 9, 9, (60, 20, 20)); out['observer_back'] = back
+    back_on = back.copy(); rect(back_on, 6, 6, 9, 9, (250, 50, 30)); out['observer_back_on'] = back_on
+    side = recolor(stone, (116, 116, 120), 0.5)
+    for i in range(5):
+        rect(side, 7 - i, 3 + i, 8 + i, 3 + i, dark)
+    rect(side, 7, 7, 8, 12, dark); out['observer_side'] = side
+    # piston: wooden face, cobblestone body with a wooden band, iron core inside
+    planks = load('oak_planks')
+    top = planks.copy(); rect(top, 0, 0, 15, 0, (90, 66, 40)); rect(top, 0, 15, 15, 15, (90, 66, 40)); rect(top, 0, 0, 0, 15, (90, 66, 40)); rect(top, 15, 0, 15, 15, (90, 66, 40))
+    out['piston_top'] = top
+    sticky = top.copy(); px = sticky.load(); rs = rng(172)
+    for y in range(2, 14):
+        for x in range(2, 14):
+            if rs.random() < 0.8:
+                g = 150 + int(rs.random() * 60)
+                px[x, y] = (int(g * 0.55), g, int(g * 0.45), 255)
+    out['piston_top_sticky'] = sticky
+    pside = cob.copy(); pside.paste(planks.crop((0, 0, 16, 4)), (0, 0)); rect(pside, 0, 4, 15, 4, (70, 54, 36))
+    out['piston_side'] = pside
+    bottom = cob.copy(); rect(bottom, 5, 5, 10, 10, (150, 150, 156)); out['piston_bottom'] = bottom
+    inner = cob.copy(); rect(inner, 5, 5, 10, 10, (190, 190, 196)); rect(inner, 6, 6, 9, 9, (120, 120, 128)); out['piston_inner'] = inner
+    # redstone dust item: red grains
+    dust = new(); rd = rng(173)
+    for _ in range(26):
+        x, y = 3 + int(rd.random() * 10), 4 + int(rd.random() * 9)
+        c = (160 + int(rd.random() * 95), 10 + int(rd.random() * 30), 8)
+        rect(dust, x, y, x, y, c)
+    out['item_redstone'] = dust
+    return out
+
+
 def all_textures(load):
     """name -> image, and name -> [frames] for animated ones"""
     static, anim = {}, {}
     for f in (barrel, blast_furnace, smoker, cartography_table, fletching_table, smithing_table, loom, lectern, grindstone, stonecutter,
-              composter, pointed_dripstone, azalea, pale_garden, small_items):
+              composter, pointed_dripstone, azalea, pale_garden, small_items, redstone):
         static.update(f(load))
     for f in (bell, lantern, brewing_stand, cauldron, beetroots, dripleaf, spore_blossom):
         static.update(f())

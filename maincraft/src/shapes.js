@@ -77,6 +77,7 @@ function blockBoxes(world, id, m, x, y, z) {
     }
     case SH.CARPET: case SH.LILY: return [[0, 0, 0, 1, 1 / 16, 1]];
     case SH.PLATE: return [[1 / 16, 0, 1 / 16, 15 / 16, 1 / 16, 15 / 16]];
+    case SH.WIRE: return [[0, 0, 0, 1, 1 / 16, 1]];
     case SH.RAIL: return [[0, 0, 0, 1, 2 / 16, 1]];
     case SH.BUTTON: return [rotBoxU([5 / 16, 6 / 16, 0, 11 / 16, 10 / 16, 2 / 16], ((m & 3) + 2) & 3)];
     case SH.FARMLAND: return [[0, 0, 0, 1, 15 / 16, 1]];

@@ -67,7 +67,7 @@ class Mesher {
     this.bufs = [new QBuf(8192), new QBuf(4096), new QBuf(2048)];
     this.vis = new Uint8Array(4096);
     this.stack = new Int32Array(4096);
-    this.fancyLeaves = true; this.leafCull = false;
+    this.fancyLeaves = true; this.leafCull = false; this.forceTint = -1;
     this.sway = true;
   }
 
@@ -90,7 +90,8 @@ class Mesher {
     // biome colour of the block's column; the grass side also flags the overlay pass in the shader
     let tint = 0xFFFF, ovl = 0;
     const tk = TINT_KIND[layer];
-    if (tk) {
+    if (this.forceTint >= 0) tint = this.forceTint;
+    else if (tk) {
       tint = this.tints[(tk === 4 ? 0 : tk - 1) * 256 + this.tcol];
       layer = TINT_LAYER[layer];
       if (tk === 4) ovl = 1 << 29;
@@ -403,6 +404,42 @@ class Mesher {
     }
   }
 
+  // redstone dust: a dot, straight or branching lines toward what it links to, and strips up the
+  // side of a block it climbs; coloured by its signal strength (Minecraft's dust colour ramp)
+  wire(ids, meta, p, m, x, y, z, buf) {
+    const SX = FACE_DELTA[0], SY = FACE_DELTA[2], SZ = FACE_DELTA[4];
+    const get = (dx, dy, dz) => ids[p + dx * SX + dy * SY + dz * SZ], getM = (dx, dy, dz) => meta[p + dx * SX + dy * SY + dz * SZ];
+    const L = [0, 0, 0, 0];
+    let n = 0;
+    for (let d = 0; d < 4; d++) { L[d] = wireLink(get, getM, d); if (L[d]) n++; }
+    const lt = this.maxLight(p), s = lt >> 4, b = lt & 15;
+    const X = x * 16, Y = y * 16 + 0.25, Z = z * 16;
+    const dot = WIRE_TEX[0], line = WIRE_TEX[1];
+    this.forceTint = WIRE_TINT[m & 15];
+    // a lone line runs straight through
+    const draw = L.slice();
+    if (n === 1) for (let d = 0; d < 4; d++) if (L[d]) draw[(d + 2) & 3] = 1;
+    // north / south halves (line along z), west / east halves (line along x)
+    if (draw[2]) this.flat(buf, [X, Y, Z + 8, X + 16, Y, Z + 8, X + 16, Y, Z, X, Y, Z], line, 0, 0, 16, 8, s, b, 1, 0, false);
+    if (draw[0]) this.flat(buf, [X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z + 8, X, Y, Z + 8], line, 0, 8, 16, 16, s, b, 1, 0, false);
+    if (draw[1]) this.flat(buf, [X + 8, Y, Z + 16, X + 8, Y, Z, X, Y, Z, X, Y, Z + 16], line, 0, 0, 16, 8, s, b, 1, 0, false);
+    if (draw[3]) this.flat(buf, [X + 16, Y, Z + 16, X + 16, Y, Z, X + 8, Y, Z, X + 8, Y, Z + 16], line, 0, 8, 16, 16, s, b, 1, 0, false);
+    const straight = n === 2 && ((L[0] && L[2]) || (L[1] && L[3])) || n === 1;
+    if (!straight) this.flat(buf, [X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z, X, Y, Z], dot, 0, 0, 16, 16, s, b, 1, 0, false);
+    // up the side of the neighbouring block
+    for (let d = 0; d < 4; d++) {
+      if (L[d] !== 2) continue;
+      const e = 15.75, Yb = y * 16, Yt = Yb + 16;
+      let pts;
+      if (d === 0) pts = [X, Yb, Z + e, X + 16, Yb, Z + e, X + 16, Yt, Z + e, X, Yt, Z + e];
+      else if (d === 2) pts = [X + 16, Yb, Z + 16 - e, X, Yb, Z + 16 - e, X, Yt, Z + 16 - e, X + 16, Yt, Z + 16 - e];
+      else if (d === 1) pts = [X + 16 - e, Yb, Z, X + 16 - e, Yb, Z + 16, X + 16 - e, Yt, Z + 16, X + 16 - e, Yt, Z];
+      else pts = [X + e, Yb, Z + 16, X + e, Yb, Z, X + e, Yt, Z, X + e, Yt, Z + 16];
+      this.flat(buf, pts, line, 0, 0, 16, 16, s, b, 1, 0, true);
+    }
+    this.forceTint = -1;
+  }
+
   maxLight(p) {
     // own light maxed with the 6 neighbours (used for plants / thin shapes)
     const light = this.light, ids = this.ids;
@@ -527,10 +564,11 @@ class Mesher {
         return;
       }
       case SH.CARPET: this.box(p, id, x, y, z, 0, 0, 0, 16, 1, 16, texs, 0, buf); return;
-      case SH.PLATE: this.box(p, id, x, y, z, 1, 0, 1, 15, 1, 15, texs, 0, buf); return;
+      case SH.PLATE: this.box(p, id, x, y, z, 1, 0, 1, 15, (m & 1) ? 0.5 : 1, 15, texs, 0, buf); return;   // pressed: half as thick
+      case SH.WIRE: this.wire(ids, meta, p, m, x, y, z, buf); return;
       case SH.BUTTON: {
         const d = m & 3;
-        const r = rotBox([5, 6, 0, 11, 10, 2], (d + 2) & 3);
+        const r = rotBox([5, 6, 0, 11, 10, (m & 8) ? 1 : 2], (d + 2) & 3);   // pressed: pushed in
         this.box(p, id, x, y, z, r[0], r[1], r[2], r[3], r[4], r[5], texs, 0, buf);
         return;
       }
@@ -855,6 +893,15 @@ function rotBox(b, turns) {
 }
 
 let LAYER_BED_HEAD = {}, BED_LEG = 0;
+// redstone dust layers (dot, line) and its colour per signal strength (RGB565)
+const WIRE_TEX = [0, 0], WIRE_TINT = (() => {
+  const t = new Uint16Array(16);
+  for (let p = 0; p < 16; p++) {
+    const f = p / 15, r = f * 0.6 + (p ? 0.4 : 0.3), g = Math.max(0, f * f * 0.7 - 0.5), bl = Math.max(0, f * f * 0.6 - 0.7);
+    t[p] = (Math.round(r * 31) << 11) | (Math.round(g * 63) << 5) | Math.round(bl * 31);
+  }
+  return t;
+})();
 // Biome-tinted textures: TINT_KIND[layer] = 1 grass, 2 foliage, 3 water, 4 grass side (dirt base +
 // tinted overlay); TINT_LAYER[layer] = the untinted layer the terrain draws instead.
 const TINT_KIND = new Uint8Array(4096), TINT_LAYER = new Uint16Array(4096);
@@ -888,4 +935,5 @@ function initMesherTextures(layers) {
     if (l !== undefined) LAYER_BED_HEAD[id] = l;
   }
   BED_LEG = layers['oak_planks'] | 0;
+  WIRE_TEX[0] = layers['redstone_dust_dot'] | 0; WIRE_TEX[1] = layers['redstone_dust_line'] | 0;
 }

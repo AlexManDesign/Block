@@ -203,6 +203,8 @@ class World {
     if (d.spawners && d.spawners.length) { c.spawners = d.spawners; this.spawnerCols.add(c); }
     const saved = this.savedEdits.get(c.key);
     if (saved) { c.edits = saved; this.savedEdits.delete(c.key); this.applyEdits(c); }
+    // redstone parts among the edits pick up their state again (pending changes are not saved)
+    if (c.edits && this.rs) for (const [li, v] of c.edits) if (RS_KIND[v & 0xFFFF]) this.rs.mark(c.cx * 16 + (li & 15), WORLD_MIN_Y + (li >> 8), c.cz * 16 + ((li >> 4) & 15));
     this.skyInit(c);
     c.state = 1;
     this.stats.gen++;
@@ -500,6 +502,7 @@ class World {
       this.neighbourChanged(x, y, z);
     }
     if (this.onBlockChanged) this.onBlockChanged(x, y, z, oldId, id);
+    if (this.rs && !(opts && opts.quiet)) this.rs.blockChanged(x, y, z, oldId, id);
     return true;
   }
 
@@ -572,6 +575,12 @@ class World {
       return SOLID[below] === 1;
     }
     // a cocoa pod hangs on a jungle log in its facing direction
+    // redstone: dust, repeaters and comparators on a full block, a lever on the block it hangs on
+    if (id === B.REDSTONE_WIRE || id === B.REPEATER || id === B.COMPARATOR) return OPAQUE[below] === 1;
+    if (id === B.LEVER) {
+      const face = (m >> 2) & 3, d = face === 0 ? 5 : face === 2 ? 4 : RS_OPP[m & 3];
+      return OPAQUE[this.getBlock(x + RS_DX[d], y + RS_DY[d], z + RS_DZ[d])] === 1;
+    }
     if (id === B.COCOA) { const d = m & 3; return isJungleLog(this.getBlock(x + DIRX_W[d], y, z + DIRZ_W[d])); }
     if (sh === SH.CRYSTAL) {
       const n = FACE_DIR[m % 6];
@@ -637,6 +646,7 @@ class World {
       }
       if (!bk.length) this.schedB.delete(t);
     }
+    if (this.rs) this.rs.tick();
   }
 
   updateBlock(x, y, z) {

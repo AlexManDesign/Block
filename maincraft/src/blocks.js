@@ -9,7 +9,7 @@ const SH = {
   AIR: 0, CUBE: 1, CROSS: 2, WATER: 3, LAVA: 4, SLAB: 5, STAIRS: 6, FENCE: 7, GATE: 8, WALL: 9,
   PANE: 10, DOOR: 11, TRAPDOOR: 12, LADDER: 13, TORCH: 14, CARPET: 15, PLATE: 16, BUTTON: 17,
   TALL: 18, VINE: 19, LICHEN: 20, LILY: 21, PICKLE: 22, BAMBOO: 23, POT: 24, RAIL: 25, CACTUS: 26,
-  CHEST: 27, BED: 28, FARMLAND: 29, FIRE: 30, SNOWLAYER: 31, CRYSTAL: 32, MODEL: 33,
+  CHEST: 27, BED: 28, FARMLAND: 29, FIRE: 30, SNOWLAYER: 31, CRYSTAL: 32, MODEL: 33, WIRE: 34,
 };
 const SHAPE_BY_NAME = {
   '': SH.CUBE, x: SH.CROSS, water: SH.WATER, lava: SH.LAVA, slab: SH.SLAB, stairs: SH.STAIRS,
@@ -17,7 +17,7 @@ const SHAPE_BY_NAME = {
   ladder: SH.LADDER, torch: SH.TORCH, carpet: SH.CARPET, plate: SH.PLATE, button: SH.BUTTON,
   tallplant: SH.TALL, vine: SH.VINE, lichen: SH.LICHEN, lilypad: SH.LILY, seapickle: SH.PICKLE,
   bamboo: SH.BAMBOO, pot: SH.POT, rail: SH.RAIL, cactus: SH.CACTUS, chest: SH.CHEST, bed: SH.BED,
-  farmland: SH.FARMLAND, fire: SH.FIRE, snowlayer: SH.SNOWLAYER, crystal: SH.CRYSTAL, model: SH.MODEL,
+  farmland: SH.FARMLAND, fire: SH.FIRE, snowlayer: SH.SNOWLAYER, crystal: SH.CRYSTAL, model: SH.MODEL, wire: SH.WIRE,
 };
 
 // render layers
@@ -80,8 +80,8 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     if (sh === SH.SLAB || sh === SH.STAIRS || sh === SH.FARMLAND || sh === SH.CHEST) LCOST[id] = 1;
     SOLID[id] = (sh === SH.CROSS || sh === SH.TALL || sh === SH.WATER || sh === SH.LAVA || sh === SH.TORCH ||
       sh === SH.VINE || sh === SH.LICHEN || sh === SH.RAIL || sh === SH.FIRE || sh === SH.BUTTON ||
-      sh === SH.PLATE || sh === SH.LADDER) ? 0 : 1;
-    if (key === 'COBWEB') SOLID[id] = 0;
+      sh === SH.PLATE || sh === SH.LADDER || sh === SH.WIRE) ? 0 : 1;
+    if (key === 'COBWEB' || key === 'LEVER') SOLID[id] = 0;
     // hardness / tool heuristics (survival)
     let h = 1.5, tool = 1;
     if (/ORE$|_ORE/.test(key)) { h = 3; }
@@ -111,6 +111,10 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     if (key === 'POINTED_DRIPSTONE') { h = 1.5; tool = 1; }
     if (key === 'CREAKING_HEART') { h = 10; tool = 2; }
     if (key === 'COCOA') { h = 0.2; tool = 2; }
+    if (/^(REDSTONE_WIRE|REDSTONE_TORCH|REDSTONE_TORCH_OFF|LEVER|REPEATER|COMPARATOR)$/.test(key)) { h = 0; tool = 0; }
+    if (/^REDSTONE_LAMP/.test(key)) { h = 0.3; tool = 0; }
+    if (/^(PISTON|STICKY_PISTON|PISTON_HEAD)$/.test(key)) { h = 1.5; tool = 0; }
+    if (key === 'OBSERVER') { h = 3; tool = 1; }
     if (key === 'SHIP_WHEEL') { h = 2; tool = 2; }
     if (sh === SH.WATER || sh === SH.LAVA) h = -1;
     HARD[id] = h; TOOL[id] = tool;
@@ -150,6 +154,26 @@ for (let id = 1; id < B_KEY.length; id++) {
   if (c && B[c[1] + '_CONCRETE']) CONCRETE_OF[id] = B[c[1] + '_CONCRETE'];
   const s = k === 'LOG' ? 'STRIPPED_OAK_LOG' : k === 'DARK_LOG' ? 'STRIPPED_DARK_OAK_LOG' : /^(?!STRIPPED_).*_(LOG|WOOD|STEM|HYPHAE)$/.test(k) ? 'STRIPPED_' + k : '';
   if (s && B[s] && k !== 'MUSHROOM_STEM' && k !== 'BIG_DRIPLEAF_STEM') STRIPPED_OF[id] = B[s];
+}
+// ---- redstone wire connections (shared by the mesher and the redstone engine)
+// horizontal directions 0 south (+z), 1 west (-x), 2 north (-z), 3 east (+x); 6-way facings add
+// 4 up and 5 down
+const RS_DX = [0, -1, 0, 1, 0, 0], RS_DY = [0, 0, 0, 0, 1, -1], RS_DZ = [1, 0, -1, 0, 0, 0], RS_OPP = [2, 3, 0, 1, 5, 4];
+// a component the wire turns toward when it lies in direction d of the wire
+function rsConnectsTo(id, m, d) {
+  if (id === B.REPEATER) return ((m & 3) & 1) === (d & 1);
+  if (id === B.OBSERVER) return (m & 7) === d;          // its output side faces the wire
+  return id === B.REDSTONE_TORCH || id === B.REDSTONE_TORCH_OFF || id === B.LEVER || id === B.REDSTONE_BLOCK ||
+    id === B.COMPARATOR || SHAPE[id] === SH.BUTTON || SHAPE[id] === SH.PLATE;
+}
+// how the wire at the origin links in direction d: 0 no, 1 flat (or down a step), 2 up the side of
+// the next block. get(dx, dy, dz) / getM(...) read the cells around it.
+function wireLink(get, getM, d) {
+  const dx = RS_DX[d], dz = RS_DZ[d], n = get(dx, 0, dz);
+  if (n === B.REDSTONE_WIRE || rsConnectsTo(n, getM(dx, 0, dz), d)) return 1;
+  if (!OPAQUE[get(0, 1, 0)] && get(dx, 1, dz) === B.REDSTONE_WIRE) return 2;
+  if (!OPAQUE[n] && get(dx, -1, dz) === B.REDSTONE_WIRE) return 1;
+  return 0;
 }
 function isJungleLog(id) { return id === B.JUNGLE_LOG || id === B.JUNGLE_WOOD || id === B.STRIPPED_JUNGLE_LOG || id === B.STRIPPED_JUNGLE_WOOD; }
 function isWaterId(id) { return id === B.WATER || (FLAGS[id] & (BF_AQUATIC | BF_WET)) !== 0; }
@@ -294,6 +318,7 @@ ITEM_TABLE.push(['CHARCOAL', 'Charcoal', 'Древесный уголь', 'item_
 ITEM_TABLE.push(['PAPER', 'Paper', 'Бумага', 'item_paper', 64]);
 ITEM_TABLE.push(['BOOK', 'Book', 'Книга', 'item_book', 64]);
 ITEM_TABLE.push(['COCOA_BEANS', 'Cocoa Beans', 'Какао-бобы', 'item_cocoa_beans', 64]);
+ITEM_TABLE.push(['REDSTONE', 'Redstone Dust', 'Красная пыль', 'item_redstone', 64]);
 const IT = {};
 for (let i = 0; i < ITEM_TABLE.length; i++) IT[ITEM_TABLE[i][0]] = ITEM_BASE + i;
 function isItem(id) { return id >= ITEM_BASE && id < WET_BASE; }

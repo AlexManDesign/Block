@@ -142,6 +142,28 @@ class Game {
     w.onColumnUnload = (c) => { this.r.freeColumn(c); if (c.edits && c.edits.size) this.pendingSave.set(c.key, c.edits); };
     w.onBreak = (x, y, z, id, m, byUpdate) => this.onBlockBroken(x, y, z, id, m, byUpdate);
     w.onFall = (x, y, z, id, m) => this.ents.spawnFalling(id, m, x, y, z);
+    // redstone: pressure plates feel the player, mobs and items; comparators read containers
+    const rs = w.rs = new Redstone(w), cells = [];
+    rs.entityCells = () => {
+      cells.length = 0;
+      const add = (p) => cells.push(Math.floor(p[0]), Math.floor(p[1] + 0.05), Math.floor(p[2]));
+      if (this.player) add(this.player.pos);
+      if (this.ents) { for (const e of this.ents.mobs) add(e.pos); for (const it of this.ents.items) add(it.pos); }
+      return cells;
+    };
+    rs.container = (x, y, z) => {
+      const id = dryId(w.getBlock(x, y, z));
+      if (id !== B.CHEST && id !== B.FURNACE && id !== B.FURNACE_LIT) return -1;
+      const k = `${x},${y},${z}`, M = this.meta, v = id === B.CHEST ? M.chests && M.chests[k] : M.furnaces && M.furnaces[k];
+      const slots = Array.isArray(v) ? v : v && v.slots ? v.slots : null, n = id === B.CHEST ? 27 : 3;
+      if (!slots) return 0;
+      // Minecraft's AbstractContainerMenu.getRedstoneSignalFromContainer
+      let f = 0, any = false;
+      for (const s of slots) if (s && s.count) { f += s.count / maxStack(s.id); any = true; }
+      return any ? Math.floor(1 + (f / n) * 14) : 0;
+    };
+    rs.onTnt = (x, y, z) => { Sfx.fuse(); setTimeout(() => { if (this.world === w) this.explode(x + 0.5, y + 0.5, z + 0.5, 4, { x, y, z }); }, 4000); };
+    rs.sound = (kind, x, y, z, on) => { if (kind === 'door') Sfx.door(on); else if (kind === 'piston') Sfx.door(on); else Sfx.click(); };
     this.world = w;
     this.pendingSave = new Map();
     this.particles.length = 0;
@@ -890,6 +912,11 @@ class Game {
       if (id === B.SHIP_WHEEL && this.ships) { if (this.ships.assemble(tg.x, tg.y, tg.z)) this.swing(); return; }
       if (dryId(id) === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
       if (id === B.FURNACE || id === B.FURNACE_LIT) { UI.openFurnace(tg.x, tg.y, tg.z); return; }
+      // redstone controls
+      if (id === B.LEVER) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 16); Sfx.click(); this.swing(); return; }
+      if (sh === SH.BUTTON) { w.rs.press(tg.x, tg.y, tg.z); Sfx.click(); this.swing(); return; }
+      if (id === B.REPEATER) { w.setBlock(tg.x, tg.y, tg.z, id, (m & ~12) | ((((m >> 2) & 3) + 1) & 3) << 2); Sfx.click(); this.swing(); return; }
+      if (id === B.COMPARATOR) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 4); Sfx.click(); this.swing(); return; }
       if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { this.explode(tg.x + 0.5, tg.y + 0.5, tg.z + 0.5, 4, tg); return; }
       // an axe strips a log or wood (the axis stays)
       if (STRIPPED_OF[id] && hid && isItem(hid) && (itemDef(hid)[5] || {}).tool === 'axe') {
@@ -938,6 +965,14 @@ class Game {
       }
       if (td && td.tool === 'shovel' && id === B.GRASS && !w.getBlock(tg.x, tg.y + 1, tg.z)) {
         w.setBlock(tg.x, tg.y, tg.z, B.DIRT_PATH, 0); Sfx.block(B.DIRT, 'place'); this.swing(); this.damageTool(); return;
+      }
+      // redstone dust goes on top of a full block
+      if (hid === IT.REDSTONE) {
+        const n = FACE_N[tg.face], px = tg.x + n[0], py = tg.y + n[1], pz = tg.z + n[2], cur = w.getBlock(px, py, pz);
+        if ((!cur || (FLAGS[cur] & BF_REPLACE)) && OPAQUE[w.getBlock(px, py - 1, pz)]) {
+          w.setBlock(px, py, pz, B.REDSTONE_WIRE, 0); Sfx.block(B.STONE, 'place'); this.consumeHeld(); this.swing();
+        }
+        return;
       }
       // cocoa beans go on the side of a jungle log (the pod faces the log)
       if (hid === IT.COCOA_BEANS && isJungleLog(id) && tg.face !== 2 && tg.face !== 3) {
