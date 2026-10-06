@@ -49,7 +49,9 @@ const MODELS = {
     { box: [0, 0, -3, 1, 4, 6], pivot: [-4, 13, 0], uv: [24, 13], anim: 'wingR' },
     { box: [-1, 0, -3, 1, 4, 6], pivot: [4, 13, 0], uv: [24, 13], anim: 'wingL', mirror: true },
   ] },
-  zombie: { tex: 'zombie', tw: 64, th: 64, parts: humanoid(4, true, true) },
+  // zombie: Minecraft's HumanoidModel, left limbs mirrored from the right ones (only the player's
+  // model has separate left limbs on its skin)
+  zombie: { tex: 'zombie', tw: 64, th: 64, parts: humanoid(4, false, true) },
   skeleton: { tex: 'skeleton', tw: 64, th: 32, parts: humanoid(2, false), heldItem: 'item_bow' },
   player: { tex: 'player', tw: 64, th: 64, parts: humanoid(4, true, true) },
   creeper: { tex: 'creeper', tw: 64, th: 32, parts: [
