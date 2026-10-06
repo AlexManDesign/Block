@@ -78,6 +78,7 @@ class Game {
     // column offsets around the player, nearest first: [dx, dz, dx² + dz²], integers only (an array
     // holding a fraction would hand out dx and dz as doubles)
     this.spiral = [];
+    this.litIdleAt = -1;   // stream(): stats.gen at the last light pass that lit nothing
     for (let dz = -40; dz <= 40; dz++) for (let dx = -40; dx <= 40; dx++) this.spiral.push([dx, dz, dx * dx + dz * dz]);
     this.spiral.sort((a, b) => a[2] - b[2]);
     this.lastSpace = 0; this.lastW = 0;
@@ -235,19 +236,26 @@ class Game {
       }
     }
     // light passes (budgeted)
+    // Columns wait here until their neighbours exist; the ones on the edge of the loaded area wait
+    // for good. A full pass that lit nothing is not repeated until another column has arrived
+    // (only arrivals let a waiting column proceed), so the waiting list is not copied, sorted and
+    // walked again every frame for nothing.
     const t0 = performance.now();
-    if (w.pendingLit.size) {
+    if (w.pendingLit.size && this.litIdleAt !== w.stats.gen) {
       const arr = Array.from(w.pendingLit);
       arr.sort((a, b) => ((a.cx - pcx) ** 2 + (a.cz - pcz) ** 2) - ((b.cx - pcx) ** 2 + (b.cz - pcz) ** 2));
+      let lit = false, cut = false;
       for (const c of arr) {
-        if (performance.now() - t0 > 3.5) break;
+        if (performance.now() - t0 > 3.5) { cut = true; break; }
         if (c.state !== 1) { w.pendingLit.delete(c); continue; }
         if (w.litPass(c)) {
+          lit = true;
           w.pendingLit.delete(c);
           let top = -1; for (let s = SECTIONS - 1; s >= 0; s--) if (c.secs[s]) { top = s; break; }
           c.dirty = top >= 0 ? ((1 << (top + 1)) - 1) : 0;
         }
       }
+      this.litIdleAt = lit || cut ? -1 : w.stats.gen;
     }
     // meshing
     const maxMesh = w.pool.workers.length * 4;
@@ -1397,12 +1405,13 @@ class Game {
     const held = this.inv[this.sel];
     const li = this.lightAt(p.pos[0], p.pos[1] + 1.2, p.pos[2], env);
     // view-space projection
-    const proj = new Float32Array(16);
+    const proj = this.handProj || (this.handProj = new Float32Array(16));
     M4.persp(proj, 70 * Math.PI / 180, r.canvas.width / r.canvas.height, 0.05, 10);
     const sw = this.swingT || 0, swingA = Math.sin((1 - sw) * Math.PI) * (sw > 0 ? 1 : 0);
     // the hand follows the same view bobbing
     const BV = this.bobView || [0, 0, 0, 0], bx = BV[0], by = BV[1];
-    const v = [];
+    const v = this.heldVB || (this.heldVB = new VBuf());
+    v.n = 0;
     gl.clear(gl.DEPTH_BUFFER_BIT);
     if (!held) {
       // arm from the player skin
@@ -1422,10 +1431,13 @@ class Game {
     const id = held.id;
     const cube = !isItem(id) && (SHAPE[id] === SH.CUBE || SHAPE[id] === SH.SLAB || SHAPE[id] === SH.STAIRS || SHAPE[id] === SH.CHEST || SHAPE[id] === SH.CACTUS || SHAPE[id] === SH.FARMLAND || SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL);
     const rotY = 0.78, rotX = 0.32;
+    // held item local -> view, into one reused 3-vector (read right after each call)
+    const TQ = this.heldTQ || (this.heldTQ = new Float64Array(3));
     const tf = (x, y, z) => {
       let x1 = x * Math.cos(rotY) + z * Math.sin(rotY), z1 = -x * Math.sin(rotY) + z * Math.cos(rotY);
       let y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX); z1 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
-      return [x1 + 0.56 + bx - swingA * 0.25, y1 - 0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0), z1 - 1.0 - swingA * 0.2];
+      TQ[0] = x1 + 0.56 + bx - swingA * 0.25; TQ[1] = y1 - 0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0); TQ[2] = z1 - 1.0 - swingA * 0.2;
+      return TQ;
     };
     if (cube) {
       const s = 0.105;
@@ -1433,10 +1445,16 @@ class Game {
       const L = [FTEX[id * 6], FTEX[id * 6 + 1], FTEX[id * 6 + 2], FTEX[id * 6 + 3], FTEX[id * 6 + 4], FTEX[id * 6 + 5]];
       if (FLAGS[id] & BF_FACING) L[4] = FRONT[id];
       const sh = [0.72, 0.72, 1, 0.55, 0.82, 0.82];
-      const tmp = [];
+      const tmp = this.heldTmp || (this.heldTmp = []);
+      tmp.length = 0;
       this.pushBox(tmp, -s, -s, -s, s, h, s, 0, [li, li, li, 1], 0, L, sh, null);
-      for (let i = 0; i < tmp.length; i += 10) { const q = tf(tmp[i], tmp[i + 1], tmp[i + 2]); tmp[i] = q[0]; tmp[i + 1] = q[1]; tmp[i + 2] = q[2]; }
-      v.push(...tmp);
+      const a = v.reserve(tmp.length);
+      for (let i = 0; i < tmp.length; i += 10) {
+        const q = tf(tmp[i], tmp[i + 1], tmp[i + 2]);
+        a[i] = q[0]; a[i + 1] = q[1]; a[i + 2] = q[2];
+        for (let k = 3; k < 10; k++) a[i + k] = tmp[i + k];
+      }
+      v.n = tmp.length;
     } else {
       // flat item sprite (double sided)
       const layer = isItem(id) ? this.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? this.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
@@ -1446,13 +1464,14 @@ class Game {
       for (const i of [0, 1, 2, 0, 2, 3]) { const q = rot(c[i][0], c[i][1], c[i][2]); v.push(q[0], q[1], q[2], c[i][3], c[i][4], layer, li, li, li, 1); }
     }
     gl.disable(gl.CULL_FACE);
-    r.drawArr(r.f32(v), v.length / 10, null, 0.5, proj);
+    r.drawArr(v.view(), v.n / 10, null, 0.5, proj);
     gl.enable(gl.CULL_FACE);
   }
 
   // MC-style box with standard skin unwrap. M(MP, x, y, z, o) maps local coords to camera relative
-  // ones, written into o (MP: its parameters; a plain function, not a closure made per call). The 8 corners are transformed once and shared by the faces, through one
-  // reused buffer (no per-corner or per-face temporaries).
+  // ones, written into o (MP: its parameters; a plain function, not a closure made per call). The
+  // 8 corners are transformed once and shared by the faces, through one reused buffer, and the
+  // vertices go straight into the vertex buffer (no per-corner, per-face or per-vertex temporaries).
   pushModelBox(out, M, MP, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
     const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24)), q = this._mbQ || (this._mbQ = new Float64Array(3));
     for (let k = 0; k < 8; k++) { M(MP, k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0, q); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
@@ -1464,6 +1483,9 @@ class Game {
     R[16] = u + d + w + d; R[17] = v + d; R[18] = u + d + w + d + w; R[19] = v + d + h;
     R[20] = u + d; R[21] = v + d; R[22] = u + d + w; R[23] = v + d + h;
     const tr = tint ? tint[0] : 1, tg = tint ? tint[1] : 1, tb = tint ? tint[2] : 1;
+    // 36 vertices of 10 floats written straight into the vertex buffer (out: a VBuf)
+    const a = out.reserve(360);
+    let n = out.n;
     for (let f = 0; f < 6; f++) {
       const L = light * MB_SHADE[f], cr = L * tr, cg = L * tg, cb = L * tb;
       const ua = R[f * 4] / tw, va = R[f * 4 + 1] / th, ub = R[f * 4 + 2] / tw, vb = R[f * 4 + 3] / th;
@@ -1471,9 +1493,12 @@ class Game {
         const i = MB_TRI[t], c = MB_FACES[f * 4 + i] * 3;
         // corner uv: 0 (u0,v1) 1 (u1,v1) 2 (u1,v0) 3 (u0,v0), mirrored horizontally when asked
         const left = (i === 0 || i === 3) !== !!mirror;
-        out.push(C[c], C[c + 1], C[c + 2], left ? ua : ub, i < 2 ? vb : va, 0, cr, cg, cb, 1);
+        a[n] = C[c]; a[n + 1] = C[c + 1]; a[n + 2] = C[c + 2]; a[n + 3] = left ? ua : ub; a[n + 4] = i < 2 ? vb : va;
+        a[n + 5] = 0; a[n + 6] = cr; a[n + 7] = cg; a[n + 8] = cb; a[n + 9] = 1;
+        n += 10;
       }
     }
+    out.n = n;
   }
 
   // ------------------------------------------------------------------ HUD

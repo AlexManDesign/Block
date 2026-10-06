@@ -59,6 +59,15 @@ class VBuf {
     this.n = n + 10;
   }
   view() { return this.a.subarray(0, this.n); }
+  // room for k more floats; returns the (possibly new) array, to be written from this.n on
+  reserve(k) {
+    if (this.n + k > this.a.length) {
+      let len = this.a.length * 2;
+      while (len < this.n + k) len *= 2;
+      const b2 = new Float32Array(len); b2.set(this.a.subarray(0, this.n)); this.a = b2;
+    }
+    return this.a;
+  }
 }
 
 const TERRAIN_VS = `#version 300 es
@@ -667,14 +676,15 @@ class Renderer {
     const R2 = (renderDist + 0.5) * (renderDist + 0.5);
     const noCull = this.noOcclusion;
     // fog occlusion (as in Sodium), only where it changes no pixel: see fullyFogged()
-    const fc = this.fogCull, fogEnd = fc ? fc.end : 0, fogY = fc ? fc.y : null;
+    const fc = this.fogCull, F = this.frustum;
+    const camX = cam[0], camY = cam[1], camZ = cam[2];
     while (qh < qt) {
       const cx = Q[qh], cz = Q[qh + 1], sy = Q[qh + 2], from = Q[qh + 3], dirs = Q[qh + 4];
       qh += 5;
       const c = world.col(cx, cz);
       const m = c.meshes[sy];
       if (m && m.vbo) {
-        if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) this.stats.fogCulled++;
+        if (fc && this.fullyFogged(cx, sy, cz, cam)) this.stats.fogCulled++;
         else list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
       }
       const vis = m && m.vis;
@@ -688,9 +698,15 @@ class Renderer {
         const nc = world.col(nx, nz);
         if (!nc || nc.state < 2) continue;
         if (nc.visFrame[ny] === fr) continue;
-        // frustum test in camera-relative coords
-        const bx = nx * 16 - cam[0], by = WORLD_MIN_Y + ny * 16 - cam[1], bz = nz * 16 - cam[2];
-        if (!this.boxVisible(bx, by, bz, bx + 16, by + 16, bz + 16)) continue;
+        // frustum test in camera-relative coords (boxVisible written out: freshly computed numbers
+        // handed to a call are boxed into new objects, thousands of times a frame here)
+        const x0 = nx * 16 - camX, y0 = WORLD_MIN_Y + ny * 16 - camY, z0 = nz * 16 - camZ, x1 = x0 + 16, y1 = y0 + 16, z1 = z0 + 16;
+        let out = false;
+        for (let i = 0; i < 24; i += 4) {
+          const a = F[i], b = F[i + 1], e = F[i + 2];
+          if (a * (a > 0 ? x1 : x0) + b * (b > 0 ? y1 : y0) + e * (e > 0 ? z1 : z0) + F[i + 3] < 0) { out = true; break; }
+        }
+        if (out) continue;
         nc.visFrame[ny] = fr;
         if (qt + 5 > Q.length) break;
         Q[qt++] = nx; Q[qt++] = nz; Q[qt++] = ny; Q[qt++] = OPP6[d]; Q[qt++] = dirs | (1 << d);
@@ -703,7 +719,8 @@ class Renderer {
   // max(horizontal distance, |dy| / 2)) and it lies wholly below the eye: every ray to it points
   // down, where the sky shader draws exactly the fog colour (no sunset glow, see renderWorld), so
   // the pixel is the same with or without it.
-  fullyFogged(cx, sy, cz, cam, fogEnd, eyeY) {
+  fullyFogged(cx, sy, cz, cam) {
+    const fogEnd = this.fogCull.end, eyeY = this.fogCull.y;
     const y0 = WORLD_MIN_Y + sy * 16;
     if (y0 + 17 > eyeY) return false;
     // seen from above the clouds, terrain reaching into the cloud layer would hide cloud behind it

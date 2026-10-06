@@ -846,9 +846,24 @@ class Entities {
     return false;
   }
   hazard(x, y, z) { const id = this.game.world.getBlock(x, y, z); return id === B.LAVA || id === B.FIRE; }
-  clear2(x, y, z) { return !this.pointSolid(x + 0.5, y + 0.4, z + 0.5) && !this.pointSolid(x + 0.5, y + 1.4, z + 0.5); }
+  // the centre column of block (bx, by, bz) at height ly inside it (0..1) is inside a collision box:
+  // pointSolid(bx + 0.5, by + ly, bz + 0.5) with integer arguments, so the pathfinder's many calls
+  // pass no fresh fractions (each would be boxed into a new number object)
+  solidIn(bx, by, bz, ly) {
+    const w = this.game.world, id = w.getBlock(bx, by, bz);
+    if (!id || !SOLID[id]) return false;
+    if (SHAPE[id] === SH.CUBE) return true;
+    const boxes = collisionBoxes(w, id, w.getMeta(bx, by, bz), bx, by, bz);
+    if (!boxes) return false;
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      if (0.5 >= b[0] && 0.5 <= b[3] && ly >= b[1] && ly <= b[4] && 0.5 >= b[2] && 0.5 <= b[5]) return true;
+    }
+    return false;
+  }
+  clear2(x, y, z) { return !this.solidIn(x, y, z, 0.4) && !this.solidIn(x, y + 1, z, 0.4); }
   standable(x, y, z) {
-    return this.pointSolid(x + 0.5, y - 0.2, z + 0.5) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
+    return this.solidIn(x, y - 1, z, 0.8) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
   }
   // walkable height in column x,z near y: one step up or a drop of up to 3
   standY(x, y, z) {
@@ -909,7 +924,7 @@ class Entities {
     const l = Math.hypot(e.wish[0], e.wish[2]);
     if (l < 0.2) return false;
     const x = Math.floor(e.pos[0] + e.wish[0] / l * 0.8), z = Math.floor(e.pos[2] + e.wish[2] / l * 0.8), y = Math.floor(e.pos[1] + 0.1);
-    for (let a = 0; a <= 3; a++) if (this.pointSolid(x + 0.5, y - a - 0.2, z + 0.5)) return false;
+    for (let a = 0; a <= 3; a++) if (this.solidIn(x, y - a - 1, z, 0.8)) return false;
     return true;
   }
   // water (or lava) right ahead, at feet level or just below

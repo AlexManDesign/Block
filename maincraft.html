@@ -11872,6 +11872,15 @@ class VBuf {
     this.n = n + 10;
   }
   view() { return this.a.subarray(0, this.n); }
+  // room for k more floats; returns the (possibly new) array, to be written from this.n on
+  reserve(k) {
+    if (this.n + k > this.a.length) {
+      let len = this.a.length * 2;
+      while (len < this.n + k) len *= 2;
+      const b2 = new Float32Array(len); b2.set(this.a.subarray(0, this.n)); this.a = b2;
+    }
+    return this.a;
+  }
 }
 
 const TERRAIN_VS = `#version 300 es
@@ -12480,14 +12489,15 @@ class Renderer {
     const R2 = (renderDist + 0.5) * (renderDist + 0.5);
     const noCull = this.noOcclusion;
     // fog occlusion (as in Sodium), only where it changes no pixel: see fullyFogged()
-    const fc = this.fogCull, fogEnd = fc ? fc.end : 0, fogY = fc ? fc.y : null;
+    const fc = this.fogCull, F = this.frustum;
+    const camX = cam[0], camY = cam[1], camZ = cam[2];
     while (qh < qt) {
       const cx = Q[qh], cz = Q[qh + 1], sy = Q[qh + 2], from = Q[qh + 3], dirs = Q[qh + 4];
       qh += 5;
       const c = world.col(cx, cz);
       const m = c.meshes[sy];
       if (m && m.vbo) {
-        if (fogY !== null && this.fullyFogged(cx, sy, cz, cam, fogEnd, fogY)) this.stats.fogCulled++;
+        if (fc && this.fullyFogged(cx, sy, cz, cam)) this.stats.fogCulled++;
         else list[n++] = m, m.cx = cx, m.cz = cz, m.sy = sy;
       }
       const vis = m && m.vis;
@@ -12501,9 +12511,15 @@ class Renderer {
         const nc = world.col(nx, nz);
         if (!nc || nc.state < 2) continue;
         if (nc.visFrame[ny] === fr) continue;
-        // frustum test in camera-relative coords
-        const bx = nx * 16 - cam[0], by = WORLD_MIN_Y + ny * 16 - cam[1], bz = nz * 16 - cam[2];
-        if (!this.boxVisible(bx, by, bz, bx + 16, by + 16, bz + 16)) continue;
+        // frustum test in camera-relative coords (boxVisible written out: freshly computed numbers
+        // handed to a call are boxed into new objects, thousands of times a frame here)
+        const x0 = nx * 16 - camX, y0 = WORLD_MIN_Y + ny * 16 - camY, z0 = nz * 16 - camZ, x1 = x0 + 16, y1 = y0 + 16, z1 = z0 + 16;
+        let out = false;
+        for (let i = 0; i < 24; i += 4) {
+          const a = F[i], b = F[i + 1], e = F[i + 2];
+          if (a * (a > 0 ? x1 : x0) + b * (b > 0 ? y1 : y0) + e * (e > 0 ? z1 : z0) + F[i + 3] < 0) { out = true; break; }
+        }
+        if (out) continue;
         nc.visFrame[ny] = fr;
         if (qt + 5 > Q.length) break;
         Q[qt++] = nx; Q[qt++] = nz; Q[qt++] = ny; Q[qt++] = OPP6[d]; Q[qt++] = dirs | (1 << d);
@@ -12516,7 +12532,8 @@ class Renderer {
   // max(horizontal distance, |dy| / 2)) and it lies wholly below the eye: every ray to it points
   // down, where the sky shader draws exactly the fog colour (no sunset glow, see renderWorld), so
   // the pixel is the same with or without it.
-  fullyFogged(cx, sy, cz, cam, fogEnd, eyeY) {
+  fullyFogged(cx, sy, cz, cam) {
+    const fogEnd = this.fogCull.end, eyeY = this.fogCull.y;
     const y0 = WORLD_MIN_Y + sy * 16;
     if (y0 + 17 > eyeY) return false;
     // seen from above the clouds, terrain reaching into the cloud layer would hide cloud behind it
@@ -14371,9 +14388,24 @@ class Entities {
     return false;
   }
   hazard(x, y, z) { const id = this.game.world.getBlock(x, y, z); return id === B.LAVA || id === B.FIRE; }
-  clear2(x, y, z) { return !this.pointSolid(x + 0.5, y + 0.4, z + 0.5) && !this.pointSolid(x + 0.5, y + 1.4, z + 0.5); }
+  // the centre column of block (bx, by, bz) at height ly inside it (0..1) is inside a collision box:
+  // pointSolid(bx + 0.5, by + ly, bz + 0.5) with integer arguments, so the pathfinder's many calls
+  // pass no fresh fractions (each would be boxed into a new number object)
+  solidIn(bx, by, bz, ly) {
+    const w = this.game.world, id = w.getBlock(bx, by, bz);
+    if (!id || !SOLID[id]) return false;
+    if (SHAPE[id] === SH.CUBE) return true;
+    const boxes = collisionBoxes(w, id, w.getMeta(bx, by, bz), bx, by, bz);
+    if (!boxes) return false;
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      if (0.5 >= b[0] && 0.5 <= b[3] && ly >= b[1] && ly <= b[4] && 0.5 >= b[2] && 0.5 <= b[5]) return true;
+    }
+    return false;
+  }
+  clear2(x, y, z) { return !this.solidIn(x, y, z, 0.4) && !this.solidIn(x, y + 1, z, 0.4); }
   standable(x, y, z) {
-    return this.pointSolid(x + 0.5, y - 0.2, z + 0.5) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
+    return this.solidIn(x, y - 1, z, 0.8) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
   }
   // walkable height in column x,z near y: one step up or a drop of up to 3
   standY(x, y, z) {
@@ -14434,7 +14466,7 @@ class Entities {
     const l = Math.hypot(e.wish[0], e.wish[2]);
     if (l < 0.2) return false;
     const x = Math.floor(e.pos[0] + e.wish[0] / l * 0.8), z = Math.floor(e.pos[2] + e.wish[2] / l * 0.8), y = Math.floor(e.pos[1] + 0.1);
-    for (let a = 0; a <= 3; a++) if (this.pointSolid(x + 0.5, y - a - 0.2, z + 0.5)) return false;
+    for (let a = 0; a <= 3; a++) if (this.solidIn(x, y - a - 1, z, 0.8)) return false;
     return true;
   }
   // water (or lava) right ahead, at feet level or just below
@@ -15918,7 +15950,7 @@ function handXform(P, x, y, z, o) {
   let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
   o[0] = x2 + 0.56 + P[1] - sw2 * 0.2; o[1] = y1 - 0.62 + P[2] + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
 }
-const BUILD_ID = '65aa296';   // filled in by build.py
+const BUILD_ID = '81b45db';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -15971,6 +16003,7 @@ class Game {
     // column offsets around the player, nearest first: [dx, dz, dx² + dz²], integers only (an array
     // holding a fraction would hand out dx and dz as doubles)
     this.spiral = [];
+    this.litIdleAt = -1;   // stream(): stats.gen at the last light pass that lit nothing
     for (let dz = -40; dz <= 40; dz++) for (let dx = -40; dx <= 40; dx++) this.spiral.push([dx, dz, dx * dx + dz * dz]);
     this.spiral.sort((a, b) => a[2] - b[2]);
     this.lastSpace = 0; this.lastW = 0;
@@ -16128,19 +16161,26 @@ class Game {
       }
     }
     // light passes (budgeted)
+    // Columns wait here until their neighbours exist; the ones on the edge of the loaded area wait
+    // for good. A full pass that lit nothing is not repeated until another column has arrived
+    // (only arrivals let a waiting column proceed), so the waiting list is not copied, sorted and
+    // walked again every frame for nothing.
     const t0 = performance.now();
-    if (w.pendingLit.size) {
+    if (w.pendingLit.size && this.litIdleAt !== w.stats.gen) {
       const arr = Array.from(w.pendingLit);
       arr.sort((a, b) => ((a.cx - pcx) ** 2 + (a.cz - pcz) ** 2) - ((b.cx - pcx) ** 2 + (b.cz - pcz) ** 2));
+      let lit = false, cut = false;
       for (const c of arr) {
-        if (performance.now() - t0 > 3.5) break;
+        if (performance.now() - t0 > 3.5) { cut = true; break; }
         if (c.state !== 1) { w.pendingLit.delete(c); continue; }
         if (w.litPass(c)) {
+          lit = true;
           w.pendingLit.delete(c);
           let top = -1; for (let s = SECTIONS - 1; s >= 0; s--) if (c.secs[s]) { top = s; break; }
           c.dirty = top >= 0 ? ((1 << (top + 1)) - 1) : 0;
         }
       }
+      this.litIdleAt = lit || cut ? -1 : w.stats.gen;
     }
     // meshing
     const maxMesh = w.pool.workers.length * 4;
@@ -17290,12 +17330,13 @@ class Game {
     const held = this.inv[this.sel];
     const li = this.lightAt(p.pos[0], p.pos[1] + 1.2, p.pos[2], env);
     // view-space projection
-    const proj = new Float32Array(16);
+    const proj = this.handProj || (this.handProj = new Float32Array(16));
     M4.persp(proj, 70 * Math.PI / 180, r.canvas.width / r.canvas.height, 0.05, 10);
     const sw = this.swingT || 0, swingA = Math.sin((1 - sw) * Math.PI) * (sw > 0 ? 1 : 0);
     // the hand follows the same view bobbing
     const BV = this.bobView || [0, 0, 0, 0], bx = BV[0], by = BV[1];
-    const v = [];
+    const v = this.heldVB || (this.heldVB = new VBuf());
+    v.n = 0;
     gl.clear(gl.DEPTH_BUFFER_BIT);
     if (!held) {
       // arm from the player skin
@@ -17315,10 +17356,13 @@ class Game {
     const id = held.id;
     const cube = !isItem(id) && (SHAPE[id] === SH.CUBE || SHAPE[id] === SH.SLAB || SHAPE[id] === SH.STAIRS || SHAPE[id] === SH.CHEST || SHAPE[id] === SH.CACTUS || SHAPE[id] === SH.FARMLAND || SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL);
     const rotY = 0.78, rotX = 0.32;
+    // held item local -> view, into one reused 3-vector (read right after each call)
+    const TQ = this.heldTQ || (this.heldTQ = new Float64Array(3));
     const tf = (x, y, z) => {
       let x1 = x * Math.cos(rotY) + z * Math.sin(rotY), z1 = -x * Math.sin(rotY) + z * Math.cos(rotY);
       let y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX); z1 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
-      return [x1 + 0.56 + bx - swingA * 0.25, y1 - 0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0), z1 - 1.0 - swingA * 0.2];
+      TQ[0] = x1 + 0.56 + bx - swingA * 0.25; TQ[1] = y1 - 0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0); TQ[2] = z1 - 1.0 - swingA * 0.2;
+      return TQ;
     };
     if (cube) {
       const s = 0.105;
@@ -17326,10 +17370,16 @@ class Game {
       const L = [FTEX[id * 6], FTEX[id * 6 + 1], FTEX[id * 6 + 2], FTEX[id * 6 + 3], FTEX[id * 6 + 4], FTEX[id * 6 + 5]];
       if (FLAGS[id] & BF_FACING) L[4] = FRONT[id];
       const sh = [0.72, 0.72, 1, 0.55, 0.82, 0.82];
-      const tmp = [];
+      const tmp = this.heldTmp || (this.heldTmp = []);
+      tmp.length = 0;
       this.pushBox(tmp, -s, -s, -s, s, h, s, 0, [li, li, li, 1], 0, L, sh, null);
-      for (let i = 0; i < tmp.length; i += 10) { const q = tf(tmp[i], tmp[i + 1], tmp[i + 2]); tmp[i] = q[0]; tmp[i + 1] = q[1]; tmp[i + 2] = q[2]; }
-      v.push(...tmp);
+      const a = v.reserve(tmp.length);
+      for (let i = 0; i < tmp.length; i += 10) {
+        const q = tf(tmp[i], tmp[i + 1], tmp[i + 2]);
+        a[i] = q[0]; a[i + 1] = q[1]; a[i + 2] = q[2];
+        for (let k = 3; k < 10; k++) a[i + k] = tmp[i + k];
+      }
+      v.n = tmp.length;
     } else {
       // flat item sprite (double sided)
       const layer = isItem(id) ? this.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? this.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
@@ -17339,13 +17389,14 @@ class Game {
       for (const i of [0, 1, 2, 0, 2, 3]) { const q = rot(c[i][0], c[i][1], c[i][2]); v.push(q[0], q[1], q[2], c[i][3], c[i][4], layer, li, li, li, 1); }
     }
     gl.disable(gl.CULL_FACE);
-    r.drawArr(r.f32(v), v.length / 10, null, 0.5, proj);
+    r.drawArr(v.view(), v.n / 10, null, 0.5, proj);
     gl.enable(gl.CULL_FACE);
   }
 
   // MC-style box with standard skin unwrap. M(MP, x, y, z, o) maps local coords to camera relative
-  // ones, written into o (MP: its parameters; a plain function, not a closure made per call). The 8 corners are transformed once and shared by the faces, through one
-  // reused buffer (no per-corner or per-face temporaries).
+  // ones, written into o (MP: its parameters; a plain function, not a closure made per call). The
+  // 8 corners are transformed once and shared by the faces, through one reused buffer, and the
+  // vertices go straight into the vertex buffer (no per-corner, per-face or per-vertex temporaries).
   pushModelBox(out, M, MP, x0, y0, z0, x1, y1, z1, u, v, w, h, d, tw, th, light, tint, mirror) {
     const C = this._mbC || (this._mbC = new Float64Array(24)), R = this._mbR || (this._mbR = new Float64Array(24)), q = this._mbQ || (this._mbQ = new Float64Array(3));
     for (let k = 0; k < 8; k++) { M(MP, k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? z1 : z0, q); C[k * 3] = q[0]; C[k * 3 + 1] = q[1]; C[k * 3 + 2] = q[2]; }
@@ -17357,6 +17408,9 @@ class Game {
     R[16] = u + d + w + d; R[17] = v + d; R[18] = u + d + w + d + w; R[19] = v + d + h;
     R[20] = u + d; R[21] = v + d; R[22] = u + d + w; R[23] = v + d + h;
     const tr = tint ? tint[0] : 1, tg = tint ? tint[1] : 1, tb = tint ? tint[2] : 1;
+    // 36 vertices of 10 floats written straight into the vertex buffer (out: a VBuf)
+    const a = out.reserve(360);
+    let n = out.n;
     for (let f = 0; f < 6; f++) {
       const L = light * MB_SHADE[f], cr = L * tr, cg = L * tg, cb = L * tb;
       const ua = R[f * 4] / tw, va = R[f * 4 + 1] / th, ub = R[f * 4 + 2] / tw, vb = R[f * 4 + 3] / th;
@@ -17364,9 +17418,12 @@ class Game {
         const i = MB_TRI[t], c = MB_FACES[f * 4 + i] * 3;
         // corner uv: 0 (u0,v1) 1 (u1,v1) 2 (u1,v0) 3 (u0,v0), mirrored horizontally when asked
         const left = (i === 0 || i === 3) !== !!mirror;
-        out.push(C[c], C[c + 1], C[c + 2], left ? ua : ub, i < 2 ? vb : va, 0, cr, cg, cb, 1);
+        a[n] = C[c]; a[n + 1] = C[c + 1]; a[n + 2] = C[c + 2]; a[n + 3] = left ? ua : ub; a[n + 4] = i < 2 ? vb : va;
+        a[n + 5] = 0; a[n + 6] = cr; a[n + 7] = cg; a[n + 8] = cb; a[n + 9] = 1;
+        n += 10;
       }
     }
+    out.n = n;
   }
 
   // ------------------------------------------------------------------ HUD
