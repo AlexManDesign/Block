@@ -195,8 +195,8 @@ const bindings={
      if(n.operator==='~'&&t===NUM){this.emitAs(n.argument,'f');this.toInt32();this.integer(-1);this.out(0x73,0xb7);return 'f';}
      if(n.operator==='void'){const r=this.natural(n.argument);this.out(0x1a);this.lit(undefined);return r&&'r';}
      break;
-    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix);break;
-    case'AssignmentExpression':if(n.left.type==='Identifier')return this.assignNatural(n);break;
+    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix);if(this.plainMember(n.argument))return this.updateMember(n);break;
+    case'AssignmentExpression':if(n.left.type==='Identifier')return this.assignNatural(n);if(this.plainMember(n.left))return this.assignMember(n);break;
     case'BinaryExpression':{const r=this.binaryNatural(n.operator,n.left,n.right,t);if(r)return r;break;}
     case'LogicalExpression':
      if(numeric(t)&&n.left._t===t&&n.right._t===t){
@@ -214,12 +214,78 @@ const bindings={
     case'CallExpression':{
      if(n._direct&&!n.optional)return this.directCall(n,n._direct);
      if(n._math&&!n.optional){const r=this.math(n);if(r)return r;}
+     if(this.callValue(n))return 'r';
      break;
     }
+    case'MemberExpression':if(this.plainMember(n)){this.memberGet(n);return 'r';}break;
+    case'ObjectExpression':this.objectLiteral(n);return 'r';
+    case'Emit':return n.emit();
    }
-  }
+  }else if(n.type==='Emit')return n.emit();
   this.dynamicExpression(n,hint);return 'r';
  },
+ // Object literal; anonymous functions take their names from the keys.
+ objectLiteral(n){
+  this.rt('object');
+  for(const p of n.properties){
+   if(p.type==='SpreadElement'){this.expression(p.argument);this.rt('assign');continue;}
+   const accessor=p.kind==='get'||p.kind==='set',anonymous=!p.method&&!accessor&&(p.value.type==='ArrowFunctionExpression'||(p.value.type==='FunctionExpression'||p.value.type==='ClassExpression')&&!p.value.id);
+   const kind=p.kind==='get'?1:p.kind==='set'?2:!p.computed&&!p.shorthand&&!p.method&&(p.key.name??p.key.value)==='__proto__'?3:p.method?4:0;
+   let key=null;
+   if(p.computed){this.expression(p.key);this.rt('key');key=this.local();this.tee(key);}else this.lit(p.key.name??p.key.value);
+   const name=p.computed?'':String(p.key.name??p.key.value);
+   if(p.method||accessor)this.function(p.value,name,true);else this.expression(p.value,kind===3?'':name);
+   if(key!==null&&(p.method||accessor||anonymous)||accessor){if(key!==null)this.get(key);else this.lit(name);this.integer(p.kind==='get'?1:p.kind==='set'?2:0);this.rt('setFunctionName');}
+   this.integer(kind);this.rt('define');
+  }
+ },
+ // ---- properties and calls without reference objects ----
+ plainMember(m){return m.type==='MemberExpression'&&!m.optional&&m.object.type!=='Super'&&m.property.type!=='PrivateIdentifier';},
+ // Evaluates object and key once; returns get/set emitters for that place.
+ place(m){
+  const o=this.local();this.expression(m.object);this.set(o);
+  let key=null,kind='c';
+  if(m.computed){const r=this.natural(m.property);if(r==='f'){key=this.local(F64);kind='f';}else{this.convert(r,'r',m.property._t);key=this.local();kind='r';}this.set(key);}
+  const pushKey=()=>{if(kind==='c')this.lit(m.property.name);else this.get(key);};
+  return {
+   get:()=>{this.get(o);pushKey();this.rt(kind==='f'?'getIndex':'getProp');return 'r';},
+   set:emitValue=>{this.get(o);pushKey();this.convert(emitValue()||'r','r');this.integer(+this.strict);this.rt(kind==='f'?'setIndex':'setProp');return 'r';},
+  };
+ },
+ memberGet(m){
+  this.expression(m.object);
+  if(!m.computed){this.lit(m.property.name);this.rt('getProp');return;}
+  const r=this.natural(m.property);
+  if(r==='f'){this.rt('getIndex');return;}
+  this.convert(r,'r',m.property._t);this.rt('getProp');
+ },
+ assignMember(n){
+  const p=this.place(n.left),t=n._t;
+  if(n.operator==='=')return p.set(()=>this.natural(n.right));
+  if(['&&=','||=','??='].includes(n.operator)){
+   const old=this.local();p.get();this.tee(old);this.rt(n.operator==='??='?'nullish':'truth');
+   const put=()=>p.set(()=>this.natural(n.right));
+   if(n.operator==='||=')this.ifElse(()=>this.get(old),put,REF);else this.ifElse(put,()=>this.get(old),REF);return 'r';
+  }
+  return p.set(()=>this.binaryAny(n.operator.slice(0,-1),{type:'Emit',_t:'any',emit:p.get},n.right,t));
+ },
+ updateMember(n){
+  const p=this.place(n.argument),old=this.local(),value=this.local();
+  p.get();this.rt('toNumeric');this.tee(old);this.integer(n.operator==='++'?1:-1);this.rt('increment');this.set(value);
+  p.set(()=>this.get(value));this.out(0x1a);this.get(n.prefix?value:old);return 'r';
+ },
+ // f(a, b) and o.m(a, b): one host crossing, arguments passed directly.
+ callValue(n){
+  const callee=n.callee;
+  if(n.optional||n.arguments.length>8||n.arguments.some(a=>a.type==='SpreadElement'))return false;
+  if(callee.type==='Super'||callee.type==='ChainExpression'||callee.type==='MemberExpression'&&!this.plainMember(callee))return false;
+  if(callee.type==='MemberExpression'){const self=this.local();this.expression(callee.object);this.tee(self);this.set(self);
+   this.get(self);if(!callee.computed)this.lit(callee.property.name);else{const r=this.natural(callee.property);if(r==='f'){this.rt('getIndex');this.get(self);this.args8(n);return true;}this.convert(r,'r',callee.property._t);}
+   this.rt('getProp');this.get(self);
+  }else{this.expression(callee);this.lit(undefined);}
+  this.args8(n);return true;
+ },
+ args8(n){for(const a of n.arguments)this.expression(a);this.rt('call'+n.arguments.length);},
  // Numeric binary operators on statically numeric operands; null otherwise.
  binaryNatural(op,left,right,t){
   if(this.dynamicOnly)return null;

@@ -67,6 +67,7 @@ function environmentWasm(){
  host('hostObjectDefine',[REF,REF,REF,I32],[REF]);host('hostObjectDelete',[REF,REF,I32],[I32]);
  host('hostArrayPush',[REF,REF],[REF]);host('hostArrayHole',[REF],[REF]);host('hostArg',[REF,I32],[REF]);
  host('hostHas',[REF,REF],[I32]);host('hostRemove',[REF],[REF]);
+ host('hostGet',[REF,REF],[REF]);host('hostSet',[REF,REF,REF,I32],[REF]);host('hostGetIndex',[REF,F64],[REF]);host('hostSetIndex',[REF,F64,REF,I32],[REF]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -79,9 +80,17 @@ function environmentWasm(){
  });
  def('setConstant',[I32,REF],[],f=>{f.out(0x23,1);f.internal(POOL);f.get(0);f.get(1);f.out(0xfb,0x0e,...u32(POOL));});
  def('lit',[I32],[REF],f=>{f.out(0x23,1);f.internal(POOL);f.get(0);f.out(0xfb,0x0b,...u32(POOL));});
- def('number',[F64],[REF],f=>{f.get(0);f.out(0x23,6);f.create(NUMBER);});
- def('isNumber',[REF],[I32],f=>{f.test(0,NUMBER);f.if(()=>{f.field(0,NUMBER,1);f.out(0x23,6,0xd3);},()=>f.int(0),I32);});
- def('toNumber',[REF],[F64],f=>f.field(0,NUMBER,0));
+ // Numbers: integers in [-2^30, 2^30) are i31 references (no allocation, and
+ // JS sees them as plain numbers); every other double is a boxed struct.
+ def('number',[F64],[REF],f=>{
+  const i=f.local(I32);
+  f.get(0);f.out(0xfc,0x02);f.tee(i);f.out(0xb7);f.get(0);f.out(0x61);
+  f.get(i);f.int(0x40000000);f.out(0x6a);f.int(0);f.out(0x4e,0x71);
+  f.get(i);f.out(0x45,0x45);f.get(0);f.out(0xbd,0x50,0x72,0x71); // not -0
+  f.if(()=>{f.get(i);f.out(0xfb,0x1c,0xfb,0x1b);},()=>{f.get(0);f.out(0x23,6);f.create(NUMBER);},REF);
+ });
+ def('isNumber',[REF],[I32],f=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x14,0x6c);f.if(()=>f.int(1),()=>{f.test(0,NUMBER);f.if(()=>{f.field(0,NUMBER,1);f.out(0x23,6,0xd3);},()=>f.int(0),I32);},I32);});
+ def('toNumber',[REF],[F64],f=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x14,0x6c);f.if(()=>{f.get(0);f.out(0xfb,0x1a,0xfb,0x16,0x6c,0xfb,0x1d,0xb7);},()=>f.field(0,NUMBER,0),F64);});
  // ECMAScript ToInt32 for doubles. Powers of two keep the remainder exact;
  // doubles with magnitude >= 2^84 are already multiples of 2^32.
  def('int32',[F64],[I32],f=>{
@@ -96,7 +105,7 @@ function environmentWasm(){
  def('boolean',[I32],[REF],f=>{f.get(0);f.if(()=>f.out(0x23,5),()=>f.out(0x23,4),REF);});
  def('truth',[REF],[I32],f=>{
   const value=f.local(F64),kind=f.local(I32);f.get(0);f.call('isNumber');f.if(()=>{
-  f.field(0,NUMBER,0);f.tee(value);f.float(0);f.out(0x62);f.get(value);f.get(value);f.out(0x61,0x71);f.ret();
+  f.get(0);f.call('toNumber');f.tee(value);f.float(0);f.out(0x62);f.get(value);f.get(value);f.out(0x61,0x71);f.ret();
   });f.get(0);f.call('atomKind');f.tee(kind);f.int(0);f.out(0x4e);f.if(()=>{f.get(kind);f.int(3);f.out(0x46);f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.get(0);f.call('stringLength');f.out(0x45,0x45);f.ret();});f.get(0);f.call('isObject');f.if(()=>{f.int(1);f.ret();});f.get(0);f.call('hostTruth');
  });
@@ -111,6 +120,35 @@ function environmentWasm(){
   f.get(0);f.call('isObject');f.if(()=>{f.get(1);f.call('isObject');f.if(()=>{f.get(0);f.internal(OBJECT);f.get(1);f.internal(OBJECT);f.out(0xd3);},()=>f.int(0),I32);f.ret();});
   f.get(1);f.call('isObject');f.if(()=>{f.int(0);f.ret();});
   f.get(0);f.get(1);f.call('hostEqual');
+ });
+ // One call tells the bridge what a value is: 0 foreign (host value or an
+ // internal record), 1 number, 2..5 undefined/null/false/true, 6 string, 7 object.
+ def('valueKind',[REF],[I32],f=>{
+  const kind=f.local(I32);
+  f.get(0);f.call('isNumber');f.if(()=>{f.int(1);f.ret();});
+  f.get(0);f.call('atomKind');f.tee(kind);f.int(0);f.out(0x4e);f.if(()=>{f.get(kind);f.int(2);f.out(0x6a);f.ret();});
+  f.get(0);f.call('isString');f.if(()=>{f.int(6);f.ret();});
+  f.get(0);f.call('isObject');f.if(()=>{f.int(7);f.ret();});
+  f.int(0);
+ });
+ // Property access without reference objects.
+ def('getProp',[REF,REF],[REF],f=>{
+  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('objectGet');f.ret();});
+  f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('stringRead');f.ret();});
+  f.get(0);f.get(1);f.call('hostGet');
+ });
+ def('setProp',[REF,REF,REF,I32],[REF],f=>{
+  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.get(2);f.get(3);f.call('objectSet');f.ret();});
+  f.get(0);f.get(1);f.get(2);f.get(3);f.call('hostSet');
+ });
+ def('getIndex',[REF,F64],[REF],f=>{
+  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('number');f.call('objectGet');f.ret();});
+  f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('number');f.call('stringRead');f.ret();});
+  f.get(0);f.get(1);f.call('hostGetIndex');
+ });
+ def('setIndex',[REF,F64,REF,I32],[REF],f=>{
+  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('number');f.get(2);f.get(3);f.call('objectSet');f.ret();});
+  f.get(0);f.get(1);f.get(2);f.get(3);f.call('hostSetIndex');
  });
  def('templateString',[REF],[REF],f=>{f.get(0);f.call('isString');f.if(()=>f.get(0),()=>{f.get(0);f.call('hostTemplateString');},REF);});
  def('property',[REF,REF,I32],[REF],f=>{f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.get(2);f.int(1);f.out(0x23,6);f.create(OBJECT_REF);f.ret();});f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.get(2);f.out(0x23,6);f.create(STRING_REF);},()=>{f.get(0);f.get(1);f.get(2);f.call('hostProperty');},REF);});
@@ -150,7 +188,7 @@ function environmentWasm(){
  def('increment',[REF,I32],[REF],f=>{f.get(0);f.call('isNumber');f.if(()=>{f.get(0);f.call('toNumber');f.get(1);f.out(0xb7,0xa0);f.call('number');f.ret();});f.get(0);f.get(1);f.call('hostIncrement');});
  def('update',[REF,I32,I32],[REF],f=>{
   const old=f.local(),value=f.local();f.get(0);f.call('read');f.set(old);f.get(old);f.call('isNumber');f.if(()=>{
-   f.field(old,NUMBER,0);f.get(1);f.out(0xb7,0xa0);f.call('number');f.set(value);
+   f.get(old);f.call('toNumber');f.get(1);f.out(0xb7,0xa0);f.call('number');f.set(value);
    f.get(0);f.get(value);f.call('write');f.drop();f.get(2);f.if(()=>f.get(old),()=>f.get(value),REF);f.ret();
   });f.get(0);f.get(old);f.get(1);f.get(2);f.call('hostUpdate');
  });

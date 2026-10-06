@@ -60,7 +60,11 @@ export async function runPage(browser, html, { waitMs = 0, timeout = 20000 } = {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push('UNCAUGHT ' + (e.name || 'Error')));
-  await page.addInitScript(LOGGER);
+  // The logger is plain page script placed before everything else, after
+  // compilation, so it is never compiled itself.
+  const tag = '<script>' + LOGGER + '</script>';
+  const m = html.match(/^\ufeff?\s*<!doctype[^>]*>/i);
+  html = m ? html.slice(0, m[0].length) + tag + html.slice(m[0].length) : tag + html;
   try {
     await page.setContent(html, { timeout });
     await page.evaluate(t => Promise.race([window.__done, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), t))]), timeout).catch(e => errors.push('DONE-ERROR ' + e.message.split('\n')[0]));

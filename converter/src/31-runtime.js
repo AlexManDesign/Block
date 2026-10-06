@@ -10,8 +10,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const pool=constants.map(x=>x.t==='u'?undefined:x.t==='big'?BigInt(x.v):x.t==='num'?Number(x.v):x.v);
  let instance,environment;
  const hostObjects=new WeakMap();
- const passthrough=new WeakSet(),mark=v=>{if(v!==null&&(typeof v==='object'||typeof v==='function'))passthrough.add(v);return v;};
- const ref=(object,key,strict=false)=>mark({object,key,strict});
+ const ref=(object,key,strict=false)=>({object,key,strict});
  const toKey=k=>typeof k==='symbol'?k:Reflect.ownKeys({[k]:null})[0];
  const functions=new WeakMap(),classes=new WeakMap(),thisCells=new WeakMap(),privateKeys=new WeakSet(),templateCache=new Map();
  const resolvePromise=Promise.resolve,thenPromise=Promise.prototype.then;
@@ -38,14 +37,66 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  });
  const stringMethodIds=new Map(stringIntrinsics.map((f,i)=>[f,i]));stringMethodIds.delete(null);
  function rememberString(s,v){if(!stringCache.has(s)&&stringCache.size>=128)stringCache.delete(stringCache.keys().next().value);stringCache.set(s,v);hostStrings.set(v,s);return v;}
- function box(v){if(v!==null&&(typeof v==='object'||typeof v==='function')&&hostObjects.has(v))return hostObjects.get(v);if(typeof v==='number')return environment.number(v);if(typeof v==='boolean')return environment.boolean(+v);if(v===undefined)return environment.undefinedValue();if(v===null)return environment.nullValue();if(typeof v==='string'){if(stringCache.has(v))return stringCache.get(v);const s=environment.stringAlloc(v.length);for(let i=0;i<v.length;i++)environment.stringSet(s,i,Reflect.apply(characterCode,v,[i]));return rememberString(v,s);}return v;}
- function unbox(v){if(v===null||typeof v!=='object'||passthrough.has(v))return v;if(environment.isNumber(v))return environment.toNumber(v);const kind=environment.atomKind(v);if(kind>=0)return kind===0?undefined:kind===1?null:kind===2?false:true;if(environment.isString(v)){if(hostStrings.has(v))return hostStrings.get(v);let s='';const n=environment.stringLength(v);for(let start=0;start<n;start+=4096){const end=n<start+4096?n:start+4096,codes=new Uint16Array(end-start);for(let i=start;i<end;i++)codes[i-start]=environment.stringUnit(v,i);s+=Reflect.apply(fromCharCode,String,codes);}rememberString(s,v);return s;}if(environment.isObject(v))return materialize(v);return mark(v);}
- function boxedBridge(fn,invalidate=false){return (...a)=>{try{if(invalidate)environment.invalidatePrototypes();return fn(...a);}catch(e){if(e instanceof WebAssembly.Exception&&e.is(errorTag))throw e;throw new WebAssembly.Exception(errorTag,[box(e)]);}finally{if(invalidate)environment.invalidatePrototypes();}};}
- function bridge(fn,scalar=false){return boxedBridge((...a)=>{const value=fn(...a.map(unbox));return scalar?value:box(value);},true);}
+ // Small integers cross as plain numbers (i31 inside WASM); other values
+ // are converted to the environment's own representation.
+ function box(v){
+  switch(typeof v){
+   case'number':return (v|0)===v&&v>=-1073741824&&v<=1073741823&&(v!==0||1/v>0)?v:environment.number(v);
+   case'object':if(v===null)return environment.nullValue();{const o=hostObjects.get(v);return o===undefined?v:o;}
+   case'function':{const o=hostObjects.get(v);return o===undefined?v:o;}
+   case'boolean':return environment.boolean(+v);
+   case'undefined':return environment.undefinedValue();
+   case'string':{
+    if(stringCache.has(v))return stringCache.get(v);
+    const s=environment.stringAlloc(v.length);for(let i=0;i<v.length;i++)environment.stringSet(s,i,Reflect.apply(characterCode,v,[i]));return rememberString(v,s);
+   }
+  }
+  return v;
+ }
+ function unbox(v){
+  if(v===null||typeof v!=='object')return v;
+  switch(environment.valueKind(v)){
+   case 1:return environment.toNumber(v);
+   case 2:return undefined;case 3:return null;case 4:return false;case 5:return true;
+   case 6:{
+    if(hostStrings.has(v))return hostStrings.get(v);
+    let s='';const n=environment.stringLength(v);
+    for(let start=0;start<n;start+=4096){const end=n<start+4096?n:start+4096,codes=new Uint16Array(end-start);for(let i=start;i<end;i++)codes[i-start]=environment.stringUnit(v,i);s+=Reflect.apply(fromCharCode,String,codes);}
+    rememberString(s,v);return s;
+   }
+   case 7:return materialize(v);
+  }
+  return v;
+ }
+ function failure(e){return e instanceof WebAssembly.Exception&&e.is(errorTag)?e:new WebAssembly.Exception(errorTag,[box(e)]);}
+ // Host calls from WASM: JS exceptions become WASM exceptions. Fixed arities
+ // avoid allocating rest arrays on every crossing.
+ function boxedBridge(fn,invalidate=false,arity=fn.length){
+  if(invalidate)return (...a)=>{try{return fn(...a);}catch(e){throw failure(e);}finally{environment.invalidatePrototypes();}};
+  switch(arity){
+   case 0:return ()=>{try{return fn();}catch(e){throw failure(e);}};
+   case 1:return a=>{try{return fn(a);}catch(e){throw failure(e);}};
+   case 2:return (a,b)=>{try{return fn(a,b);}catch(e){throw failure(e);}};
+   case 3:return (a,b,c)=>{try{return fn(a,b,c);}catch(e){throw failure(e);}};
+   case 4:return (a,b,c,d)=>{try{return fn(a,b,c,d);}catch(e){throw failure(e);}};
+  }
+  return (...a)=>{try{return fn(...a);}catch(e){throw failure(e);}};
+ }
+ function bridge(fn,scalar=false,invalidate=false){
+  const out=scalar?v=>v:box;
+  switch(fn.length){
+   case 0:return boxedBridge(()=>out(fn()),invalidate);
+   case 1:return boxedBridge(a=>out(fn(unbox(a))),invalidate);
+   case 2:return boxedBridge((a,b)=>out(fn(unbox(a),unbox(b))),invalidate);
+   case 3:return boxedBridge((a,b,c)=>out(fn(unbox(a),unbox(b),unbox(c))),invalidate);
+   case 4:return boxedBridge((a,b,c,d)=>out(fn(unbox(a),unbox(b),unbox(c),unbox(d))),invalidate);
+  }
+  return boxedBridge((...a)=>out(fn(...a.map(unbox))),invalidate,-1);
+ }
  function materialize(v){
   const existing=environment.objectHost(v);if(existing!==null)return existing;
   const kind=environment.objectKind(v),o=kind===1?[]:kind===2?Object.create(null):{};
-  environment.objectSetHost(v,o);hostObjects.set(o,v);mark(o);
+  environment.objectSetHost(v,o);hostObjects.set(o,v);
   const active=pendingObjects!==null,queue=pendingObjects??(pendingObjects=[]);
   defineProperty(queue,queue.length,{value:[v,o,kind],writable:true,configurable:true});if(active)return o;
   try{for(let cursor=0;cursor<queue.length;cursor++){
@@ -76,6 +127,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  }
  const host={
   hostRead:readProperty,hostWrite:writeProperty,
+  hostGet:(o,k)=>{if(o==null)throw new TypeError("Cannot read properties of "+o+" (reading '"+String(k)+"')");return o[k];},
+  hostGetIndex:(o,i)=>{if(o==null)throw new TypeError("Cannot read properties of "+o+" (reading '"+i+"')");return o[i];},
+  hostSet:(o,k,v,s)=>setProperty(o,k,v,!!s),hostSetIndex:(o,i,v,s)=>setProperty(o,i,v,!!s),
   hostProperty:(o,k,s)=>{if(o==null)throw new TypeError('Cannot access '+String(k)+' of '+o);return ref(o,k,!!s);},
   hostStringRead:(o,k)=>o[k],hostStringWrite:(o,k,v,s)=>setProperty(o,k,v,!!s),
   hostEqual:(a,b)=>+(a===b),hostTemplateString:v=>{if(typeof v==='symbol')throw new TypeError('Cannot convert Symbol to string');return String(v);},
@@ -84,7 +138,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   fail:(code,k)=>{if(code===1)throw new SyntaxError('Duplicate binding: '+pool[k]);if(code===2)throw new ReferenceError('Binding is not initialized');if(code===3)throw new TypeError('Assignment to import binding');if(code===4)throw new TypeError('Assignment to constant variable');if(code===5)throw new RangeError('Invalid string length or repeat count');if(code===6)throw new RangeError('Invalid array length');if(code===7)throw new TypeError('Cannot delete array length');throw new Error('Environment runtime error '+code);},
  };
  const nativeImports={undefined:new WebAssembly.Global({value:'externref'},undefined)};
- for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual'||name==='hostToNumber');
+ // Writes and updates on host objects may run setters that change prototypes.
+ const mutating=new Set(['hostWrite','hostSet','hostSetIndex','hostUpdate','hostStringWrite']);
+ for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual'||name==='hostToNumber',mutating.has(name));
  Object.assign(nativeImports,{
   hostPrototypeFlags:boxedBridge(prototypeFlags),hostKey:bridge(toKey),
   hostHas:boxedBridge((o,k)=>{const key=unbox(k);if(environment.isObject(o)){const forward=environment.objectHost(o);if(forward!==null)return +(key in forward);return +(key in (environment.objectKind(o)===1?arrayPrototype:objectPrototype));}return +(key in unbox(o));},true),
@@ -107,9 +163,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function propertyReference(r){if(environment.isObjectReference(r))return ref(unbox(environment.objectReceiver(r)),unbox(environment.objectKey(r)),!!environment.objectStrict(r));return environment.isStringReference(r)?ref(unbox(environment.stringReceiver(r)),unbox(environment.stringKey(r)),!!environment.stringStrict(r)):r;}
  function prepare(r){
   const fn=environment.read(r);
-  if(environment.isObjectReference(r))return mark({fn,self:environment.objectReceiver(r)});
-  if(environment.isStringReference(r))return mark({fn,self:environment.stringReceiver(r),nativeString:true});
-  return mark({fn,self:box(r.super?r.receiver:r.object)});
+  if(environment.isObjectReference(r))return ({fn,self:environment.objectReceiver(r)});
+  if(environment.isStringReference(r))return ({fn,self:environment.stringReceiver(r),nativeString:true});
+  return ({fn,self:box(r.super?r.receiver:r.object)});
  }
  function nativeStringCall(fn,s,args){
   const method=stringMethods[stringMethodIds.get(fn)],a=args[0],b=args[1];
@@ -131,6 +187,19 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   return Reflect.apply(checkCallable(fn),unbox(s),args);
  }
  function argumentList(a){const n=environment.isObject(a)?environment.arrayLength(a)>>>0:a.length,values=[];for(let i=0;i<n;i++)defineProperty(values,i,{value:unbox(environment.arg(a,i)),writable:true,enumerable:true,configurable:true});return values;}
+ // Calls a boxed function value with boxed `self` and a JS array of boxed
+ // arguments. Compiled functions are entered directly.
+ function callValue(fn,self,args){
+  const f=functions.get(fn);if(f?.invokeBoxed)return f.invokeBoxed(self,args,environment.undefinedValue());
+  if(stringMethodIds.has(fn)&&environment.isString(self))return box(nativeStringCall(fn,self,args.map(unbox)));
+  if((fn===arrayPush||fn===arrayPop)&&environment.isObject(self)&&environment.objectKind(self)===1&&environment.objectHost(self)===null){
+   if(fn===arrayPop)return environment.arrayPopValue(self,box('length'));
+   for(const v of args)environment.push(self,v);return environment.getProp(self,box('length'));
+  }
+  const values=new Array(args.length);for(let i=0;i<args.length;i++)values[i]=unbox(args[i]);
+  try{return box(Reflect.apply(checkCallable(unbox(fn)),unbox(self),values));}finally{environment.invalidatePrototypes();}
+ }
+ function boxedArguments(a){if(!environment.isObject(a))return a;const n=environment.arrayLength(a)>>>0,values=new Array(n);for(let i=0;i<n;i++)values[i]=environment.arg(a,i);return values;}
  function invoke(r,a){
   const f=functions.get(r.fn);if(f?.invokeBoxed)return f.invokeBoxed(r.self,a,environment.undefinedValue());
   if(r.nativeString&&stringMethodIds.has(r.fn))return box(nativeStringCall(r.fn,r.self,argumentList(a)));
@@ -144,7 +213,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function setProperty(object,key,value,strict){if(object==null)throw new TypeError('Cannot set property of null or undefined');if(typeof object!=='object'&&typeof object!=='function'){if(strict)throw new TypeError('Cannot assign property of primitive');return value;}if(!Reflect.set(object,key,value,object)&&strict)throw new TypeError('Cannot assign property '+String(key));return value;}
  function writeProperty(r,v){if(r.private){const d=r.private;privateCheck(d,r.object);if(d.kind===0)d.values.set(r.object,v);else if(d.kind===2&&d.set)Reflect.apply(d.set,r.object,[v]);else throw new TypeError('Private member is not writable');return v;}if(r.unresolved&&r.strict)throw new ReferenceError(r.key+' is not defined');if(r.super){if(!Reflect.set(r.object,r.key,v,r.receiver))throw new TypeError('Cannot assign super property');return v;}return setProperty(r.object,r.key,v,r.strict);}
  function unwrap(e){if(e instanceof WebAssembly.Exception&&e.is(errorTag))return unbox(e.getArg(errorTag,0));return e;}
- function callCompiled(id,env,self,args,newTarget){environment.invalidatePrototypes();try{return unbox(instance.exports['f'+id](env,box(self),mark(args),box(newTarget)));}catch(e){throw unwrap(e);}finally{environment.invalidatePrototypes();}}
+ function callCompiled(id,env,self,args,newTarget){environment.invalidatePrototypes();try{return unbox(instance.exports['f'+id](env,box(self),args,box(newTarget)));}catch(e){throw unwrap(e);}}
  function makeFunction(env,id,nameIndex,flags,self,newTarget){
   const strict=!!(flags&1),arrow=!!(flags&2),name=pool[nameIndex],info={home:null,method:!!(flags&8)};let closure=env,f;
   const call=(receiver,a,target)=>flags&48?startResumable(id,closure,receiver,a,target,flags,f):callCompiled(id,closure,receiver,a,target);
@@ -319,8 +388,8 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   unary:(op,v)=>{switch(pool[op]){case'+':return +v;case'-':return -v;case'!':return !v;case'~':return ~v;case'void':return undefined;case'typeof':return typeof v;}throw new Error('Unknown unary operator');},
   templateString:v=>{if(typeof v==='symbol')throw new TypeError('Cannot convert Symbol to string');return String(v);},
   binary:(op,a,b)=>{switch(pool[op]){case'+':return a+b;case'-':return a-b;case'*':return a*b;case'/':return a/b;case'%':return a%b;case'**':return a**b;case'===':return a===b;case'!==':return a!==b;case'==':return a==b;case'!=':return a!=b;case'<':return a<b;case'>':return a>b;case'<=':return a<=b;case'>=':return a>=b;case'&':return a&b;case'|':return a|b;case'^':return a^b;case'<<':return a<<b;case'>>':return a>>b;case'>>>':return a>>>b;case'in':return a in b;case'instanceof':return a instanceof b;}throw new Error('Unknown binary operator');},
-  array:()=>mark([]),push:(a,v)=>{a.push(v);return a;},hole:a=>{a.length++;return a;},spread:(a,v)=>{a.push(...v);return a;},
-  object:()=>mark({}),assign:(o,v)=>{if(v==null)return o;for(const k of Reflect.ownKeys(Object(v)))if(Object.getOwnPropertyDescriptor(Object(v),k).enumerable)Object.defineProperty(o,k,{value:v[k],writable:true,enumerable:true,configurable:true});return o;},
+  array:()=>[],push:(a,v)=>{a.push(v);return a;},hole:a=>{a.length++;return a;},spread:(a,v)=>{a.push(...v);return a;},
+  object:()=>({}),assign:(o,v)=>{if(v==null)return o;for(const k of Reflect.ownKeys(Object(v)))if(Object.getOwnPropertyDescriptor(Object(v),k).enumerable)Object.defineProperty(o,k,{value:v[k],writable:true,enumerable:true,configurable:true});return o;},
   define:(o,k,v,kind)=>{if(kind===3){if(v===null||typeof v==='object'||typeof v==='function')Object.setPrototypeOf(o,v);return o;}if(functions.get(v)?.method)setHome(v,o);const d=kind===1?{get:v}:kind===2?{set:v}:{value:v,writable:true};Object.defineProperty(o,k,{...d,enumerable:true,configurable:true});return o;},
   regex:(p,f)=>new RegExp(pool[p],pool[f]),func:makeFunction,
   prepare,invoke,
@@ -333,7 +402,8 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  };
  Object.assign(raw,{
   moduleMeta,importModule,
-  prepareValue:fn=>({fn,self:undefined}),callable:r=>r.fn,thisValue,makeClass,classMethod,classField,finishClass,superCall,privateDeclare,privateKey,
+  prepareValue:fn=>({fn,self:undefined}),
+  setFunctionName:(f,key,kind)=>{const name=typeof key==='symbol'?(key.description?'['+key.description+']':''):String(key);Object.defineProperty(f,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});return f;},callable:r=>r.fn,thisValue,makeClass,classMethod,classField,finishClass,superCall,privateDeclare,privateKey,
   privateProperty:(e,o,i)=>({private:privateKey(e,i),object:o}),privateHas:(e,i,o)=>{requireObject(o);return privateKey(e,i).values.has(o);},
   superProperty:(e,self,key)=>({object:Object.getPrototypeOf(context(e,'home')),key,receiver:thisValue(self),super:true,strict:true}),
   coercible:v=>{if(v==null)throw new TypeError('Cannot destructure null or undefined');return v;},
@@ -353,7 +423,13 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  imports.define=environment.objectDefine;
  imports.func=boxedBridge(makeFunction);imports.thisValue=boxedBridge(v=>thisCells.has(v)?box(thisValue(v)):v);
  imports.coercible=boxedBridge(v=>{if(environment.nullish(v))throw new TypeError('Cannot destructure null or undefined');return v;});
- imports.prepare=boxedBridge(prepare);imports.prepareValue=boxedBridge(fn=>mark({fn,self:environment.undefinedValue()}));imports.callable=boxedBridge(r=>r.fn);imports.invoke=boxedBridge(invoke);
+ imports.prepare=boxedBridge(prepare);
+ imports.callArray=boxedBridge((fn,self,a)=>{const f=functions.get(fn);if(f?.invokeBoxed)return f.invokeBoxed(self,a,environment.undefinedValue());return callValue(fn,self,boxedArguments(a));});
+ imports.call0=boxedBridge((fn,self)=>callValue(fn,self,[]));
+ imports.call1=boxedBridge((fn,self,a)=>callValue(fn,self,[a]));
+ imports.call2=boxedBridge((fn,self,a,b)=>callValue(fn,self,[a,b]));
+ for(let n=3;n<=8;n++)imports['call'+n]=boxedBridge((fn,self,...a)=>callValue(fn,self,a),false,-1);
+ for(const name of ['getProp','setProp','getIndex','setIndex'])imports[name]=environment[name];imports.prepareValue=boxedBridge(fn=>({fn,self:environment.undefinedValue()}));imports.callable=boxedBridge(r=>r.fn);imports.invoke=boxedBridge(invoke);
  imports.rest=boxedBridge((a,i)=>{const out=environment.array(),n=environment.isObject(a)?environment.arrayLength(a)>>>0:a.length;for(;i<n;i++)environment.push(out,environment.arg(a,i));return out;});
  imports.spread=boxedBridge((a,v)=>{for(const value of unbox(v))environment.push(a,box(value));return a;},true);
  imports.typeOf=boxedBridge(r=>{const v=environment.read(r);return box(environment.isObject(v)?'object':typeof unbox(v));});
