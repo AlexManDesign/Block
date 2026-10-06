@@ -891,6 +891,12 @@ class Game {
       if (dryId(id) === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
       if (id === B.FURNACE || id === B.FURNACE_LIT) { UI.openFurnace(tg.x, tg.y, tg.z); return; }
       if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { this.explode(tg.x + 0.5, tg.y + 0.5, tg.z + 0.5, 4, tg); return; }
+      // shears carve a pumpkin (face toward the player) and it drops 4 seeds, as in Minecraft
+      if (id === B.PUMPKIN && hid === IT.SHEARS) {
+        w.setBlock(tg.x, tg.y, tg.z, B.CARVED_PUMPKIN, (p.facingDir() + 2) & 3);
+        this.ents.dropItem(IT.PUMPKIN_SEEDS, 4, tg.x + 0.5, tg.y + 1.1, tg.z + 0.5);
+        this.swing(); this.damageTool(); return;
+      }
     }
     if (!hid) return;
     // buckets

@@ -144,8 +144,8 @@ const MOB_DEFS = {
   cow: { w: 0.9, h: 1.4, hp: 10, attr: 0.2, tempt: 1.25, food: [IT.WHEAT], panic: 2.0, drops: () => [[IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
   sheep: { w: 0.9, h: 1.3, hp: 8, attr: 0.23, tempt: 1.1, food: [IT.WHEAT], panic: 1.25, drops: (e) => [[IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
   chicken: { w: 0.5, h: 0.7, hp: 4, attr: 0.25, tempt: 1.0, food: [IT.WHEAT_SEEDS, IT.PUMPKIN_SEEDS, IT.MELON_SEEDS], panic: 1.4, drops: () => [[IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
-  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, drops: () => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0]], hostile: true, burns: true },
-  skeleton: { w: 0.6, h: 1.95, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true },
+  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, drops: () => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0]], hostile: true, burns: true, sinks: true },
+  skeleton: { w: 0.6, h: 1.95, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
   creeper: { w: 0.6, h: 1.6, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
   spider: { w: 1.4, h: 0.9, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
   cave_spider: { w: 0.7, h: 0.5, hp: 12, attr: 0.3, wander: 0.8, dmg: 2, poison: 7, climber: true, neutralLight: 12, spiderAI: true, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
@@ -985,9 +985,11 @@ class Entities {
       s = Math.min(1, Math.sqrt(wl / MOB_SPEED_K));
     }
     const fx = Math.sin(e.bodyYaw), fz = -Math.cos(e.bodyYaw), input = s * 0.98;
-    // jumping (JumpControl acts on the tick after it was asked; FloatGoal in water)
-    const depth = inW ? this.waterDepth(e) : 0;
-    if (depth > (e.h * 0.85 < 0.4 ? 0 : 0.4) && Math.random() < 0.8) v[1] += 0.04;
+    // jumping (JumpControl acts on the tick after it was asked; FloatGoal in water). Zombies and
+    // skeletons have no FloatGoal: they sink and walk the bottom, rising only while they want to
+    // jump (LivingEntity.jumpInLiquid)
+    const depth = inW ? this.waterDepth(e) : 0, deep = depth > (e.h * 0.85 < 0.4 ? 0 : 0.4);
+    if (deep && (d.sinks ? e.wantJump : Math.random() < 0.8)) v[1] += 0.04;
     else if (e.wantJump && e.onGround && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
     e.wantJump = false;
     if (e.type === 'chicken' && !e.onGround && v[1] < 0) v[1] *= 0.6;   // Chicken.aiStep: flaps down

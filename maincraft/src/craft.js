@@ -10,19 +10,35 @@ function matches(tag, id) {
   if (tag === ANY_LOG) return /(_LOG|^LOG|_WOOD|_STEM|_HYPHAE)$/.test(B_KEY[id] || '') && !/MUSHROOM|PUMPKIN|MELON/.test(B_KEY[id]);
   if (tag === 'wool') return /^WOOL_/.test(B_KEY[id] || '');
   if (tag === 'stonetool') return id === B.COBBLE || id === B.COBBLED_DEEPSLATE || id === B.BLACKSTONE;
+  if (tag === 'sand') return id === B.SAND || id === B.RED_SAND;
+  if (tag === 'woodslab') return SHAPE[id] === SH.SLAB && /PLANKS/.test(B_KEY[BASE[id]] || '');
   return tag === id;
 }
 (function () {
   const P = ANY_PLANKS, S = IT.STICK;
-  const logPlanks = [['LOG', 'PLANKS'], ['BIRCH_LOG', 'BIRCH_PLANKS'], ['SPRUCE_LOG', 'SPRUCE_PLANKS'], ['DARK_LOG', 'DARK_PLANKS'],
-    ['JUNGLE_LOG', 'JUNGLE_PLANKS'], ['ACACIA_LOG', 'ACACIA_PLANKS'], ['CRIMSON_STEM', 'CRIMSON_PLANKS'], ['WARPED_STEM', 'WARPED_PLANKS'],
-    ['STRIPPED_OAK_LOG', 'PLANKS'], ['OAK_WOOD', 'PLANKS'], ['BIRCH_WOOD', 'BIRCH_PLANKS'], ['SPRUCE_WOOD', 'SPRUCE_PLANKS']];
-  for (const [l, p] of logPlanks) if (B[l] && B[p]) RS([B[l]], B[p], 4);
+  // every log, wood and stem (stripped or not) gives 4 planks of its kind; 4 logs give 3 wood
+  const kinds = [['OAK', 'LOG', 'OAK_WOOD', 'PLANKS'], ['BIRCH', 'BIRCH_LOG', 'BIRCH_WOOD', 'BIRCH_PLANKS'],
+    ['SPRUCE', 'SPRUCE_LOG', 'SPRUCE_WOOD', 'SPRUCE_PLANKS'], ['DARK_OAK', 'DARK_LOG', 'DARK_OAK_WOOD', 'DARK_PLANKS'],
+    ['JUNGLE', 'JUNGLE_LOG', 'JUNGLE_WOOD', 'JUNGLE_PLANKS'], ['ACACIA', 'ACACIA_LOG', 'ACACIA_WOOD', 'ACACIA_PLANKS'],
+    ['MANGROVE', 'MANGROVE_LOG', 'MANGROVE_WOOD', 'MANGROVE_PLANKS'], ['CHERRY', 'CHERRY_LOG', 'CHERRY_WOOD', 'CHERRY_PLANKS'],
+    ['PALE_OAK', 'PALE_OAK_LOG', 'PALE_OAK_WOOD', 'PALE_OAK_PLANKS'], ['CRIMSON', 'CRIMSON_STEM', 'CRIMSON_HYPHAE', 'CRIMSON_PLANKS'],
+    ['WARPED', 'WARPED_STEM', 'WARPED_HYPHAE', 'WARPED_PLANKS']];
+  for (const [k, log, wood, planks] of kinds) {
+    const sLog = 'STRIPPED_' + (k === 'OAK' || k === 'DARK_OAK' ? k + '_' + (log.endsWith('STEM') ? 'STEM' : 'LOG') : log);
+    const sWood = 'STRIPPED_' + wood;
+    for (const l of [log, wood, sLog, sWood]) if (B[l] && B[planks]) RS([B[l]], B[planks], 4);
+    if (B[log] && B[wood]) R(['##', '##'], { '#': B[log] }, B[wood], 3);
+    if (B[sLog] && B[sWood]) R(['##', '##'], { '#': B[sLog] }, B[sWood], 3);
+  }
   R(['#', '#'], { '#': P }, S, 4);
   R(['##', '##'], { '#': P }, B.CRAFTING_TABLE);
   R(['###', '# #', '###'], { '#': 'stonetool' }, B.FURNACE);
   R(['###', '# #', '###'], { '#': P }, B.CHEST);
   R(['C', 'S'], { C: IT.COAL, S }, B.TORCH, 4);
+  R([' #S', '# S', ' #S'], { '#': S, S: IT.STRING }, IT.BOW);
+  R(['F', 'S', 'E'], { F: IT.FLINT, S, E: IT.FEATHER }, IT.ARROW, 4);
+  if (B.BARREL) R(['PSP', 'P P', 'PSP'], { P, S: 'woodslab' }, B.BARREL);
+  if (B.CAMPFIRE) R([' S ', 'SCS', 'LLL'], { S, C: IT.COAL, L: ANY_LOG }, B.CAMPFIRE);
   R(['# #', '###', '# #'], { '#': S }, B.LADDER, 3);
   R([' S ', 'SPS', ' S '], { S, P }, B.SHIP_WHEEL);
   for (const [mat, tier, key] of [[P, 'WOODEN'], ['stonetool', 'STONE'], [IT.IRON_INGOT, 'IRON'], [IT.GOLD_INGOT, 'GOLDEN'], [IT.DIAMOND, 'DIAMOND']].map(a => [a[0], 0, a[1]])) {
@@ -42,8 +58,10 @@ function matches(tag, id) {
   RS([IT.BONE], IT.BONE_MEAL, 3);
   RS([IT.SUGAR_CANE_ITEM || B.SUGAR_CANE], IT.SUGAR);
   R(['###', '#A#', '###'], { '#': IT.GOLD_INGOT, A: IT.APPLE }, IT.GOLDEN_APPLE);
+  // (Minecraft uses 8 gold nuggets; there are no nuggets here)
   R(['###', '#C#', '###'], { '#': IT.GOLD_INGOT, C: IT.CARROT }, IT.GOLDEN_CARROT);
-  RS([B.MELON], IT.MELON_SEEDS); RS([B.PUMPKIN], IT.PUMPKIN_SEEDS, 4);
+  RS([IT.MELON_SLICE], IT.MELON_SEEDS); RS([B.PUMPKIN], IT.PUMPKIN_SEEDS, 4);
+  R(['###', '###', '###'], { '#': IT.MELON_SLICE }, B.MELON);
   const storage = [[IT.COAL, 'COAL_BLOCK'], [IT.IRON_INGOT, 'IRON_BLOCK'], [IT.GOLD_INGOT, 'GOLD_BLOCK'], [IT.DIAMOND, 'DIAMOND_BLOCK'], [IT.EMERALD, 'EMERALD_BLOCK'], [IT.COPPER_INGOT, 'COPPER_BLOCK'], [IT.WHEAT, 'HAY_BLOCK']];
   for (const [it, b] of storage) if (B[b]) { R(['###', '###', '###'], { '#': it }, B[b]); RS([B[b]], it, 9); }
   R(['##', '##'], { '#': IT.CLAY_BALL }, B.CLAY);
@@ -55,11 +73,10 @@ function matches(tag, id) {
   R(['##', '##'], { '#': B.ANDESITE }, B.POLISHED_ANDESITE, 4);
   R(['##', '##'], { '#': B.COBBLED_DEEPSLATE }, B.POLISHED_DEEPSLATE, 4);
   R(['##', '##'], { '#': IT.STRING }, B.WOOL_WHITE);
-  R(['###', '#S#', '###'], { '#': IT.GUNPOWDER, S: B.SAND }, B.TNT);
+  R(['G#G', '#G#', 'G#G'], { G: IT.GUNPOWDER, '#': 'sand' }, B.TNT);
   R(['###', '###'], { '#': B.GLASS }, B.GLASS_PANE, 16);
   R(['###', '###'], { '#': IT.IRON_INGOT }, B.IRON_BARS, 16);
-  R(['S', 'P'], { S: IT.STICK, P: B.PUMPKIN }, B.JACK_O_LANTERN);
-  R(['##', '##'], { '#': IT.STRING }, B.WOOL_WHITE);
+  R(['P', 'T'], { P: B.CARVED_PUMPKIN, T: B.TORCH }, B.JACK_O_LANTERN);
   R(['WWW', '###'], { W: 'wool', '#': P }, B.BED);
   R(['#S#', '#S#'], { '#': P, S }, B.OAK_FENCE, 3);
   R(['S#S', 'S#S'], { '#': P, S }, B.OAK_GATE);
@@ -71,10 +88,16 @@ function matches(tag, id) {
   R(['##'], { '#': P }, B.PLANKS_PRESSURE_PLATE);
   R(['##'], { '#': B.STONE }, B.STONE_PRESSURE_PLATE);
   R(['#', '#'], { '#': B.QUARTZ }, B.QUARTZ_PILLAR, 2);
-  R(['# #', ' # '], { '#': B.BRICK }, B.FLOWER_POT);
+  R(['# #', ' # '], { '#': IT.BRICK_ITEM }, B.FLOWER_POT);
   R(['#S#', '#S#', '#S#'], { '#': IT.IRON_INGOT, S }, B.RAIL, 16);
-  R(['###', '###', '###'], { '#': B.SNOW }, B.SNOW);
-  R(['##', '##'], { '#': B.ICE }, B.PACKED_ICE);
+  R(['###', '###', '###'], { '#': B.ICE }, B.PACKED_ICE);
+  if (B.BLUE_ICE) R(['###', '###', '###'], { '#': B.PACKED_ICE }, B.BLUE_ICE);
+  // mossy and chiseled stone
+  RS([B.STONE_BRICKS, B.VINE], B.MOSSY_STONE_BRICKS); RS([B.COBBLE, B.VINE], B.MOSSY);
+  if (B.MOSS_BLOCK) { RS([B.STONE_BRICKS, B.MOSS_BLOCK], B.MOSSY_STONE_BRICKS); RS([B.COBBLE, B.MOSS_BLOCK], B.MOSSY); }
+  if (B.STONEBRICK_SLAB && B.CHISELED_STONE_BRICKS) R(['#', '#'], { '#': B.STONEBRICK_SLAB }, B.CHISELED_STONE_BRICKS);
+  if (B.SANDSTONE_SLAB && B.CHISELED_SANDSTONE) R(['#', '#'], { '#': B.SANDSTONE_SLAB }, B.CHISELED_SANDSTONE);
+  if (B.MOSS_BLOCK && B.MOSS_CARPET) R(['##'], { '#': B.MOSS_BLOCK }, B.MOSS_CARPET, 3);
   // slabs, stairs, walls from their base blocks (and fences for planks)
   for (let id = 1; id < NB; id++) {
     const base = BASE[id];
@@ -135,7 +158,7 @@ const SMELT = {};
   s(B.GOLD, IT.GOLD_INGOT); s(B.DEEPSLATE_GOLD_ORE, IT.GOLD_INGOT); s(IT.RAW_COPPER, IT.COPPER_INGOT); s(B.CLAY, B.TERRACOTTA);
   s(IT.CLAY_BALL, IT.BRICK_ITEM); s(IT.PORKCHOP, IT.COOKED_PORKCHOP); s(IT.BEEF, IT.COOKED_BEEF); s(IT.MUTTON, IT.COOKED_MUTTON);
   s(IT.CHICKEN, IT.COOKED_CHICKEN); s(IT.RAW_COD, IT.COOKED_COD); s(IT.RAW_SALMON, IT.COOKED_SALMON); s(IT.POTATO, IT.BAKED_POTATO);
-  s(B.COBBLED_DEEPSLATE, B.DEEPSLATE); s(B.STONE, B.SMOOTH_STONE); s(B.LOG, IT.COAL); s(B.CACTUS, B.GREEN_CONCRETE);
+  s(B.COBBLED_DEEPSLATE, B.DEEPSLATE); s(B.STONE, B.SMOOTH_STONE); s(B.LOG, IT.COAL);
   s(B.STONE_BRICKS, B.CRACKED_STONE_BRICKS); s(B.NETHERRACK, B.NETHER_BRICKS); s(B.WET_SPONGE, B.SPONGE);
 })();
 function fuelValue(id) {
