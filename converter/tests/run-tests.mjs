@@ -1,15 +1,29 @@
 // Differential tests: plain JS vs compiled WASM must log the same lines.
-// Usage: node run-tests.mjs [filter]
+// Usage: node run-tests.mjs [name filter] [--file cases-x.mjs]
+// Cases come from every cases*.mjs file next to this script.
+import fs from 'node:fs';
+import path from 'node:path';
 import { launch, compilerPage, runPage, wrap } from './harness.mjs';
-import { cases } from './cases.mjs';
 
-const filter = process.argv[2] ? new RegExp(process.argv[2], 'i') : null;
+const args = process.argv.slice(2), fileAt = args.indexOf('--file');
+const onlyFile = fileAt >= 0 ? args.splice(fileAt, 2)[1] : null;
+const filter = args[0] ? new RegExp(args[0], 'i') : null;
+const dir = path.dirname(new URL(import.meta.url).pathname);
+const cases = {};
+for (const file of fs.readdirSync(dir).filter(f => /^cases.*\.mjs$/.test(f)).sort()) {
+  if (onlyFile && file !== onlyFile) continue;
+  const module = await import(path.join(dir, file));
+  for (const [name, code] of Object.entries(module.cases)) {
+    if (cases[name] !== undefined) throw new Error(`duplicate case name "${name}" in ${file}`);
+    cases[name] = code;
+  }
+}
 const browser = await launch();
 const { page: cpage, compile } = await compilerPage(browser);
 let pass = 0, fail = 0, compileFail = 0;
 const failures = [];
 const entries = Object.entries(cases).filter(([name]) => !filter || filter.test(name));
-const concurrency = 6;
+const concurrency = +process.env.TEST_CONCURRENCY || 6;
 async function one([name, code]) {
   const html = wrap(code);
   const expected = await runPage(browser, html);
@@ -32,7 +46,7 @@ const queue = [...entries];
 await Promise.all(Array.from({ length: concurrency }, async () => { while (queue.length) await one(queue.shift()); }));
 
 // Built-in converter examples must compile and behave like the source page.
-if (!filter || filter.test('examples')) {
+if (!onlyFile && (!filter || filter.test('examples'))) {
   const examples = await cpage.evaluate(() => examples);
   for (const [name, demo] of Object.entries(examples)) {
     const c = await compile(demo.html, demo.files, demo.entry);
