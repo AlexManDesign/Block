@@ -5,6 +5,7 @@ const REF=require("./wasm.mjs")["REF"];
 const I32=require("./wasm.mjs")["I32"];
 const F64=require("./wasm.mjs")["F64"];
 const u32=require("./wasm.mjs")["u32"];
+const STRING=require("./string-wasm.mjs")["STRING"];
 const OBJECT=11,PROPERTY=12,OBJECT_REF=13;
 const objectTypes=[
  [0x5f,7,I32,1,REF,1,REF,1,REF,1,I32,1,REF,1,0x6d,0], // kind, head, tail, dense, length, host, brand
@@ -50,7 +51,7 @@ function addObjectRuntime(def){
  });
  def('objectFind',[REF,REF],[REF],f=>{
   const node=f.local();f.field(0,OBJECT,HEAD);f.set(node);
-  f.block('end',end=>f.block('loop',loop=>{f.get(node);f.out(0xd1);f.branch(end,true);f.field(node,PROPERTY,1);f.out(0xd1,0x45);f.if(()=>{f.field(node,PROPERTY,0);f.get(1);f.call('stringCompare');f.out(0x45);f.if(()=>{f.get(node);f.ret();});});f.field(node,PROPERTY,2);f.set(node);f.branch(loop);}));f.nil();
+  f.block('end',end=>f.block('loop',loop=>{f.get(node);f.out(0xd1);f.branch(end,true);f.field(node,PROPERTY,1);f.out(0xd1,0x45);f.if(()=>{f.field(node,PROPERTY,0);f.internal(STRING);f.get(1);f.internal(STRING);f.out(0xd3);f.if(()=>{f.get(node);f.ret();});f.field(node,PROPERTY,0);f.get(1);f.call('stringCompare');f.out(0x45);f.if(()=>{f.get(node);f.ret();});});f.field(node,PROPERTY,2);f.set(node);f.branch(loop);}));f.nil();
  });
  def('objectStore',[REF,REF,REF],[REF],f=>{
   const node=f.local(),tail=f.local();f.get(0);f.get(1);f.call('objectFind');f.set(node);f.nonnull(node);
@@ -84,7 +85,9 @@ function addObjectRuntime(def){
   });
   f.get(1);f.call('isNumber');f.if(()=>{f.get(1);f.call('hostKey');f.set(1);});
   f.get(1);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('objectFind');f.set(node);f.nonnull(node);f.if(()=>{f.field(node,PROPERTY,1);f.ret();});});
-  f.field(0,OBJECT,KIND);f.int(2);f.out(0x46);f.if(()=>{f.undef();f.ret();});host(f,'hostObjectGet',2);
+  f.field(0,OBJECT,KIND);f.int(2);f.out(0x46);f.if(()=>{f.undef();f.ret();});
+  f.field(0,OBJECT,KIND);f.out(0x45);f.if(()=>{f.call('prototypeFlags');f.int(8);f.out(0x71);f.if(()=>{f.get(1);f.call('isString');f.if(()=>{f.get(1);f.call('isBaseKey');f.out(0x45);f.if(()=>{f.undef();f.ret();});});});});
+  f.get(0);f.get(1);f.field(0,OBJECT,KIND);f.call('hostProtoGet');
  });
  def('objectSet',[REF,REF,REF,I32],[REF],f=>{
   const index=f.local(I32),node=f.local(),n=f.local(F64);f.get(1);f.call('key');f.set(1);forwarded(f,0);f.if(()=>host(f,'hostObjectSet',4));

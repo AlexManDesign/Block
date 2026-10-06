@@ -8,7 +8,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const UNINIT=Symbol('uninitialized');
  const errorTag=new WebAssembly.Tag({parameters:['externref']});
  const pool=constants.map(x=>x.t==='u'?undefined:x.t==='big'?BigInt(x.v):x.t==='num'?Number(x.v):x.v);
- let instance,environment;
+ let instance,environment,UNDEFINED,NULL,TRUE,FALSE;
  const hostObjects=new WeakMap();
  const ref=(object,key,strict=false)=>({object,key,strict});
  const toKey=k=>typeof k==='symbol'?k:Reflect.ownKeys({[k]:null})[0];
@@ -25,6 +25,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const names=new Map();pool.forEach((name,i)=>{if(typeof name==='string')names.set(name,i);});
  function nameIndex(name){if(!names.has(name)){names.set(name,pool.length);pool.push(name);}return names.get(name);}
  const objectPrototype=Object.prototype,arrayPrototype=Array.prototype,getPrototype=Object.getPrototypeOf,getNames=Object.getOwnPropertyNames,defineProperty=Object.defineProperty;
+ const baseKeys=Object.getOwnPropertyNames(Object.prototype);
  const intrinsic=(name)=>{const f=getDescriptor(arrayPrototype,name)?.value;return typeof f==='function'&&Reflect.apply(globalThis.Function.prototype.toString,f,[])===`function ${name}() { [native code] }`?f:null;};
  const stringCache=new Map(),hostStrings=new WeakMap(),characterCode=String.prototype.charCodeAt,fromCharCode=String.fromCharCode,getDescriptor=Object.getOwnPropertyDescriptor;
  const arrayPush=intrinsic('push'),arrayPop=intrinsic('pop');
@@ -42,10 +43,10 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function box(v){
   switch(typeof v){
    case'number':return (v|0)===v&&v>=-1073741824&&v<=1073741823&&(v!==0||1/v>0)?v:environment.number(v);
-   case'object':if(v===null)return environment.nullValue();{const o=hostObjects.get(v);return o===undefined?v:o;}
+   case'object':if(v===null)return NULL;{const o=hostObjects.get(v);return o===undefined?v:o;}
    case'function':{const o=hostObjects.get(v);return o===undefined?v:o;}
-   case'boolean':return environment.boolean(+v);
-   case'undefined':return environment.undefinedValue();
+   case'boolean':return v?TRUE:FALSE;
+   case'undefined':return UNDEFINED;
    case'string':{
     if(stringCache.has(v))return stringCache.get(v);
     const s=environment.stringAlloc(v.length);for(let i=0;i<v.length;i++)environment.stringSet(s,i,Reflect.apply(characterCode,v,[i]));return rememberString(v,s);
@@ -68,6 +69,19 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   }
   return v;
  }
+ // Unboxes a value whose kind (see valueKind) WASM already computed.
+ function fromKind(v,kind){
+  switch(kind){
+   case 0:return v;
+   case 1:return typeof v==='number'?v:environment.toNumber(v);
+   case 2:return undefined;case 3:return null;case 4:return false;case 5:return true;
+   case 6:{const s=hostStrings.get(v);return s===undefined?unbox(v):s;}
+  }
+  return unbox(v);
+ }
+ // A native call or write can only change the prototypes the WASM object
+ // runtime relies on when it is handed one of them.
+ const touchesPrototypes=(...values)=>values.includes(objectPrototype)||values.includes(arrayPrototype);
  function failure(e){return e instanceof WebAssembly.Exception&&e.is(errorTag)?e:new WebAssembly.Exception(errorTag,[box(e)]);}
  // Host calls from WASM: JS exceptions become WASM exceptions. Fixed arities
  // avoid allocating rest arrays on every crossing.
@@ -79,6 +93,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
    case 2:return (a,b)=>{try{return fn(a,b);}catch(e){throw failure(e);}};
    case 3:return (a,b,c)=>{try{return fn(a,b,c);}catch(e){throw failure(e);}};
    case 4:return (a,b,c,d)=>{try{return fn(a,b,c,d);}catch(e){throw failure(e);}};
+   case 5:return (a,b,c,d,e5)=>{try{return fn(a,b,c,d,e5);}catch(e){throw failure(e);}};
   }
   return (...a)=>{try{return fn(...a);}catch(e){throw failure(e);}};
  }
@@ -112,7 +127,17 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   const keys=getNames(objectPrototype);
   if(objectChain&&keys.every(k=>k==='__proto__'||getDescriptor(objectPrototype,k)?.writable===true))flags|=1;
   if(objectChain&&arrayChain&&!keys.some(index)&&!getNames(arrayPrototype).some(index))flags|=2;
+  if(objectChain&&keys.length===baseKeys.length&&keys.every((k,i)=>k===baseKeys[i]))flags|=8;
   return flags;
+ }
+ // Prototype lookup for a key an ordinary WASM object does not have.
+ function protoGet(o,key,kind){
+  const k=typeof key==='object'&&key!==null?fromKind(key,6):key;
+  if(getPrototype(objectPrototype)===null&&(kind!==1||getPrototype(arrayPrototype)===objectPrototype)){
+   const d=(kind===1?getDescriptor(arrayPrototype,k):undefined)||getDescriptor(objectPrototype,k);
+   if(!d)return UNDEFINED;if(Object.hasOwn(d,'value'))return box(d.value);
+  }
+  return box(materialize(o)[k]);
  }
  function objectGet(o,key){
   const k=unbox(key),forward=environment.objectHost(o);if(forward!==null)return box(forward[k]);
@@ -139,24 +164,36 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  };
  const nativeImports={undefined:new WebAssembly.Global({value:'externref'},undefined)};
  // Writes and updates on host objects may run setters that change prototypes.
- const mutating=new Set(['hostWrite','hostSet','hostSetIndex','hostUpdate','hostStringWrite']);
+ const mutating=new Set(['hostWrite','hostSet','hostSetIndex','hostUpdate']);
  for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual'||name==='hostToNumber',mutating.has(name));
+ const key=k=>typeof k==='object'&&k!==null?fromKind(k,6):k;
  Object.assign(nativeImports,{
+  hostGetRaw:boxedBridge((o,k)=>box(o[key(k)])),
+  hostGetIndexRaw:boxedBridge((o,i)=>box(o[i])),
+  hostSetRaw:boxedBridge((o,k,v,kind,strict)=>{const value=fromKind(v,kind);setProperty(o,key(k),value,!!strict);if(o===objectPrototype||o===arrayPrototype)environment.invalidatePrototypes();return v;},false,5),
+  hostSetIndexRaw:boxedBridge((o,i,v,kind,strict)=>{const value=fromKind(v,kind);if(ArrayBuffer.isView(o))o[i]=value;else{setProperty(o,i,value,!!strict);if(o===objectPrototype||o===arrayPrototype)environment.invalidatePrototypes();}return v;},false,5),
+  hostCall0:boxedBridge((fn,self,k)=>callKinds(fn,self,k,[])),
+  hostCall1:boxedBridge((fn,self,k,a)=>callKinds(fn,self,k,[a])),
+  hostCall2:boxedBridge((fn,self,k,a,b)=>callKinds(fn,self,k,[a,b]),false,5),
+  ...Object.fromEntries(Array.from({length:6},(_,i)=>['hostCall'+(i+3),boxedBridge((fn,self,k,...a)=>callKinds(fn,self,k,a),false,-1)])),
   hostPrototypeFlags:boxedBridge(prototypeFlags),hostKey:bridge(toKey),
   hostHas:boxedBridge((o,k)=>{const key=unbox(k);if(environment.isObject(o)){const forward=environment.objectHost(o);if(forward!==null)return +(key in forward);return +(key in (environment.objectKind(o)===1?arrayPrototype:objectPrototype));}return +(key in unbox(o));},true),
   hostRemove:bridge(r=>raw.remove(r)),
-  hostObjectGet:boxedBridge(objectGet,true),
-  hostObjectSet:boxedBridge((o,k,v,strict)=>{setProperty(materialize(o),unbox(k),unbox(v),!!strict);return v;},true),
-  hostObjectDefine:boxedBridge((o,k,v,kind)=>{raw.define(materialize(o),unbox(k),unbox(v),kind);return o;},true),
+  hostObjectGet:boxedBridge(objectGet),hostProtoGet:boxedBridge(protoGet),
+  hostObjectSet:boxedBridge((o,k,v,strict)=>{setProperty(materialize(o),unbox(k),unbox(v),!!strict);return v;}),
+  hostObjectDefine:boxedBridge((o,k,v,kind)=>{raw.define(materialize(o),unbox(k),unbox(v),kind);return o;}),
   hostObjectDelete:boxedBridge((o,k,strict)=>{const ok=Reflect.deleteProperty(materialize(o),unbox(k));if(!ok&&strict)throw new TypeError('Cannot delete property');return +ok;},true),
   hostArrayPush:boxedBridge((o,v)=>{const a=materialize(o),i=a.length;defineProperty(a,i,{value:unbox(v),writable:true,enumerable:true,configurable:true});return o;},true),
-  hostArrayHole:boxedBridge(o=>{materialize(o).length++;return o;},true),
-  hostArg:boxedBridge((a,i)=>box(i<a.length?a[i]:undefined),true),
+  hostArrayHole:boxedBridge(o=>{materialize(o).length++;return o;}),
+  hostArg:boxedBridge((a,i)=>box(i<a.length?a[i]:undefined)),
  });
  if(!metadata[0]?.environmentWasm)throw new Error('Missing WASM environment runtime; rebuild with compiler 0.9+.');
  const environmentBytes=Uint8Array.from(atob(metadata[0].environmentWasm),c=>c.charCodeAt(0));
  environment=new WebAssembly.Instance(new WebAssembly.Module(environmentBytes),{h:nativeImports}).exports;
- environment.initValues(pool.length);pool.forEach((v,i)=>environment.setConstant(i,box(v)));
+ environment.initValues(pool.length);
+ UNDEFINED=environment.undefinedValue();NULL=environment.nullValue();TRUE=environment.boolean(1);FALSE=environment.boolean(0);
+ pool.forEach((v,i)=>environment.setConstant(i,box(v)));
+ environment.setBaseKeys(baseKeys.length);baseKeys.forEach((k,i)=>environment.setBaseKey(i,box(k)));
  const root=environment.scopeNew(null,metadata[0]?.rootSlots|0);
  function read(r){try{return unbox(environment.read(r));}catch(e){throw unwrap(e);}}
  function write(r,v){try{return unbox(environment.write(r,box(v)));}catch(e){throw unwrap(e);}}
@@ -197,7 +234,19 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
    for(const v of args)environment.push(self,v);return environment.getProp(self,box('length'));
   }
   const values=new Array(args.length);for(let i=0;i<args.length;i++)values[i]=unbox(args[i]);
-  try{return box(Reflect.apply(checkCallable(unbox(fn)),unbox(self),values));}finally{environment.invalidatePrototypes();}
+  return applyNative(fn,unbox(self),values);
+ }
+ function applyNative(fn,self,values){
+  const result=Reflect.apply(checkCallable(typeof fn==='function'?fn:unbox(fn)),self,values);
+  if(touchesPrototypes(self,...values))environment.invalidatePrototypes();
+  return box(result);
+ }
+ function callKinds(fn,self,kinds,args){
+  const f=functions.get(fn);if(f?.invokeBoxed)return f.invokeBoxed(self,args,environment.undefinedValue());
+  const selfKind=kinds&7;
+  if(selfKind===6&&stringMethodIds.has(fn)||selfKind===7&&(fn===arrayPush||fn===arrayPop))return callValue(fn,self,args);
+  const values=new Array(args.length);for(let i=0;i<args.length;i++)values[i]=fromKind(args[i],(kinds>>>3*(i+1))&7);
+  return applyNative(fn,fromKind(self,selfKind),values);
  }
  function boxedArguments(a){if(!environment.isObject(a))return a;const n=environment.arrayLength(a)>>>0,values=new Array(n);for(let i=0;i<n;i++)values[i]=environment.arg(a,i);return values;}
  function invoke(r,a){
@@ -207,13 +256,13 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
    if(r.fn===arrayPush)return environment.arrayPushValues(r.self,a,box('length'));
    if(r.fn===arrayPop)return environment.arrayPopValue(r.self,box('length'));
   }
-  environment.invalidatePrototypes();try{return box(Reflect.apply(checkCallable(unbox(r.fn)),unbox(r.self),argumentList(a)));}finally{environment.invalidatePrototypes();}
+  return applyNative(r.fn,unbox(r.self),argumentList(a));
  }
  function readProperty(r){if(r.private){const d=r.private;privateCheck(d,r.object);if(d.kind===0)return d.values.get(r.object);if(d.kind===1)return d.fn;if(!d.get)throw new TypeError('Private getter missing');return Reflect.apply(d.get,r.object,[]);}if(r.unresolved)throw new ReferenceError(r.key+' is not defined');if(r.super)return Reflect.get(r.object,r.key,r.receiver);return r.object[r.key];}
  function setProperty(object,key,value,strict){if(object==null)throw new TypeError('Cannot set property of null or undefined');if(typeof object!=='object'&&typeof object!=='function'){if(strict)throw new TypeError('Cannot assign property of primitive');return value;}if(!Reflect.set(object,key,value,object)&&strict)throw new TypeError('Cannot assign property '+String(key));return value;}
  function writeProperty(r,v){if(r.private){const d=r.private;privateCheck(d,r.object);if(d.kind===0)d.values.set(r.object,v);else if(d.kind===2&&d.set)Reflect.apply(d.set,r.object,[v]);else throw new TypeError('Private member is not writable');return v;}if(r.unresolved&&r.strict)throw new ReferenceError(r.key+' is not defined');if(r.super){if(!Reflect.set(r.object,r.key,v,r.receiver))throw new TypeError('Cannot assign super property');return v;}return setProperty(r.object,r.key,v,r.strict);}
  function unwrap(e){if(e instanceof WebAssembly.Exception&&e.is(errorTag))return unbox(e.getArg(errorTag,0));return e;}
- function callCompiled(id,env,self,args,newTarget){environment.invalidatePrototypes();try{return unbox(instance.exports['f'+id](env,box(self),args,box(newTarget)));}catch(e){throw unwrap(e);}}
+ function callCompiled(id,env,self,args,newTarget){try{return unbox(instance.exports['f'+id](env,box(self),args,box(newTarget)));}catch(e){throw unwrap(e);}}
  function makeFunction(env,id,nameIndex,flags,self,newTarget){
   const strict=!!(flags&1),arrow=!!(flags&2),name=pool[nameIndex],info={home:null,method:!!(flags&8)};let closure=env,f;
   const call=(receiver,a,target)=>flags&48?startResumable(id,closure,receiver,a,target,flags,f):callCompiled(id,closure,receiver,a,target);
@@ -425,10 +474,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  imports.coercible=boxedBridge(v=>{if(environment.nullish(v))throw new TypeError('Cannot destructure null or undefined');return v;});
  imports.prepare=boxedBridge(prepare);
  imports.callArray=boxedBridge((fn,self,a)=>{const f=functions.get(fn);if(f?.invokeBoxed)return f.invokeBoxed(self,a,environment.undefinedValue());return callValue(fn,self,boxedArguments(a));});
- imports.call0=boxedBridge((fn,self)=>callValue(fn,self,[]));
- imports.call1=boxedBridge((fn,self,a)=>callValue(fn,self,[a]));
- imports.call2=boxedBridge((fn,self,a,b)=>callValue(fn,self,[a,b]));
- for(let n=3;n<=8;n++)imports['call'+n]=boxedBridge((fn,self,...a)=>callValue(fn,self,a),false,-1);
+ for(let n=0;n<=8;n++)imports['call'+n]=environment['call'+n];
  for(const name of ['getProp','setProp','getIndex','setIndex'])imports[name]=environment[name];imports.prepareValue=boxedBridge(fn=>({fn,self:environment.undefinedValue()}));imports.callable=boxedBridge(r=>r.fn);imports.invoke=boxedBridge(invoke);
  imports.rest=boxedBridge((a,i)=>{const out=environment.array(),n=environment.isObject(a)?environment.arrayLength(a)>>>0:a.length;for(;i<n;i++)environment.push(out,environment.arg(a,i));return out;});
  imports.spread=boxedBridge((a,v)=>{for(const value of unbox(v))environment.push(a,box(value));return a;},true);

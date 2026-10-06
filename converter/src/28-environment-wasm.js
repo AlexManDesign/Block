@@ -63,11 +63,15 @@ function environmentWasm(){
  host('hostProperty',[REF,REF,I32],[REF]);host('hostStringRead',[REF,REF],[REF]);host('hostStringWrite',[REF,REF,REF,I32],[REF]);
  host('hostEqual',[REF,REF],[I32]);host('hostTemplateString',[REF],[REF]);
  host('hostPrototypeFlags',[],[I32]);host('hostKey',[REF],[REF]);
- host('hostObjectGet',[REF,REF],[REF]);host('hostObjectSet',[REF,REF,REF,I32],[REF]);
+ host('hostObjectGet',[REF,REF],[REF]);host('hostProtoGet',[REF,REF,I32],[REF]);host('hostObjectSet',[REF,REF,REF,I32],[REF]);
  host('hostObjectDefine',[REF,REF,REF,I32],[REF]);host('hostObjectDelete',[REF,REF,I32],[I32]);
  host('hostArrayPush',[REF,REF],[REF]);host('hostArrayHole',[REF],[REF]);host('hostArg',[REF,I32],[REF]);
  host('hostHas',[REF,REF],[I32]);host('hostRemove',[REF],[REF]);
  host('hostGet',[REF,REF],[REF]);host('hostSet',[REF,REF,REF,I32],[REF]);host('hostGetIndex',[REF,F64],[REF]);host('hostSetIndex',[REF,F64,REF,I32],[REF]);
+ // Raw variants: the receiver is a host value and value kinds are passed along,
+ // so the bridge never has to call back into WASM to classify them.
+ host('hostGetRaw',[REF,REF],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
+ for(let n=0;n<=8;n++)host('hostCall'+n,[REF,REF,I32,...Array(n).fill(REF)],[REF]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -135,20 +139,32 @@ function environmentWasm(){
  def('getProp',[REF,REF],[REF],f=>{
   f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('objectGet');f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('stringRead');f.ret();});
+  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetRaw');f.ret();});
   f.get(0);f.get(1);f.call('hostGet');
  });
  def('setProp',[REF,REF,REF,I32],[REF],f=>{
   f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.get(2);f.get(3);f.call('objectSet');f.ret();});
+  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.get(2);f.get(2);f.call('valueKind');f.get(3);f.call('hostSetRaw');f.ret();});
   f.get(0);f.get(1);f.get(2);f.get(3);f.call('hostSet');
  });
  def('getIndex',[REF,F64],[REF],f=>{
   f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('number');f.call('objectGet');f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('number');f.call('stringRead');f.ret();});
+  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetIndexRaw');f.ret();});
   f.get(0);f.get(1);f.call('hostGetIndex');
  });
  def('setIndex',[REF,F64,REF,I32],[REF],f=>{
   f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('number');f.get(2);f.get(3);f.call('objectSet');f.ret();});
+  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.get(2);f.get(2);f.call('valueKind');f.get(3);f.call('hostSetIndexRaw');f.ret();});
   f.get(0);f.get(1);f.get(2);f.get(3);f.call('hostSetIndex');
+ });
+ // Calls with up to 8 arguments: kinds of `self` and each argument are packed
+ // three bits each so the host can unbox them without calling back.
+ for(let n=0;n<=8;n++)def('call'+n,[REF,REF,...Array(n).fill(REF)],[REF],f=>{
+  f.get(0);f.get(1);f.get(1);f.call('valueKind');
+  for(let i=0;i<n;i++){f.get(2+i);f.call('valueKind');f.int(3*(i+1));f.out(0x74,0x72);}
+  for(let i=0;i<n;i++)f.get(2+i);
+  f.call('hostCall'+n);
  });
  def('templateString',[REF],[REF],f=>{f.get(0);f.call('isString');f.if(()=>f.get(0),()=>{f.get(0);f.call('hostTemplateString');},REF);});
  def('property',[REF,REF,I32],[REF],f=>{f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.get(2);f.int(1);f.out(0x23,6);f.create(OBJECT_REF);f.ret();});f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.get(2);f.out(0x23,6);f.create(STRING_REF);},()=>{f.get(0);f.get(1);f.get(2);f.call('hostProperty');},REF);});
@@ -166,6 +182,18 @@ function environmentWasm(){
  def('scopeClone',[REF],[REF],f=>{
   const n=f.local(I32),copy=f.local();f.get(0);f.internal(SCOPE);f.out(0xfb,0x0f);f.tee(n);f.out(0xfb,7,...u32(SCOPE),0xfb,0x1b);f.set(copy);
   f.get(copy);f.internal(SCOPE);f.int(0);f.get(0);f.internal(SCOPE);f.int(0);f.get(n);f.out(0xfb,0x11,...u32(SCOPE),...u32(SCOPE));f.get(copy);
+ });
+ // Own string keys of Object.prototype at startup (global 9). While the
+ // prototype keeps exactly these keys, other names are known to be absent.
+ def('setBaseKeys',[I32],[],f=>{f.get(0);f.out(0xfb,7,...u32(POOL),0xfb,0x1b,0x24,9);});
+ def('setBaseKey',[I32,REF],[],f=>{f.out(0x23,9);f.internal(POOL);f.get(0);f.get(1);f.out(0xfb,0x0e,...u32(POOL));});
+ def('isBaseKey',[REF],[I32],f=>{
+  const i=f.local(I32),n=f.local(I32);f.out(0x23,9);f.internal(POOL);f.out(0xfb,0x0f);f.set(n);
+  f.block('end',end=>f.block('loop',loop=>{
+   f.get(i);f.get(n);f.out(0x4e);f.branch(end,true);
+   f.out(0x23,9);f.internal(POOL);f.get(i);f.out(0xfb,0x0b,...u32(POOL));f.get(0);f.call('stringCompare');f.out(0x45);f.if(()=>{f.int(1);f.ret();});
+   f.get(i);f.int(1);f.out(0x6a);f.set(i);f.branch(loop);
+  }));f.int(0);
  });
  // Module records by module index (global 8 holds the container array).
  def('initModuleScopes',[I32],[],f=>{f.get(0);f.out(0xfb,7,...u32(SCOPE),0xfb,0x1b,0x24,8);});
@@ -202,7 +230,7 @@ function environmentWasm(){
  entries.push([...utf8('h'),...utf8('undefined'),3,REF,0]);
  const exports=functions.map((fn,i)=>[...utf8(fn.name),0,...u32(imports.length+i)]);
  const bytes=[0,97,115,109,1,0,0,0];
- const globals=[...u32(8),...Array.from({length:5},()=>[REF,1,0xd0,REF,0x0b]).flat(),0x6d,1,0xd0,0x6d,0x0b,I32,1,0x41,0,0x0b,REF,1,0xd0,REF,0x0b];
+ const globals=[...u32(9),...Array.from({length:5},()=>[REF,1,0xd0,REF,0x0b]).flat(),0x6d,1,0xd0,0x6d,0x0b,I32,1,0x41,0,0x0b,REF,1,0xd0,REF,0x0b,REF,1,0xd0,REF,0x0b];
  for(const [id,data]of [[1,[...u32(types.length),...types.flat()]],[2,[...u32(entries.length),...entries.flat()]],[3,[...u32(functions.length),...functions.flatMap(fn=>u32(fn.type))]],[6,globals],[7,[...u32(exports.length),...exports.flat()]],[10,[...u32(bodies.length),...bodies.flat()]]])bytes.push(...section(id,data));
  const binary=new Uint8Array(bytes);
  // Module() provides an offset/function diagnostic if the own encoder is wrong.
