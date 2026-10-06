@@ -65,7 +65,9 @@ class World {
     this.seed = seed;
     this.cols = new Map();
     this.grid = new Array(COL_GRID * COL_GRID).fill(null);
-    this.savedEdits = new Map();   // colKey -> Map (edits of unloaded / not yet loaded columns)
+    this.savedEdits = new Map();   // colKey -> Map: edits of unloaded columns not yet in the database
+    this.editKeys = new Set();     // columns with edits in the database (loaded when requested)
+    this.editStore = null;         // colKey -> Promise of its stored edits (Map or null)
     this.dirtyCols = new Set();    // columns with unsaved edits
     this.pendingLit = new Set();   // columns waiting for the horizontal light pass
     this.opts = opts;
@@ -165,6 +167,17 @@ class World {
     const c = new Column(cx, cz);
     this.cols.set(k, c);
     this.grid[slot] = c;
+    // its stored edits are read while it generates; generation waits for them (onGenerated)
+    if (this.editStore && this.editKeys.has(k) && !this.savedEdits.has(k)) {
+      c.editsWait = true;
+      this.editStore(k).then(m => {
+        c.editsWait = false;
+        if (c.state < 0) return;
+        if (m && m.size && !this.savedEdits.has(k)) this.savedEdits.set(k, m);
+        const d = c.genData;
+        if (d) { c.genData = null; this.onGenerated(d); }
+      });
+    }
     this.genInFlight++;
     this.pool.post({ t: 'gen', cx, cz });
   }
@@ -172,6 +185,7 @@ class World {
   onGenerated(d) {
     const c = this.col(d.cx, d.cz);
     if (!c || c.state) return;
+    if (c.editsWait) { c.genData = d; return; }
     for (let s = 0; s < SECTIONS; s++) {
       const src = d.sections[s];
       if (!src) continue;
@@ -188,7 +202,7 @@ class World {
     if (d.springs && d.springs.length) { c.springs = d.springs; this.springCols.add(c); }
     if (d.spawners && d.spawners.length) { c.spawners = d.spawners; this.spawnerCols.add(c); }
     const saved = this.savedEdits.get(c.key);
-    if (saved) { c.edits = saved; this.applyEdits(c); }
+    if (saved) { c.edits = saved; this.savedEdits.delete(c.key); this.applyEdits(c); }
     this.skyInit(c);
     c.state = 1;
     this.stats.gen++;

@@ -131,11 +131,12 @@ class Game {
     Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false }, meta.surv || {});
     show('title', false); show('loading', true);
     $('loadText').textContent = T('loading');
-    const edits = await DB.loadCols(meta.id);
+    const editKeys = await DB.loadColKeys(meta.id);
     if (this.world) { this.world.pool.terminate(); }
     const nw = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 4) - 1));
     const w = new World(meta.seed, this.workerSrc, this.assets.layers, { workers: nw });
-    w.savedEdits = edits;
+    // edited columns: only their keys stay in memory, the edits load with the column
+    w.editKeys = editKeys; w.editStore = k => DB.loadCol(meta.id, k);
     this.meshQueue = [];
     w.onMeshResult = (c, sy, d) => this.meshQueue.push(c, sy, d);
     w.onColumnUnload = (c) => { this.r.freeColumn(c); if (c.edits && c.edits.size) this.pendingSave.set(c.key, c.edits); };
@@ -220,7 +221,13 @@ class Game {
       ship: this.ships ? this.ships.serialize() : null,
     });
     await DB.putWorld(this.meta);
-    await DB.saveCols(this.meta.id, entries);
+    if (await DB.saveCols(this.meta.id, entries)) {
+      // stored: unloaded columns' edits leave memory (read back when the column loads again)
+      for (const [k, m] of entries) {
+        w.editKeys.add(k);
+        if (w.savedEdits.get(k) === m && !w.cols.has(k)) w.savedEdits.delete(k);
+      }
+    }
     void quitting;
   }
 
