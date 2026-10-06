@@ -67,7 +67,7 @@ function environmentWasm(){
  host('hostObjectDefine',[REF,REF,REF,I32],[REF]);host('hostObjectDelete',[REF,REF,I32],[I32]);
  host('hostArrayPush',[REF,REF],[REF]);host('hostArrayHole',[REF],[REF]);host('hostArg',[REF,I32],[REF]);
  host('hostHas',[REF,REF],[I32]);host('hostRemove',[REF],[REF]);
- host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);
+ host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
  // GC globals: imported host undefined at 0 (ABI only), pool at 1,
@@ -144,6 +144,8 @@ function environmentWasm(){
   f.get(0);f.call('isObjectReference');f.if(()=>{f.field(0,OBJECT_REF,0);f.field(0,OBJECT_REF,1);f.get(1);f.field(0,OBJECT_REF,2);f.call('objectSet');f.ret();});
   f.get(0);f.get(1);f.call('hostWrite');
  });
+ // ToNumber for the typed tier: numbers stay in WASM, the rest asks the host.
+ def('toNumberValue',[REF],[F64],f=>{f.get(0);f.call('isNumber');f.if(()=>{f.get(0);f.call('toNumber');f.ret();});f.get(0);f.call('hostToNumber');});
  def('toNumeric',[REF],[REF],f=>{f.get(0);f.call('isNumber');f.if(()=>{f.get(0);f.ret();});f.get(0);f.call('hostToNumeric');});
  def('increment',[REF,I32],[REF],f=>{f.get(0);f.call('isNumber');f.if(()=>{f.get(0);f.call('toNumber');f.get(1);f.out(0xb7,0xa0);f.call('number');f.ret();});f.get(0);f.get(1);f.call('hostIncrement');});
  def('update',[REF,I32,I32],[REF],f=>{

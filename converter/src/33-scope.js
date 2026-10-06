@@ -56,7 +56,7 @@ class ScopeAnalysis {
  constructor(){
   this.root=new Scope('root',null,null,null);this.root.forced=true;
   this.globals=new Map();this.scriptErrors=new Map();this.modules=new Map();this.functions=new Map();
-  this.globalWrites=new Set();this.dynamicGlobalWrites=false;
+  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;
  }
  // ---- pass 1: scopes and declarations ----
  declare(scope,name,kind,node){
@@ -306,7 +306,12 @@ class ScopeAnalysis {
     else{this.globalTarget(n.left);this.expression(n.left,scope,fn);}
     this.expression(n.right,scope,fn);return;
    case'BinaryExpression':case'LogicalExpression':this.expression(n.left,scope,fn);this.expression(n.right,scope,fn);return;
-   case'MemberExpression':if(n.object.type==='Identifier')n.object._memberObject=true;this.expression(n.object,scope,fn);if(n.computed)this.expression(n.property,scope,fn);return;
+   case'MemberExpression':
+    if(n.object.type==='Identifier')n.object._memberObject=true;
+    this.expression(n.object,scope,fn);if(n.computed)this.expression(n.property,scope,fn);
+    // Reads of global functions through window.* make them reachable from anywhere.
+    if(n.object.type==='Identifier'&&!n.object._ref?.binding&&['window','globalThis','self','top','parent','frames'].includes(n.object.name)){if(n.computed)this.globalEscapes=true;else this.globalReads.add(n.property.name);}
+    return;
    case'ConditionalExpression':this.expression(n.test,scope,fn);this.expression(n.consequent,scope,fn);this.expression(n.alternate,scope,fn);return;
    case'CallExpression':case'NewExpression':this.expression(n.callee,scope,fn);n.arguments.forEach(a=>this.expression(a,scope,fn));return;
    case'SequenceExpression':n.expressions.forEach(e=>this.expression(e,scope,fn));return;
@@ -320,7 +325,9 @@ class ScopeAnalysis {
  }
  // Writes to properties of the global object through window/globalThis/self.
  globalTarget(n){
-  if(n.type!=='MemberExpression'||n.object.type!=='Identifier'||!['window','globalThis','self'].includes(n.object.name))return;
+  if(n.type!=='MemberExpression'||n.object.type!=='Identifier')return;
+  if(n.object.name==='Math')this.mathWrites=true;
+  if(!['window','globalThis','self'].includes(n.object.name))return;
   if(n.computed)this.dynamicGlobalWrites=true;else this.globalWrites.add(n.property.name);
  }
  reference(n,scope,fn,mode){

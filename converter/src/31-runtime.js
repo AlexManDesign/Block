@@ -79,12 +79,12 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   hostProperty:(o,k,s)=>{if(o==null)throw new TypeError('Cannot access '+String(k)+' of '+o);return ref(o,k,!!s);},
   hostStringRead:(o,k)=>o[k],hostStringWrite:(o,k,v,s)=>setProperty(o,k,v,!!s),
   hostEqual:(a,b)=>+(a===b),hostTemplateString:v=>{if(typeof v==='symbol')throw new TypeError('Cannot convert Symbol to string');return String(v);},
-  hostToNumeric:v=>typeof v==='bigint'?v:+v,hostIncrement:(v,d)=>typeof v==='bigint'?v+BigInt(d):v+d,
+  hostToNumeric:v=>typeof v==='bigint'?v:+v,hostToNumber:v=>+v,hostIncrement:(v,d)=>typeof v==='bigint'?v+BigInt(d):v+d,
   hostTruth:v=>+!!v,hostUpdate:(r,value,d,post)=>{let n=typeof value==='bigint'?value:+value;const previous=n;n=typeof n==='bigint'?n+BigInt(d):n+d;write(r,n);return post?previous:n;},
   fail:(code,k)=>{if(code===1)throw new SyntaxError('Duplicate binding: '+pool[k]);if(code===2)throw new ReferenceError('Binding is not initialized');if(code===3)throw new TypeError('Assignment to import binding');if(code===4)throw new TypeError('Assignment to constant variable');if(code===5)throw new RangeError('Invalid string length or repeat count');if(code===6)throw new RangeError('Invalid array length');if(code===7)throw new TypeError('Cannot delete array length');throw new Error('Environment runtime error '+code);},
  };
  const nativeImports={undefined:new WebAssembly.Global({value:'externref'},undefined)};
- for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual');
+ for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual'||name==='hostToNumber');
  Object.assign(nativeImports,{
   hostPrototypeFlags:boxedBridge(prototypeFlags),hostKey:bridge(toKey),
   hostHas:boxedBridge((o,k)=>{const key=unbox(k);if(environment.isObject(o)){const forward=environment.objectHost(o);if(forward!==null)return +(key in forward);return +(key in (environment.objectKind(o)===1?arrayPrototype:objectPrototype));}return +(key in unbox(o));},true),
@@ -302,7 +302,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,read,write,
+  scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
   globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
   globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
   globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
@@ -347,7 +347,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag};
- const nativeNames=new Set(['scopeNew','scopeClone','moduleScope','toNumeric','increment','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;
@@ -361,6 +361,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
 
  imports.frameRef=boxedBridge((f,i)=>box(f.slots[i]));imports.putRef=boxedBridge((f,i,v)=>{f.slots[i]=v;});
  imports.int32=environment.int32;imports.has=environment.has;
+ // Numeric helpers of the typed tier take and return f64: no boxing at all.
+ imports.fmod=(a,b)=>a%b;imports.pow=(a,b)=>a**b;
+ for(const name of ['random','atan2','pow','acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'])imports['math_'+name]=Math[name];
  for(const name of ['isString','stringLength','stringConcat','stringCompare','stringRead','stringCharCodeAt','stringCharAt','stringSlice','stringSubstring','stringIndexOf','stringLastIndexOf','stringIncludes','stringStartsWith','stringEndsWith','stringRepeat'])imports[name]=environment[name];
  const bytes=typeof binary==='string'?Uint8Array.from(atob(binary),c=>c.charCodeAt(0)):binary;
  instance=new WebAssembly.Instance(new WebAssembly.Module(bytes),{r:imports});

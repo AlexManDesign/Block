@@ -14,6 +14,9 @@ const stringTypes=require("./string-wasm.mjs")["stringTypes"];
 const base64=require("./encoding.mjs")["base64"];
 const ScopeAnalysis=require("./scope.mjs")["ScopeAnalysis"];
 const bindings=require("./bindings.mjs")["bindings"];
+const reprOf=require("./bindings.mjs")["reprOf"];
+const VALUE_TYPE=require("./bindings.mjs")["VALUE_TYPE"];
+const TypeInference=require("./types.mjs")["TypeInference"];
 
 const signatures={
  ...featureSignatures,
@@ -29,16 +32,28 @@ const signatures={
  object:['','r'],assign:['rr','r'],define:['rrri','r'],regex:['ii','r'],func:['riiirr','r'],
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
+ toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
+ ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
 };
 const types={r:REF,i:I32,f:F64};
 const strictBody=(body,inherited)=>!!(inherited||body?.some?.(n=>n.directive==='use strict'));
 function error(n,message){throw new SyntaxError(message+(n?.loc?` (строка ${n.loc.start.line}, столбец ${n.loc.start.column+1})`:''));}
 
 class Compiler {
- constructor({numeric=true,environments=true}={}){this.numeric=numeric;this.environments=environments;this.constants=[];this.constantKeys=new Map();this.imports=[];this.importNames=new Map();this.plans=[];this.bodies=[];this.templateCount=0;}
+ constructor({numeric=true,environments=true}={}){
+  this.numeric=numeric;this.environments=environments;this.constants=[];this.constantKeys=new Map();this.imports=[];this.importNames=new Map();this.plans=[];this.bodies=[];this.templateCount=0;
+  // All imports are declared up front, so function indices are known while emitting.
+  for(const name of Object.keys(signatures))this.import(name);
+ }
+ // Each plan owns two functions: f<id> (generic entry, exported) and t<id>
+ // (typed body called directly by compiled code, or a stub).
+ genericIndex(id){return this.imports.length+2*id;}
+ typedIndex(fn){return this.imports.length+2*this.planOf(fn)+1;}
+ planOf(fn){const n=fn.node;if(n._planId===undefined)this.add(n,fn.strict,'function',n.id?.name||'');return n._planId;}
+ paramRepr(fn,i){const p=fn.node.params[i];return p.type==='AssignmentPattern'?'r':reprOf(p._ref.binding.type);}
  constant(v){const d=typeof v==='undefined'?{t:'u'}:typeof v==='bigint'?{t:'big',v:String(v)}:typeof v==='number'?{t:'num',v:Object.is(v,-0)?'-0':String(v)}:{t:'v',v};const key=JSON.stringify(d);if(!this.constantKeys.has(key)){this.constantKeys.set(key,this.constants.length);this.constants.push(d);}return this.constantKeys.get(key);}
  import(name){if(!signatures[name])throw new Error('Unknown ABI: '+name);if(!this.importNames.has(name)){const[p,r]=signatures[name];this.importNames.set(name,this.imports.length);this.imports.push({name,params:[...p].map(t=>types[t]),results:[...r].map(t=>types[t])});}return this.importNames.get(name);}
- add(node,strict=false,kind='function',name=''){const id=this.plans.length;let arity=node.params?.findIndex(p=>p.type==='AssignmentPattern'||p.type==='RestElement')??0;if(arity<0)arity=node.params.length;this.plans.push({node,kind,name,sourceName:kind==='script'||kind==='handler'?name:this.currentSource||name,strict:strictBody(node.body?.body||node.body,strict),arity});return id;}
+ add(node,strict=false,kind='function',name=''){if(kind==='function'&&node._planId!==undefined)return node._planId;const id=this.plans.length;if(kind==='function')node._planId=id;let arity=node.params?.findIndex(p=>p.type==='AssignmentPattern'||p.type==='RestElement')??0;if(arity<0)arity=node.params.length;this.plans.push({node,kind,name,sourceName:kind==='script'||kind==='handler'?name:this.currentSource||name,strict:strictBody(node.body?.body||node.body,strict),arity});return id;}
  script(source,filename='script'){let ast;try{ast=parse(source,{ecmaVersion:'latest',sourceType:'script',locations:true});}catch(e){throw new SyntaxError(filename+': '+e.message);}return this.add(ast,false,'script',filename);}
  handler(source,name){let ast;try{ast=parse(`function handler(event){\n${source}\n}`,{ecmaVersion:'latest',locations:true});}catch(e){throw new SyntaxError(name+': '+e.message);}return this.add(ast.body[0],false,'handler',name);}
  build(){
@@ -46,6 +61,7 @@ class Compiler {
   const analysis=this.analysis=new ScopeAnalysis();
   for(const plan of [...this.plans])analysis.program(plan);
   analysis.finish();
+  new TypeInference(analysis).run();
   this.moduleSpecs??=[];
   for(const [id,spec]of this.moduleSpecs.entries()){
    const scope=analysis.modules.get(id),slotOf=(module,local)=>analysis.modules.get(module).bindings.get(local).slot;
@@ -53,13 +69,25 @@ class Compiler {
    for(const entry of spec.imports)entry.slot=scope.bindings.get(entry.local).slot;
    for(const entry of spec.exports)if(!entry.target.namespace)entry.target.slot=slotOf(entry.target.module,entry.target.local);
   }
+  const generic=[REF,REF,REF,REF],functions=[];
   for(let id=0;id<this.plans.length;id++){
    const plan=this.plans[id];this.currentSource=plan.sourceName;
    try{
-    let body=new FunctionEmitter(this,id).compile();
-    if(plan.node.async||plan.node.generator){plan.frameTypes=[REF,REF,REF,REF,...body.locals];body=lowerResumable(body,this);}
+    const fn=analysis.functions.get(plan.node);
+    if(plan.kind==='function'&&fn?.typedBody){
+     const params=plan.node.params.map((p,i)=>VALUE_TYPE[this.paramRepr(fn,i)]),ret=VALUE_TYPE[reprOf(fn.ret)];
+     const typed=new FunctionEmitter(this,id,{typed:true,base:4+params.length,retRepr:reprOf(fn.ret)}).compile();
+     functions[2*id]={params:generic,results:[REF],...this.adapter(id,fn)};
+     functions[2*id+1]={params:[...generic,...params],results:[ret],...typed};
+     plan.typed=true;
+     continue;
+    }
+    const resumable=!!(plan.node.async||plan.node.generator);
+    let body=new FunctionEmitter(this,id,{dynamicOnly:resumable}).compile();
+    if(resumable){plan.frameTypes=[REF,REF,REF,REF,...body.locals];body=lowerResumable(body,this);}
     else if(this.numeric){const fast=specializeNumeric(this,plan,body);if(fast){body={code:[...fast.code,...body.code],locals:[...body.locals,...fast.locals]};plan.numeric=true;plan.stringSpecialization=fast.stringSpecialization;}}
-    this.bodies.push(body);
+    functions[2*id]={params:generic,results:[REF],...body};
+    functions[2*id+1]={params:generic,results:[REF],code:[0x00],locals:[]};
    }catch(e){e.message=this.currentSource+': '+e.message;throw e;}
   }
   const metadata=this.plans.map(p=>({arity:p.arity,name:p.name,frameTypes:p.frameTypes,numeric:!!p.numeric,stringSpecialization:!!p.stringSpecialization,usesArguments:!!p.usesArguments}));
@@ -67,14 +95,28 @@ class Compiler {
   const environmentBinary=this.environments?environmentWasm():null;
   if(environmentBinary&&metadata.length)metadata[0].environmentWasm=base64(environmentBinary);
   // Types 0..2: strings (numeric.mjs relies on these indices), 3: scope record.
-  return {binary:makeModule(this.imports,this.bodies,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]]),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
+  this.functions=functions;
+  const exported=this.plans.map((_,id)=>({name:'f'+id,index:this.genericIndex(id)}));
+  return {binary:makeModule(this.imports,functions,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]],exported),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
+ }
+ // Generic entry of a typed function: unpack the argument array, call t<id>.
+ adapter(id,fn){
+  const code=[],out=(...b)=>code.push(...b),call=name=>out(0x10,...u32(this.import(name)));
+  out(0x20,0,0x20,1,0x20,2,0x20,3);
+  fn.node.params.forEach((p,i)=>{
+   out(0x20,2,0x41,...i32(i));call('arg');
+   const repr=this.paramRepr(fn,i);if(repr==='f')call('toNumberValue');else if(repr==='i')call('truth');
+  });
+  out(0x10,...u32(this.imports.length+2*id+1));
+  const ret=reprOf(fn.ret);if(ret==='f')call('number');else if(ret==='i')call('boolean');
+  return {code,locals:[]};
  }
 }
 
 class FunctionEmitter {
- constructor(compiler,id){this.c=compiler;this.id=id;this.plan=compiler.plans[id];this.code=[];this.locals=[];this.labels=[];this.finalizers=[];this.env=0;this.strict=this.plan.strict;}
+ constructor(compiler,id,{typed=false,base=4,retRepr=null,dynamicOnly=false}={}){this.c=compiler;this.id=id;this.plan=compiler.plans[id];this.code=[];this.locals=[];this.labels=[];this.finalizers=[];this.env=0;this.strict=this.plan.strict;this.typed=typed;this.base=base;this.retRepr=retRepr;this.dynamicOnly=dynamicOnly;}
  out(...bytes){this.code.push(...bytes);}
- local(type=REF){const id=4+this.locals.length;this.locals.push(type);return id;}
+ local(type=REF){const id=this.base+this.locals.length;this.locals.push(type);return id;}
  get(i){this.out(0x20,...u32(i));} set(i){this.out(0x21,...u32(i));} tee(i){this.out(0x22,...u32(i));}
  integer(n){this.out(0x41,...i32(n));} lit(v){this.integer(this.c.constant(v));this.rt('lit');}
  rt(name){this.out(0x10,...u32(this.c.import(name)));}
@@ -145,7 +187,7 @@ const emitter=FunctionEmitter.prototype;
 emitter.baseExpression=emitter.expression;
 emitter.baseStatement=emitter.statement;
 Object.assign(emitter,features);
-Object.assign(emitter,{featureExpression:emitter.expression,featureStatement:emitter.statement,featurePattern:emitter.pattern,featureReference:emitter.reference,featureCallTarget:emitter.callTarget,featureChainPart:emitter.chainPart});
+Object.assign(emitter,{featureAbrupt:emitter.abrupt,featureExpression:emitter.expression,featureStatement:emitter.statement,featurePattern:emitter.pattern,featureReference:emitter.reference,featureCallTarget:emitter.callTarget,featureChainPart:emitter.chainPart});
 Object.assign(emitter,bindings);
 
 exports["Compiler"]=Compiler;

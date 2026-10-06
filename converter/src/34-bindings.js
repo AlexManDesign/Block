@@ -1,16 +1,32 @@
-// Emitter methods for statically resolved bindings (see scope.mjs).
-// A local binding is a WASM local; a captured binding is element `slot` of a
-// scope record reached from a known record by a fixed number of parent links.
+// Emitter methods for statically resolved bindings (scope.mjs) and statically
+// typed values (types.mjs). A local binding is a WASM local; a captured
+// binding is element `slot` of a scope record reached from a known record by
+// a fixed number of parent links. Values have one of three representations:
+// 'r' boxed (externref), 'f' a JS number as f64, 'i' a boolean as i32.
 const REF=require("./wasm.mjs")["REF"];
+const I32=require("./wasm.mjs")["I32"];
+const F64=require("./wasm.mjs")["F64"];
 const u32=require("./wasm.mjs")["u32"];
 const hops=require("./scope.mjs")["hops"];
+const NUM=require("./types.mjs")["NUM"];
+const BOOL=require("./types.mjs")["BOOL"];
 
 const SCOPE=3; // scope record type index in the program module
 const GLOBAL_CONSTANTS=new Map([['undefined',undefined],['NaN',NaN],['Infinity',Infinity]]);
+const VALUE_TYPE={r:REF,f:F64,i:I32};
+const reprOf=t=>t===NUM?'f':t===BOOL?'i':'r';
+const numeric=t=>t===NUM||t===BOOL;
+const F64_OPS={'+':0xa0,'-':0xa1,'*':0xa2,'/':0xa3};
+const F64_COMPARE={'<':0x63,'>':0x64,'<=':0x65,'>=':0x66,'==':0x61,'===':0x61,'!=':0x62,'!==':0x62};
+const I32_OPS={'&':0x71,'|':0x72,'^':0x73,'<<':0x74,'>>':0x75,'>>>':0x76};
+const MATH_UNARY={abs:0x99,ceil:0x9b,floor:0x9c,trunc:0x9d,sqrt:0x9f};
+const MATH_IMPORTED1=new Set(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh']);
+const MATH_IMPORTED2=new Set(['atan2','pow']);
 function fail(n,message){throw new SyntaxError(message+(n?.loc?` (строка ${n.loc.start.line}, столбец ${n.loc.start.column+1})`:''));}
 
 const bindings={
  ref(n){if(!n._ref)fail(n,'Внутренняя ошибка: имя '+n.name+' не разрешено');return n._ref;},
+ f64(n){const a=new Uint8Array(8);new DataView(a.buffer).setFloat64(0,n,true);this.out(0x44,...a);},
  // ---- scope records ----
  castRecord(){this.out(0xfb,0x1a,0xfb,0x16,SCOPE);},
  slotGet(slot){this.castRecord();this.integer(slot);this.out(0xfb,0x0b,SCOPE);},
@@ -18,6 +34,8 @@ const bindings={
   const own=this.records.get(target);if(own!==undefined){this.get(own);return;}
   const n=hops(this.closureScope,target);this.get(0);for(let i=0;i<n;i++)this.slotGet(0);
  },
+ // Record of the nearest materialized scope at or above `scope`.
+ recordAt(scope){let s=scope;while(s&&!s.materialized)s=s.parent;this.record(s);},
  openRecord(scope){
   this.get(this.env);this.integer(scope.slots);this.rt('scopeNew');
   const local=this.local();this.set(local);this.env=local;this.records.set(scope,local);
@@ -35,8 +53,32 @@ const bindings={
  hoistFunctions(statements){
   for(const s of statements)if(s.type==='FunctionDeclaration')this.initIdentifier(s.id,()=>this.function(s,s._displayName||s.id.name));
  },
+ // ---- representations ----
+ // Converts the value on the stack from representation `from` to `to`.
+ // `t` is its static type; a boxed value of static type num/bool is unboxed
+ // without checks.
+ convert(from,to,t){
+  if(from===to)return;
+  if(to==='r'){this.rt(from==='f'?'number':'boolean');return;}
+  if(to==='f'){
+   if(from==='i'){this.out(0xb7);return;}
+   if(t===BOOL){this.rt('truth');this.out(0xb7);return;}
+   this.rt(t===NUM?'toNumber':'toNumberValue');return;
+  }
+  // to 'i': JavaScript truthiness.
+  if(from==='f'){const v=this.local(F64);this.tee(v);this.f64(0);this.out(0x62);this.get(v);this.get(v);this.out(0x61,0x71);return;}
+  this.rt('truth');
+ },
+ emitAs(n,to,hint=''){this.convert(this.natural(n,hint),to,n._t);},
+ condition(n){this.emitAs(n,'i');},
+ // ToInt32 of the f64 on the stack, inline for the common in-range case.
+ toInt32(){
+  const v=this.local(F64);this.tee(v);this.f64(-2147483648);this.out(0x66);this.get(v);this.f64(2147483648);this.out(0x63,0x71);
+  this.ifElse(()=>{this.get(v);this.out(0xaa);},()=>{this.get(v);this.rt('int32');},I32);
+ },
  // ---- bindings ----
- bindingLocal(b){let local=this.bindingLocals.get(b);if(local===undefined){local=this.local();this.bindingLocals.set(b,local);}return local;},
+ bindingLocal(b){let local=this.bindingLocals.get(b);if(local===undefined){local=this.local(VALUE_TYPE[this.storageRepr(b)]);this.bindingLocals.set(b,local);}return local;},
+ storageRepr(b){return b.storage==='local'&&!this.dynamicOnly?reprOf(b.type):'r';},
  importTarget(b){
   const id=b.scope.node._moduleId,spec=this.c.moduleSpecs[id],entry=spec.imports.find(e=>e.local===b.name);
   if(!entry||entry.target.namespace)return null;
@@ -44,49 +86,64 @@ const bindings={
   if(!target)throw new Error('Внутренняя ошибка: нет привязки '+entry.target.local);
   return {module:entry.target.module,slot:target.slot,initialized:target.kind==='function'};
  },
+ // Pushes the stored value; returns [representation, may be uninitialized].
  loadBinding(b){
-  if(b.storage==='local'){this.get(this.bindingLocal(b));return true;}
+  if(b.storage==='local'){this.get(this.bindingLocal(b));return [this.storageRepr(b),true];}
   if(b.kind==='import'){
    const t=this.importTarget(b);
-   if(t){this.integer(t.module);this.rt('moduleScope');this.slotGet(t.slot);return !t.initialized;}
+   if(t){this.integer(t.module);this.rt('moduleScope');this.slotGet(t.slot);return ['r',!t.initialized];}
   }
-  this.record(b.scope);this.slotGet(b.slot);return true;
+  this.record(b.scope);this.slotGet(b.slot);return ['r',true];
  },
- storeBinding(b,keep){
-  if(b.storage==='local'){this.out(keep?0x22:0x21,...u32(this.bindingLocal(b)));return;}
+ // Stores the value on the stack (representation `from`) into binding b.
+ storeBinding(b,keep,from='r'){
+  const repr=this.storageRepr(b);
+  if(b.storage==='local'){this.convert(from,repr,b.type);this.out(keep?0x22:0x21,...u32(this.bindingLocal(b)));return repr;}
+  this.convert(from,'r',b.type);
   const v=this.local();this.set(v);this.record(b.scope);this.castRecord();this.integer(b.slot);this.get(v);this.out(0xfb,0x0e,SCOPE);if(keep)this.get(v);
+  return 'r';
  },
  tdz(name){this.integer(this.c.constant(name));this.rt('tdz');this.out(0x00);},
  checkInitialized(name){const t=this.local();this.tee(t);this.out(0xd1);this.ifElse(()=>this.tdz(name));this.get(t);},
  isGlobal(r){return !r.binding||r.binding.storage==='global';},
- readIdentifier(n){
+ // Pushes an identifier's value in its natural representation.
+ readNatural(n){
   const r=this.ref(n),b=r.binding;
   if(this.isGlobal(r)){
-   if(!b&&GLOBAL_CONSTANTS.has(n.name)){this.lit(GLOBAL_CONSTANTS.get(n.name));return;}
-   this.integer(this.c.constant(n.name));this.rt('globalRead');return;
+   if(!b&&GLOBAL_CONSTANTS.has(n.name)){if(n.name!=='undefined'&&!this.dynamicOnly){this.f64(GLOBAL_CONSTANTS.get(n.name));return 'f';}this.lit(GLOBAL_CONSTANTS.get(n.name));return 'r';}
+   this.integer(this.c.constant(n.name));this.rt('globalRead');return 'r';
   }
-  const mayBeEmpty=this.loadBinding(b);
-  if(r.check&&mayBeEmpty)this.checkInitialized(n.name);
+  const [repr,mayBeEmpty]=this.loadBinding(b);
+  if(repr==='r'&&r.check&&mayBeEmpty)this.checkInitialized(n.name);
+  if(repr==='r'&&b.storage!=='local'&&!this.dynamicOnly&&numeric(b.type)){this.convert('r',reprOf(b.type),b.type);return reprOf(b.type);}
+  return repr;
  },
+ readIdentifier(n){this.convert(this.readNatural(n),'r',n._t);},
  // Assignment semantics: TDZ and constant checks after the value is computed.
+ // emitValue pushes the value and may return its representation (default 'r').
  writeIdentifier(n,emitValue,keep=true){
   const r=this.ref(n),b=r.binding;
-  if(this.isGlobal(r)){this.integer(this.c.constant(n.name));emitValue();this.integer(+this.strict);this.rt('globalWrite');if(!keep)this.out(0x1a);return;}
-  emitValue();
-  if(r.check&&r.mode==='write'){const v=this.local();this.set(v);if(this.loadBinding(b)){this.out(0xd1);this.ifElse(()=>this.tdz(n.name));}else this.out(0x1a);this.get(v);}
-  if(!b.mutable){
-   if(b.kind==='callee'&&!this.strict){if(!keep)this.out(0x1a);return;}
-   this.out(0x1a);this.integer(this.c.constant(n.name));this.rt('constAssign');this.out(0x00);return;
+  if(this.isGlobal(r)){this.integer(this.c.constant(n.name));this.convert(emitValue()||'r','r');this.integer(+this.strict);this.rt('globalWrite');if(!keep)this.out(0x1a);return 'r';}
+  let from=emitValue()||'r';
+  if(r.check&&r.mode==='write'){
+   const v=this.local(VALUE_TYPE[from]);this.set(v);
+   const [repr,mayBeEmpty]=this.loadBinding(b);
+   if(repr==='r'&&mayBeEmpty){this.out(0xd1);this.ifElse(()=>this.tdz(n.name));}else this.out(0x1a);
+   this.get(v);
   }
-  this.storeBinding(b,keep);
+  if(!b.mutable){
+   if(b.kind==='callee'&&!this.strict){if(!keep)this.out(0x1a);return from;}
+   this.out(0x1a);this.integer(this.c.constant(n.name));this.rt('constAssign');this.out(0x00);return 'r';
+  }
+  return this.storeBinding(b,keep,from);
  },
  // Declaration semantics: initializes the binding, never checks.
  initIdentifier(n,emitValue){
   const r=this.ref(n),b=r.binding;
-  if(this.isGlobal(r)){this.integer(this.c.constant(n.name));emitValue();this.integer(0);this.rt('globalWrite');this.out(0x1a);return;}
-  emitValue();this.storeBinding(b,false);
+  if(this.isGlobal(r)){this.integer(this.c.constant(n.name));this.convert(emitValue()||'r','r');this.integer(0);this.rt('globalWrite');this.out(0x1a);return;}
+  this.storeBinding(b,false,emitValue()||'r');
  },
- initBinding(b,emitValue){emitValue();this.storeBinding(b,false);},
+ initBinding(b,emitValue){this.storeBinding(b,false,emitValue()||'r');},
  typeofIdentifier(n){
   if(this.isGlobal(this.ref(n))){this.integer(this.c.constant(n.name));this.rt('globalTypeof');return;}
   this.integer(this.c.constant('typeof'));this.readIdentifier(n);this.rt('unary');
@@ -95,20 +152,159 @@ const bindings={
   if(this.isGlobal(this.ref(n))){this.integer(this.c.constant(n.name));this.rt('globalDelete');return;}
   this.lit(false);
  },
- updateIdentifier(n,delta,prefix){
+ updateNatural(n,delta,prefix){
+  const b=this.ref(n).binding;
+  if(!this.dynamicOnly&&b&&b.storage!=='global'&&b.type===NUM){
+   const old=this.local(F64),value=this.local(F64);
+   this.convert(this.readNatural(n),'f',NUM);this.tee(old);this.f64(delta);this.out(0xa0);this.set(value);
+   this.writeIdentifier(n,()=>{this.get(value);return 'f';},false);this.get(prefix?value:old);return 'f';
+  }
   const old=this.local(),value=this.local();
   this.readIdentifier(n);this.rt('toNumeric');this.tee(old);this.integer(delta);this.rt('increment');this.set(value);
-  this.writeIdentifier(n,()=>this.get(value),false);this.get(prefix?value:old);
+  this.writeIdentifier(n,()=>this.get(value),false);this.get(prefix?value:old);return 'r';
  },
- assignIdentifier(n){
-  const left=n.left;
-  if(n.operator==='='){this.writeIdentifier(left,()=>this.expression(n.right,left.name));return;}
+ assignNatural(n){
+  const left=n.left,t=n._t;
+  if(n.operator==='=')return this.writeIdentifier(left,()=>this.natural(n.right,left.name));
   if(['&&=','||=','??='].includes(n.operator)){
    const old=this.local();this.readIdentifier(left);this.tee(old);this.rt(n.operator==='??='?'nullish':'truth');
-   const put=()=>this.writeIdentifier(left,()=>this.expression(n.right,left.name));
-   if(n.operator==='||=')this.ifElse(()=>this.get(old),put,REF);else this.ifElse(put,()=>this.get(old),REF);return;
+   const put=()=>this.convert(this.writeIdentifier(left,()=>this.natural(n.right,left.name)),'r',t);
+   if(n.operator==='||=')this.ifElse(()=>this.get(old),put,REF);else this.ifElse(put,()=>this.get(old),REF);return 'r';
   }
-  this.writeIdentifier(left,()=>this.binary(n.operator.slice(0,-1),()=>this.readIdentifier(left),()=>this.expression(n.right)));
+  return this.writeIdentifier(left,()=>this.binaryAny(n.operator.slice(0,-1),left,n.right,t));
+ },
+ binaryAny(op,left,right,t){
+  const r=this.binaryNatural(op,left,right,t);if(r)return r;
+  this.binary(op,()=>this.expression(left),()=>this.expression(right));return 'r';
+ },
+ // ---- typed expressions ----
+ expression(n,hint=''){this.convert(this.natural(n,hint),'r',n._t);},
+ natural(n,hint=''){
+  if(!this.dynamicOnly){
+   const t=n._t;
+   switch(n.type){
+    case'Literal':
+     if(typeof n.value==='number'){this.f64(n.value);return 'f';}
+     if(typeof n.value==='boolean'){this.integer(+n.value);return 'i';}
+     break;
+    case'Identifier':return this.readNatural(n);
+    case'UnaryExpression':
+     if(n.operator==='!'){this.condition(n.argument);this.out(0x45);return 'i';}
+     if(n.operator==='+'&&t===NUM){this.emitAs(n.argument,'f');return 'f';}
+     if(n.operator==='-'&&t===NUM){this.emitAs(n.argument,'f');this.out(0x9a);return 'f';}
+     if(n.operator==='~'&&t===NUM){this.emitAs(n.argument,'f');this.toInt32();this.integer(-1);this.out(0x73,0xb7);return 'f';}
+     if(n.operator==='void'){const r=this.natural(n.argument);this.out(0x1a);this.lit(undefined);return r&&'r';}
+     break;
+    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix);break;
+    case'AssignmentExpression':if(n.left.type==='Identifier')return this.assignNatural(n);break;
+    case'BinaryExpression':{const r=this.binaryNatural(n.operator,n.left,n.right,t);if(r)return r;break;}
+    case'LogicalExpression':
+     if(numeric(t)&&n.left._t===t&&n.right._t===t){
+      const repr=reprOf(t),v=this.local(VALUE_TYPE[repr]);this.emitAs(n.left,repr);this.tee(v);
+      if(n.operator==='??'){this.out(0x1a);this.get(v);return repr;}
+      this.convert(repr,'i',t);
+      if(n.operator==='||')this.ifElse(()=>this.get(v),()=>this.emitAs(n.right,repr),VALUE_TYPE[repr]);else this.ifElse(()=>this.emitAs(n.right,repr),()=>this.get(v),VALUE_TYPE[repr]);
+      return repr;
+     }
+     break;
+    case'ConditionalExpression':
+     if(numeric(t)){const repr=reprOf(t);this.condition(n.test);this.ifElse(()=>this.emitAs(n.consequent,repr),()=>this.emitAs(n.alternate,repr),VALUE_TYPE[repr]);return repr;}
+     this.condition(n.test);this.ifElse(()=>this.expression(n.consequent),()=>this.expression(n.alternate),REF);return 'r';
+    case'SequenceExpression':{let r='r';n.expressions.forEach((e,i)=>{r=this.natural(e);if(i<n.expressions.length-1)this.out(0x1a);});return r;}
+    case'CallExpression':{
+     if(n._direct&&!n.optional)return this.directCall(n,n._direct);
+     if(n._math&&!n.optional){const r=this.math(n);if(r)return r;}
+     break;
+    }
+   }
+  }
+  this.dynamicExpression(n,hint);return 'r';
+ },
+ // Numeric binary operators on statically numeric operands; null otherwise.
+ binaryNatural(op,left,right,t){
+  if(this.dynamicOnly)return null;
+  const a=left._t,b=right._t;
+  if(F64_COMPARE[op]!==undefined&&numeric(a)&&numeric(b)){
+   if((op==='==='||op==='!==')&&a!==b){this.natural(left);this.out(0x1a);this.natural(right);this.out(0x1a);this.integer(op==='!=='?1:0);return 'i';}
+   if(a===BOOL&&b===BOOL&&(op==='==='||op==='!=='||op==='=='||op==='!=')){this.emitAs(left,'i');this.emitAs(right,'i');this.out(op[0]==='!'?0x47:0x46);return 'i';}
+   this.operands(left,right);this.out(F64_COMPARE[op]);return 'i';
+  }
+  if(t!==NUM)return null;
+  if(F64_OPS[op]!==undefined){this.operands(left,right);this.out(F64_OPS[op]);return 'f';}
+  if(op==='%'){this.operands(left,right);this.remainder();return 'f';}
+  if(op==='**'){this.operands(left,right);this.rt('pow');return 'f';}
+  if(I32_OPS[op]!==undefined){
+   const x=this.local(F64);this.operands(left,right);this.set(x);this.toInt32();this.get(x);this.toInt32();
+   this.out(I32_OPS[op],op==='>>>'?0xb8:0xb7);return 'f';
+  }
+  return null;
+ },
+ // Evaluates both operands, then converts them to f64 (ToNumber happens
+ // after both operands are evaluated, as the language requires).
+ operands(left,right){
+  const a=this.natural(left);
+  if(a==='r'&&left._t!==NUM){const x=this.local();this.set(x);const b=this.natural(right),y=this.local(VALUE_TYPE[b]);this.set(y);this.get(x);this.convert('r','f',left._t);this.get(y);this.convert(b,'f',right._t);return;}
+  this.convert(a,'f',left._t);this.emitAs(right,'f');
+ },
+ // JS remainder: exact for int32 operands inline, otherwise the host's %.
+ remainder(){
+  const a=this.local(F64),b=this.local(F64),r=this.local(I32);this.set(b);this.set(a);
+  this.get(a);this.get(a);this.out(0xaa,0xb7,0x61);this.get(b);this.get(b);this.out(0xaa,0xb7,0x61,0x71);
+  this.get(b);this.f64(0);this.out(0x62,0x71);this.get(b);this.f64(-1);this.out(0x62,0x71);
+  this.get(a);this.f64(-2147483648);this.out(0x66,0x71);this.get(a);this.f64(2147483648);this.out(0x63,0x71);
+  this.get(b);this.f64(-2147483648);this.out(0x66,0x71);this.get(b);this.f64(2147483648);this.out(0x63,0x71);
+  this.ifElse(()=>{
+   // A zero result takes the dividend's sign (-4 % 2 is -0).
+   this.get(a);this.out(0xaa);this.get(b);this.out(0xaa,0x6f);this.tee(r);this.out(0x45);this.get(a);this.f64(0);this.out(0x63,0x71);
+   this.ifElse(()=>this.f64(-0),()=>{this.get(r);this.out(0xb7);},F64);
+  },()=>{this.get(a);this.get(b);this.rt('fmod');},F64);
+ },
+ math(n){
+  const name=n._math,args=n.arguments;
+  if(args.some(a=>a.type==='SpreadElement'))return null;
+  // Arguments are evaluated first, then converted with ToNumber in order.
+  const all=()=>{
+   const values=args.map(a=>{const r=this.natural(a),x=this.local(VALUE_TYPE[r]);this.set(x);return [x,r,a._t];});
+   return values.map(([x,r,t])=>{if(r==='f')return x;const y=this.local(F64);this.get(x);this.convert(r,'f',t);this.set(y);return y;});
+  };
+  if(MATH_UNARY[name]!==undefined&&args.length>=1){const [x,...rest]=all();this.get(x);this.out(MATH_UNARY[name]);return 'f';}
+  if((name==='min'||name==='max')&&args.length>=1){const xs=all();this.get(xs[0]);for(const x of xs.slice(1)){this.get(x);this.out(name==='min'?0xa4:0xa5);}return 'f';}
+  if((name==='min'||name==='max')&&!args.length){this.f64(name==='min'?Infinity:-Infinity);return 'f';}
+  if(name==='round'&&args.length>=1){
+   const [x]=all(),r=this.local(F64);this.get(x);this.out(0x9b);this.tee(r);this.f64(0.5);this.out(0xa1);this.get(x);this.out(0x64);
+   this.ifElse(()=>{this.get(r);this.f64(1);this.out(0xa1);},()=>this.get(r),F64);return 'f';
+  }
+  if(name==='sign'&&args.length>=1){const [x]=all();this.get(x);this.f64(0);this.out(0x64);this.ifElse(()=>this.f64(1),()=>{this.get(x);this.f64(0);this.out(0x63);this.ifElse(()=>this.f64(-1),()=>this.get(x),F64);},F64);return 'f';}
+  if(name==='fround'&&args.length>=1){const [x]=all();this.get(x);this.out(0xb6,0xbb);return 'f';}
+  if(name==='imul'&&args.length>=2){const [x,y]=all();this.get(x);this.toInt32();this.get(y);this.toInt32();this.out(0x6c,0xb7);return 'f';}
+  if(name==='clz32'&&args.length>=1){const [x]=all();this.get(x);this.toInt32();this.out(0x67,0xb8);return 'f';}
+  if(MATH_IMPORTED1.has(name)&&args.length>=1){const [x]=all();this.get(x);this.rt('math_'+name);return 'f';}
+  if(MATH_IMPORTED2.has(name)&&args.length>=2){const [x,y]=all();this.get(x);this.get(y);this.rt('math_'+name);return 'f';}
+  if(name==='random'){all();this.rt('math_random');return 'f';}
+  return null;
+ },
+ // Direct call of a statically known function: no JS, no argument array.
+ directCall(n,fn){
+  const params=fn.node.params;
+  this.recordAt(fn.scope.parent);this.lit(undefined);this.out(0xd0,REF);this.lit(undefined);
+  params.forEach((p,i)=>{
+   const repr=this.c.paramRepr(fn,i);
+   if(i<n.arguments.length)this.emitAs(n.arguments[i],repr);
+   else if(repr==='r')this.lit(undefined);
+   else throw new Error('Внутренняя ошибка: пропущен типизированный аргумент');
+  });
+  for(const extra of n.arguments.slice(params.length)){this.natural(extra);this.out(0x1a);}
+  this.out(0x10,...u32(this.c.typedIndex(fn)));
+  return reprOf(fn.ret);
+ },
+ dynamicExpression(n,hint){
+  switch(n.type){
+   case'Identifier':this.readIdentifier(n);return;
+   case'UnaryExpression':if(n.argument.type==='Identifier'){if(n.operator==='typeof'){this.typeofIdentifier(n.argument);return;}if(n.operator==='delete'){this.deleteIdentifier(n.argument);return;}}break;
+   case'UpdateExpression':if(n.argument.type==='Identifier'){this.convert(this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix),'r',NUM);return;}break;
+   case'AssignmentExpression':if(n.left.type==='Identifier'){this.convert(this.assignNatural(n),'r',n._t);return;}break;
+  }
+  this.featureExpression(n,hint);
  },
  // ---- functions ----
  info(node){const fn=this.c.analysis.functions.get(node);if(!fn)throw new Error('Внутренняя ошибка: функция без анализа');return fn;},
@@ -121,6 +317,8 @@ const bindings={
  hoistVars(scope,skip=null){
   for(const b of scope.bindings.values()){
    if(b.kind!=='var'||b.storage==='global'||skip?.has(b.name))continue;
+   // A typed var is only read after its initializer, so it needs no undefined.
+   if(this.storageRepr(b)!=='r')continue;
    this.lit(undefined);this.storeBinding(b,false);
   }
  },
@@ -131,16 +329,16 @@ const bindings={
    this.records.set(fn.scope,0);this.closureScope=fn.scope;
    if(kind==='module-init'){this.hoistVars(fn.scope);this.hoistFunctions(node.body);}
    else node.body.forEach(n=>this.statement(n));
-   this.lit(undefined);return {code:this.code,locals:this.locals};
+   this.lit(undefined);return this.result();
   }
   if(kind==='script'){
    this.records.set(analysis.root,0);this.closureScope=analysis.root;
    const error=analysis.scriptErrors.get(node);
-   if(error!==undefined){this.integer(this.c.constant(error));this.rt('scriptError');this.out(0x00);return {code:this.code,locals:this.locals};}
+   if(error!==undefined){this.integer(this.c.constant(error));this.rt('scriptError');this.out(0x00);return this.result();}
    for(const d of node._globalDecls||[])if(d.kind==='var'){this.integer(this.c.constant(d.name));this.rt('globalVar');}
    for(const s of node.body)if(s.type==='FunctionDeclaration'){this.integer(this.c.constant(s.id.name));this.function(s,s.id.name);this.rt('globalFunction');}
    node.body.forEach(n=>this.statement(n));
-   this.lit(undefined);return {code:this.code,locals:this.locals};
+   this.lit(undefined);return this.result();
   }
   this.closureScope=fn.scope.parent;
   if(fn.scope.materialized)this.openRecord(fn.scope);
@@ -149,13 +347,14 @@ const bindings={
    const slots=fn.mapped?node.params.map((p,i)=>node.params.findLastIndex(q=>q.name===p.name)===i?fn.scope.bindings.get(p.name).slot:0):[];
    this.initBinding(fn.argumentsBinding,()=>{this.get(2);this.get(this.env);this.integer(this.c.constant(slots));this.integer(+fn.mapped);this.rt('arguments');});
   }
-  node.params.forEach((p,i)=>this.pattern(p,()=>{this.get(2);this.integer(i);this.rt(p.type==='RestElement'?'rest':'arg');},'let'));
-  if(node.type==='ArrowFunctionExpression'&&node.body.type!=='BlockStatement'){this.expression(node.body);this.out(0x0f);this.lit(undefined);return {code:this.code,locals:this.locals};}
+  if(this.typed)this.typedParameters(node,fn);
+  else node.params.forEach((p,i)=>this.pattern(p,()=>{this.get(2);this.integer(i);this.rt(p.type==='RestElement'?'rest':'arg');},'let'));
+  if(node.type==='ArrowFunctionExpression'&&node.body.type!=='BlockStatement'){this.returnValue(node.body);return this.result();}
   const body=node.body.body,prologue=()=>{
    if(fn.bodyScope!==fn.scope){
     // Non-simple parameters: body vars start as copies of same-named parameters.
     const copied=new Set();
-    for(const b of fn.bodyScope.bindings.values()){const p=fn.scope.bindings.get(b.name);if(b.kind==='var'&&p){copied.add(b.name);this.initBinding(b,()=>this.loadBinding(p));}}
+    for(const b of fn.bodyScope.bindings.values()){const p=fn.scope.bindings.get(b.name);if(b.kind==='var'&&p){copied.add(b.name);this.initBinding(b,()=>{const [repr]=this.loadBinding(p);return repr;});}}
     this.hoistVars(fn.bodyScope,copied);
    }else this.hoistVars(fn.scope);
    this.hoistFunctions(body);
@@ -163,7 +362,31 @@ const bindings={
    body.forEach(n=>this.statement(n));
   };
   if(fn.bodyScope!==fn.scope)this.enterScope(fn.bodyScope,prologue);else prologue();
-  this.lit(undefined);return {code:this.code,locals:this.locals};
+  if(this.retRepr&&this.retRepr!=='r')this.out(0x00);else this.lit(undefined);
+  return this.result();
+ },
+ result(){return {code:this.code,locals:this.locals};},
+ // Typed entry: parameters arrive as WASM params 4.. in their representation.
+ typedParameters(node,fn){
+  node.params.forEach((p,i)=>{
+   const id=p.type==='AssignmentPattern'?p.left:p,b=id._ref.binding,incoming=4+i,repr=this.c.paramRepr(fn,i);
+   if(p.type==='AssignmentPattern'){
+    const target=this.storageRepr(b);
+    this.get(incoming);this.rt('isUndefined');
+    this.ifElse(()=>this.emitAs(p.right,target,id.name),()=>{this.get(incoming);this.convert('r',target,b.type);},VALUE_TYPE[target]);
+    this.storeBinding(b,false,target);return;
+   }
+   if(b.storage==='local'&&this.storageRepr(b)===repr){this.bindingLocals.set(b,incoming);return;}
+   this.get(incoming);this.storeBinding(b,false,repr);
+  });
+ },
+ returnValue(n){
+  if(this.retRepr&&!this.finalizers.length){if(n)this.emitAs(n,this.retRepr);else this.lit(undefined);this.out(0x0f);return;}
+  const v=this.local();if(n)this.expression(n);else this.lit(undefined);this.set(v);this.abrupt('return',null,v);
+ },
+ abrupt(kind,target=null,value=null){
+  if(kind==='return'&&this.retRepr&&!this.finalizers.some(c=>true)){this.get(value);this.convert('r',this.retRepr,this.fnInfo.ret);this.out(0x0f);return;}
+  this.featureAbrupt(kind,target,value);
  },
  pattern(n,emit,kind='assign'){
   if(n.type==='Identifier'){if(kind==='assign')this.writeIdentifier(n,emit,false);else this.initIdentifier(n,emit);return;}
@@ -195,33 +418,37 @@ const bindings={
   });
   this.strict=strict;
  },
- expression(n,hint=''){
-  switch(n.type){
-   case'Identifier':this.readIdentifier(n);return;
-   case'UnaryExpression':if(n.argument.type==='Identifier'){if(n.operator==='typeof'){this.typeofIdentifier(n.argument);return;}if(n.operator==='delete'){this.deleteIdentifier(n.argument);return;}}break;
-   case'UpdateExpression':if(n.argument.type==='Identifier'){this.updateIdentifier(n.argument,n.operator==='++'?1:-1,n.prefix);return;}break;
-   case'AssignmentExpression':if(n.left.type==='Identifier'){this.assignIdentifier(n);return;}break;
-  }
-  this.featureExpression(n,hint);
- },
  statement(n,tag=null){
   switch(n.type){
    case'FunctionDeclaration':return;
+   case'ExpressionStatement':if(n.directive)return;this.natural(n.expression);this.out(0x1a);return;
+   case'ReturnStatement':
+    if(this.retRepr||!(this.plan.node.async&&this.plan.node.generator)){this.returnValue(n.argument);return;}
+    break;
+   case'IfStatement':this.condition(n.test);this.ifElse(()=>this.statement(n.consequent),n.alternate?()=>this.statement(n.alternate):null);return;
+   case'VariableDeclaration':
+    if(!['var','let','const'].includes(n.kind))break;
+    for(const d of n.declarations){
+     if(d.id.type!=='Identifier'){if(d.init||n.kind!=='var')this.pattern(d.id,()=>d.init?this.expression(d.init,d.id._displayName||''):this.lit(undefined),n.kind);continue;}
+     if(!d.init&&n.kind==='var')continue;
+     this.initIdentifier(d.id,()=>d.init?this.natural(d.init,d.id._displayName||d.id.name):this.lit(undefined));
+    }
+    return;
    case'BlockStatement':this.enterScope(n._scope,()=>n.body.forEach(x=>this.statement(x)),n.body);return;
    case'ClassDeclaration':this.initIdentifier(n.id,()=>this.classExpression(n));return;
    case'ForStatement':case'WhileStatement':case'DoWhileStatement':{
     const scope=n.type==='ForStatement'?n._scope:null;
     this.enterScope(scope,()=>{
-     if(n.init){if(n.init.type==='VariableDeclaration')this.statement(n.init);else{this.expression(n.init);this.out(0x1a);}}
+     if(n.init){if(n.init.type==='VariableDeclaration')this.statement(n.init);else{this.natural(n.init);this.out(0x1a);}}
      // Closures capture a fresh copy of the loop bindings per iteration.
      const copy=!!scope?.materialized,next=()=>{if(copy){this.get(this.env);this.rt('scopeClone');this.set(this.env);}};
      next();
      this.label('break',end=>this.label('loop',again=>{
-      if(n.type!=='DoWhileStatement'&&n.test){this.expression(n.test);this.rt('truth');this.out(0x45);this.ifElse(()=>this.branch(end));}
+      if(n.type!=='DoWhileStatement'&&n.test){this.condition(n.test);this.out(0x45);this.ifElse(()=>this.branch(end));}
       this.label('continue',()=>this.statement(n.body),0x40,tag);
       next();
-      if(n.update){this.expression(n.update);this.out(0x1a);}
-      if(n.type==='DoWhileStatement'){this.expression(n.test);this.rt('truth');this.ifElse(()=>this.branch(again));}else this.branch(again);
+      if(n.update){this.natural(n.update);this.out(0x1a);}
+      if(n.type==='DoWhileStatement'){this.condition(n.test);this.ifElse(()=>this.branch(again));}else this.branch(again);
      }),0x40,tag);
     });return;
    }
@@ -244,7 +471,7 @@ const bindings={
     return;
    }
    case'SwitchStatement':{
-    const value=this.local(),start=this.local(0x7f);this.expression(n.discriminant);this.set(value);this.integer(-1);this.set(start);
+    const value=this.local(),start=this.local(I32);this.expression(n.discriminant);this.set(value);this.integer(-1);this.set(start);
     const statements=n.cases.flatMap(c=>c.consequent);
     this.enterScope(n._scope,()=>{
      let def=-1;
@@ -267,3 +494,5 @@ const bindings={
 
 exports["bindings"]=bindings;
 exports["SCOPE"]=SCOPE;
+exports["reprOf"]=reprOf;
+exports["VALUE_TYPE"]=VALUE_TYPE;
