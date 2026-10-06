@@ -5086,9 +5086,13 @@ class Mesher {
     const ids = job.ids, meta = job.meta, light = job.light;
     this.ids = ids; this.metaArr = meta; this.light = light;
     // leaves: 2 fancy (every face, like Minecraft), 1 optimized (faces buried two leaves deep are
-    // skipped: they only show through two aligned holes), 0 fast (no faces between leaves)
+    // skipped: they only show through two aligned holes), 0 fast (no faces between leaves),
+    // 3 shell (see-through like fancy, but no faces between leaves: only the crown's outer surface;
+    // the far range of the adaptive setting)
     this.fancyLeaves = job.leaves !== 0;
     this.leafCull = job.leaves === 1;
+    this.leafShell = job.leaves === 3;
+    this.leafy = false;
     for (const b of this.bufs) b.n = 0;
     const tpx = new Float32Array(4), tpy = new Float32Array(4), tpz = new Float32Array(4);
     const tu = new Float32Array(4), tv = new Float32Array(4);
@@ -5137,7 +5141,7 @@ class Mesher {
       }
       off += b.n;
     }
-    return { data: out, counts, gc, vis };
+    return { data: out, counts, gc, vis, leafy: this.leafy };
   }
 
   // ---------------------------------------------------------------- full cubes
@@ -5152,6 +5156,7 @@ class Mesher {
     const m = meta[p];
     const { tpx, tpy, tpz, tu, tv, sh, sk, bl } = this.t;
     const flagV = leaves && this.sway ? 2 : 0;
+    if (leaves) this.leafy = true;
     // waterlogged cube (mangrove roots in water): the water of the cell is drawn with it
     if (fl & BF_AQUATIC) this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
     for (let f = 0; f < 6; f++) {
@@ -5159,6 +5164,7 @@ class Mesher {
       const n = ids[np];
       if (OPAQUE[n]) continue;
       if (n === id && (clear || (leaves && !this.fancyLeaves))) continue;
+      if (this.leafShell && leaves && (FLAGS[n] & BF_LEAVES)) continue;
       // buried leaf face: the neighbour leaf is itself covered by leaves or a solid block behind it
       if (this.leafCull && leaves && (FLAGS[n] & BF_LEAVES)) {
         const d = FN[f], x2 = x + 2 * d[0], y2 = y + 2 * d[1], z2 = z + 2 * d[2];
@@ -5881,7 +5887,7 @@ self.onmessage = function (e) {
   if (d.t === 'mesh') {
     MESHER.sway = d.sway !== false;
     const r = MESHER.mesh(d);
-    self.postMessage({ t: 'mesh', cx: d.cx, cz: d.cz, sy: d.sy, ver: d.ver, data: r.data, counts: r.counts, gc: r.gc, vis: r.vis,
+    self.postMessage({ t: 'mesh', cx: d.cx, cz: d.cz, sy: d.sy, ver: d.ver, data: r.data, counts: r.counts, gc: r.gc, vis: r.vis, leafy: r.leafy,
       ids: d.ids, meta: d.meta, light: d.light }, [r.data.buffer, d.ids.buffer, d.meta.buffer, d.light.buffer]);
     return;
   }
@@ -10035,9 +10041,13 @@ class Mesher {
     const ids = job.ids, meta = job.meta, light = job.light;
     this.ids = ids; this.metaArr = meta; this.light = light;
     // leaves: 2 fancy (every face, like Minecraft), 1 optimized (faces buried two leaves deep are
-    // skipped: they only show through two aligned holes), 0 fast (no faces between leaves)
+    // skipped: they only show through two aligned holes), 0 fast (no faces between leaves),
+    // 3 shell (see-through like fancy, but no faces between leaves: only the crown's outer surface;
+    // the far range of the adaptive setting)
     this.fancyLeaves = job.leaves !== 0;
     this.leafCull = job.leaves === 1;
+    this.leafShell = job.leaves === 3;
+    this.leafy = false;
     for (const b of this.bufs) b.n = 0;
     const tpx = new Float32Array(4), tpy = new Float32Array(4), tpz = new Float32Array(4);
     const tu = new Float32Array(4), tv = new Float32Array(4);
@@ -10086,7 +10096,7 @@ class Mesher {
       }
       off += b.n;
     }
-    return { data: out, counts, gc, vis };
+    return { data: out, counts, gc, vis, leafy: this.leafy };
   }
 
   // ---------------------------------------------------------------- full cubes
@@ -10101,6 +10111,7 @@ class Mesher {
     const m = meta[p];
     const { tpx, tpy, tpz, tu, tv, sh, sk, bl } = this.t;
     const flagV = leaves && this.sway ? 2 : 0;
+    if (leaves) this.leafy = true;
     // waterlogged cube (mangrove roots in water): the water of the cell is drawn with it
     if (fl & BF_AQUATIC) this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
     for (let f = 0; f < 6; f++) {
@@ -10108,6 +10119,7 @@ class Mesher {
       const n = ids[np];
       if (OPAQUE[n]) continue;
       if (n === id && (clear || (leaves && !this.fancyLeaves))) continue;
+      if (this.leafShell && leaves && (FLAGS[n] & BF_LEAVES)) continue;
       // buried leaf face: the neighbour leaf is itself covered by leaves or a solid block behind it
       if (this.leafCull && leaves && (FLAGS[n] & BF_LEAVES)) {
         const d = FN[f], x2 = x + 2 * d[0], y2 = y + 2 * d[1], z2 = z + 2 * d[2];
@@ -11002,6 +11014,7 @@ class Column {
     this.meshBusy = 0;       // bitmask of sections with a mesh job in flight
     this.meshed = 0;         // bitmask of sections that have (possibly empty) meshes
     this.meshes = new Array(SECTIONS).fill(null);
+    this.leafMode = -1;      // leaf mesh mode its sections are built with (-1: not chosen yet)
     this.visFrame = new Uint32Array(SECTIONS);   // last frame each section was reached by the visibility walk
     this.edits = null;       // Map localIndex -> id | meta<<16 (player modifications)
     this.biomes = null;
@@ -12295,7 +12308,7 @@ class Renderer {
   // class: the visibility walk and the draw loops read these fields on thousands of meshes a frame
   newMesh(vbo, vao, vis) {
     return { vbo, vao, counts: null, vis, cap: 0, slot: undefined, gc: null, cx: 0, cz: 0, sy: 0,
-      tvao: null, tibo: null, tcap: 0, tc: null, tg: null, tfirst: 0, tn: 0, tkey: -1 };
+      tvao: null, tibo: null, tcap: 0, tc: null, tg: null, tfirst: 0, tn: 0, tkey: -1, leafy: false };
   }
   uploadSection(c, sy, d) {
     const gl = this.gl;
@@ -12325,7 +12338,7 @@ class Renderer {
       gl.bufferData(gl.ARRAY_BUFFER, d.data, gl.STATIC_DRAW);
       m.cap = d.data.byteLength;
     } else gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.data);
-    m.counts = d.counts; m.gc = d.gc || null; m.vis = d.vis;
+    m.counts = d.counts; m.gc = d.gc || null; m.vis = d.vis; m.leafy = !!d.leafy;
     this.prepareTrans(m, d);
   }
   // Translucent quads are drawn back to front through a per-section index buffer that is re-sorted
@@ -15766,7 +15779,7 @@ const STR = {
     mode: 'Game Mode', creative: 'Creative', survival: 'Survival', createBtn: 'Create', noWorlds: 'No worlds yet - create your first one!',
     loading: 'Generating world...', resume: 'Back to Game', saveQuit: 'Save & Quit to Title', paused: 'Game Menu',
     renderDist: 'Render Distance', fov: 'FOV', sens: 'Sensitivity', bright: 'Brightness', clouds: 'Clouds',
-    leaves: 'Leaves', leavesFancy: 'Fancy', leavesOpt: 'Optimized', leavesFast: 'Fast', sway: 'Waving Plants', bobView: 'View Bobbing', on: 'ON', off: 'OFF', chunks: 'chunks', done: 'Done',
+    leaves: 'Leaves', leavesFancy: 'Fancy', leavesOpt: 'Optimized', leavesFast: 'Fast', leavesAdaptive: 'Adaptive', sway: 'Waving Plants', bobView: 'View Bobbing', on: 'ON', off: 'OFF', chunks: 'chunks', done: 'Done',
     scale: 'Render Scale', fps: 'Show FPS', lang: 'Language', inventory: 'Inventory', search: 'Search...',
     tab_b: 'Building Blocks', tab_c: 'Colored Blocks', tab_n: 'Natural Blocks', tab_f: 'Functional Blocks',
     tab_t: 'Tools & Items', tab_s: 'Search', confirmDel: 'Delete this world forever?', died: 'You Died!', respawn: 'Respawn',
@@ -15784,7 +15797,7 @@ const STR = {
     mode: 'Режим игры', creative: 'Творческий', survival: 'Выживание', createBtn: 'Создать', noWorlds: 'Миров пока нет — создай первый!',
     loading: 'Генерация мира...', resume: 'Вернуться к игре', saveQuit: 'Сохранить и выйти в меню', paused: 'Меню игры',
     renderDist: 'Дальность прорисовки', fov: 'Поле зрения', sens: 'Чувствительность', bright: 'Яркость', clouds: 'Облака',
-    leaves: 'Листва', leavesFancy: 'Красивая', leavesOpt: 'Оптимизированная', leavesFast: 'Быстрая', sway: 'Колыхание растений', bobView: 'Покачивание камеры', on: 'ВКЛ', off: 'ВЫКЛ', chunks: 'чанков', done: 'Готово',
+    leaves: 'Листва', leavesFancy: 'Красивая', leavesOpt: 'Оптимизированная', leavesFast: 'Быстрая', leavesAdaptive: 'Адаптивная', sway: 'Колыхание растений', bobView: 'Покачивание камеры', on: 'ВКЛ', off: 'ВЫКЛ', chunks: 'чанков', done: 'Готово',
     scale: 'Масштаб рендера', fps: 'Показывать FPS', lang: 'Язык', inventory: 'Инвентарь', search: 'Поиск...',
     tab_b: 'Строительные блоки', tab_c: 'Цветные блоки', tab_n: 'Природные блоки', tab_f: 'Функциональные блоки',
     tab_t: 'Инструменты и предметы', tab_s: 'Поиск', confirmDel: 'Удалить этот мир навсегда?', died: 'Вы погибли!', respawn: 'Возродиться',
@@ -15980,7 +15993,18 @@ function heldXform(P, x, y, z, o) {
   const y1 = y * HELD_CX - z0 * HELD_SX, z1 = y * HELD_SX + z0 * HELD_CX;
   o[0] = x1 + P[0]; o[1] = y1 + P[1]; o[2] = z1 + P[2];
 }
-const BUILD_ID = '32a1082';   // filled in by build.py
+// leaf mesh modes (mesher: 0 fast, 1 optimized, 2 fancy, 3 shell) from coarse to fine
+const LEAF_RANK = new Uint8Array([0, 2, 3, 1]);
+// adaptive leaves for a column at squared chunk distance d2, now built with mode cur: fancy within
+// 2 chunks, optimized within 6, shell beyond; a column keeps a finer mode one chunk further
+// (2 -> 3, 6 -> 7) so walking along a border does not rebuild it back and forth
+function leafLod(d2, cur) {
+  const t = d2 <= 4 ? 2 : d2 <= 36 ? 1 : 3;
+  if (cur === 2 && t !== 2 && d2 <= 9) return 2;
+  if (cur === 1 && t === 3 && d2 <= 49) return 1;
+  return t;
+}
+const BUILD_ID = '0d20ffd';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -16227,13 +16251,28 @@ class Game {
   // lit to the mesh workers, nearest columns first
   meshPass(w, pcx, pcz, RR) {
     const SP = this.spiral, p = this.player.pos;
-    const maxMesh = w.pool.workers.length * 4;
+    const maxMesh = w.pool.workers.length * 4, LV = Settings.leaves;
+    let lowered = false;
     for (let i = 0; i < SP.length; i++) {
       const e = SP[i];
       if (e[2] > RR) break;
       if (w.meshInFlight >= maxMesh) break;
       const c = w.col(pcx + e[0], pcz + e[1]);
-      if (!c || c.state !== 2 || !c.dirty) continue;
+      if (!c || c.state !== 2) continue;
+      // adaptive leaves: fancy within 2 chunks, optimized within 6, the crown's outer shell beyond
+      const want = LV === 3 ? leafLod(e[2], c.leafMode) : LV;
+      if (c.leafMode < 0) c.leafMode = want;
+      else if (want !== c.leafMode) {
+        // finer leaves at once; coarser ones one column a frame (crossing a chunk border would
+        // otherwise rebuild a whole ring of columns in one go). Only sections with leaves rebuild.
+        const finer = LEAF_RANK[want] > LEAF_RANK[c.leafMode];
+        if (finer || !lowered) {
+          if (!finer) lowered = true;
+          c.leafMode = want;
+          for (let s = 0; s < SECTIONS; s++) { const m = c.meshes[s]; if ((m && m.leafy) || (c.meshBusy & (1 << s))) { c.meshVer[s]++; c.dirty |= 1 << s; } }
+        }
+      }
+      if (!c.dirty) continue;
       let ok = true;
       for (let k = 0; k < 9 && ok; k++) { const n = w.col(c.cx + (k % 3) - 1, c.cz + ((k / 3) | 0) - 1); if (!n || n.state !== 2) ok = false; }
       if (!ok) continue;
@@ -16249,7 +16288,7 @@ class Game {
           c.meshes[s] = null; c.meshed |= 1 << s;
           continue;
         }
-        w.submitMesh(c, s, Settings.leaves, Settings.sway);
+        w.submitMesh(c, s, c.leafMode, Settings.sway);
       }
     }
   }
@@ -16547,7 +16586,7 @@ class Game {
     L.push(`Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${b.pos.map(v => v.toFixed(1)).join(' ')} · pitch ${b.pitch.toFixed(2)} · биом ${BIOME_LIST[pb] ? BIOME_LIST[pb][0] : '?'}`);
     L.push(`GPU: ${r.gpuName || '?'}`);
     L.push(`${navigator.userAgent}`);
-    L.push(`настройки: экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'}`);
+    L.push(`настройки: экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая', 'адаптивная'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'}`);
     L.push(`FPS ${f(1000 / avg, 1)} · кадр ${f(avg)} мс · 1% low ${f(1000 / p99, 1)} fps · худший ${f(worst, 1)} мс · кадров ${n}`);
     if (acc) L.push(`GPU мс (отброшено замеров ${r.gpuBad || 0}): всего ${f(gsum)} | рельеф ${f(Gv('solid'))} листва ${f(Gv('cutout'))} небо ${f(Gv('sky'))} облака ${f(Gv('clouds'))} частицы ${f(Gv('particles'))} мобы ${f(Gv('entities'))} вода ${f(Gv('water'))} рука ${f(Gv('hand'))}`);
     else L.push('GPU мс: таймер видеокарты недоступен');
@@ -17540,7 +17579,7 @@ class Game {
     const L = [];
     L.push(`== ПРОИЗВОДИТЕЛЬНОСТЬ ==  FPS ${this.fps} · кадр ${f(avg)} мс · 1% low ${f(p99 ? 1000 / p99 : 0, 0)} fps · худший ${f(worst, 1)} мс`);
     L.push(`GPU: ${r.gpuName || '?'}`);
-    L.push(`экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'} · multiDraw ${r.multiDraw ? 'да' : 'нет'}`);
+    L.push(`экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая', 'адаптивная'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'} · multiDraw ${r.multiDraw ? 'да' : 'нет'}`);
     if (r.tq) {
       const names = ['solid', 'cutout', 'sky', 'clouds', 'particles', 'entities', 'water', 'hand'];
       let sum = 0; for (const k of names) sum += G[k] || 0;
@@ -17791,7 +17830,7 @@ const UI = {
       b.onclick = () => { Settings[key] = !Settings[key]; b.textContent = label + ': ' + (Settings[key] ? T('on') : T('off')); if (after) after(); };
       box.append(b);
     };
-    const remesh = () => { const w = this.game.world; if (w) for (const c of w.cols.values()) if (c.state === 2) { let top = -1; for (let s = SECTIONS - 1; s >= 0; s--) if (c.secs[s]) { top = s; break; } c.dirty |= top >= 0 ? (1 << (top + 1)) - 1 : 0; } };
+    const remesh = () => { const w = this.game.world; if (w) for (const c of w.cols.values()) if (c.state === 2) { c.leafMode = -1; let top = -1; for (let s = SECTIONS - 1; s >= 0; s--) if (c.secs[s]) { top = s; break; } c.dirty |= top >= 0 ? (1 << (top + 1)) - 1 : 0; } };
     slider(T('renderDist'), 'renderDist', 2, 24, 1, v => v + ' ' + T('chunks'));
     slider(T('fov'), 'fov', 40, 110, 1, v => String(v));
     slider(T('sens'), 'sens', 0.2, 3, 0.05, v => Math.round(v * 100) + '%');
@@ -17799,9 +17838,10 @@ const UI = {
     slider(T('scale'), 'scale', 0.4, 1, 0.05, v => Math.round(v * 100) + '%', () => this.game.resize());
     toggle(T('autoScale'), 'autoScale', () => this.game.resize());
     toggle(T('clouds'), 'clouds');
-    const leafNames = [T('leavesFast'), T('leavesOpt'), T('leavesFancy')];
+    // order of the button: fancy -> adaptive -> optimized -> fast -> fancy
+    const leafNames = [T('leavesFast'), T('leavesOpt'), T('leavesFancy'), T('leavesAdaptive')], leafNext = [2, 0, 3, 1];
     const lv = el('button', { class: 'tog' }, T('leaves') + ': ' + leafNames[Settings.leaves]);
-    lv.onclick = () => { Settings.leaves = (Settings.leaves + 2) % 3; lv.textContent = T('leaves') + ': ' + leafNames[Settings.leaves]; remesh(); };
+    lv.onclick = () => { Settings.leaves = leafNext[Settings.leaves]; lv.textContent = T('leaves') + ': ' + leafNames[Settings.leaves]; remesh(); };
     box.append(lv);
     toggle(T('sway'), 'sway', remesh);
     toggle(T('bobView'), 'bobView');

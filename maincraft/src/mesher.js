@@ -113,9 +113,13 @@ class Mesher {
     const ids = job.ids, meta = job.meta, light = job.light;
     this.ids = ids; this.metaArr = meta; this.light = light;
     // leaves: 2 fancy (every face, like Minecraft), 1 optimized (faces buried two leaves deep are
-    // skipped: they only show through two aligned holes), 0 fast (no faces between leaves)
+    // skipped: they only show through two aligned holes), 0 fast (no faces between leaves),
+    // 3 shell (see-through like fancy, but no faces between leaves: only the crown's outer surface;
+    // the far range of the adaptive setting)
     this.fancyLeaves = job.leaves !== 0;
     this.leafCull = job.leaves === 1;
+    this.leafShell = job.leaves === 3;
+    this.leafy = false;
     for (const b of this.bufs) b.n = 0;
     const tpx = new Float32Array(4), tpy = new Float32Array(4), tpz = new Float32Array(4);
     const tu = new Float32Array(4), tv = new Float32Array(4);
@@ -164,7 +168,7 @@ class Mesher {
       }
       off += b.n;
     }
-    return { data: out, counts, gc, vis };
+    return { data: out, counts, gc, vis, leafy: this.leafy };
   }
 
   // ---------------------------------------------------------------- full cubes
@@ -179,6 +183,7 @@ class Mesher {
     const m = meta[p];
     const { tpx, tpy, tpz, tu, tv, sh, sk, bl } = this.t;
     const flagV = leaves && this.sway ? 2 : 0;
+    if (leaves) this.leafy = true;
     // waterlogged cube (mangrove roots in water): the water of the cell is drawn with it
     if (fl & BF_AQUATIC) this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
     for (let f = 0; f < 6; f++) {
@@ -186,6 +191,7 @@ class Mesher {
       const n = ids[np];
       if (OPAQUE[n]) continue;
       if (n === id && (clear || (leaves && !this.fancyLeaves))) continue;
+      if (this.leafShell && leaves && (FLAGS[n] & BF_LEAVES)) continue;
       // buried leaf face: the neighbour leaf is itself covered by leaves or a solid block behind it
       if (this.leafCull && leaves && (FLAGS[n] & BF_LEAVES)) {
         const d = FN[f], x2 = x + 2 * d[0], y2 = y + 2 * d[1], z2 = z + 2 * d[2];

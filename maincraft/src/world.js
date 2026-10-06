@@ -27,6 +27,7 @@ class Column {
     this.meshBusy = 0;       // bitmask of sections with a mesh job in flight
     this.meshed = 0;         // bitmask of sections that have (possibly empty) meshes
     this.meshes = new Array(SECTIONS).fill(null);
+    this.leafMode = -1;      // leaf mesh mode its sections are built with (-1: not chosen yet)
     this.visFrame = new Uint32Array(SECTIONS);   // last frame each section was reached by the visibility walk
     this.edits = null;       // Map localIndex -> id | meta<<16 (player modifications)
     this.biomes = null;

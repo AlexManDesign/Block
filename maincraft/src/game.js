@@ -32,6 +32,17 @@ function heldXform(P, x, y, z, o) {
   const y1 = y * HELD_CX - z0 * HELD_SX, z1 = y * HELD_SX + z0 * HELD_CX;
   o[0] = x1 + P[0]; o[1] = y1 + P[1]; o[2] = z1 + P[2];
 }
+// leaf mesh modes (mesher: 0 fast, 1 optimized, 2 fancy, 3 shell) from coarse to fine
+const LEAF_RANK = new Uint8Array([0, 2, 3, 1]);
+// adaptive leaves for a column at squared chunk distance d2, now built with mode cur: fancy within
+// 2 chunks, optimized within 6, shell beyond; a column keeps a finer mode one chunk further
+// (2 -> 3, 6 -> 7) so walking along a border does not rebuild it back and forth
+function leafLod(d2, cur) {
+  const t = d2 <= 4 ? 2 : d2 <= 36 ? 1 : 3;
+  if (cur === 2 && t !== 2 && d2 <= 9) return 2;
+  if (cur === 1 && t === 3 && d2 <= 49) return 1;
+  return t;
+}
 const BUILD_ID = '@BUILD@';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
@@ -279,13 +290,28 @@ class Game {
   // lit to the mesh workers, nearest columns first
   meshPass(w, pcx, pcz, RR) {
     const SP = this.spiral, p = this.player.pos;
-    const maxMesh = w.pool.workers.length * 4;
+    const maxMesh = w.pool.workers.length * 4, LV = Settings.leaves;
+    let lowered = false;
     for (let i = 0; i < SP.length; i++) {
       const e = SP[i];
       if (e[2] > RR) break;
       if (w.meshInFlight >= maxMesh) break;
       const c = w.col(pcx + e[0], pcz + e[1]);
-      if (!c || c.state !== 2 || !c.dirty) continue;
+      if (!c || c.state !== 2) continue;
+      // adaptive leaves: fancy within 2 chunks, optimized within 6, the crown's outer shell beyond
+      const want = LV === 3 ? leafLod(e[2], c.leafMode) : LV;
+      if (c.leafMode < 0) c.leafMode = want;
+      else if (want !== c.leafMode) {
+        // finer leaves at once; coarser ones one column a frame (crossing a chunk border would
+        // otherwise rebuild a whole ring of columns in one go). Only sections with leaves rebuild.
+        const finer = LEAF_RANK[want] > LEAF_RANK[c.leafMode];
+        if (finer || !lowered) {
+          if (!finer) lowered = true;
+          c.leafMode = want;
+          for (let s = 0; s < SECTIONS; s++) { const m = c.meshes[s]; if ((m && m.leafy) || (c.meshBusy & (1 << s))) { c.meshVer[s]++; c.dirty |= 1 << s; } }
+        }
+      }
+      if (!c.dirty) continue;
       let ok = true;
       for (let k = 0; k < 9 && ok; k++) { const n = w.col(c.cx + (k % 3) - 1, c.cz + ((k / 3) | 0) - 1); if (!n || n.state !== 2) ok = false; }
       if (!ok) continue;
@@ -301,7 +327,7 @@ class Game {
           c.meshes[s] = null; c.meshed |= 1 << s;
           continue;
         }
-        w.submitMesh(c, s, Settings.leaves, Settings.sway);
+        w.submitMesh(c, s, c.leafMode, Settings.sway);
       }
     }
   }
@@ -599,7 +625,7 @@ class Game {
     L.push(`Maincraft · seed ${this.meta && this.meta.seed} · XYZ ${b.pos.map(v => v.toFixed(1)).join(' ')} · pitch ${b.pitch.toFixed(2)} · биом ${BIOME_LIST[pb] ? BIOME_LIST[pb][0] : '?'}`);
     L.push(`GPU: ${r.gpuName || '?'}`);
     L.push(`${navigator.userAgent}`);
-    L.push(`настройки: экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'}`);
+    L.push(`настройки: экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая', 'адаптивная'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'}`);
     L.push(`FPS ${f(1000 / avg, 1)} · кадр ${f(avg)} мс · 1% low ${f(1000 / p99, 1)} fps · худший ${f(worst, 1)} мс · кадров ${n}`);
     if (acc) L.push(`GPU мс (отброшено замеров ${r.gpuBad || 0}): всего ${f(gsum)} | рельеф ${f(Gv('solid'))} листва ${f(Gv('cutout'))} небо ${f(Gv('sky'))} облака ${f(Gv('clouds'))} частицы ${f(Gv('particles'))} мобы ${f(Gv('entities'))} вода ${f(Gv('water'))} рука ${f(Gv('hand'))}`);
     else L.push('GPU мс: таймер видеокарты недоступен');
@@ -1592,7 +1618,7 @@ class Game {
     const L = [];
     L.push(`== ПРОИЗВОДИТЕЛЬНОСТЬ ==  FPS ${this.fps} · кадр ${f(avg)} мс · 1% low ${f(p99 ? 1000 / p99 : 0, 0)} fps · худший ${f(worst, 1)} мс`);
     L.push(`GPU: ${r.gpuName || '?'}`);
-    L.push(`экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'} · multiDraw ${r.multiDraw ? 'да' : 'нет'}`);
+    L.push(`экран ${cv.width}x${cv.height} · dpr ${f(window.devicePixelRatio || 1)} · масштаб ${Settings.scale}${Settings.autoScale ? ` (авто ×${f(this.dynScale || 1)})` : ''} · дальность ${Settings.renderDist} · листва ${['быстрая', 'оптим.', 'красивая', 'адаптивная'][Settings.leaves]} · облака ${Settings.clouds ? 'да' : 'нет'} · колыхание ${Settings.sway ? 'да' : 'нет'} · multiDraw ${r.multiDraw ? 'да' : 'нет'}`);
     if (r.tq) {
       const names = ['solid', 'cutout', 'sky', 'clouds', 'particles', 'entities', 'water', 'hand'];
       let sum = 0; for (const k of names) sum += G[k] || 0;

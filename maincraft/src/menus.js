@@ -141,7 +141,7 @@ const UI = {
       b.onclick = () => { Settings[key] = !Settings[key]; b.textContent = label + ': ' + (Settings[key] ? T('on') : T('off')); if (after) after(); };
       box.append(b);
     };
-    const remesh = () => { const w = this.game.world; if (w) for (const c of w.cols.values()) if (c.state === 2) { let top = -1; for (let s = SECTIONS - 1; s >= 0; s--) if (c.secs[s]) { top = s; break; } c.dirty |= top >= 0 ? (1 << (top + 1)) - 1 : 0; } };
+    const remesh = () => { const w = this.game.world; if (w) for (const c of w.cols.values()) if (c.state === 2) { c.leafMode = -1; let top = -1; for (let s = SECTIONS - 1; s >= 0; s--) if (c.secs[s]) { top = s; break; } c.dirty |= top >= 0 ? (1 << (top + 1)) - 1 : 0; } };
     slider(T('renderDist'), 'renderDist', 2, 24, 1, v => v + ' ' + T('chunks'));
     slider(T('fov'), 'fov', 40, 110, 1, v => String(v));
     slider(T('sens'), 'sens', 0.2, 3, 0.05, v => Math.round(v * 100) + '%');
@@ -149,9 +149,10 @@ const UI = {
     slider(T('scale'), 'scale', 0.4, 1, 0.05, v => Math.round(v * 100) + '%', () => this.game.resize());
     toggle(T('autoScale'), 'autoScale', () => this.game.resize());
     toggle(T('clouds'), 'clouds');
-    const leafNames = [T('leavesFast'), T('leavesOpt'), T('leavesFancy')];
+    // order of the button: fancy -> adaptive -> optimized -> fast -> fancy
+    const leafNames = [T('leavesFast'), T('leavesOpt'), T('leavesFancy'), T('leavesAdaptive')], leafNext = [2, 0, 3, 1];
     const lv = el('button', { class: 'tog' }, T('leaves') + ': ' + leafNames[Settings.leaves]);
-    lv.onclick = () => { Settings.leaves = (Settings.leaves + 2) % 3; lv.textContent = T('leaves') + ': ' + leafNames[Settings.leaves]; remesh(); };
+    lv.onclick = () => { Settings.leaves = leafNext[Settings.leaves]; lv.textContent = T('leaves') + ': ' + leafNames[Settings.leaves]; remesh(); };
     box.append(lv);
     toggle(T('sway'), 'sway', remesh);
     toggle(T('bobView'), 'bobView');

@@ -482,7 +482,7 @@ class Renderer {
   // class: the visibility walk and the draw loops read these fields on thousands of meshes a frame
   newMesh(vbo, vao, vis) {
     return { vbo, vao, counts: null, vis, cap: 0, slot: undefined, gc: null, cx: 0, cz: 0, sy: 0,
-      tvao: null, tibo: null, tcap: 0, tc: null, tg: null, tfirst: 0, tn: 0, tkey: -1 };
+      tvao: null, tibo: null, tcap: 0, tc: null, tg: null, tfirst: 0, tn: 0, tkey: -1, leafy: false };
   }
   uploadSection(c, sy, d) {
     const gl = this.gl;
@@ -512,7 +512,7 @@ class Renderer {
       gl.bufferData(gl.ARRAY_BUFFER, d.data, gl.STATIC_DRAW);
       m.cap = d.data.byteLength;
     } else gl.bufferSubData(gl.ARRAY_BUFFER, 0, d.data);
-    m.counts = d.counts; m.gc = d.gc || null; m.vis = d.vis;
+    m.counts = d.counts; m.gc = d.gc || null; m.vis = d.vis; m.leafy = !!d.leafy;
     this.prepareTrans(m, d);
   }
   // Translucent quads are drawn back to front through a per-section index buffer that is re-sorted

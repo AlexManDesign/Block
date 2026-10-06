@@ -21,7 +21,7 @@ self.onmessage = function (e) {
   if (d.t === 'mesh') {
     MESHER.sway = d.sway !== false;
     const r = MESHER.mesh(d);
-    self.postMessage({ t: 'mesh', cx: d.cx, cz: d.cz, sy: d.sy, ver: d.ver, data: r.data, counts: r.counts, gc: r.gc, vis: r.vis,
+    self.postMessage({ t: 'mesh', cx: d.cx, cz: d.cz, sy: d.sy, ver: d.ver, data: r.data, counts: r.counts, gc: r.gc, vis: r.vis, leafy: r.leafy,
       ids: d.ids, meta: d.meta, light: d.light }, [r.data.buffer, d.ids.buffer, d.meta.buffer, d.light.buffer]);
     return;
   }
