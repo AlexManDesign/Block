@@ -197,6 +197,7 @@ function convertHTML(html,{loadExternal=null,loadModule=null,documentURL='file:/
  walk(tree);if(!entries.length)throw new Error('В HTML не найден исполняемый JavaScript.');
  const modules=linker.finish();
  const moduleRoots=new Set(entries.map(e=>e.moduleId));for(const r of linker.records){if(!moduleRoots.has(r.id))entries.push({moduleId:r.id,name:'module · '+r.name,sourceBytes:r.sourceBytes});while(r.source.includes(key))key+='_';}
+ compiler.moduleSpecs=modules;
  const {binary,constants,metadata,environmentBytes}=compiler.build();
  for(const e of edits){if('eventId'in e)e.text=e.attribute+'="'+attr(`return ${key}.event(${e.eventId},this,event)`)+'"';else{const call=e.module?`await ${key}.module(${e.scriptId});`:`${key}.run(${e.scriptId});`;e.text=e.tag?e.tag+call+'<\/script>':call;}}
  const loader=`<script${nonce?' nonce="'+attr(nonce)+'"':''}>/* Own AOT compiler: WASM program + fixed browser ABI */\nvar ${key}=(${boot.toString()})(${safeJSON(base64(binary))},${safeJSON(constants)},${safeJSON(metadata)},undefined,${safeJSON(modules)});\n<\/script>`;
@@ -9071,6 +9072,8 @@ const specializeNumeric=require("./numeric.mjs")["specializeNumeric"];
 const environmentWasm=require("./environment-wasm.mjs")["environmentWasm"];
 const stringTypes=require("./string-wasm.mjs")["stringTypes"];
 const base64=require("./encoding.mjs")["base64"];
+const ScopeAnalysis=require("./scope.mjs")["ScopeAnalysis"];
+const bindings=require("./bindings.mjs")["bindings"];
 
 const signatures={
  ...featureSignatures,
@@ -9078,17 +9081,18 @@ const signatures={
  truth:['r','i'],nullish:['r','i'],isUndefined:['r','i'],equal:['rr','i'],has:['rr','i'],
  isString:['r','i'],stringLength:['r','i'],stringConcat:['rr','r'],stringCompare:['rr','i'],stringRead:['rr','r'],stringBuiltins:['i','i'],
  stringCharCodeAt:['rf','f'],stringCharAt:['rf','r'],stringSlice:['rff','r'],stringSubstring:['rff','r'],stringIndexOf:['rrf','i'],stringLastIndexOf:['rrf','i'],stringIncludes:['rrf','i'],stringStartsWith:['rrf','i'],stringEndsWith:['rrf','i'],stringRepeat:['rf','r'],
- scope:['rii','r'],clone:['r','r'],reserve:['rii',''],init:['rir','r'],variable:['r','r'],
- binding:['ri','r'],read:['r','r'],write:['rr','r'],key:['r','r'],property:['rri','r'],remove:['r','r'],typeOf:['r','r'],update:['rii','r'],
+ scopeNew:['ri','r'],scopeClone:['r','r'],moduleScope:['i','r'],
+ globalRead:['i','r'],globalTypeof:['i','r'],globalWrite:['iri','r'],globalVar:['i',''],globalFunction:['ir',''],globalDelete:['i','r'],
+ tdz:['i',''],constAssign:['i',''],scriptError:['i',''],toNumeric:['r','r'],increment:['ri','r'],
+ read:['r','r'],write:['rr','r'],key:['r','r'],property:['rri','r'],remove:['r','r'],typeOf:['r','r'],update:['rii','r'],
  unary:['ir','r'],templateString:['r','r'],binary:['irr','r'],array:['','r'],push:['rr','r'],hole:['r','r'],spread:['rr','r'],
  object:['','r'],assign:['rr','r'],define:['rrri','r'],regex:['ii','r'],func:['riiirr','r'],
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
- iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],setStrict:['ri',''],
+ iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
 };
 const types={r:REF,i:I32,f:F64};
 const strictBody=(body,inherited)=>!!(inherited||body?.some?.(n=>n.directive==='use strict'));
 function error(n,message){throw new SyntaxError(message+(n?.loc?` (строка ${n.loc.start.line}, столбец ${n.loc.start.column+1})`:''));}
-function scan(n,visit){if(!n||typeof n!=='object')return;if(visit(n)===false)return;for(const[key,v]of Object.entries(n)){if(['loc','start','end'].includes(key))continue;if(Array.isArray(v))v.forEach(x=>scan(x,visit));else if(v&&typeof v==='object')scan(v,visit);}}
 
 class Compiler {
  constructor({numeric=true,environments=true}={}){this.numeric=numeric;this.environments=environments;this.constants=[];this.constantKeys=new Map();this.imports=[];this.importNames=new Map();this.plans=[];this.bodies=[];this.templateCount=0;}
@@ -9098,6 +9102,17 @@ class Compiler {
  script(source,filename='script'){let ast;try{ast=parse(source,{ecmaVersion:'latest',sourceType:'script',locations:true});}catch(e){throw new SyntaxError(filename+': '+e.message);}return this.add(ast,false,'script',filename);}
  handler(source,name){let ast;try{ast=parse(`function handler(event){\n${source}\n}`,{ecmaVersion:'latest',locations:true});}catch(e){throw new SyntaxError(name+': '+e.message);}return this.add(ast.body[0],false,'handler',name);}
  build(){
+  // Resolve every name of the program before emitting any function.
+  const analysis=this.analysis=new ScopeAnalysis();
+  for(const plan of [...this.plans])analysis.program(plan);
+  analysis.finish();
+  this.moduleSpecs??=[];
+  for(const [id,spec]of this.moduleSpecs.entries()){
+   const scope=analysis.modules.get(id),slotOf=(module,local)=>analysis.modules.get(module).bindings.get(local).slot;
+   spec.slots=scope.slots;
+   for(const entry of spec.imports)entry.slot=scope.bindings.get(entry.local).slot;
+   for(const entry of spec.exports)if(!entry.target.namespace)entry.target.slot=slotOf(entry.target.module,entry.target.local);
+  }
   for(let id=0;id<this.plans.length;id++){
    const plan=this.plans[id];this.currentSource=plan.sourceName;
    try{
@@ -9108,14 +9123,16 @@ class Compiler {
    }catch(e){e.message=this.currentSource+': '+e.message;throw e;}
   }
   const metadata=this.plans.map(p=>({arity:p.arity,name:p.name,frameTypes:p.frameTypes,numeric:!!p.numeric,stringSpecialization:!!p.stringSpecialization,usesArguments:!!p.usesArguments}));
+  if(metadata.length)metadata[0].rootSlots=analysis.root.slots;
   const environmentBinary=this.environments?environmentWasm():null;
   if(environmentBinary&&metadata.length)metadata[0].environmentWasm=base64(environmentBinary);
-  return {binary:makeModule(this.imports,this.bodies,this.stringGC?[stringTypes[0],stringTypes[1],stringTypes[3]]:[]),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
+  // Types 0..2: strings (numeric.mjs relies on these indices), 3: scope record.
+  return {binary:makeModule(this.imports,this.bodies,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]]),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
  }
 }
 
 class FunctionEmitter {
- constructor(compiler,id){this.c=compiler;this.id=id;this.plan=compiler.plans[id];this.code=[];this.locals=[];this.labels=[];this.finalizers=[];this.env=this.local();this.strict=this.plan.strict;}
+ constructor(compiler,id){this.c=compiler;this.id=id;this.plan=compiler.plans[id];this.code=[];this.locals=[];this.labels=[];this.finalizers=[];this.env=0;this.strict=this.plan.strict;}
  out(...bytes){this.code.push(...bytes);}
  local(type=REF){const id=4+this.locals.length;this.locals.push(type);return id;}
  get(i){this.out(0x20,...u32(i));} set(i){this.out(0x21,...u32(i));} tee(i){this.out(0x22,...u32(i));}
@@ -9124,41 +9141,6 @@ class FunctionEmitter {
  label(kind,body,result=0x40,tag=null){this.out(kind==='loop'?0x03:0x02,result);const label={kind,tag};this.labels.push(label);body(label);this.labels.pop();this.out(0x0b);}
  branch(label){const depth=this.labels.length-1-this.labels.lastIndexOf(label);if(depth<0)throw new Error('Invalid compiler branch');this.out(0x0c,...u32(depth));}
  ifElse(yes,no,result=0x40){this.out(0x04,result);this.labels.push({kind:'if'});yes();if(no){this.out(0x05);no();}this.labels.pop();this.out(0x0b);}
- reserve(name,kind){this.get(this.env);this.integer(this.c.constant(name));this.integer(kind);this.rt('reserve');}
- binding(name){this.get(this.env);this.integer(this.c.constant(name));this.rt('binding');}
- initialize(name,emit,kind='let'){if(kind==='var'){this.binding(name);emit();this.rt('write');}else{this.get(this.env);this.integer(this.c.constant(name));emit();this.rt('init');}this.out(0x1a);}
- scoped(body){const previous=this.env;this.get(previous);this.integer(0);this.integer(+this.strict);this.rt('scope');this.env=this.local();this.set(this.env);body();this.env=previous;}
- function(n,name='',method=false){
-  if(n.async||n.generator)error(n,'async/await и генераторы ещё не реализованы');
-  const strict=strictBody(n.body?.body,this.strict),id=this.c.add(n,strict,'function',name||n.id?.name||'');
-  this.get(this.env);this.integer(id);this.integer(this.c.constant(name||n.id?.name||''));
-  this.integer((strict?1:0)|(n.type==='ArrowFunctionExpression'?2:0)|(n.type==='FunctionExpression'&&n.id?4:0)|(method?8:0));this.get(1);this.get(3);this.rt('func');
- }
- hoistVars(nodes){for(const node of nodes)scan(node,n=>{if(['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression'].includes(n.type))return false;if(n.type==='VariableDeclaration'&&n.kind==='var')for(const d of n.declarations){if(d.id.type!=='Identifier')error(d,'Деструктуризация ещё не реализована');this.reserve(d.id.name,0);}});}
- lexical(nodes,top=false){
-  for(const n of nodes){if(n.type==='VariableDeclaration'&&n.kind!=='var')for(const d of n.declarations){if(d.id.type!=='Identifier')error(d,'Деструктуризация ещё не реализована');this.reserve(d.id.name,n.kind==='const'?2:1);}
-   if(n.type==='FunctionDeclaration'){if(!top&&!this.strict)error(n,'Функция в нестрогом блоке пока не поддержана');this.reserve(n.id.name,top?0:1);}}
-  for(const n of nodes)if(n.type==='FunctionDeclaration')this.initialize(n.id.name,()=>this.function(n,n.id.name),top?'var':'let');
- }
- compile(){
-  const {node,kind}=this.plan;
-  if(kind==='script'){this.get(0);this.set(this.env);this.get(this.env);this.integer(+this.strict);this.rt('setStrict');}
-  else{this.get(0);this.integer(1);this.integer(+this.strict);this.rt('scope');this.set(this.env);
-   const names=new Set();for(const p of node.params){const id=p.type==='AssignmentPattern'?p.left:p.type==='RestElement'?p.argument:p;if(id.type!=='Identifier')error(p,'Деструктуризация параметров ещё не реализована');if(names.has(id.name))error(p,'Повторные имена параметров пока не поддержаны');names.add(id.name);this.reserve(id.name,1);}
-   if(node.type!=='ArrowFunctionExpression'){
-    let usesArguments=false;scan(node.body,n=>{if(['FunctionDeclaration','FunctionExpression'].includes(n.type))return false;if(n.type==='Identifier'&&n.name==='arguments')usesArguments=true;});
-    if(usesArguments&&!this.strict)error(node,'Для arguments нужна функция с "use strict"; mapped arguments не реализован');
-    if(!names.has('arguments')){this.reserve('arguments',0);this.initialize('arguments',()=>{this.get(2);this.rt('arguments');},'var');}
-   }
-   node.params.forEach((p,i)=>{const id=p.type==='AssignmentPattern'?p.left:p.type==='RestElement'?p.argument:p;this.initialize(id.name,()=>{this.get(2);this.integer(i);this.rt(p.type==='RestElement'?'rest':'arg');if(p.type==='AssignmentPattern'){const tmp=this.local();this.tee(tmp);this.rt('isUndefined');this.ifElse(()=>this.expression(p.right),()=>this.get(tmp),REF);}});});
-  }
-  if(node.type==='ArrowFunctionExpression'&&node.body.type!=='BlockStatement'){this.expression(node.body);this.out(0x0f);}
-  else{const statements=kind==='script'?node.body:node.body.body;this.hoistVars(statements);this.lexical(statements,true);statements.forEach(n=>this.statement(n));}
-  this.lit(undefined);return {code:this.code,locals:this.locals};
- }
- reference(n){if(n.type==='Identifier'){if(['eval','Function'].includes(n.name))error(n,'Динамическое создание JS не поддерживается AOT-компилятором');this.binding(n.name);}
-  else if(n.type==='MemberExpression'&&!n.optional){this.expression(n.object);if(n.computed)this.expression(n.property);else this.lit(n.property.name);this.integer(+this.strict);this.rt('property');}
-  else error(n,'Неподдерживаемая ссылка: '+n.type);}
  args(nodes){this.rt('array');for(const a of nodes){if(a?.type==='SpreadElement'){this.expression(a.argument);this.rt('spread');}else if(a){this.expression(a);this.rt('push');}else this.rt('hole');}}
  binary(op,left,right){
   const a=this.local(),b=this.local();left();this.set(a);right();this.set(b);
@@ -9175,7 +9157,6 @@ class FunctionEmitter {
  expression(n){
   switch(n.type){
    case'Literal':if(n.regex){this.integer(this.c.constant(n.regex.pattern));this.integer(this.c.constant(n.regex.flags));this.rt('regex');}else this.lit(n.value);return;
-   case'Identifier':this.reference(n);this.rt('read');return;
    case'ThisExpression':this.get(1);return;
    case'MetaProperty':if(n.meta.name==='new'&&n.property.name==='target'){this.get(3);return;}break;
    case'MemberExpression':this.reference(n);this.rt('read');return;
@@ -9210,54 +9191,22 @@ class FunctionEmitter {
   switch(n.type){
    case'EmptyStatement':case'DebuggerStatement':case'FunctionDeclaration':return;
    case'ExpressionStatement':if(n.directive)return;this.expression(n.expression);this.out(0x1a);return;
-   case'BlockStatement':{const body=()=>{this.lexical(n.body);n.body.forEach(x=>this.statement(x));};if(this.c.environments&&!n.body.some(x=>(x.type==='VariableDeclaration'&&x.kind!=='var')||x.type==='FunctionDeclaration'||x.type==='ClassDeclaration'))body();else this.scoped(body);return;}
-   case'VariableDeclaration':for(const d of n.declarations){if(d.id.type!=='Identifier')error(d,'Деструктуризация ещё не реализована');if(d.init||n.kind!=='var')this.initialize(d.id.name,()=>d.init?this.expression(d.init):this.lit(undefined),n.kind);}return;
    case'ReturnStatement':if(n.argument)this.expression(n.argument);else this.lit(undefined);this.out(0x0f);return;
    case'ThrowStatement':this.expression(n.argument);this.rt('throw');this.out(0x00);return;
    case'IfStatement':this.expression(n.test);this.rt('truth');this.ifElse(()=>this.statement(n.consequent),n.alternate?()=>this.statement(n.alternate):null);return;
-   case'ForStatement':case'WhileStatement':case'DoWhileStatement':this.scoped(()=>{
-    let cloneIteration=n.type==='ForStatement'&&n.init?.type==='VariableDeclaration'&&n.init.kind!=='var';
-    if(cloneIteration&&this.c.environments){let captures=false;scan(n,x=>{if(['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression','ClassDeclaration','ClassExpression'].includes(x.type)){captures=true;return false;}});cloneIteration=captures;}
-    if(n.init?.type==='VariableDeclaration'){this.lexical([n.init]);this.statement(n.init);}else if(n.init){this.expression(n.init);this.out(0x1a);}
-    if(cloneIteration){this.get(this.env);this.rt('clone');this.set(this.env);}
-    this.label('break',end=>this.label('loop',again=>{
-     if(n.type!=='DoWhileStatement'&&n.test){this.expression(n.test);this.rt('truth');this.out(0x45);this.ifElse(()=>this.branch(end));}
-     this.label('continue',()=>this.statement(n.body),0x40,tag);
-     if(cloneIteration){this.get(this.env);this.rt('clone');this.set(this.env);}
-     if(n.update){this.expression(n.update);this.out(0x1a);}
-     if(n.type==='DoWhileStatement'){this.expression(n.test);this.rt('truth');this.ifElse(()=>this.branch(again));}else this.branch(again);
-    }),0x40,tag);
-   });return;
-   case'ForOfStatement':case'ForInStatement':{
-    if(n.await)error(n,'for await ещё не реализован');
-    const iterator=this.local(),next=this.local();this.expression(n.right);this.rt(n.type==='ForOfStatement'?'iterator':'keys');this.set(iterator);
-    this.label('break',end=>this.label('loop',again=>{
-     this.get(iterator);this.rt('next');this.tee(next);this.rt('done');this.ifElse(()=>this.branch(end));
-     this.scoped(()=>{if(n.left.type==='VariableDeclaration'){const d=n.left.declarations[0];if(d.id.type!=='Identifier')error(d,'Деструктуризация ещё не реализована');this.lexical([n.left]);this.initialize(d.id.name,()=>{this.get(next);this.rt('value');},n.left.kind);}else{this.reference(n.left);this.get(next);this.rt('value');this.rt('write');this.out(0x1a);}this.label('continue',()=>this.statement(n.body),0x40,tag);});this.branch(again);
-    }),0x40,tag);return;
-   }
    case'BreakStatement':case'ContinueStatement':{const target=[...this.labels].reverse().find(l=>(n.type==='BreakStatement'?l.kind==='break'||(n.label&&l.kind==='label'):l.kind==='continue')&&(!n.label||l.tag===n.label.name));if(!target)error(n,'Не найдена цель break/continue');this.branch(target);return;}
    case'LabeledStatement':if(['ForStatement','WhileStatement','DoWhileStatement','ForInStatement','ForOfStatement'].includes(n.body.type))this.statement(n.body,n.label.name);else this.label('label',()=>this.statement(n.body),0x40,n.label.name);return;
-   case'TryStatement':{
-    if(n.finalizer)error(n.finalizer,'try/finally ещё не реализован');
-    this.out(0x06,0x40);this.labels.push({kind:'try'});this.statement(n.block);this.out(0x07,0);const caught=this.local();this.set(caught);
-    this.scoped(()=>{if(n.handler.param){if(n.handler.param.type!=='Identifier')error(n.handler.param,'Деструктуризация catch ещё не реализована');this.reserve(n.handler.param.name,1);this.initialize(n.handler.param.name,()=>this.get(caught));}this.statement(n.handler.body);});this.labels.pop();this.out(0x0b);return;
-   }
-   case'SwitchStatement':{
-    const value=this.local(),start=this.local(I32);this.expression(n.discriminant);this.set(value);this.integer(-1);this.set(start);let def=-1;
-    n.cases.forEach((c,i)=>{if(c.test===null){def=i;return;}this.get(start);this.integer(-1);this.out(0x46);this.ifElse(()=>{this.get(value);this.expression(c.test);this.rt('equal');this.ifElse(()=>{this.integer(i);this.set(start);});});});
-    if(def>=0){this.get(start);this.integer(-1);this.out(0x46);this.ifElse(()=>{this.integer(def);this.set(start);});}
-    this.scoped(()=>{this.lexical(n.cases.flatMap(c=>c.consequent));this.label('break',()=>n.cases.forEach((c,i)=>{this.get(start);this.integer(0);this.out(0x4e);this.get(start);this.integer(i);this.out(0x4c,0x71);this.ifElse(()=>c.consequent.forEach(s=>this.statement(s)));}));});return;
-   }
-   case'ClassDeclaration':error(n,'Классы ещё не реализованы');
   }error(n,'Конструкция ещё не реализована: '+n.type);
  }
 }
 
-// Keep the small arithmetic/control emitter independent of advanced syntax.
-FunctionEmitter.prototype.baseExpression=FunctionEmitter.prototype.expression;
-FunctionEmitter.prototype.baseStatement=FunctionEmitter.prototype.statement;
-Object.assign(FunctionEmitter.prototype,features);
+// Layers: base syntax, then advanced syntax, then static bindings on top.
+const emitter=FunctionEmitter.prototype;
+emitter.baseExpression=emitter.expression;
+emitter.baseStatement=emitter.statement;
+Object.assign(emitter,features);
+Object.assign(emitter,{featureExpression:emitter.expression,featureStatement:emitter.statement,featurePattern:emitter.pattern,featureReference:emitter.reference,featureCallTarget:emitter.callTarget,featureChainPart:emitter.chainPart});
+Object.assign(emitter,bindings);
 
 exports["Compiler"]=Compiler;
 },
@@ -15654,14 +15603,9 @@ const featureSignatures={
  delegate:['ri','r'],delegateStep:['rr','r'],request:['ir','r'],
  asyncIterator:['r','r'],asyncNext:['r','r'],asyncClose:['ri','r'],
 };
-const strictBody=(body,inherited)=>!!(inherited||body?.some?.(n=>n.directive==='use strict'));
 function error(n,message){throw new SyntaxError(message+(n?.loc?` (строка ${n.loc.start.line}, столбец ${n.loc.start.column+1})`:''));}
-function scan(n,visit){if(!n||typeof n!=='object'||visit(n)===false)return;for(const[k,v]of Object.entries(n)){if(['loc','start','end'].includes(k))continue;if(Array.isArray(v))v.forEach(x=>scan(x,visit));else if(v&&typeof v==='object')scan(v,visit);}}
-function names(n){if(!n)return [];switch(n.type){case'Identifier':return[n.name];case'AssignmentPattern':return names(n.left);case'RestElement':return names(n.argument);case'ArrayPattern':return n.elements.flatMap(names);case'ObjectPattern':return n.properties.flatMap(p=>names(p.type==='RestElement'?p.argument:p.value));default:error(n,'Неподдерживаемая привязка '+n.type);}}
-const nested=n=>['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression','ClassDeclaration','ClassExpression'].includes(n.type);
 
 const features={
- reservePattern(n,kind){for(const name of names(n))this.reserve(name,kind);},
  abrupt(kind,target=null,value=null){
   const c=[...this.finalizers].reverse().find(c=>kind==='return'||this.labels.indexOf(target)<this.labels.indexOf(c.exit));
   if(c){let r=c.routes.find(r=>r.kind===kind&&r.target===target);if(!r){r={kind,target,id:c.routes.length+2};c.routes.push(r);}if(value!==null){this.get(value);this.set(c.value);}this.integer(r.id);this.set(c.state);this.branch(c.exit);}
@@ -15676,7 +15620,6 @@ const features={
  closeIterator(iterator,c){this.get(iterator);this.get(c.state);this.integer(1);this.out(0x46);this.rt('closeIterator');},
  pattern(n,emit,kind='assign'){
   switch(n.type){
-   case'Identifier':if(kind!=='assign'){this.initialize(n.name,emit,kind);return;}this.reference(n);emit();this.rt('write');this.out(0x1a);return;
    case'MemberExpression':if(kind!=='assign')error(n,'Ожидалось имя привязки');this.reference(n);emit();this.rt('write');this.out(0x1a);return;
    case'AssignmentPattern':this.pattern(n.left,()=>{const v=this.local();emit();this.tee(v);this.rt('isUndefined');this.ifElse(()=>this.expression(n.right,n.left.type==='Identifier'?n.left.name:''),()=>this.get(v),REF);},kind);return;
    case'RestElement':this.pattern(n.argument,emit,kind);return;
@@ -15684,65 +15627,19 @@ const features={
    case'ArrayPattern':{const iterator=this.local();emit();this.rt('iterator');this.set(iterator);this.withFinally(()=>{for(const item of n.elements){if(!item){this.get(iterator);this.rt('skip');}else this.pattern(item.type==='RestElement'?item.argument:item,()=>{this.get(iterator);this.rt(item.type==='RestElement'?'iteratorRest':'take');},kind);}},c=>this.closeIterator(iterator,c));return;}
   }error(n,'Шаблон ещё не реализован: '+n.type);
  },
- hoistVars(nodes){for(const n of nodes)scan(n,x=>{if(nested(x))return false;if(x.type==='VariableDeclaration'&&x.kind==='var')for(const d of x.declarations)this.reservePattern(d.id,0);});},
- lexical(nodes,top=false){for(const n of nodes){if(n.type==='VariableDeclaration'&&n.kind!=='var')for(const d of n.declarations)this.reservePattern(d.id,n.kind==='const'?2:1);if(n.type==='ClassDeclaration')this.reserve(n.id.name,1);if(n.type==='FunctionDeclaration'){if(!top&&!this.strict)error(n,'Функция в нестрогом блоке пока не поддержана');this.reserve(n.id.name,top?0:1);}}for(const n of nodes)if(n.type==='FunctionDeclaration')this.initialize(n.id.name,()=>this.function(n,n._displayName||n.id.name),top?'var':'let');},
- function(n,name='',method=false){
-  const strict=strictBody(n.body?.body,this.strict),id=this.c.add(n,strict,'function',name||n.id?.name||'');
-  this.get(this.env);this.integer(id);this.integer(this.c.constant(name||n.id?.name||''));this.integer((strict?1:0)|(n.type==='ArrowFunctionExpression'?2:0)|(n.type==='FunctionExpression'&&n.id?4:0)|(method?8:0)|(n.generator?16:0)|(n.async?32:0));this.get(1);this.get(3);this.rt('func');
- },
- compile(){
-  const {node,kind}=this.plan;
-  if(kind==='module-init'||kind==='module-body'){
-   this.get(0);this.set(this.env);
-   if(kind==='module-init'){this.hoistVars(node.body);this.lexical(node.body,true);}else node.body.forEach(n=>this.statement(n));
-   this.lit(undefined);return {code:this.code,locals:this.locals};
-  }
-  if(kind==='script'){this.get(0);this.set(this.env);this.get(this.env);this.integer(+this.strict);this.rt('setStrict');}
-  else{
-   this.get(0);this.integer(1);this.integer(+this.strict);this.rt('scope');this.set(this.env);
-   const simple=node.params.every(p=>p.type==='Identifier'),all=new Set();
-   for(const p of node.params)for(const name of names(p)){if(all.has(name)){if(this.strict||!simple)error(p,'Повторные параметры в строгой или непростой функции');continue;}all.add(name);this.reserve(name,1);}
-   let usesArguments=false;for(const n of [...node.params,node.body])scan(n,x=>{if(x.type==='FunctionDeclaration'||x.type==='FunctionExpression')return false;if(x.type==='Identifier'&&x.name==='arguments')usesArguments=true;});
-   this.plan.usesArguments=(usesArguments||!this.c.environments)&&node.type!=='ArrowFunctionExpression'&&!all.has('arguments');
-   if(this.plan.usesArguments){this.reserve('arguments',0);this.initialize('arguments',()=>{this.get(2);this.get(this.env);this.integer(this.c.constant(simple?node.params.map(p=>p.name):[]));this.integer(+(!this.strict&&simple));this.rt('arguments');},'var');}
-   node.params.forEach((p,i)=>this.pattern(p,()=>{this.get(2);this.integer(i);this.rt(p.type==='RestElement'?'rest':'arg');},'let'));
-   if(!simple&&node.body.type==='BlockStatement'){
-    const params=this.env,vars=new Set();scan(node.body,x=>{if(nested(x))return false;if(x.type==='VariableDeclaration'&&x.kind==='var')for(const d of x.declarations)for(const name of names(d.id))vars.add(name);});for(const s of node.body.body)if(s.type==='FunctionDeclaration')vars.add(s.id.name);
-    this.get(params);this.integer(1);this.integer(+this.strict);this.rt('scope');this.env=this.local();this.set(this.env);
-    for(const name of vars)if(all.has(name)||(name==='arguments'&&node.type!=='ArrowFunctionExpression')){this.reserve(name,0);this.initialize(name,()=>{this.get(params);this.integer(this.c.constant(name));this.rt('binding');this.rt('read');},'var');}
-   }
-  }
-  if(node.type==='ArrowFunctionExpression'&&node.body.type!=='BlockStatement'){this.expression(node.body);this.out(0x0f);}
-  else{const body=kind==='script'?node.body:node.body.body;this.hoistVars(body);this.lexical(body,true);if(node.generator){this.lit(undefined);this.integer(0);this.rt('pause');this.out(0x1a);}body.forEach(n=>this.statement(n));}
-  this.lit(undefined);return {code:this.code,locals:this.locals};
- },
  reference(n){
-  if(n.type==='Identifier'){if(['eval','Function'].includes(n.name))error(n,'Динамическое создание JS не поддерживается AOT-компилятором');this.binding(n.name);return;}
   if(n.type==='MemberExpression'&&!n.optional){if(n.property.type==='PrivateIdentifier'){this.get(this.env);this.expression(n.object);this.integer(this.c.constant(n.property.name));this.rt('privateProperty');return;}if(n.object.type==='Super'){this.get(this.env);this.get(1);if(n.computed)this.expression(n.property);else this.lit(n.property.name);this.rt('superProperty');return;}this.expression(n.object);if(n.computed)this.expression(n.property);else this.lit(n.property.name);this.integer(+this.strict);this.rt('property');return;}
   error(n,'Неподдерживаемая ссылка: '+n.type);
- },
- classExpression(n,inferredName=''){
-  const strict=this.strict;this.strict=true;this.scoped(()=>{
-   const bindingName=n.id?.name||'',name=n._displayName||bindingName||inferredName,c=this.local();if(bindingName)this.reserve(bindingName,2);
-   for(const m of n.body.body)if(m.key?.type==='PrivateIdentifier'){this.get(this.env);this.integer(this.c.constant(m.key.name));this.integer(m.type==='PropertyDefinition'?0:m.kind==='get'||m.kind==='set'?2:1);this.integer(+m.static);this.rt('privateDeclare');}
-   const ctor=n.body.body.find(m=>m.type==='MethodDefinition'&&m.kind==='constructor'),ctorId=ctor?this.c.add(ctor.value,true,'function',name):-1;
-   this.get(this.env);if(n.superClass)this.expression(n.superClass);else this.lit(undefined);this.integer(ctorId);this.integer(this.c.constant(name));this.integer(+!!n.superClass);this.rt('makeClass');this.set(c);
-   for(const m of n.body.body){if(m===ctor)continue;if(m.type==='StaticBlock'){this.get(c);this.lit(undefined);this.function({type:'FunctionExpression',params:[],body:{type:'BlockStatement',body:m.body}},'',true);this.integer(1);this.integer(1);this.rt('classField');continue;}this.get(c);if(m.key.type==='PrivateIdentifier'){this.get(this.env);this.integer(this.c.constant(m.key.name));this.rt('privateKey');}else if(m.computed){this.expression(m.key);this.rt('key');}else this.lit(m.key.name??m.key.value);
-    if(m.type==='MethodDefinition'){this.function(m.value,m.key.name||'',true);this.integer(m.kind==='get'?1:m.kind==='set'?2:0);this.integer(+m.static);this.rt('classMethod');}
-    else if(m.type==='PropertyDefinition'){this.function({type:'FunctionExpression',params:[],body:{type:'BlockStatement',body:[{type:'ReturnStatement',argument:m.value||null}]}},'',true);this.integer(+m.static);this.integer(0);this.rt('classField');}
-    else error(m,'Элемент класса ещё не реализован: '+m.type);
-   }if(bindingName)this.initialize(bindingName,()=>this.get(c),'const');this.get(c);this.rt('finishClass');
-  });this.strict=strict;
  },
  chain(n,mode='value'){const result=this.local();this.label('chain',exit=>{this.chainPart(n.expression,{exit,result,mode},mode);this.set(result);});this.get(result);},
  shortChain(v,c,prepared=false){this.get(v);if(prepared)this.rt('callable');this.rt('nullish');this.ifElse(()=>{this.lit(c.mode==='delete'?true:undefined);if(c.mode==='call')this.rt('prepareValue');this.set(c.result);this.branch(c.exit);});},
  chainPart(n,c,mode='value'){
   if(n.type==='MemberExpression'){if(n.object.type==='Super'){this.reference(n);this.rt(mode==='call'?'prepare':mode==='delete'?'remove':'read');return;}const base=this.local();this.chainPart(n.object,c);this.set(base);if(n.optional)this.shortChain(base,c);if(n.property.type==='PrivateIdentifier'){this.get(this.env);this.get(base);this.integer(this.c.constant(n.property.name));this.rt('privateProperty');}else{this.get(base);if(n.computed)this.expression(n.property);else this.lit(n.property.name);this.integer(+this.strict);this.rt('property');}this.rt(mode==='call'?'prepare':mode==='delete'?'remove':'read');return;}
   if(n.type==='CallExpression'){const f=this.local();this.chainPart(n.callee,c,'call');this.set(f);if(n.optional)this.shortChain(f,c,true);this.get(f);this.args(n.arguments);this.rt('invoke');}
-  else if(n.type==='ChainExpression'){this.chain(n,mode);return;}else if(mode==='call'&&n.type==='Identifier'){this.reference(n);this.rt('prepare');return;}else this.expression(n);
+  else if(n.type==='ChainExpression'){this.chain(n,mode);return;}else this.expression(n);
   if(mode==='call')this.rt('prepareValue');if(mode==='delete'){this.out(0x1a);this.lit(true);}
  },
- callTarget(n){if(n.type==='ChainExpression')this.chain(n,'call');else if(['Identifier','MemberExpression'].includes(n.type)){this.reference(n);this.rt('prepare');}else{this.expression(n);this.rt('prepareValue');}},
+ callTarget(n){if(n.type==='ChainExpression')this.chain(n,'call');else if(n.type==='MemberExpression'){this.reference(n);this.rt('prepare');}else{this.expression(n);this.rt('prepareValue');}},
  suspend(emit,kind){
   const request=this.local();emit();this.integer(kind);this.rt('pause');this.set(request);
   this.get(request);this.rt('resumeKind');this.integer(2);this.out(0x46);this.ifElse(()=>{const v=this.local();this.get(request);this.rt('resumeValue');this.set(v);this.abrupt('return',null,v);});
@@ -15785,15 +15682,6 @@ const features={
    case'VariableDeclaration':if(!['var','let','const'].includes(n.kind))error(n,'Декларация '+n.kind+' ещё не реализована');for(const d of n.declarations)if(d.init||n.kind!=='var')this.pattern(d.id,()=>d.init?this.expression(d.init,d.id._displayName||(d.id.type==='Identifier'?d.id.name:'')):this.lit(undefined),n.kind);return;
    case'ReturnStatement':{const v=this.local();const value=()=>n.argument?this.expression(n.argument):this.lit(undefined);if(this.plan.node.async&&this.plan.node.generator)this.suspend(value,2);else value();this.set(v);this.abrupt('return',null,v);return;}
    case'BreakStatement':case'ContinueStatement':{const target=[...this.labels].reverse().find(l=>(n.type==='BreakStatement'?l.kind==='break'||(n.label&&l.kind==='label'):l.kind==='continue')&&(!n.label||l.tag===n.label.name));if(!target)error(n,'Не найдена цель break/continue');this.abrupt('branch',target);return;}
-   case'TryStatement':{
-    if(n.finalizer){this.withFinally(()=>this.statement({...n,finalizer:null}),()=>this.statement(n.finalizer));return;}if(!n.handler){this.statement(n.block);return;}
-    this.out(0x06,0x40);this.labels.push({kind:'try'});this.statement(n.block);this.out(0x07,0);const caught=this.local();this.set(caught);this.scoped(()=>{if(n.handler.param){this.reservePattern(n.handler.param,1);this.pattern(n.handler.param,()=>this.get(caught),'let');}this.statement(n.handler.body);});this.labels.pop();this.out(0x0b);return;
-   }
-   case'ClassDeclaration':this.initialize(n.id.name,()=>this.classExpression(n));return;
-   case'ForOfStatement':case'ForInStatement':{
-    const iterator=this.local(),next=this.local();const head=()=>{this.expression(n.right);this.rt(n.await?'asyncIterator':n.type==='ForOfStatement'?'iterator':'keys');this.set(iterator);};if(n.left.type==='VariableDeclaration'&&n.left.kind!=='var')this.scoped(()=>{this.lexical([n.left]);head();});else head();
-    this.label('break',end=>this.withFinally(()=>this.label('loop',again=>{const advance=()=>{this.get(iterator);this.rt(n.await?'asyncNext':'next');};if(n.await)this.suspend(advance,2);else advance();this.tee(next);this.rt('done');this.ifElse(()=>this.branch(end));this.scoped(()=>{if(n.left.type==='VariableDeclaration'){this.lexical([n.left]);this.pattern(n.left.declarations[0].id,()=>{this.get(next);this.rt('value');},n.left.kind);}else this.pattern(n.left,()=>{this.get(next);this.rt('value');});this.label('continue',()=>this.statement(n.body),0x40,tag);});this.branch(again);}),c=>{if(n.await){this.suspend(()=>{this.get(iterator);this.get(c.state);this.integer(1);this.out(0x46);this.rt('asyncClose');},2);this.out(0x1a);}else this.closeIterator(iterator,c);}),0x40,tag);return;
-   }
   }this.baseStatement(n,tag);
  },
 };
@@ -15815,9 +15703,11 @@ function decode(bytes){
  function leb(signed=false){let value=0,shift=0,b;do{b=bytes[cursor++];value|=(b&127)<<shift;shift+=7;}while(b&128);if(signed&&shift<32&&(b&64))value|=(-1<<shift);return signed?value:value>>>0;}
  function list(){const nodes=[];while(cursor<bytes.length){const start=cursor,op=bytes[cursor++];if([0x0b,0x05,0x07].includes(op)){if(op===0x07)leb();return {nodes,stop:op};}
   if([0x02,0x03,0x04,0x06].includes(op)){const type=bytes[cursor++],first=list();let other=[];if(first.stop===0x05||first.stop===0x07)other=list().nodes;nodes.push({op,type,body:first.nodes,other});continue;}
-  let arg;if([0x10,0x20,0x21,0x22,0x0c].includes(op))arg=leb();else if(op===0x41)arg=leb(true);
-  else if(![0x00,0x0f,0x1a,0x45,0x46,0x47,0x48,0x4a,0x4c,0x4e,0x71,0x72,0x73,0x74,0x75,0x76,0x61,0x62,0x63,0x64,0x65,0x66,0x9a,0xa0,0xa1,0xa2,0xa3,0xb7,0xb8].includes(op))throw new Error('Unknown lowering opcode: 0x'+op.toString(16));
-  nodes.push({op,arg,bytes:bytes.slice(start,cursor)});
+  let arg,sub;if([0x10,0x20,0x21,0x22,0x0c].includes(op))arg=leb();else if(op===0x41)arg=leb(true);
+  else if(op===0x44)cursor+=8;else if(op===0xd0)leb();
+  else if(op===0xfb){sub=leb();if([0x0b,0x0c,0x0d,0x0e,0x16,0x17,0x14,0x15].includes(sub))arg=leb();else if(![0x0f,0x1a,0x1b].includes(sub))throw new Error('Unknown lowering GC opcode: 0x'+sub.toString(16));}
+  else if(![0xd1,0x00,0x0f,0x1a,0x45,0x46,0x47,0x48,0x4a,0x4c,0x4e,0x71,0x72,0x73,0x74,0x75,0x76,0x61,0x62,0x63,0x64,0x65,0x66,0x9a,0xa0,0xa1,0xa2,0xa3,0xb7,0xb8].includes(op))throw new Error('Unknown lowering opcode: 0x'+op.toString(16));
+  nodes.push({op,arg,sub,bytes:bytes.slice(start,cursor)});
  }return {nodes};}return list().nodes;
 }
 
@@ -15845,6 +15735,18 @@ function lowerResumable(body,compiler){
    else if(n.op===0x21)pop(current,original[n.arg]);
    else if(n.op===0x22){pop(current,original[n.arg]);current.stack.push(original[n.arg]);}
    else if(n.op===0x41)current.stack.push(I32);
+   else if(n.op===0x44)current.stack.push(F64);
+   else if(n.op===0xd0)current.stack.push(REF);
+   else if(n.op===0xd1){pop(current,REF);current.stack.push(I32);}
+   else if(n.op===0xfb){
+    if(n.sub===0x1a){pop(current,REF);current.stack.push('any');}
+    else if(n.sub===0x1b){current.stack.pop();current.stack.push(REF);}
+    else if(n.sub===0x16||n.sub===0x17){pop(current,'any');current.stack.push('ref'+n.arg);}
+    else if(n.sub===0x14||n.sub===0x15){pop(current,'any');current.stack.push(I32);}
+    else if(n.sub>=0x0b&&n.sub<=0x0d){pop(current,I32);current.stack.pop();current.stack.push(REF);}
+    else if(n.sub===0x0e){pop(current,REF);pop(current,I32);current.stack.pop();}
+    else if(n.sub===0x0f){current.stack.pop();current.stack.push(I32);}
+   }
    else if(n.op===0x1a){if(!current.stack.length)throw new Error('Lowering stack underflow');current.stack.pop();}
    else if(n.op===0x45){pop(current,I32);current.stack.push(I32);}
    else if([0x46,0x47,0x48,0x4a,0x4c,0x4e,0x71,0x72,0x73,0x74,0x75,0x76].includes(n.op)){pop(current,I32);pop(current,I32);current.stack.push(I32);}
@@ -15857,7 +15759,7 @@ function lowerResumable(body,compiler){
  }
  const entry=block([],null);entry.reachable=true;const last=compile(decode(body.code),entry,[],null);if(last){pop(last,REF);last.term={kind:'return'};}
  const active=blocks.filter(b=>b.reachable),spillKeys=new Map(),spillTypes=[];
- function slot(position,type){const key=position+':'+type;if(!spillKeys.has(key)){spillKeys.set(key,original.length+spillTypes.length);spillTypes.push(type);}return spillKeys.get(key);}
+ function slot(position,type){if(typeof type==='string')throw new Error('Lowering: GC value crosses a block boundary');const key=position+':'+type;if(!spillKeys.has(key)){spillKeys.set(key,original.length+spillTypes.length);spillTypes.push(type);}return spillKeys.get(key);}
  for(const b of active){b.entry.forEach((t,i)=>slot(i,t));b.stack.forEach((t,i)=>slot(i,t));if(b.handler)slot(b.handler.height,REF);}
  const savedTypes=[...original,...spillTypes],locals=[...savedTypes],local=t=>{const n=4+locals.length;locals.push(t);return n;};
  const pc=local(I32),condition=local(I32),yieldKind=local(I32),yieldValue=local(REF),caught=local(REF),code=[];
@@ -15914,7 +15816,7 @@ function stringParameters(node){
   if(n.type==='MemberExpression'&&(memberName(n)==='length'||STRING_METHODS.includes(memberName(n))))mark(n.object);
   if(n.type==='CallExpression'&&n.callee.type==='MemberExpression'){const method=memberName(n.callee);if(['indexOf','lastIndexOf','includes','startsWith','endsWith'].includes(method))mark(n.arguments[0]);if(method==='concat')n.arguments.forEach(mark);}
   if(n.type==='BinaryExpression'&&(n.operator==='+'||stringComparisons[n.operator])){if(n.left.type==='Literal'&&typeof n.left.value==='string')mark(n.right);if(n.right.type==='Literal'&&typeof n.right.value==='string')mark(n.left);}
-  for(const [k,v]of Object.entries(n))if(!['loc','start','end'].includes(k)){if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);}
+  for(const [k,v]of Object.entries(n))if(!['loc','start','end'].includes(k)&&k[0]!=='_'){if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);}
  };walk(node.body);return strings;
 }
 const bitwise={'&':0x71,'|':0x72,'^':0x73,'<<':0x74,'>>':0x75,'>>>':0x76};
@@ -15924,7 +15826,7 @@ function integerBindings(node){
  const walk=n=>{if(!n||typeof n!=='object')return;if(n.type==='VariableDeclarator'&&n.id.type==='Identifier'){counts.set(n.id.name,(counts.get(n.id.name)||0)+1);if(signed(n.init))declarations.set(n.id.name,n);}
   if(n.type==='AssignmentExpression'&&n.left.type==='Identifier')writes.push([n.left.name,n.operator==='='?signed(n.right):['&=','|=','^=','<<=','>>='].includes(n.operator)]);
   if(n.type==='UpdateExpression'&&n.argument.type==='Identifier')writes.push([n.argument.name,false]);
-  for(const [k,v]of Object.entries(n))if(!['loc','start','end'].includes(k)){if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);}
+  for(const [k,v]of Object.entries(n))if(!['loc','start','end'].includes(k)&&k[0]!=='_'){if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);}
  };
  node.params.forEach(p=>{if(p.type==='Identifier')counts.set(p.name,1);});walk(node.body);
  for(const [name,count]of counts)if(count!==1)declarations.delete(name);
@@ -16303,10 +16205,7 @@ const OBJECT_REF=require("./object-wasm.mjs")["OBJECT_REF"];
 const objectTypes=require("./object-wasm.mjs")["objectTypes"];
 const addObjectRuntime=require("./object-wasm.mjs")["addObjectRuntime"];
 
-const ENV=0,CELL=1,GLOBAL_REF=2,NUMBER=3,ATOM=4,POOL=5,TOKEN=6;
-const PARENT=0,VARIABLE=1,GLOBAL=2,STRICT=3,HEAD=4;
-const NEXT=0,NAME=1,FLAGS=2,VALUE=3,ALIAS_ENV=4,ALIAS_NAME=5;
-const CONSTANT=1,TDZ=2,GLOBAL_CELL=4,IMPORTED=8;
+const NUMBER=3,ATOM=4,POOL=5,TOKEN=6,SCOPE=14;
 let cached;
 
 class Emitter {
@@ -16324,7 +16223,6 @@ class Emitter {
  create(type){this.out(0xfb,0,...u32(type),0xfb,0x1b);}
  test(id,type){this.get(id);this.out(0xfb,0x1a,0xfb,0x14,...u32(type));}
  nonnull(id){this.get(id);this.out(0xd1,0x45);}
- flag(id,bit){this.field(id,CELL,FLAGS);this.int(bit);this.out(0x71);}
  if(yes,no=null,result=0x40){this.out(0x04,result);this.labels.push({});yes();if(no){this.out(0x05);no();}this.labels.pop();this.out(0x0b);}
  block(kind,body){this.out(kind==='loop'?3:2,0x40);const label={};this.labels.push(label);body(label);this.labels.pop();this.out(0x0b);}
  branch(label,conditional=false){this.out(conditional?0x0d:0x0c,...u32(this.labels.length-1-this.labels.indexOf(label)));}
@@ -16334,6 +16232,7 @@ class Emitter {
 function environmentWasm(){
  if(cached)return cached;
  const types=[
+  // 0..2 are retired environment structs, kept so type indices stay stable.
   [0x5f,5,REF,1,REF,1,I32,1,I32,1,REF,1],
   [0x5f,6,REF,1,I32,1,I32,1,REF,1,REF,1,I32,1],
   [0x5f,2,REF,1,I32,1],
@@ -16343,11 +16242,10 @@ function environmentWasm(){
   [0x5f,0],
   ...stringTypes,
   ...objectTypes,
+  [0x5e,REF,1],                                   // scope record
  ],typeKeys=new Map(),imports=[],functions=[],ids=new Map();
  const type=(p,r)=>{const key=JSON.stringify([p,r]);if(!typeKeys.has(key)){typeKeys.set(key,types.length);types.push([0x60,...u32(p.length),...p,...u32(r.length),...r]);}return typeKeys.get(key);};
  const host=(name,p,r)=>{ids.set(name,imports.length);imports.push({name,type:type(p,r)});};
- host('globalReserve',[I32],[]);host('globalBinding',[I32,I32],[REF]);
- host('globalRead',[I32],[REF]);host('globalWrite',[I32,REF,I32],[REF]);
  host('hostRead',[REF],[REF]);host('hostWrite',[REF,REF],[REF]);host('fail',[I32,I32],[]);
  host('hostTruth',[REF],[I32]);host('hostUpdate',[REF,REF,I32,I32],[REF]);
  host('hostProperty',[REF,REF,I32],[REF]);host('hostStringRead',[REF,REF],[REF]);host('hostStringWrite',[REF,REF,REF,I32],[REF]);
@@ -16357,6 +16255,7 @@ function environmentWasm(){
  host('hostObjectDefine',[REF,REF,REF,I32],[REF]);host('hostObjectDelete',[REF,REF,I32],[I32]);
  host('hostArrayPush',[REF,REF],[REF]);host('hostArrayHole',[REF],[REF]);host('hostArg',[REF,I32],[REF]);
  host('hostHas',[REF,REF],[I32]);host('hostRemove',[REF],[REF]);
+ host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
  // GC globals: imported host undefined at 0 (ABI only), pool at 1,
@@ -16404,99 +16303,37 @@ function environmentWasm(){
  def('templateString',[REF],[REF],f=>{f.get(0);f.call('isString');f.if(()=>f.get(0),()=>{f.get(0);f.call('hostTemplateString');},REF);});
  def('property',[REF,REF,I32],[REF],f=>{f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.get(2);f.int(1);f.out(0x23,6);f.create(OBJECT_REF);f.ret();});f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.get(2);f.out(0x23,6);f.create(STRING_REF);},()=>{f.get(0);f.get(1);f.get(2);f.call('hostProperty');},REF);});
 
- def('root',[],[REF],f=>{
-  const env=f.local();f.nil();f.nil();f.int(1);f.int(0);f.nil();f.create(ENV);f.tee(env);
-  f.drop();f.put(env,ENV,VARIABLE,()=>f.get(env));f.get(env);
+ // Scope records: (array (mut externref)); element 0 is the parent record,
+ // elements 1..n are the captured bindings. null marks an uninitialized
+ // (TDZ) binding. The compiler resolves (hops, slot) statically.
+ def('scopeNew',[REF,I32],[REF],f=>{
+  const record=f.local();f.get(1);f.int(1);f.out(0x6a,0xfb,7,...u32(SCOPE),0xfb,0x1b);f.tee(record);
+  f.internal(SCOPE);f.int(0);f.get(0);f.out(0xfb,0x0e,...u32(SCOPE));f.get(record);
  });
- def('scope',[REF,I32,I32],[REF],f=>{
-  const env=f.local();f.get(0);f.nil();f.int(0);f.get(2);f.nil();f.create(ENV);f.set(env);
-  f.put(env,ENV,VARIABLE,()=>{f.get(1);f.if(()=>f.get(env),()=>f.field(0,ENV,VARIABLE),REF);});f.get(env);
+ def('scopeParent',[REF],[REF],f=>{f.get(0);f.internal(SCOPE);f.int(0);f.out(0xfb,0x0b,...u32(SCOPE));});
+ def('scopeGet',[REF,I32],[REF],f=>{f.get(0);f.internal(SCOPE);f.get(1);f.out(0xfb,0x0b,...u32(SCOPE));});
+ def('scopeSet',[REF,I32,REF],[],f=>{f.get(0);f.internal(SCOPE);f.get(1);f.get(2);f.out(0xfb,0x0e,...u32(SCOPE));});
+ def('scopeClone',[REF],[REF],f=>{
+  const n=f.local(I32),copy=f.local();f.get(0);f.internal(SCOPE);f.out(0xfb,0x0f);f.tee(n);f.out(0xfb,7,...u32(SCOPE),0xfb,0x1b);f.set(copy);
+  f.get(copy);f.internal(SCOPE);f.int(0);f.get(0);f.internal(SCOPE);f.int(0);f.get(n);f.out(0xfb,0x11,...u32(SCOPE),...u32(SCOPE));f.get(copy);
  });
- for(const [name,index]of [['parent',PARENT],['variable',VARIABLE]])def(name,[REF],[REF],f=>f.field(0,ENV,index));
- def('strict',[REF],[I32],f=>f.field(0,ENV,STRICT));
- def('setStrict',[REF,I32],[],f=>f.put(0,ENV,STRICT,()=>f.get(1)));
- def('cell',[REF,I32],[REF],f=>{
-  const cell=f.local();f.field(0,ENV,HEAD);f.set(cell);
-  f.block('end',end=>f.block('loop',loop=>{
-   f.get(cell);f.out(0xd1);f.branch(end,true);
-   f.field(cell,CELL,NAME);f.get(1);f.out(0x46);f.if(()=>{f.get(cell);f.ret();});
-   f.field(cell,CELL,NEXT);f.set(cell);f.branch(loop);
-  }));f.nil();
- });
- // Insert a binding with all fields supplied. Only startup/linking uses this
- // export directly; normal source declarations use reserve + init.
- def('define',[REF,I32,REF,I32,REF,I32],[REF],f=>{
-  const cell=f.local();f.get(0);f.get(1);f.call('cell');f.set(cell);f.nonnull(cell);
-  f.if(()=>{
-   f.put(cell,CELL,VALUE,()=>f.get(2));f.put(cell,CELL,FLAGS,()=>f.get(3));
-   f.put(cell,CELL,ALIAS_ENV,()=>f.get(4));f.put(cell,CELL,ALIAS_NAME,()=>f.get(5));
-  },()=>{
-   f.field(0,ENV,HEAD);f.get(1);f.get(3);f.get(2);f.get(4);f.get(5);f.create(CELL);f.set(cell);
-   f.put(0,ENV,HEAD,()=>f.get(cell));
-  });f.get(cell);
- });
- def('reserve',[REF,I32,I32],[],f=>{
-  const cell=f.local(),flags=f.local(I32);
-  f.get(2);f.out(0x45);f.if(()=>{f.field(0,ENV,VARIABLE);f.set(0);});
-  f.get(0);f.get(1);f.call('cell');f.set(cell);f.nonnull(cell);
-  f.if(()=>{f.get(2);f.out(0x45);f.if(()=>f.ret());f.fail(1,1);});
-  f.get(2);f.if(()=>f.int(TDZ),()=>f.int(0),I32);f.set(flags);
-  f.get(2);f.int(2);f.out(0x46);f.if(()=>{f.get(flags);f.int(CONSTANT);f.out(0x72);f.set(flags);});
-  f.field(0,ENV,GLOBAL);f.get(2);f.out(0x45,0x71);f.if(()=>{f.get(1);f.call('globalReserve');f.int(GLOBAL_CELL);f.set(flags);});
-  f.get(0);f.get(1);f.undef();f.get(flags);f.nil();f.int(0);f.call('define');f.drop();
- });
- def('init',[REF,I32,REF],[REF],f=>{
-  const cell=f.local();f.get(0);f.get(1);f.call('cell');f.set(cell);
-  f.get(cell);f.out(0xd1);f.if(()=>f.fail(2,1));
-  f.flag(cell,GLOBAL_CELL);f.if(()=>{f.get(1);f.get(2);f.field(0,ENV,STRICT);f.call('globalWrite');f.ret();});
-  f.put(cell,CELL,VALUE,()=>f.get(2));f.put(cell,CELL,FLAGS,()=>{f.field(cell,CELL,FLAGS);f.int(~TDZ);f.out(0x71);});f.get(2);
- });
- def('binding',[REF,I32],[REF],f=>{
-  const env=f.local(),cell=f.local(),strict=f.local(I32);f.field(0,ENV,STRICT);f.set(strict);f.get(0);f.set(env);
-  f.block('end',end=>f.block('loop',loop=>{
-   f.get(env);f.out(0xd1);f.branch(end,true);
-   f.get(env);f.get(1);f.call('cell');f.set(cell);f.nonnull(cell);f.if(()=>{
-    f.flag(cell,GLOBAL_CELL);f.if(()=>{f.get(cell);f.get(strict);f.create(GLOBAL_REF);},()=>f.get(cell),REF);f.ret();
-   });
-   f.field(env,ENV,PARENT);f.set(env);f.branch(loop);
-  }));f.get(1);f.get(strict);f.call('globalBinding');
- });
+ // Module records by module index (global 8 holds the container array).
+ def('initModuleScopes',[I32],[],f=>{f.get(0);f.out(0xfb,7,...u32(SCOPE),0xfb,0x1b,0x24,8);});
+ def('setModuleScope',[I32,REF],[],f=>{f.out(0x23,8);f.internal(SCOPE);f.get(0);f.get(1);f.out(0xfb,0x0e,...u32(SCOPE));});
+ def('moduleScope',[I32],[REF],f=>{f.out(0x23,8);f.internal(SCOPE);f.get(0);f.out(0xfb,0x0b,...u32(SCOPE));});
+ // References are only created for properties now; bindings never are.
  def('read',[REF],[REF],f=>{
-  const alias=f.local();f.test(0,CELL);f.if(()=>{
-   f.field(0,CELL,ALIAS_ENV);f.set(alias);f.nonnull(alias);f.if(()=>{
-    f.get(alias);f.field(0,CELL,ALIAS_NAME);f.call('cell');f.set(alias);
-    f.get(alias);f.out(0xd1);f.if(()=>f.fail(2));f.get(alias);f.call('read');f.ret();
-   });
-   f.flag(0,TDZ);f.if(()=>f.fail(2));
-   f.flag(0,GLOBAL_CELL);f.if(()=>{f.field(0,CELL,NAME);f.call('globalRead');f.ret();});
-   f.field(0,CELL,VALUE);f.ret();
-  });
-  f.test(0,GLOBAL_REF);f.if(()=>{f.field(0,GLOBAL_REF,0);f.set(alias);f.field(alias,CELL,NAME);f.call('globalRead');f.ret();});
   f.get(0);f.call('isStringReference');f.if(()=>{f.field(0,STRING_REF,0);f.field(0,STRING_REF,1);f.call('stringRead');f.ret();});
   f.get(0);f.call('isObjectReference');f.if(()=>{f.field(0,OBJECT_REF,0);f.field(0,OBJECT_REF,1);f.call('objectGet');f.ret();});
   f.get(0);f.call('hostRead');
  });
  def('write',[REF,REF],[REF],f=>{
-  const cell=f.local();f.test(0,CELL);f.if(()=>{
-   f.flag(0,IMPORTED);f.if(()=>f.fail(3));f.flag(0,TDZ);f.if(()=>f.fail(2));f.flag(0,CONSTANT);f.if(()=>f.fail(4));
-   f.flag(0,GLOBAL_CELL);f.if(()=>{f.field(0,CELL,NAME);f.get(1);f.int(0);f.call('globalWrite');f.ret();});
-   f.put(0,CELL,VALUE,()=>f.get(1));f.get(1);f.ret();
-  });
-  f.test(0,GLOBAL_REF);f.if(()=>{f.field(0,GLOBAL_REF,0);f.set(cell);f.field(cell,CELL,NAME);f.get(1);f.field(0,GLOBAL_REF,1);f.call('globalWrite');f.ret();});
   f.get(0);f.call('isStringReference');f.if(()=>{f.field(0,STRING_REF,0);f.field(0,STRING_REF,1);f.get(1);f.field(0,STRING_REF,2);f.call('hostStringWrite');f.ret();});
   f.get(0);f.call('isObjectReference');f.if(()=>{f.field(0,OBJECT_REF,0);f.field(0,OBJECT_REF,1);f.get(1);f.field(0,OBJECT_REF,2);f.call('objectSet');f.ret();});
   f.get(0);f.get(1);f.call('hostWrite');
  });
- def('clone',[REF],[REF],f=>{
-  const env=f.local(),cell=f.local();f.field(0,ENV,PARENT);f.int(0);f.field(0,ENV,STRICT);f.call('scope');f.set(env);
-  f.field(0,ENV,HEAD);f.set(cell);
-  f.block('end',end=>f.block('loop',loop=>{
-   f.get(cell);f.out(0xd1);f.branch(end,true);
-   f.get(env);f.field(cell,CELL,NAME);f.field(cell,CELL,VALUE);f.field(cell,CELL,FLAGS);f.field(cell,CELL,ALIAS_ENV);f.field(cell,CELL,ALIAS_NAME);f.call('define');f.drop();
-   f.field(cell,CELL,NEXT);f.set(cell);f.branch(loop);
-  }));f.get(env);
- });
- def('isBinding',[REF],[I32],f=>{f.test(0,CELL);f.test(0,GLOBAL_REF);f.out(0x72);});
+ def('toNumeric',[REF],[REF],f=>{f.get(0);f.call('isNumber');f.if(()=>{f.get(0);f.ret();});f.get(0);f.call('hostToNumeric');});
+ def('increment',[REF,I32],[REF],f=>{f.get(0);f.call('isNumber');f.if(()=>{f.get(0);f.call('toNumber');f.get(1);f.out(0xb7,0xa0);f.call('number');f.ret();});f.get(0);f.get(1);f.call('hostIncrement');});
  def('update',[REF,I32,I32],[REF],f=>{
   const old=f.local(),value=f.local();f.get(0);f.call('read');f.set(old);f.get(old);f.call('isNumber');f.if(()=>{
    f.field(old,NUMBER,0);f.get(1);f.out(0xb7,0xa0);f.call('number');f.set(value);
@@ -16513,7 +16350,7 @@ function environmentWasm(){
  entries.push([...utf8('h'),...utf8('undefined'),3,REF,0]);
  const exports=functions.map((fn,i)=>[...utf8(fn.name),0,...u32(imports.length+i)]);
  const bytes=[0,97,115,109,1,0,0,0];
- const globals=[...u32(7),...Array.from({length:5},()=>[REF,1,0xd0,REF,0x0b]).flat(),0x6d,1,0xd0,0x6d,0x0b,I32,1,0x41,0,0x0b];
+ const globals=[...u32(8),...Array.from({length:5},()=>[REF,1,0xd0,REF,0x0b]).flat(),0x6d,1,0xd0,0x6d,0x0b,I32,1,0x41,0,0x0b,REF,1,0xd0,REF,0x0b];
  for(const [id,data]of [[1,[...u32(types.length),...types.flat()]],[2,[...u32(entries.length),...entries.flat()]],[3,[...u32(functions.length),...functions.flatMap(fn=>u32(fn.type))]],[6,globals],[7,[...u32(exports.length),...exports.flat()]],[10,[...u32(bodies.length),...bodies.flat()]]])bytes.push(...section(id,data));
  const binary=new Uint8Array(bytes);
  // Module() provides an offset/function diagnostic if the own encoder is wrong.
@@ -16672,7 +16509,6 @@ function addObjectRuntime(def){
   f.field(0,OBJECT,KIND);f.int(2);f.out(0x46);f.if(()=>{f.int(0);f.ret();});host(f,'hostHas',2);
  });
  def('remove',[REF],[REF],f=>{
-  f.get(0);f.call('isBinding');f.if(()=>{f.int(0);f.call('boolean');f.ret();});
   f.get(0);f.call('isObjectReference');f.if(()=>{f.field(0,OBJECT_REF,0);f.field(0,OBJECT_REF,1);f.field(0,OBJECT_REF,2);f.call('objectDelete');f.call('boolean');f.ret();});f.get(0);f.call('hostRemove');
  });
  // Method lookup/identity checks live at the host boundary; the recognized
@@ -16726,9 +16562,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function thisValue(v){if(thisCells.has(v)){v=thisCells.get(v);if(v===UNINIT)throw new ReferenceError('Must call super before accessing this');}return v;}
  const environmentInfo=new WeakMap();
  function info(e){let data=environmentInfo.get(e);if(!data){data={};environmentInfo.set(e,data);}return data;}
- function context(e,key){for(let p=e;p;p=environment.parent(p)){const data=environmentInfo.get(p);if(data&&Object.hasOwn(data,key))return data[key];}throw new ReferenceError('Missing '+key+' context');}
+ function context(e,key){for(let p=e;p;p=environment.scopeParent(p)){const data=environmentInfo.get(p);if(data&&Object.hasOwn(data,key))return data[key];}throw new ReferenceError('Missing '+key+' context');}
  function privateDeclare(e,index,kind,isStatic){const data=info(e);if(!data.privates)data.privates=new Map();const name=pool[index];if(!data.privates.has(name)){const d={name,kind,isStatic,values:new WeakMap()};data.privates.set(name,d);privateKeys.add(d);}}
- function privateKey(e,index){const name=pool[index];for(let p=e;p;p=environment.parent(p)){const privates=environmentInfo.get(p)?.privates;if(privates?.has(name))return privates.get(name);}throw new SyntaxError('Unknown private name: '+name);}
+ function privateKey(e,index){const name=pool[index];for(let p=e;p;p=environment.scopeParent(p)){const privates=environmentInfo.get(p)?.privates;if(privates?.has(name))return privates.get(name);}throw new SyntaxError('Unknown private name: '+name);}
  function privateCheck(d,o){if(!d.values.has(o))throw new TypeError('Object does not have private member #'+d.name);}
  const names=new Map();pool.forEach((name,i)=>{if(typeof name==='string')names.set(name,i);});
  function nameIndex(name){if(!names.has(name)){names.set(name,pool.length);pool.push(name);}return names.get(name);}
@@ -16782,13 +16618,11 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   return box(materialize(o)[k]);
  }
  const host={
-  globalReserve:k=>{const name=pool[k];if(!(name in globalObject))Object.defineProperty(globalObject,name,{value:undefined,writable:true,enumerable:true,configurable:false});},
-  globalBinding:(k,s)=>mark({...ref(globalObject,pool[k],!!s),identifier:true,unresolved:!(pool[k] in globalObject)}),
-  globalRead:k=>globalObject[pool[k]],globalWrite:(k,v,s)=>setProperty(globalObject,pool[k],v,!!s),
   hostRead:readProperty,hostWrite:writeProperty,
   hostProperty:(o,k,s)=>{if(o==null)throw new TypeError('Cannot access '+String(k)+' of '+o);return ref(o,k,!!s);},
   hostStringRead:(o,k)=>o[k],hostStringWrite:(o,k,v,s)=>setProperty(o,k,v,!!s),
   hostEqual:(a,b)=>+(a===b),hostTemplateString:v=>{if(typeof v==='symbol')throw new TypeError('Cannot convert Symbol to string');return String(v);},
+  hostToNumeric:v=>typeof v==='bigint'?v:+v,hostIncrement:(v,d)=>typeof v==='bigint'?v+BigInt(d):v+d,
   hostTruth:v=>+!!v,hostUpdate:(r,value,d,post)=>{let n=typeof value==='bigint'?value:+value;const previous=n;n=typeof n==='bigint'?n+BigInt(d):n+d;write(r,n);return post?previous:n;},
   fail:(code,k)=>{if(code===1)throw new SyntaxError('Duplicate binding: '+pool[k]);if(code===2)throw new ReferenceError('Binding is not initialized');if(code===3)throw new TypeError('Assignment to import binding');if(code===4)throw new TypeError('Assignment to constant variable');if(code===5)throw new RangeError('Invalid string length or repeat count');if(code===6)throw new RangeError('Invalid array length');if(code===7)throw new TypeError('Cannot delete array length');throw new Error('Environment runtime error '+code);},
  };
@@ -16810,7 +16644,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const environmentBytes=Uint8Array.from(atob(metadata[0].environmentWasm),c=>c.charCodeAt(0));
  environment=new WebAssembly.Instance(new WebAssembly.Module(environmentBytes),{h:nativeImports}).exports;
  environment.initValues(pool.length);pool.forEach((v,i)=>environment.setConstant(i,box(v)));
- const {scope,reserve,init,binding}=environment,root=environment.root();
+ const root=environment.scopeNew(null,metadata[0]?.rootSlots|0);
  function read(r){try{return unbox(environment.read(r));}catch(e){throw unwrap(e);}}
  function write(r,v){try{return unbox(environment.write(r,box(v)));}catch(e){throw unwrap(e);}}
  function propertyReference(r){if(environment.isObjectReference(r))return ref(unbox(environment.objectReceiver(r)),unbox(environment.objectKey(r)),!!environment.objectStrict(r));return environment.isStringReference(r)?ref(unbox(environment.stringReceiver(r)),unbox(environment.stringKey(r)),!!environment.stringStrict(r)):r;}
@@ -16818,7 +16652,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   const fn=environment.read(r);
   if(environment.isObjectReference(r))return mark({fn,self:environment.objectReceiver(r)});
   if(environment.isStringReference(r))return mark({fn,self:environment.stringReceiver(r),nativeString:true});
-  return mark({fn,self:box(environment.isBinding(r)||r.identifier?undefined:r.super?r.receiver:r.object)});
+  return mark({fn,self:box(r.super?r.receiver:r.object)});
  }
  function nativeStringCall(fn,s,args){
   const method=stringMethods[stringMethodIds.get(fn)],a=args[0],b=args[1];
@@ -16856,41 +16690,47 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function callCompiled(id,env,self,args,newTarget){environment.invalidatePrototypes();try{return unbox(instance.exports['f'+id](env,box(self),mark(args),box(newTarget)));}catch(e){throw unwrap(e);}finally{environment.invalidatePrototypes();}}
  function makeFunction(env,id,nameIndex,flags,self,newTarget){
   const strict=!!(flags&1),arrow=!!(flags&2),name=pool[nameIndex],info={home:null,method:!!(flags&8)};let closure=env,f;
-  const call=(receiver,a,target)=>{let e=closure;if(metadata[id].usesArguments||info.home!==null){e=scope(closure,0,strict);const data={};if(metadata[id].usesArguments)data.callee=f;if(info.home!==null)data.home=info.home;environmentInfo.set(e,data);}return flags&48?startResumable(id,e,receiver,a,target,flags,f):callCompiled(id,e,receiver,a,target);};
+  const call=(receiver,a,target)=>flags&48?startResumable(id,closure,receiver,a,target,flags,f):callCompiled(id,closure,receiver,a,target);
   info.invokeBoxed=(receiver,a,target)=>{
    if(arrow){receiver=box(self);target=box(newTarget);}else if(!strict){if(environment.nullish(receiver))receiver=box(globalObject);else if(!environment.isObject(receiver))receiver=box(Object(unbox(receiver)));}
-   let e=closure;if(metadata[id].usesArguments||info.home!==null){e=scope(closure,0,strict);const data={};if(metadata[id].usesArguments)data.callee=f;if(info.home!==null)data.home=info.home;environmentInfo.set(e,data);}
-   return flags&48?box(startResumable(id,e,receiver,a,target,flags,f)):instance.exports['f'+id](e,receiver,a,target);
+   return flags&48?box(startResumable(id,closure,receiver,a,target,flags,f)):instance.exports['f'+id](closure,receiver,a,target);
   };
   if(arrow)f=(...a)=>call(self,a,newTarget);
   else if(flags&56)f=({method(...a){return call(strict?this:(this==null?globalObject:Object(this)),a,undefined);}}).method;
   else f=function(...a){return call(strict?this:(this==null?globalObject:Object(this)),a,new.target);};
   Object.defineProperty(f,'name',{value:name||'',configurable:true});Object.defineProperty(f,'length',{value:metadata[id].arity,configurable:true});
-  if(flags&4){closure=scope(env,0,strict);environment.define(closure,nameIndex,f,1,null,0);}functions.set(f,info);
+  // Record [parent, f] per function object: self name of a named function
+  // expression, home object for super, callee for arguments.
+  if(flags&64){closure=environment.scopeNew(env,1);environment.scopeSet(closure,1,f);info.record=closure;environmentInfo.set(closure,{callee:f});}
+  functions.set(f,info);
   if(flags&16)Object.defineProperty(f,'prototype',{value:Object.create(flags&32?asyncGeneratorPrototype:generatorPrototype),writable:true});
   return f;
  }
+ function setHome(fn,home){const i=functions.get(fn);if(!i)return;i.home=home;if(i.record)environmentInfo.get(i.record).home=home;}
  function addPrivate(d,self,value){if(d.values.has(self))throw new TypeError('Private member already initialized');d.values.set(self,value);}
  function initializeField(field,self){const value=Reflect.apply(field.fn,self,[]);if(field.isBlock)return;if(privateKeys.has(field.key))addPrivate(field.key,self,value);else Object.defineProperty(self,field.key,{value,writable:true,enumerable:true,configurable:true});}
  function initializeFields(c,self){const info=classes.get(c);for(const d of info.privateMethods)if(!d.isStatic)addPrivate(d,self,undefined);for(const field of info.fields)initializeField(field,self);}
  function makeClass(env,base,ctorId,nameIndex,derived){
   let prototype=Object.prototype;if(derived){if(base!==null){if(typeof base!=='function')throw new TypeError('Class extends a non-constructor');Reflect.construct(Object,[],base);}prototype=base===null?null:base.prototype;if(prototype!==null&&typeof prototype!=='object'&&typeof prototype!=='function')throw new TypeError('Invalid superclass prototype');}
-  const c=function(...args){if(!new.target)throw new TypeError('Class constructor cannot be called without new');const e=scope(env,0,true);info(e).home=c.prototype;info(e).classOwner=c;
+  const e=environment.scopeNew(env,1);
+  const c=function(...args){if(!new.target)throw new TypeError('Class constructor cannot be called without new');
    if(derived){const cell={};thisCells.set(cell,UNINIT);if(ctorId<0){const value=Reflect.construct(Object.getPrototypeOf(c),args,new.target);thisCells.set(cell,value);initializeFields(c,value);return value;}const result=callCompiled(ctorId,e,cell,args,new.target);if(result!==null&&(typeof result==='object'||typeof result==='function'))return result;if(result!==undefined)throw new TypeError('Derived constructor returned a primitive');return thisValue(cell);}
    initializeFields(c,this);if(ctorId<0)return this;const result=callCompiled(ctorId,e,this,args,new.target);return result!==null&&(typeof result==='object'||typeof result==='function')?result:this;
   };
-  c.prototype=Object.create(prototype,{constructor:{value:c,writable:true,configurable:true}});Object.defineProperty(c,'prototype',{writable:false});Object.defineProperty(c,'name',{value:pool[nameIndex],configurable:true});Object.defineProperty(c,'length',{value:ctorId<0?0:metadata[ctorId].arity,configurable:true});if(derived&&base!==null)Object.setPrototypeOf(c,base);classes.set(c,{fields:[],statics:[],privateMethods:[]});return c;
+  c.prototype=Object.create(prototype,{constructor:{value:c,writable:true,configurable:true}});Object.defineProperty(c,'prototype',{writable:false});Object.defineProperty(c,'name',{value:pool[nameIndex],configurable:true});Object.defineProperty(c,'length',{value:ctorId<0?0:metadata[ctorId].arity,configurable:true});if(derived&&base!==null)Object.setPrototypeOf(c,base);classes.set(c,{fields:[],statics:[],privateMethods:[]});
+  environment.scopeSet(e,1,c);environmentInfo.set(e,{home:c.prototype,classOwner:c});return c;
  }
- function classMethod(c,key,fn,kind,isStatic){const home=isStatic?c:c.prototype;functions.get(fn).home=home;const name=privateKeys.has(key)?'#'+key.name:typeof key==='symbol'?'['+(key.description||'')+']':String(key);Object.defineProperty(fn,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});if(privateKeys.has(key)){key[kind===1?'get':kind===2?'set':'fn']=fn;const methods=classes.get(c).privateMethods;if(!methods.includes(key))methods.push(key);return;}Object.defineProperty(home,key,{...(kind===1?{get:fn}:kind===2?{set:fn}:{value:fn,writable:true}),enumerable:false,configurable:true});}
- function classField(c,key,fn,isStatic,isBlock){functions.get(fn).home=isStatic?c:c.prototype;classes.get(c)[isStatic?'statics':'fields'].push({key,fn,isBlock});}
+ function classMethod(c,key,fn,kind,isStatic){const home=isStatic?c:c.prototype;setHome(fn,home);const name=privateKeys.has(key)?'#'+key.name:typeof key==='symbol'?'['+(key.description||'')+']':String(key);Object.defineProperty(fn,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});if(privateKeys.has(key)){key[kind===1?'get':kind===2?'set':'fn']=fn;const methods=classes.get(c).privateMethods;if(!methods.includes(key))methods.push(key);return;}Object.defineProperty(home,key,{...(kind===1?{get:fn}:kind===2?{set:fn}:{value:fn,writable:true}),enumerable:false,configurable:true});}
+ function classField(c,key,fn,isStatic,isBlock){setHome(fn,isStatic?c:c.prototype);classes.get(c)[isStatic?'statics':'fields'].push({key,fn,isBlock});}
  function finishClass(c){const info=classes.get(c);for(const d of info.privateMethods)if(d.isStatic)addPrivate(d,c,undefined);for(const field of info.statics)initializeField(field,c);return c;}
  function superCall(env,cell,args,newTarget){const c=context(env,'classOwner'),value=Reflect.construct(Object.getPrototypeOf(c),args,newTarget);if(thisCells.get(cell)!==UNINIT)throw new ReferenceError('Super constructor may only be called once');thisCells.set(cell,value);initializeFields(c,value);return value;}
  function checkCallable(f){if(f===globalThis.eval||f===globalThis.Function)throw new TypeError('Runtime JS generation is not supported by this AOT compiler');return f;}
  function argumentsObject(args,env,paramIndex,mapped){
   const object={...args};Object.defineProperty(object,'length',{value:args.length,writable:true,configurable:true});Object.defineProperty(object,Symbol.iterator,{value:Array.prototype[Symbol.iterator],writable:true,configurable:true});
   if(!mapped){const poison=()=>{throw new TypeError('Restricted arguments.callee');};Object.defineProperty(object,'callee',{get:poison,set:poison});return object;}
-  Object.defineProperty(object,'callee',{value:context(env,'callee'),writable:true,configurable:true});const names=pool[paramIndex],map=new Map(),seen=new Set();for(let i=names.length-1;i>=0;i--){if(!seen.has(names[i])&&i<args.length)map.set(String(i),names[i]);seen.add(names[i]);}const value=key=>environment.cell(env,nameIndex(map.get(key)));
-  return new Proxy(object,{get:(t,k,r)=>map.has(k)?read(value(k)):Reflect.get(t,k,r),getOwnPropertyDescriptor:(t,k)=>{const d=Reflect.getOwnPropertyDescriptor(t,k);if(d&&map.has(k))d.value=read(value(k));return d;},defineProperty:(t,k,descriptor)=>{const linked=map.has(k),binding=linked?value(k):null,d={...descriptor};if(linked&&d.writable===false&&!Object.hasOwn(d,'value')&&!Object.hasOwn(d,'get')&&!Object.hasOwn(d,'set'))d.value=read(binding);if(!Reflect.defineProperty(t,k,d))return false;if(linked){if(Object.hasOwn(d,'get')||Object.hasOwn(d,'set'))map.delete(k);else{if(Object.hasOwn(d,'value'))write(binding,d.value);if(d.writable===false)map.delete(k);}}return true;},deleteProperty:(t,k)=>{const ok=Reflect.deleteProperty(t,k);if(ok)map.delete(k);return ok;}});
+  Object.defineProperty(object,'callee',{value:context(env,'callee'),writable:true,configurable:true});const slots=pool[paramIndex],map=new Map();for(let i=0;i<slots.length&&i<args.length;i++)if(slots[i])map.set(String(i),slots[i]);
+  const read=k=>unbox(environment.scopeGet(env,map.get(k))),write=(k,v)=>environment.scopeSet(env,map.get(k),box(v));
+  return new Proxy(object,{get:(t,k,r)=>map.has(k)?read(k):Reflect.get(t,k,r),getOwnPropertyDescriptor:(t,k)=>{const d=Reflect.getOwnPropertyDescriptor(t,k);if(d&&map.has(k))d.value=read(k);return d;},defineProperty:(t,k,descriptor)=>{const linked=map.has(k),d={...descriptor};if(linked&&d.writable===false&&!Object.hasOwn(d,'value')&&!Object.hasOwn(d,'get')&&!Object.hasOwn(d,'set'))d.value=read(k);if(!Reflect.defineProperty(t,k,d))return false;if(linked){if(Object.hasOwn(d,'get')||Object.hasOwn(d,'set'))map.delete(k);else{if(Object.hasOwn(d,'value'))write(k,d.value);if(d.writable===false)map.delete(k);}}return true;},deleteProperty:(t,k)=>{const ok=Reflect.deleteProperty(t,k);if(ok)map.delete(k);return ok;}});
  }
  function requireObject(v){if(v===null||(typeof v!=='object'&&typeof v!=='function'))throw new TypeError('Iterator result must be an object');return v;}
  function iterator(v){const it=requireObject(Reflect.apply(checkCallable(v[Symbol.iterator]),v,[]));return {iterator:it,next:it.next,done:false};}
@@ -16967,8 +16807,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   return driveAsync(f);
  }
  // Linked binding records contain names and function IDs, never executable JS.
- const modules=moduleSpecs.map(spec=>({spec,env:scope(root,1,true),state:0,promise:null,error:null,namespace:null,meta:null}));
- const moduleValue=target=>target.namespace?namespace(modules[target.module]):read(binding(modules[target.module].env,nameIndex(target.local)));
+ environment.initModuleScopes(moduleSpecs.length);
+ const modules=moduleSpecs.map((spec,i)=>{const env=environment.scopeNew(root,spec.slots|0);environment.setModuleScope(i,env);return {spec,env,state:0,promise:null,error:null,namespace:null,meta:null};});
+ const moduleValue=target=>{if(target.namespace)return namespace(modules[target.module]);const v=environment.scopeGet(modules[target.module].env,target.slot);if(v===null)throw new ReferenceError('Binding is not initialized');return unbox(v);};
  function namespace(record){
   if(record.namespace)return record.namespace;
   const target=Object.create(null),exports=new Map(record.spec.exports.map(e=>[e.name,e.target]));
@@ -16998,24 +16839,32 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function importModule(id){return upon(resolved(),()=>upon(runModule(id),()=>namespace(modules[id])));}
  function initializeModules(){
   for(const r of modules)info(r.env).module=r;
-  for(const r of modules)for(const entry of r.spec.imports){const t=entry.target;environment.define(r.env,nameIndex(entry.local),t.namespace?namespace(modules[t.module]):undefined,9,t.namespace?null:modules[t.module].env,t.namespace?0:nameIndex(t.local));}
+  for(const r of modules)for(const entry of r.spec.imports)if(entry.target.namespace)environment.scopeSet(r.env,entry.slot,box(namespace(modules[entry.target.module])));
   for(const r of modules)callCompiled(r.spec.init,r.env,undefined,[],undefined);
  }
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  scope,setStrict:environment.setStrict,clone:environment.clone,
-  reserve,init,binding,read,write,variable:environment.variable,
+  scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,read,write,
+  globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
+  globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
+  globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
+  globalVar:k=>{const name=pool[k];if(!(name in globalObject))Object.defineProperty(globalObject,name,{value:undefined,writable:true,enumerable:true,configurable:false});},
+  globalFunction:(k,f)=>{const name=pool[k],d=Object.getOwnPropertyDescriptor(globalObject,name);if(!d||d.configurable)Object.defineProperty(globalObject,name,{value:f,writable:true,enumerable:true,configurable:false});else globalObject[name]=f;},
+  globalDelete:k=>Reflect.deleteProperty(globalObject,pool[k]),
+  tdz:k=>{throw new ReferenceError("Cannot access '"+pool[k]+"' before initialization");},
+  constAssign:()=>{throw new TypeError('Assignment to constant variable.');},
+  scriptError:k=>{throw new SyntaxError("Identifier '"+pool[k]+"' has already been declared");},
   key:toKey,property:(o,k,s)=>{if(o==null)throw new TypeError('Cannot access '+String(k)+' of '+o);return ref(o,k,!!s);},
-  remove:r=>{if(environment.isBinding(r))return false;r=propertyReference(r);if(r.super)throw new ReferenceError('Cannot delete super property');const ok=Reflect.deleteProperty(Object(r.object),r.key);if(!ok&&r.strict)throw new TypeError('Cannot delete property');return ok;},
-  typeOf:r=>!environment.isBinding(r)&&r.unresolved?'undefined':typeof read(r),
+  remove:r=>{r=propertyReference(r);if(r.super)throw new ReferenceError('Cannot delete super property');const ok=Reflect.deleteProperty(Object(r.object),r.key);if(!ok&&r.strict)throw new TypeError('Cannot delete property');return ok;},
+  typeOf:r=>typeof read(r),
   update:(r,d,post)=>{const v=read(r);let n=typeof v==='bigint'?v:+v;const previous=n;n=typeof n==='bigint'?n+BigInt(d):n+d;write(r,n);return post?previous:n;},
   unary:(op,v)=>{switch(pool[op]){case'+':return +v;case'-':return -v;case'!':return !v;case'~':return ~v;case'void':return undefined;case'typeof':return typeof v;}throw new Error('Unknown unary operator');},
   templateString:v=>{if(typeof v==='symbol')throw new TypeError('Cannot convert Symbol to string');return String(v);},
   binary:(op,a,b)=>{switch(pool[op]){case'+':return a+b;case'-':return a-b;case'*':return a*b;case'/':return a/b;case'%':return a%b;case'**':return a**b;case'===':return a===b;case'!==':return a!==b;case'==':return a==b;case'!=':return a!=b;case'<':return a<b;case'>':return a>b;case'<=':return a<=b;case'>=':return a>=b;case'&':return a&b;case'|':return a|b;case'^':return a^b;case'<<':return a<<b;case'>>':return a>>b;case'>>>':return a>>>b;case'in':return a in b;case'instanceof':return a instanceof b;}throw new Error('Unknown binary operator');},
   array:()=>mark([]),push:(a,v)=>{a.push(v);return a;},hole:a=>{a.length++;return a;},spread:(a,v)=>{a.push(...v);return a;},
   object:()=>mark({}),assign:(o,v)=>{if(v==null)return o;for(const k of Reflect.ownKeys(Object(v)))if(Object.getOwnPropertyDescriptor(Object(v),k).enumerable)Object.defineProperty(o,k,{value:v[k],writable:true,enumerable:true,configurable:true});return o;},
-  define:(o,k,v,kind)=>{if(kind===3){if(v===null||typeof v==='object'||typeof v==='function')Object.setPrototypeOf(o,v);return o;}if(functions.get(v)?.method)functions.get(v).home=o;const d=kind===1?{get:v}:kind===2?{set:v}:{value:v,writable:true};Object.defineProperty(o,k,{...d,enumerable:true,configurable:true});return o;},
+  define:(o,k,v,kind)=>{if(kind===3){if(v===null||typeof v==='object'||typeof v==='function')Object.setPrototypeOf(o,v);return o;}if(functions.get(v)?.method)setHome(v,o);const d=kind===1?{get:v}:kind===2?{set:v}:{value:v,writable:true};Object.defineProperty(o,k,{...d,enumerable:true,configurable:true});return o;},
   regex:(p,f)=>new RegExp(pool[p],pool[f]),func:makeFunction,
   prepare,invoke,
   stringBuiltins:mask=>+stringMethods.every((name,i)=>!(mask&(1<<i))||stringIntrinsics[i]!==null&&getDescriptor(String.prototype,name)?.value===stringIntrinsics[i]),
@@ -17041,7 +16890,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag};
- const nativeNames=new Set(['scope','setStrict','clone','reserve','init','binding','read','write','variable','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['scopeNew','scopeClone','moduleScope','toNumeric','increment','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;
@@ -17050,7 +16899,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  imports.prepare=boxedBridge(prepare);imports.prepareValue=boxedBridge(fn=>mark({fn,self:environment.undefinedValue()}));imports.callable=boxedBridge(r=>r.fn);imports.invoke=boxedBridge(invoke);
  imports.rest=boxedBridge((a,i)=>{const out=environment.array(),n=environment.isObject(a)?environment.arrayLength(a)>>>0:a.length;for(;i<n;i++)environment.push(out,environment.arg(a,i));return out;});
  imports.spread=boxedBridge((a,v)=>{for(const value of unbox(v))environment.push(a,box(value));return a;},true);
- imports.typeOf=boxedBridge(r=>{if(!environment.isBinding(r)&&r.unresolved)return box('undefined');const v=environment.read(r);return box(environment.isObject(v)?'object':typeof unbox(v));});
+ imports.typeOf=boxedBridge(r=>{const v=environment.read(r);return box(environment.isObject(v)?'object':typeof unbox(v));});
  imports.unary=boxedBridge((op,v)=>pool[op]==='typeof'&&environment.isObject(v)?box('object'):box(raw.unary(op,unbox(v))),true);
 
  imports.frameRef=boxedBridge((f,i)=>box(f.slots[i]));imports.putRef=boxedBridge((f,i,v)=>{f.slots[i]=v;});
@@ -17060,7 +16909,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  instance=new WebAssembly.Instance(new WebAssembly.Module(bytes),{r:imports});
  initializeModules();
  const handlers=new Map();
- return {run:id=>callCompiled(id,root,globalObject,[],undefined),module:runModule,importModule,event:(id,self,event)=>{if(!handlers.has(id)){const fn=function(event){let e=root;if(metadata[id].usesArguments){e=scope(root,0,false);info(e).callee=fn;}return callCompiled(id,e,this,[event],undefined);};handlers.set(id,fn);}return Reflect.apply(handlers.get(id),self,[event]);},exports:instance.exports};
+ return {run:id=>callCompiled(id,root,globalObject,[],undefined),module:runModule,importModule,event:(id,self,event)=>{if(!handlers.has(id)){let e=root;const fn=function(event){return callCompiled(id,e,this,[event],undefined);};if(metadata[id].usesArguments){e=environment.scopeNew(root,1);environment.scopeSet(e,1,fn);info(e).callee=fn;}handlers.set(id,fn);}return Reflect.apply(handlers.get(id),self,[event]);},exports:instance.exports};
 }
 
 exports["boot"]=boot;
@@ -17109,6 +16958,7 @@ class ModuleLinker {
   ast.body=body;
   visit(ast,n=>{if(functionNode(n))return false;if(n.type==='AwaitExpression'||n.type==='ForOfStatement'&&n.await)r.async=true;});
   this.discoverDynamic(ast,url,name);
+  ast._moduleId=id;ast._imports=r.imports;
   r.init=this.compiler.add(ast,true,'module-init',name);this.compiler.plans[r.init].sourceName=name;
   r.execute=this.compiler.add({...ast,async:r.async},true,'module-body',name);this.compiler.plans[r.execute].sourceName=name;
   return id;
@@ -17140,9 +16990,673 @@ class ModuleLinker {
 }
 
 exports["ModuleLinker"]=ModuleLinker;
+},
+33:function(module,exports,require){
+// Static scope analysis for the whole program. Every identifier is resolved
+// at compile time; nothing is looked up by name while the program runs.
+//  - a binding no closure captures becomes a WASM local of its function;
+//  - a captured binding gets a slot in a runtime scope record (WASM-GC array,
+//    element 0 = parent record), addressed by (hops, slot);
+//  - top-level var/function of classic scripts and unresolved names live on
+//    the JS global object, as the language requires.
+const FUNCTIONS=new Set(['FunctionDeclaration','FunctionExpression','ArrowFunctionExpression']);
+const LEXICAL=new Set(['let','const','class']);
+function fail(n,message){throw new SyntaxError(message+(n?.loc?` (строка ${n.loc.start.line}, столбец ${n.loc.start.column+1})`:''));}
+function patternNames(n,out=[]){
+ if(!n)return out;
+ switch(n.type){
+  case'Identifier':out.push(n);break;
+  case'AssignmentPattern':patternNames(n.left,out);break;
+  case'RestElement':patternNames(n.argument,out);break;
+  case'ArrayPattern':n.elements.forEach(e=>patternNames(e,out));break;
+  case'ObjectPattern':n.properties.forEach(p=>patternNames(p.type==='RestElement'?p.argument:p.value,out));break;
+  case'MemberExpression':break;
+  default:fail(n,'Неподдерживаемая привязка '+n.type);
+ }
+ return out;
+}
+
+class Binding {
+ constructor(name,kind,scope,node){
+  this.name=name;this.kind=kind;this.scope=scope;this.node=node;
+  this.captured=false;this.storage=null;this.slot=0;this.inits=0;this.assigns=0;this.reads=0;
+  // Position after which the binding is initialized; reads that provably come
+  // later in the same function need no TDZ check.
+  this.ready=Infinity;this.tdzChecks=false;
+ }
+ get lexical(){return LEXICAL.has(this.kind);}
+ get constant(){return this.kind==='const'||this.kind==='class-inner'||this.kind==='import'||this.kind==='namespace'||this.kind==='callee';}
+ get mutable(){return !this.constant;}
+}
+
+class Scope {
+ constructor(kind,parent,fn,node){
+  this.kind=kind;this.parent=parent;this.fn=fn;this.node=node;this.bindings=new Map();
+  this.materialized=false;this.forced=false;this.slots=0;this.children=[];this.strict=!!parent?.strict;
+  if(parent)parent.children.push(this);
+ }
+ lookupLocal(name){return this.bindings.get(name);}
+}
+
+class FunctionInfo {
+ constructor(node,outer,kind){
+  this.node=node;this.outer=outer;this.kind=kind;this.scope=null;this.paramScope=null;this.bodyScope=null;
+  this.fscopeNode=null;this.fscope=false;this.usesArguments=false;this.mapped=false;this.argumentsBinding=null;
+  this.strict=false;this.arrow=node?.type==='ArrowFunctionExpression';this.method=false;this.classConstructor=false;
+ }
+}
+
+class ScopeAnalysis {
+ constructor(){
+  this.root=new Scope('root',null,null,null);this.root.forced=true;
+  this.globals=new Map();this.scriptErrors=new Map();this.modules=new Map();this.functions=new Map();
+  this.globalWrites=new Set();this.dynamicGlobalWrites=false;
+ }
+ // ---- pass 1: scopes and declarations ----
+ declare(scope,name,kind,node){
+  const existing=scope.bindings.get(name);
+  if(existing){
+   if(existing.lexical||LEXICAL.has(kind))fail(node,'Повторное объявление '+name);
+   if(kind==='function'&&existing.kind!=='param')existing.kind='function';
+   return existing;
+  }
+  const b=new Binding(name,kind,scope,node);scope.bindings.set(name,b);return b;
+ }
+ hoistVars(nodes,scope,fn){
+  const visit=n=>{
+   if(!n||typeof n!=='object')return;
+   if(Array.isArray(n)){n.forEach(visit);return;}
+   if(FUNCTIONS.has(n.type)||n.type==='ClassDeclaration'||n.type==='ClassExpression')return;
+   if(n.type==='VariableDeclaration'&&n.kind==='var')for(const d of n.declarations)for(const id of patternNames(d.id))this.declareVar(scope,id.name,id,fn);
+   for(const key in n){if(key==='loc'||key[0]==='_')continue;const v=n[key];if(v&&typeof v==='object')visit(v);}
+  };
+  visit(nodes);
+ }
+ declareVar(scope,name,node,fn){
+  if(scope.kind==='script'){this.declareGlobal(scope,name,'var',node);return;}
+  const b=this.declare(scope,name,'var',node);b.ready=-Infinity;
+ }
+ declareGlobal(scope,name,kind,node){
+  const script=scope.node,existing=this.root.bindings.get(name);
+  if(existing&&existing.lexical){this.scriptError(script,name);return;}
+  let b=existing;if(!b){b=new Binding(name,kind,this.root,node);b.storage='global';b.ready=-Infinity;this.root.bindings.set(name,b);}
+  else if(kind==='function')b.kind='function';
+  (script._globalDecls??=[]).push({name,kind,node});
+ }
+ scriptError(script,name){if(!this.scriptErrors.has(script))this.scriptErrors.set(script,name);}
+ lexicalDeclarations(statements,scope,fn,top){
+  for(const n of statements){
+   const s=n.type==='ExportNamedDeclaration'||n.type==='ExportDefaultDeclaration'?n.declaration:n;
+   if(!s)continue;
+   if(s.type==='VariableDeclaration'&&s.kind!=='var'){
+    if(!['let','const'].includes(s.kind))fail(s,'Декларация '+s.kind+' ещё не реализована');
+    for(const d of s.declarations)for(const id of patternNames(d.id))this.declareLexical(scope,id.name,s.kind,id,d.end);
+   }
+   else if(s.type==='ClassDeclaration')this.declareLexical(scope,s.id.name,'class',s.id,s.end);
+   else if(s.type==='FunctionDeclaration'){
+    if(top){
+     if(scope.kind==='script')this.declareGlobal(scope,s.id.name,'function',s.id);
+     else{const b=this.declare(scope,s.id.name,'function',s.id);b.ready=-Infinity;}
+    }else{
+     if(!scope.strict)fail(s,'Функция в нестрогом блоке пока не поддержана');
+     const b=this.declareLexical(scope,s.id.name,'let',s.id,-Infinity);b.kind='function-block';
+    }
+   }
+  }
+ }
+ declareLexical(scope,name,kind,node,ready){
+  if(scope.kind==='script'){
+   const existing=this.root.bindings.get(name);
+   if(existing){this.scriptError(scope.node,name);return existing;}
+   const b=new Binding(name,kind,this.root,node);b.ready=Infinity;this.root.bindings.set(name,b);b.script=scope.node;return b;
+  }
+  const b=this.declare(scope,name,kind,node);b.ready=ready;return b;
+ }
+ // Creates the scope tree of a top-level plan (script, handler, module).
+ program(plan){
+  const node=plan.node;
+  if(plan.kind==='script'){
+   const fn=new FunctionInfo(node,this.root,'script');fn.strict=plan.strict;this.functions.set(node,fn);
+   const scope=new Scope('script',this.root,fn,node);scope.strict=fn.strict;fn.scope=scope;node._scope=scope;
+   this.hoistVars(node.body,scope,fn);this.lexicalDeclarations(node.body,scope,fn,true);
+   node.body.forEach(s=>this.statement(s,scope,fn));
+   return fn;
+  }
+  if(plan.kind==='module-init'||plan.kind==='module-body'){
+   const known=this.modules.get(node._moduleId);
+   if(known){this.functions.set(node,known.fn);node._scope=known;return known.fn;}
+   const fn=new FunctionInfo(node,this.root,'module');fn.strict=true;this.functions.set(node,fn);
+   const scope=new Scope('module',this.root,fn,node);scope.forced=true;scope.strict=true;fn.scope=scope;node._scope=scope;
+   for(const [local,target]of node._imports||[]){const b=this.declare(scope,local,target.namespace?'namespace':'import',null);b.importTarget=target;b.ready=target.namespace?-Infinity:Infinity;}
+   this.hoistVars(node.body,scope,fn);this.lexicalDeclarations(node.body,scope,fn,true);
+   node.body.forEach(s=>this.statement(s,scope,fn));
+   this.modules.set(node._moduleId,scope);
+   return fn;
+  }
+  // handler
+  return this.functionNode(node,this.root,{handler:true});
+ }
+ functionNode(n,outer,{method=false,classConstructor=false,handler=false}={}){
+  const fn=new FunctionInfo(n,outer,handler?'handler':'function');this.functions.set(n,fn);
+  fn.method=method;fn.classConstructor=classConstructor;
+  fn.strict=!!(classConstructor||outer.strict||n.body?.body?.some?.(s=>s.directive==='use strict'));
+  const simple=n.params.every(p=>p.type==='Identifier');
+  if(!fn.arrow){
+   let uses=false;
+   const visit=x=>{if(!x||typeof x!=='object')return;if(Array.isArray(x)){x.forEach(visit);return;}if(x.type==='FunctionDeclaration'||x.type==='FunctionExpression')return;if(x.type==='Identifier'&&x.name==='arguments')uses=true;for(const k in x){if(k==='loc'||k[0]==='_')continue;const v=x[k];if(v&&typeof v==='object')visit(v);}};
+   visit(n.params);visit(n.body);
+   fn.usesArguments=uses&&!n.params.some(p=>patternNames(p).some(id=>id.name==='arguments'));
+  }
+  const named=n.type==='FunctionExpression'&&!!n.id;
+  fn.fscope=!!(named||method||fn.usesArguments||classConstructor);
+  // Per-function-object record created by the runtime: [parent, function].
+  // Holds the self binding of a named function expression and the
+  // callee/home data used by arguments.callee and super.
+  if(fn.fscope){
+   const f=new Scope('fscope',outer,fn,n);f.forced=true;f.strict=fn.strict;fn.fscopeNode=f;
+   if(named){const b=this.declare(f,n.id.name,'callee',n.id);b.ready=-Infinity;}
+   outer=f;
+  }
+  const scope=new Scope('function',outer,fn,n);scope.strict=fn.strict;fn.scope=scope;fn.paramScope=scope;n._scope=scope;
+  const params=[];
+  for(const p of n.params)for(const id of patternNames(p)){
+   if(scope.bindings.has(id.name)){if(fn.strict||!simple||fn.arrow)fail(p,'Повторные параметры в строгой или непростой функции');continue;}
+   const b=this.declare(scope,id.name,'param',id);b.ready=simple?-Infinity:p.end;params.push(b);
+  }
+  if(fn.usesArguments){
+   fn.mapped=!fn.strict&&simple;
+   const b=this.declare(scope,'arguments','arguments',null);b.ready=-Infinity;fn.argumentsBinding=b;
+   // A mapped arguments object aliases the parameters: keep them in the record.
+   if(fn.mapped)for(const p of params)p.captured=true;
+  }
+  // Parameter expressions see parameters only; with non-simple parameters
+  // the body gets its own var scope (copies of same-named parameters).
+  let bodyScope=scope;
+  if(!simple&&n.body.type==='BlockStatement'){
+   bodyScope=new Scope('params-body',scope,fn,n.body);bodyScope.strict=fn.strict;fn.bodyScope=bodyScope;
+   for(const p of n.params)this.pattern(p,scope,fn);
+  }else{fn.bodyScope=scope;for(const p of n.params)this.pattern(p,scope,fn);}
+  if(n.body.type==='BlockStatement'){
+   this.hoistVars(n.body.body,bodyScope,fn);this.lexicalDeclarations(n.body.body,bodyScope,fn,true);
+   n.body.body.forEach(s=>this.statement(s,bodyScope,fn));
+  }else this.expression(n.body,scope,fn);
+  return fn;
+ }
+ block(statements,scope,fn,node,kind='block'){
+  const inner=new Scope(kind,scope,fn,node);node._scope=inner;
+  this.lexicalDeclarations(statements,inner,fn,false);
+  return inner;
+ }
+ statement(n,scope,fn){
+  if(!n)return;
+  switch(n.type){
+   case'EmptyStatement':case'DebuggerStatement':return;
+   case'ExpressionStatement':this.expression(n.expression,scope,fn);return;
+   case'BlockStatement':{const inner=this.block(n.body,scope,fn,n);n.body.forEach(s=>this.statement(s,inner,fn));return;}
+   case'StaticBlock':{const inner=this.block(n.body,scope,fn,n);n.body.forEach(s=>this.statement(s,inner,fn));return;}
+   case'VariableDeclaration':for(const d of n.declarations){this.pattern(d.id,scope,fn);if(d.init)this.expression(d.init,scope,fn);}return;
+   case'FunctionDeclaration':this.reference(n.id,scope,fn,'declare');n._outerScope=scope;this.functionNode(n,scope);return;
+   case'ClassDeclaration':this.reference(n.id,scope,fn,'declare');this.classNode(n,scope,fn);return;
+   case'ReturnStatement':case'ThrowStatement':if(n.argument)this.expression(n.argument,scope,fn);return;
+   case'IfStatement':this.expression(n.test,scope,fn);this.statement(n.consequent,scope,fn);this.statement(n.alternate,scope,fn);return;
+   case'LabeledStatement':this.statement(n.body,scope,fn);return;
+   case'BreakStatement':case'ContinueStatement':return;
+   case'WhileStatement':case'DoWhileStatement':this.expression(n.test,scope,fn);this.statement(n.body,scope,fn);return;
+   case'ForStatement':{
+    let inner=scope;
+    if(n.init?.type==='VariableDeclaration'&&n.init.kind!=='var'){inner=new Scope('for',scope,fn,n);n._scope=inner;this.lexicalDeclarations([n.init],inner,fn,false);}
+    if(n.init){if(n.init.type==='VariableDeclaration')this.statement(n.init,inner,fn);else this.expression(n.init,inner,fn);}
+    if(n.test)this.expression(n.test,inner,fn);if(n.update)this.expression(n.update,inner,fn);this.statement(n.body,inner,fn);return;
+   }
+   case'ForInStatement':case'ForOfStatement':{
+    if(n.left.type==='VariableDeclaration'&&n.left.kind!=='var'){
+     // TDZ scope for the head expression, then a fresh scope per iteration.
+     const head=new Scope('for-head',scope,fn,n.right);n._headScope=head;this.lexicalDeclarations([n.left],head,fn,false);
+     for(const b of head.bindings.values())b.ready=Infinity;
+     this.expression(n.right,head,fn);
+     const iter=new Scope('for-iteration',scope,fn,n);n._scope=iter;this.lexicalDeclarations([n.left],iter,fn,false);
+     for(const b of iter.bindings.values())b.ready=n.left.end;
+     this.statement(n.left,iter,fn);this.statement(n.body,iter,fn);return;
+    }
+    this.expression(n.right,scope,fn);
+    if(n.left.type==='VariableDeclaration')this.statement(n.left,scope,fn);else this.pattern(n.left,scope,fn,true);
+    this.statement(n.body,scope,fn);return;
+   }
+   case'SwitchStatement':{
+    this.expression(n.discriminant,scope,fn);
+    const inner=this.block(n.cases.flatMap(c=>c.consequent),scope,fn,n,'switch');
+    for(const b of inner.bindings.values())if(b.ready!==-Infinity)b.ready=Infinity;
+    for(const c of n.cases){if(c.test)this.expression(c.test,inner,fn);c.consequent.forEach(s=>this.statement(s,inner,fn));}return;
+   }
+   case'TryStatement':
+    this.statement(n.block,scope,fn);
+    if(n.handler){
+     const catchScope=new Scope('catch',scope,fn,n.handler);n.handler._scope=catchScope;
+     if(n.handler.param){for(const id of patternNames(n.handler.param)){const b=this.declare(catchScope,id.name,'catch',id);b.ready=n.handler.param.type==='Identifier'?-Infinity:n.handler.param.end;}this.pattern(n.handler.param,catchScope,fn);}
+     this.statement(n.handler.body,catchScope,fn);
+    }
+    this.statement(n.finalizer,scope,fn);return;
+   case'WithStatement':fail(n,'with не поддерживается AOT-компилятором');
+  }
+  fail(n,'Конструкция ещё не реализована: '+n.type);
+ }
+ pattern(n,scope,fn,assign=false){
+  if(!n)return;
+  switch(n.type){
+   case'Identifier':this.reference(n,scope,fn,assign?'write':'declare');return;
+   case'MemberExpression':this.expression(n,scope,fn);return;
+   case'AssignmentPattern':this.pattern(n.left,scope,fn,assign);this.expression(n.right,scope,fn);return;
+   case'RestElement':this.pattern(n.argument,scope,fn,assign);return;
+   case'ArrayPattern':n.elements.forEach(e=>this.pattern(e,scope,fn,assign));return;
+   case'ObjectPattern':for(const p of n.properties){if(p.type==='RestElement'){this.pattern(p.argument,scope,fn,assign);continue;}if(p.computed)this.expression(p.key,scope,fn);this.pattern(p.value,scope,fn,assign);}return;
+  }
+  fail(n,'Шаблон ещё не реализован: '+n.type);
+ }
+ classNode(n,scope,fn){
+  const inner=new Scope('class',scope,fn,n);inner.strict=true;n._scope=inner;
+  if(n.id){const b=this.declare(inner,n.id.name,'class-inner',n.id);b.ready=n.end;}
+  if(n.superClass)this.expression(n.superClass,inner,fn);
+  if(n.body.body.some(m=>m.key?.type==='PrivateIdentifier'))inner.forced=true;
+  const ctor=n.body.body.find(m=>m.type==='MethodDefinition'&&m.kind==='constructor');
+  for(const m of n.body.body){
+   if(m.computed)this.expression(m.key,inner,fn);
+   if(m.type==='MethodDefinition'){m.value._outerScope=inner;this.functionNode(m.value,inner,{method:m!==ctor,classConstructor:m===ctor});}
+   else if(m.type==='PropertyDefinition'){
+    // Field initializers run as hidden methods.
+    const wrapper={type:'FunctionExpression',params:[],body:{type:'BlockStatement',body:[{type:'ReturnStatement',argument:m.value||null}]},start:m.start,end:m.end,loc:m.loc,_synthetic:true};
+    m._initializer=wrapper;wrapper._outerScope=inner;this.functionNode(wrapper,inner,{method:true});
+   }
+   else if(m.type==='StaticBlock'){
+    const wrapper={type:'FunctionExpression',params:[],body:{type:'BlockStatement',body:m.body},start:m.start,end:m.end,loc:m.loc,_synthetic:true};
+    m._initializer=wrapper;wrapper._outerScope=inner;this.functionNode(wrapper,inner,{method:true});
+   }
+   else fail(m,'Элемент класса ещё не реализован: '+m.type);
+  }
+ }
+ expression(n,scope,fn){
+  if(!n)return;
+  switch(n.type){
+   case'Identifier':this.reference(n,scope,fn,'read');return;
+   case'Literal':case'ThisExpression':case'Super':case'MetaProperty':case'TemplateElement':case'PrivateIdentifier':return;
+   case'ArrayExpression':n.elements.forEach(e=>this.expression(e,scope,fn));return;
+   case'ObjectExpression':
+    for(const p of n.properties){
+     if(p.type==='SpreadElement'){this.expression(p.argument,scope,fn);continue;}
+     if(p.computed)this.expression(p.key,scope,fn);
+     if(p.method||p.kind==='get'||p.kind==='set'){p.value._outerScope=scope;this.functionNode(p.value,scope,{method:true});}
+     else this.expression(p.value,scope,fn);
+    }return;
+   case'FunctionExpression':case'ArrowFunctionExpression':n._outerScope=scope;this.functionNode(n,scope);return;
+   case'ClassExpression':this.classNode(n,scope,fn);return;
+   case'SpreadElement':this.expression(n.argument,scope,fn);return;
+   case'UnaryExpression':
+    if(n.operator==='typeof'&&n.argument.type==='Identifier'){this.reference(n.argument,scope,fn,'typeof');return;}
+    if(n.operator==='delete'&&n.argument.type==='Identifier'){this.reference(n.argument,scope,fn,'delete');return;}
+    this.expression(n.argument,scope,fn);return;
+   case'UpdateExpression':if(n.argument.type==='Identifier')this.reference(n.argument,scope,fn,'update');else{this.globalTarget(n.argument);this.expression(n.argument,scope,fn);}return;
+   case'AssignmentExpression':
+    if(n.left.type==='Identifier')this.reference(n.left,scope,fn,n.operator==='='?'write':'update');
+    else if(n.left.type==='ArrayPattern'||n.left.type==='ObjectPattern')this.pattern(n.left,scope,fn,true);
+    else{this.globalTarget(n.left);this.expression(n.left,scope,fn);}
+    this.expression(n.right,scope,fn);return;
+   case'BinaryExpression':case'LogicalExpression':this.expression(n.left,scope,fn);this.expression(n.right,scope,fn);return;
+   case'MemberExpression':if(n.object.type==='Identifier')n.object._memberObject=true;this.expression(n.object,scope,fn);if(n.computed)this.expression(n.property,scope,fn);return;
+   case'ConditionalExpression':this.expression(n.test,scope,fn);this.expression(n.consequent,scope,fn);this.expression(n.alternate,scope,fn);return;
+   case'CallExpression':case'NewExpression':this.expression(n.callee,scope,fn);n.arguments.forEach(a=>this.expression(a,scope,fn));return;
+   case'SequenceExpression':n.expressions.forEach(e=>this.expression(e,scope,fn));return;
+   case'YieldExpression':case'AwaitExpression':this.expression(n.argument,scope,fn);return;
+   case'TemplateLiteral':n.expressions.forEach(e=>this.expression(e,scope,fn));return;
+   case'TaggedTemplateExpression':this.expression(n.tag,scope,fn);this.expression(n.quasi,scope,fn);return;
+   case'ChainExpression':this.expression(n.expression,scope,fn);return;
+   case'ImportExpression':this.expression(n.source,scope,fn);return;
+  }
+  fail(n,'Конструкция ещё не реализована: '+n.type);
+ }
+ // Writes to properties of the global object through window/globalThis/self.
+ globalTarget(n){
+  if(n.type!=='MemberExpression'||n.object.type!=='Identifier'||!['window','globalThis','self'].includes(n.object.name))return;
+  if(n.computed)this.dynamicGlobalWrites=true;else this.globalWrites.add(n.property.name);
+ }
+ reference(n,scope,fn,mode){
+  if(mode==='declare'){
+   // Declaration sites resolve in their own scope (already declared in pass 1).
+   let s=scope;while(s&&!s.bindings.has(n.name))s=s.parent;
+   const binding=s?s.bindings.get(n.name):null;
+   n._ref={binding,scope,fn,mode,check:false};
+   if(binding){binding.inits++;this.capture(binding,fn);}
+   return;
+  }
+  if(['eval','Function'].includes(n.name)&&mode==='read')fail(n,'Динамическое создание JS не поддерживается AOT-компилятором');
+  let s=scope,binding=null;
+  while(s){const b=s.bindings.get(n.name);if(b){binding=b;break;}s=s.parent;}
+  n._ref={binding,scope,fn,mode,check:false};
+  if(!binding){
+   if(mode==='write'||mode==='update')this.globalWrites.add(n.name);
+   if(mode==='read'&&['window','globalThis','self','top','parent','frames'].includes(n.name)&&!n._memberObject)this.globalEscapes=true;
+   return;
+  }
+  if(mode==='write'||mode==='update')binding.assigns++;
+  if(mode!=='write')binding.reads++;
+  this.capture(binding,fn);
+  if(this.needsCheck(n,binding,fn)){n._ref.check=true;binding.tdzChecks=true;}
+ }
+ needsCheck(n,binding,fn){
+  if(binding.storage==='global'||binding.ready===-Infinity)return false;
+  if(binding.kind==='import')return true;
+  if(binding.scope===this.root)return !(fn.kind==='script'&&fn.node===binding.script&&n.start>=binding.ready);
+  if(binding.scope.fn===fn)return !(n.start>=binding.ready);
+  return !this.closureAfter(fn,binding);
+ }
+ // A closure created after a binding is initialized can never observe its TDZ.
+ closureAfter(fn,binding){
+  if(binding.ready===-Infinity)return true;
+  let f=fn;while(f&&f.outer&&f.outer.fn!==binding.scope.fn)f=f.outer.fn;
+  if(!f||!f.node)return false;
+  const created=f.node.type==='FunctionDeclaration'?-Infinity:f.node.start;
+  return created>=binding.ready&&binding.scope.kind!=='switch';
+ }
+ capture(binding,fn){if(binding.storage!=='global'&&binding.scope.fn!==fn)binding.captured=true;}
+ // ---- pass 2: storage and slots ----
+ finish(){
+  const visit=scope=>{
+   let slot=0;
+   for(const b of scope.bindings.values()){
+    if(b.storage==='global')continue;
+    if(scope.kind==='root'||scope.kind==='module'||scope.kind==='fscope'||b.captured){b.storage='env';b.slot=++slot;}
+    else b.storage='local';
+   }
+   scope.slots=slot;scope.materialized=scope.forced||slot>0;
+   scope.children.forEach(visit);
+  };
+  visit(this.root);
+ }
+}
+
+// Number of parent links from the record of scope `from` (or the nearest
+// materialized scope above it) to the record of scope `target`.
+function hops(from,target){
+ let n=0;
+ for(let s=from;s;s=s.parent){if(!s.materialized)continue;if(s===target)return n;n++;}
+ throw new Error('Внутренняя ошибка: область '+target.kind+' недостижима');
+}
+
+exports["ScopeAnalysis"]=ScopeAnalysis;
+exports["hops"]=hops;
+exports["patternNames"]=patternNames;
+},
+34:function(module,exports,require){
+// Emitter methods for statically resolved bindings (see scope.mjs).
+// A local binding is a WASM local; a captured binding is element `slot` of a
+// scope record reached from a known record by a fixed number of parent links.
+const REF=require("./wasm.mjs")["REF"];
+const u32=require("./wasm.mjs")["u32"];
+const hops=require("./scope.mjs")["hops"];
+
+const SCOPE=3; // scope record type index in the program module
+const GLOBAL_CONSTANTS=new Map([['undefined',undefined],['NaN',NaN],['Infinity',Infinity]]);
+function fail(n,message){throw new SyntaxError(message+(n?.loc?` (строка ${n.loc.start.line}, столбец ${n.loc.start.column+1})`:''));}
+
+const bindings={
+ ref(n){if(!n._ref)fail(n,'Внутренняя ошибка: имя '+n.name+' не разрешено');return n._ref;},
+ // ---- scope records ----
+ castRecord(){this.out(0xfb,0x1a,0xfb,0x16,SCOPE);},
+ slotGet(slot){this.castRecord();this.integer(slot);this.out(0xfb,0x0b,SCOPE);},
+ record(target){
+  const own=this.records.get(target);if(own!==undefined){this.get(own);return;}
+  const n=hops(this.closureScope,target);this.get(0);for(let i=0;i<n;i++)this.slotGet(0);
+ },
+ openRecord(scope){
+  this.get(this.env);this.integer(scope.slots);this.rt('scopeNew');
+  const local=this.local();this.set(local);this.env=local;this.records.set(scope,local);
+ },
+ enterScope(scope,body,statements=null){
+  if(!scope){body();return;}
+  const previous=this.env;
+  if(scope.materialized&&!this.records.has(scope))this.openRecord(scope);
+  // A block re-entered by a loop starts in TDZ again.
+  for(const b of scope.bindings.values())if(b.storage==='local'&&b.tdzChecks){this.out(0xd0,REF);this.set(this.bindingLocal(b));}
+  if(statements)this.hoistFunctions(statements);
+  body();
+  this.env=previous;
+ },
+ hoistFunctions(statements){
+  for(const s of statements)if(s.type==='FunctionDeclaration')this.initIdentifier(s.id,()=>this.function(s,s._displayName||s.id.name));
+ },
+ // ---- bindings ----
+ bindingLocal(b){let local=this.bindingLocals.get(b);if(local===undefined){local=this.local();this.bindingLocals.set(b,local);}return local;},
+ importTarget(b){
+  const id=b.scope.node._moduleId,spec=this.c.moduleSpecs[id],entry=spec.imports.find(e=>e.local===b.name);
+  if(!entry||entry.target.namespace)return null;
+  const target=this.c.analysis.modules.get(entry.target.module).bindings.get(entry.target.local);
+  if(!target)throw new Error('Внутренняя ошибка: нет привязки '+entry.target.local);
+  return {module:entry.target.module,slot:target.slot,initialized:target.kind==='function'};
+ },
+ loadBinding(b){
+  if(b.storage==='local'){this.get(this.bindingLocal(b));return true;}
+  if(b.kind==='import'){
+   const t=this.importTarget(b);
+   if(t){this.integer(t.module);this.rt('moduleScope');this.slotGet(t.slot);return !t.initialized;}
+  }
+  this.record(b.scope);this.slotGet(b.slot);return true;
+ },
+ storeBinding(b,keep){
+  if(b.storage==='local'){this.out(keep?0x22:0x21,...u32(this.bindingLocal(b)));return;}
+  const v=this.local();this.set(v);this.record(b.scope);this.castRecord();this.integer(b.slot);this.get(v);this.out(0xfb,0x0e,SCOPE);if(keep)this.get(v);
+ },
+ tdz(name){this.integer(this.c.constant(name));this.rt('tdz');this.out(0x00);},
+ checkInitialized(name){const t=this.local();this.tee(t);this.out(0xd1);this.ifElse(()=>this.tdz(name));this.get(t);},
+ isGlobal(r){return !r.binding||r.binding.storage==='global';},
+ readIdentifier(n){
+  const r=this.ref(n),b=r.binding;
+  if(this.isGlobal(r)){
+   if(!b&&GLOBAL_CONSTANTS.has(n.name)){this.lit(GLOBAL_CONSTANTS.get(n.name));return;}
+   this.integer(this.c.constant(n.name));this.rt('globalRead');return;
+  }
+  const mayBeEmpty=this.loadBinding(b);
+  if(r.check&&mayBeEmpty)this.checkInitialized(n.name);
+ },
+ // Assignment semantics: TDZ and constant checks after the value is computed.
+ writeIdentifier(n,emitValue,keep=true){
+  const r=this.ref(n),b=r.binding;
+  if(this.isGlobal(r)){this.integer(this.c.constant(n.name));emitValue();this.integer(+this.strict);this.rt('globalWrite');if(!keep)this.out(0x1a);return;}
+  emitValue();
+  if(r.check&&r.mode==='write'){const v=this.local();this.set(v);if(this.loadBinding(b)){this.out(0xd1);this.ifElse(()=>this.tdz(n.name));}else this.out(0x1a);this.get(v);}
+  if(!b.mutable){
+   if(b.kind==='callee'&&!this.strict){if(!keep)this.out(0x1a);return;}
+   this.out(0x1a);this.integer(this.c.constant(n.name));this.rt('constAssign');this.out(0x00);return;
+  }
+  this.storeBinding(b,keep);
+ },
+ // Declaration semantics: initializes the binding, never checks.
+ initIdentifier(n,emitValue){
+  const r=this.ref(n),b=r.binding;
+  if(this.isGlobal(r)){this.integer(this.c.constant(n.name));emitValue();this.integer(0);this.rt('globalWrite');this.out(0x1a);return;}
+  emitValue();this.storeBinding(b,false);
+ },
+ initBinding(b,emitValue){emitValue();this.storeBinding(b,false);},
+ typeofIdentifier(n){
+  if(this.isGlobal(this.ref(n))){this.integer(this.c.constant(n.name));this.rt('globalTypeof');return;}
+  this.integer(this.c.constant('typeof'));this.readIdentifier(n);this.rt('unary');
+ },
+ deleteIdentifier(n){
+  if(this.isGlobal(this.ref(n))){this.integer(this.c.constant(n.name));this.rt('globalDelete');return;}
+  this.lit(false);
+ },
+ updateIdentifier(n,delta,prefix){
+  const old=this.local(),value=this.local();
+  this.readIdentifier(n);this.rt('toNumeric');this.tee(old);this.integer(delta);this.rt('increment');this.set(value);
+  this.writeIdentifier(n,()=>this.get(value),false);this.get(prefix?value:old);
+ },
+ assignIdentifier(n){
+  const left=n.left;
+  if(n.operator==='='){this.writeIdentifier(left,()=>this.expression(n.right,left.name));return;}
+  if(['&&=','||=','??='].includes(n.operator)){
+   const old=this.local();this.readIdentifier(left);this.tee(old);this.rt(n.operator==='??='?'nullish':'truth');
+   const put=()=>this.writeIdentifier(left,()=>this.expression(n.right,left.name));
+   if(n.operator==='||=')this.ifElse(()=>this.get(old),put,REF);else this.ifElse(put,()=>this.get(old),REF);return;
+  }
+  this.writeIdentifier(left,()=>this.binary(n.operator.slice(0,-1),()=>this.readIdentifier(left),()=>this.expression(n.right)));
+ },
+ // ---- functions ----
+ info(node){const fn=this.c.analysis.functions.get(node);if(!fn)throw new Error('Внутренняя ошибка: функция без анализа');return fn;},
+ function(n,name='',method=false){
+  const fn=this.info(n),label=name||n.id?.name||'',id=this.c.add(n,fn.strict,'function',label);
+  this.get(this.env);this.integer(id);this.integer(this.c.constant(label));
+  this.integer((fn.strict?1:0)|(fn.arrow?2:0)|(n.type==='FunctionExpression'&&n.id?4:0)|(method?8:0)|(n.generator?16:0)|(n.async?32:0)|(fn.fscope?64:0));
+  this.get(1);this.get(3);this.rt('func');
+ },
+ hoistVars(scope,skip=null){
+  for(const b of scope.bindings.values()){
+   if(b.kind!=='var'||b.storage==='global'||skip?.has(b.name))continue;
+   this.lit(undefined);this.storeBinding(b,false);
+  }
+ },
+ compile(){
+  const {node,kind}=this.plan,fn=this.info(node),analysis=this.c.analysis;
+  this.fnInfo=fn;this.records=new Map();this.bindingLocals=new Map();this.env=0;
+  if(kind==='module-init'||kind==='module-body'){
+   this.records.set(fn.scope,0);this.closureScope=fn.scope;
+   if(kind==='module-init'){this.hoistVars(fn.scope);this.hoistFunctions(node.body);}
+   else node.body.forEach(n=>this.statement(n));
+   this.lit(undefined);return {code:this.code,locals:this.locals};
+  }
+  if(kind==='script'){
+   this.records.set(analysis.root,0);this.closureScope=analysis.root;
+   const error=analysis.scriptErrors.get(node);
+   if(error!==undefined){this.integer(this.c.constant(error));this.rt('scriptError');this.out(0x00);return {code:this.code,locals:this.locals};}
+   for(const d of node._globalDecls||[])if(d.kind==='var'){this.integer(this.c.constant(d.name));this.rt('globalVar');}
+   for(const s of node.body)if(s.type==='FunctionDeclaration'){this.integer(this.c.constant(s.id.name));this.function(s,s.id.name);this.rt('globalFunction');}
+   node.body.forEach(n=>this.statement(n));
+   this.lit(undefined);return {code:this.code,locals:this.locals};
+  }
+  this.closureScope=fn.scope.parent;
+  if(fn.scope.materialized)this.openRecord(fn.scope);
+  this.plan.usesArguments=fn.usesArguments;
+  if(fn.usesArguments){
+   const slots=fn.mapped?node.params.map((p,i)=>node.params.findLastIndex(q=>q.name===p.name)===i?fn.scope.bindings.get(p.name).slot:0):[];
+   this.initBinding(fn.argumentsBinding,()=>{this.get(2);this.get(this.env);this.integer(this.c.constant(slots));this.integer(+fn.mapped);this.rt('arguments');});
+  }
+  node.params.forEach((p,i)=>this.pattern(p,()=>{this.get(2);this.integer(i);this.rt(p.type==='RestElement'?'rest':'arg');},'let'));
+  if(node.type==='ArrowFunctionExpression'&&node.body.type!=='BlockStatement'){this.expression(node.body);this.out(0x0f);this.lit(undefined);return {code:this.code,locals:this.locals};}
+  const body=node.body.body,prologue=()=>{
+   if(fn.bodyScope!==fn.scope){
+    // Non-simple parameters: body vars start as copies of same-named parameters.
+    const copied=new Set();
+    for(const b of fn.bodyScope.bindings.values()){const p=fn.scope.bindings.get(b.name);if(b.kind==='var'&&p){copied.add(b.name);this.initBinding(b,()=>this.loadBinding(p));}}
+    this.hoistVars(fn.bodyScope,copied);
+   }else this.hoistVars(fn.scope);
+   this.hoistFunctions(body);
+   if(node.generator){this.lit(undefined);this.integer(0);this.rt('pause');this.out(0x1a);}
+   body.forEach(n=>this.statement(n));
+  };
+  if(fn.bodyScope!==fn.scope)this.enterScope(fn.bodyScope,prologue);else prologue();
+  this.lit(undefined);return {code:this.code,locals:this.locals};
+ },
+ pattern(n,emit,kind='assign'){
+  if(n.type==='Identifier'){if(kind==='assign')this.writeIdentifier(n,emit,false);else this.initIdentifier(n,emit);return;}
+  this.featurePattern(n,emit,kind);
+ },
+ reference(n){
+  if(n.type==='Identifier')throw new Error('Внутренняя ошибка: ссылка на привязку '+n.name);
+  this.featureReference(n);
+ },
+ callTarget(n){if(n.type==='Identifier'){this.readIdentifier(n);this.rt('prepareValue');return;}this.featureCallTarget(n);},
+ chainPart(n,c,mode='value'){if(mode==='call'&&n.type==='Identifier'){this.readIdentifier(n);this.rt('prepareValue');return;}this.featureChainPart(n,c,mode);},
+ classExpression(n,inferredName=''){
+  const strict=this.strict;this.strict=true;
+  this.enterScope(n._scope,()=>{
+   const bindingName=n.id?.name||'',name=n._displayName||bindingName||inferredName,c=this.local();
+   for(const m of n.body.body)if(m.key?.type==='PrivateIdentifier'){this.get(this.env);this.integer(this.c.constant(m.key.name));this.integer(m.type==='PropertyDefinition'?0:m.kind==='get'||m.kind==='set'?2:1);this.integer(+m.static);this.rt('privateDeclare');}
+   const ctor=n.body.body.find(m=>m.type==='MethodDefinition'&&m.kind==='constructor'),ctorId=ctor?this.c.add(ctor.value,true,'function',name):-1;
+   this.get(this.env);if(n.superClass)this.expression(n.superClass);else this.lit(undefined);this.integer(ctorId);this.integer(this.c.constant(name));this.integer(+!!n.superClass);this.rt('makeClass');this.set(c);
+   for(const m of n.body.body){
+    if(m===ctor)continue;
+    if(m.type==='StaticBlock'){this.get(c);this.lit(undefined);this.function(m._initializer,'',true);this.integer(1);this.integer(1);this.rt('classField');continue;}
+    this.get(c);
+    if(m.key.type==='PrivateIdentifier'){this.get(this.env);this.integer(this.c.constant(m.key.name));this.rt('privateKey');}else if(m.computed){this.expression(m.key);this.rt('key');}else this.lit(m.key.name??m.key.value);
+    if(m.type==='MethodDefinition'){this.function(m.value,m.key.name||'',true);this.integer(m.kind==='get'?1:m.kind==='set'?2:0);this.integer(+m.static);this.rt('classMethod');}
+    else{this.function(m._initializer,'',true);this.integer(+m.static);this.integer(0);this.rt('classField');}
+   }
+   if(bindingName)this.initBinding(n._scope.bindings.get(bindingName),()=>this.get(c));
+   this.get(c);this.rt('finishClass');
+  });
+  this.strict=strict;
+ },
+ expression(n,hint=''){
+  switch(n.type){
+   case'Identifier':this.readIdentifier(n);return;
+   case'UnaryExpression':if(n.argument.type==='Identifier'){if(n.operator==='typeof'){this.typeofIdentifier(n.argument);return;}if(n.operator==='delete'){this.deleteIdentifier(n.argument);return;}}break;
+   case'UpdateExpression':if(n.argument.type==='Identifier'){this.updateIdentifier(n.argument,n.operator==='++'?1:-1,n.prefix);return;}break;
+   case'AssignmentExpression':if(n.left.type==='Identifier'){this.assignIdentifier(n);return;}break;
+  }
+  this.featureExpression(n,hint);
+ },
+ statement(n,tag=null){
+  switch(n.type){
+   case'FunctionDeclaration':return;
+   case'BlockStatement':this.enterScope(n._scope,()=>n.body.forEach(x=>this.statement(x)),n.body);return;
+   case'ClassDeclaration':this.initIdentifier(n.id,()=>this.classExpression(n));return;
+   case'ForStatement':case'WhileStatement':case'DoWhileStatement':{
+    const scope=n.type==='ForStatement'?n._scope:null;
+    this.enterScope(scope,()=>{
+     if(n.init){if(n.init.type==='VariableDeclaration')this.statement(n.init);else{this.expression(n.init);this.out(0x1a);}}
+     // Closures capture a fresh copy of the loop bindings per iteration.
+     const copy=!!scope?.materialized,next=()=>{if(copy){this.get(this.env);this.rt('scopeClone');this.set(this.env);}};
+     next();
+     this.label('break',end=>this.label('loop',again=>{
+      if(n.type!=='DoWhileStatement'&&n.test){this.expression(n.test);this.rt('truth');this.out(0x45);this.ifElse(()=>this.branch(end));}
+      this.label('continue',()=>this.statement(n.body),0x40,tag);
+      next();
+      if(n.update){this.expression(n.update);this.out(0x1a);}
+      if(n.type==='DoWhileStatement'){this.expression(n.test);this.rt('truth');this.ifElse(()=>this.branch(again));}else this.branch(again);
+     }),0x40,tag);
+    });return;
+   }
+   case'ForOfStatement':case'ForInStatement':{
+    const iterator=this.local(),next=this.local(),lexical=n.left.type==='VariableDeclaration'&&n.left.kind!=='var';
+    const head=()=>{this.expression(n.right);this.rt(n.await?'asyncIterator':n.type==='ForOfStatement'?'iterator':'keys');this.set(iterator);};
+    if(lexical)this.enterScope(n._headScope,head);else head();
+    this.label('break',end=>this.withFinally(()=>this.label('loop',again=>{
+     const advance=()=>{this.get(iterator);this.rt(n.await?'asyncNext':'next');};
+     if(n.await)this.suspend(advance,2);else advance();
+     this.tee(next);this.rt('done');this.ifElse(()=>this.branch(end));
+     const bind=()=>{
+      const value=()=>{this.get(next);this.rt('value');};
+      if(n.left.type==='VariableDeclaration')this.pattern(n.left.declarations[0].id,value,n.left.kind);else this.pattern(n.left,value);
+      this.label('continue',()=>this.statement(n.body),0x40,tag);
+     };
+     if(lexical)this.enterScope(n._scope,bind);else bind();
+     this.branch(again);
+    }),c=>{if(n.await){this.suspend(()=>{this.get(iterator);this.get(c.state);this.integer(1);this.out(0x46);this.rt('asyncClose');},2);this.out(0x1a);}else this.closeIterator(iterator,c);}),0x40,tag);
+    return;
+   }
+   case'SwitchStatement':{
+    const value=this.local(),start=this.local(0x7f);this.expression(n.discriminant);this.set(value);this.integer(-1);this.set(start);
+    const statements=n.cases.flatMap(c=>c.consequent);
+    this.enterScope(n._scope,()=>{
+     let def=-1;
+     n.cases.forEach((c,i)=>{if(c.test===null){def=i;return;}this.get(start);this.integer(-1);this.out(0x46);this.ifElse(()=>{this.get(value);this.expression(c.test);this.rt('equal');this.ifElse(()=>{this.integer(i);this.set(start);});});});
+     if(def>=0){this.get(start);this.integer(-1);this.out(0x46);this.ifElse(()=>{this.integer(def);this.set(start);});}
+     this.label('break',()=>n.cases.forEach((c,i)=>{this.get(start);this.integer(0);this.out(0x4e);this.get(start);this.integer(i);this.out(0x4c,0x71);this.ifElse(()=>c.consequent.forEach(s=>this.statement(s)));}),0x40,tag);
+    },statements);return;
+   }
+   case'TryStatement':{
+    if(n.finalizer){this.withFinally(()=>this.statement({...n,finalizer:null}),()=>this.statement(n.finalizer));return;}
+    if(!n.handler){this.statement(n.block);return;}
+    this.out(0x06,0x40);this.labels.push({kind:'try'});this.statement(n.block);this.out(0x07,0);const caught=this.local();this.set(caught);
+    this.enterScope(n.handler._scope,()=>{if(n.handler.param)this.pattern(n.handler.param,()=>this.get(caught),'let');this.statement(n.handler.body);});
+    this.labels.pop();this.out(0x0b);return;
+   }
+  }
+  this.featureStatement(n,tag);
+ },
+};
+
+exports["bindings"]=bindings;
+exports["SCOPE"]=SCOPE;
 }
 };
-const dependencies=[{"./html.mjs":1,"./encoding.mjs":30},{"parse5":2,"./compiler.mjs":21,"./runtime.mjs":31,"./modules.mjs":32,"./encoding.mjs":30},{"./parser/index.js":3,"./tree-adapters/default.js":16,"./serializer/index.js":19,"./common/error-codes.js":7,"./common/foreign-content.js":18,"./common/html.js":13,"./common/token.js":8,"./tokenizer/index.js":4},{"../tokenizer/index.js":4,"./open-element-stack.js":14,"./formatting-element-list.js":15,"../tree-adapters/default.js":16,"../common/doctype.js":17,"../common/foreign-content.js":18,"../common/error-codes.js":7,"../common/unicode.js":6,"../common/html.js":13,"../common/token.js":8},{"./preprocessor.js":5,"../common/unicode.js":6,"../common/token.js":8,"entities/decode":9,"../common/error-codes.js":7,"../common/html.js":13},{"../common/unicode.js":6,"../common/error-codes.js":7},{},{},{},{"./generated/decode-data-html.js":10,"./generated/decode-data-xml.js":11,"./decode-codepoint.js":12},{},{},{},{},{"../common/html.js":13},{},{"../common/html.js":13},{"./html.js":13},{"./html.js":13},{"../common/html.js":13,"entities/escape":20,"../tree-adapters/default.js":16},{},{"acorn":22,"./wasm.mjs":23,"./compiler-features.mjs":24,"./resumable.mjs":25,"./numeric.mjs":26,"./environment-wasm.mjs":28,"./string-wasm.mjs":27,"./encoding.mjs":30},{},{},{"./wasm.mjs":23},{"./wasm.mjs":23},{"./wasm.mjs":23,"./string-wasm.mjs":27},{"./wasm.mjs":23},{"./wasm.mjs":23,"./string-wasm.mjs":27,"./object-wasm.mjs":29},{"./wasm.mjs":23},{},{},{"acorn":22,"./encoding.mjs":30}],cache=Object.create(null);
+const dependencies=[{"./html.mjs":1,"./encoding.mjs":30},{"parse5":2,"./compiler.mjs":21,"./runtime.mjs":31,"./modules.mjs":32,"./encoding.mjs":30},{"./parser/index.js":3,"./tree-adapters/default.js":16,"./serializer/index.js":19,"./common/error-codes.js":7,"./common/foreign-content.js":18,"./common/html.js":13,"./common/token.js":8,"./tokenizer/index.js":4},{"../tokenizer/index.js":4,"./open-element-stack.js":14,"./formatting-element-list.js":15,"../tree-adapters/default.js":16,"../common/doctype.js":17,"../common/foreign-content.js":18,"../common/error-codes.js":7,"../common/unicode.js":6,"../common/html.js":13,"../common/token.js":8},{"./preprocessor.js":5,"../common/unicode.js":6,"../common/token.js":8,"entities/decode":9,"../common/error-codes.js":7,"../common/html.js":13},{"../common/unicode.js":6,"../common/error-codes.js":7},{},{},{},{"./generated/decode-data-html.js":10,"./generated/decode-data-xml.js":11,"./decode-codepoint.js":12},{},{},{},{},{"../common/html.js":13},{},{"../common/html.js":13},{"./html.js":13},{"./html.js":13},{"../common/html.js":13,"entities/escape":20,"../tree-adapters/default.js":16},{},{"acorn":22,"./wasm.mjs":23,"./compiler-features.mjs":24,"./resumable.mjs":25,"./numeric.mjs":26,"./environment-wasm.mjs":28,"./string-wasm.mjs":27,"./encoding.mjs":30,"./scope.mjs":33,"./bindings.mjs":34},{},{},{"./wasm.mjs":23},{"./wasm.mjs":23},{"./wasm.mjs":23,"./string-wasm.mjs":27},{"./wasm.mjs":23},{"./wasm.mjs":23,"./string-wasm.mjs":27,"./object-wasm.mjs":29},{"./wasm.mjs":23},{},{},{"acorn":22,"./encoding.mjs":30},{},{"./wasm.mjs":23,"./scope.mjs":33}],cache=Object.create(null);
 function load(id){if(cache[id])return cache[id].exports;const module={exports:{}};cache[id]=module;factories[id](module,module.exports,name=>{const target=dependencies[id][name];if(target===undefined)throw new Error('Missing bundled dependency: '+name);return load(target);});return module.exports;}
 return load(0).compileProject;
 }</script>
