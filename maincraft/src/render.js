@@ -729,7 +729,7 @@ class Renderer {
     const dx = cam[0] < x0 ? x0 - cam[0] : cam[0] > x0 + 16 ? cam[0] - x0 - 16 : 0;
     const dz = cam[2] < z0 ? z0 - cam[2] : cam[2] > z0 + 16 ? cam[2] - z0 - 16 : 0;
     const dy = eyeY - (y0 + 17);
-    return Math.max(Math.hypot(dx, dz), dy * 0.5) >= fogEnd + 1;
+    return Math.max(Math.sqrt(dx * dx + dz * dz), dy * 0.5) >= fogEnd + 1;
   }
 
   // ---------------------------------------------------------------- terrain passes
@@ -936,8 +936,12 @@ class Renderer {
     // re-orthogonalise a
     ax = by * dir[2] - bz * dir[1]; ay = bz * dir[0] - bx * dir[2]; az = bx * dir[1] - by * dir[0];
     const h = size / 2;
-    const v = [];
-    const corner = (sa, sb, u, w) => v.push(cx + (ax * sa + bx * sb) * h, cy + (ay * sa + by * sb) * h, cz + (az * sa + bz * sb) * h, u, w, 1, 1, 1, alpha);
+    const v = this.spriteV || (this.spriteV = new Float32Array(54));
+    let n = 0;
+    const corner = (sa, sb, u, w) => {
+      v[n] = cx + (ax * sa + bx * sb) * h; v[n + 1] = cy + (ay * sa + by * sb) * h; v[n + 2] = cz + (az * sa + bz * sb) * h;
+      v[n + 3] = u; v[n + 4] = w; v[n + 5] = 1; v[n + 6] = 1; v[n + 7] = 1; v[n + 8] = alpha; n += 9;
+    };
     corner(-1, -1, uv[0], uv[3]); corner(1, -1, uv[2], uv[3]); corner(1, 1, uv[2], uv[1]);
     corner(-1, -1, uv[0], uv[3]); corner(1, 1, uv[2], uv[1]); corner(-1, 1, uv[0], uv[1]);
     gl.useProgram(p);
@@ -945,7 +949,7 @@ class Renderer {
     gl.uniform1i(p.u.uKeyBlack, 1);
     gl.uniform1i(p.u.uTex, 3);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tex); gl.activeTexture(gl.TEXTURE0);
-    this.drawDynSprite(this.f32(v), 6);
+    this.drawDynSprite(v, 6);
   }
 
   makeDyn() {
@@ -964,14 +968,6 @@ class Renderer {
     gl.bindVertexArray(null);
     return d;
   }
-  // Copies a plain array into a reused scratch Float32Array. The view is valid until the next call,
-  // so it is meant for data that is uploaded right away.
-  scratch(n) {
-    let b = this.f32buf;
-    if (!b || b.length < n) b = this.f32buf = new Float32Array(Math.max(n, b ? b.length * 2 : 16384));
-    return b;
-  }
-  f32(v) { const b = this.scratch(v.length); b.set(v); return b.subarray(0, v.length); }
   // Appends the vertices behind the ones already written (a ring): every draw of the frame keeps its
   // own range, so an upload never overwrites data a pending draw still reads, which would make the
   // GPU wait or copy. When full, the buffer is re-specified (the driver hands out fresh storage).

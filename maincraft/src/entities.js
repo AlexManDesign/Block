@@ -210,25 +210,39 @@ const MOB_DT = 0.05;   // mob simulation step (20 Hz, as in the original)
 const PATH_NODES = 900, PATH_RANGE = 28;
 const NB8 = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
 // binary heap on node.f for A*
-function heapPush(h, n) {
-  h.push(n);
-  let i = h.length - 1;
-  while (i > 0) { const p = (i - 1) >> 1; if (h[p].f <= h[i].f) break; const t = h[p]; h[p] = h[i]; h[i] = t; i = p; }
+// A* state in reused typed arrays over the columns within PATH_RANGE of the start (index
+// (dx + 32) * 64 + dz + 32); a cell's entries count only when its stamp is the current search's
+const PG = 64, PO = 32, PSZ = PG * PG, PNONE = -2147483648;
+const PS = {
+  gen: 0, stamp: new Uint32Array(PSZ), g: new Float64Array(PSZ), f: new Float64Array(PSZ), y: new Int32Array(PSZ),
+  from: new Int32Array(PSZ), done: new Uint8Array(PSZ),
+  mStamp: new Uint32Array(PSZ), mY: new Int32Array(PSZ), mV: new Int32Array(PSZ),   // last standY query per column
+  heap: new Int32Array(PATH_NODES * 8 + 8), hn: 0,
+};
+// binary heap of cell indices ordered by f (an entry is pushed again when its cost drops; stale
+// entries are skipped by their done flag)
+function heapPush(i) {
+  const h = PS.heap, f = PS.f;
+  let k = PS.hn++;
+  h[k] = i;
+  while (k > 0) { const p = (k - 1) >> 1; if (f[h[p]] <= f[h[k]]) break; const t = h[p]; h[p] = h[k]; h[k] = t; k = p; }
 }
-function heapPop(h) {
-  const top = h[0], last = h.pop();
-  if (!h.length) return top;
-  h[0] = last;
-  for (let i = 0, n = h.length; ;) {
+function heapPop() {
+  const h = PS.heap, f = PS.f, top = h[0], n = --PS.hn;
+  if (!n) return top;
+  h[0] = h[n];
+  for (let i = 0; ;) {
     const a = i * 2 + 1, b = a + 1;
     let m = i;
-    if (a < n && h[a].f < h[m].f) m = a;
-    if (b < n && h[b].f < h[m].f) m = b;
+    if (a < n && f[h[a]] < f[h[m]]) m = a;
+    if (b < n && f[h[b]] < f[h[m]]) m = b;
     if (m === i) break;
     const t = h[m]; h[m] = h[i]; h[i] = t; i = m;
   }
   return top;
 }
+// octile distance
+function octDist(ax, az) { ax = ax < 0 ? -ax : ax; az = az < 0 ? -az : az; return ax > az ? ax - az + Math.SQRT2 * az : az - ax + Math.SQRT2 * ax; }
 
 function slimeChunk(cx, cz, seed) {
   let t = Math.imul(cx, 522133279) ^ Math.imul(cz, 668265261) ^ (seed | 0);
@@ -240,6 +254,8 @@ function slimeChunk(cx, cz, seed) {
 // (see buildModel): rotation Z, Y, X as cos/sin pairs (MC order: Z*Y*X applied to the vertex, X
 // first), the pivot, the model scale, the swim pitch, the sneak drop, the death tilt, the body
 // yaw and the entity and camera positions.
+// face shades of falling blocks and of dropped block items (+x, -x, top, bottom, +z, -z)
+const FALL_SHADE = [0.6, 0.6, 1, 0.5, 0.8, 0.8], ITEM_SHADE = [0.72, 0.72, 1, 0.55, 0.82, 0.82];
 function modelXform(P, x, y, z, o) {
   let y1 = y * P[0] - z * P[1], z1 = y * P[1] + z * P[0]; y = y1; z = z1;
   let x1 = x * P[2] + z * P[3]; z1 = -x * P[3] + z * P[2]; x = x1; z = z1;
@@ -877,45 +893,44 @@ class Entities {
     const sx = Math.floor(e.pos[0]), sy = Math.floor(e.pos[1] + 0.1), sz = Math.floor(e.pos[2]);
     const gx = Math.floor(tx), gz = Math.floor(tz);
     if (sx === gx && sz === gz) return null;
-    const oct = (ax, az) => { ax = ax < 0 ? -ax : ax; az = az < 0 ? -az : az; return ax > az ? ax - az + Math.SQRT2 * az : az - ax + Math.SQRT2 * ax; };
-    const key = (x, z) => (x - sx + 64) * 256 + (z - sz + 64);
-    const nodes = new Map(), heap = [], memo = new Map();
-    const stand = (x, y, z) => {
-      const k = ((x - sx + 64) * 256 + (z - sz + 64)) * 1024 + (y - sy + 512);
-      let v = memo.get(k);
-      if (v === undefined) { v = this.standY(x, y, z); memo.set(k, v); }
-      return v;
-    };
-    const start = { x: sx, y: sy, z: sz, from: null, g: 0, f: oct(sx - gx, sz - gz), done: false };
-    nodes.set(key(sx, sz), start); heapPush(heap, start);
-    let best = start, bestH = start.f, n = 0;
-    while (heap.length && n < PATH_NODES) {
-      const P = heapPop(heap);
-      if (P.done) continue;
-      P.done = true; n++;
-      if (P.x === gx && P.z === gz) { best = P; break; }
+    if (++PS.gen > 0x3fffffff) { PS.gen = 1; PS.stamp.fill(0); PS.mStamp.fill(0); }
+    const gen = PS.gen, ST = PS.stamp, G = PS.g, F = PS.f, Y = PS.y, FR = PS.from, D = PS.done;
+    const MS = PS.mStamp, MY = PS.mY, MV = PS.mV;
+    const s0 = PO * PG + PO;
+    ST[s0] = gen; G[s0] = 0; F[s0] = octDist(sx - gx, sz - gz); Y[s0] = sy; FR[s0] = -1; D[s0] = 0;
+    PS.hn = 0; heapPush(s0);
+    let best = s0, bestH = F[s0], n = 0;
+    while (PS.hn && n < PATH_NODES) {
+      const P = heapPop();
+      if (D[P]) continue;
+      D[P] = 1; n++;
+      const px = sx + ((P / PG) | 0) - PO, pz = sz + (P % PG) - PO, py = Y[P];
+      if (px === gx && pz === gz) { best = P; break; }
       for (let k = 0; k < 8; k++) {
-        const bx = NB8[k * 2], bz = NB8[k * 2 + 1], hx = P.x + bx, hz = P.z + bz;
+        const bx = NB8[k * 2], bz = NB8[k * 2 + 1], hx = px + bx, hz = pz + bz;
         if (Math.abs(hx - sx) > PATH_RANGE || Math.abs(hz - sz) > PATH_RANGE) continue;
-        const y = stand(hx, P.y, hz);
-        if (y === null) continue;
+        const kk = (hx - sx + PO) * PG + (hz - sz + PO);
+        let y;
+        if (MS[kk] === gen && MY[kk] === py) y = MV[kk];
+        else { const v = this.standY(hx, py, hz); y = v === null ? PNONE : v; MS[kk] = gen; MY[kk] = py; MV[kk] = y; }
+        if (y === PNONE) continue;
         const diag = bx !== 0 && bz !== 0;
-        if (diag && (y !== P.y || !this.clear2(P.x + bx, P.y, P.z) || !this.clear2(P.x, P.y, P.z + bz))) continue;
-        const gc = P.g + (diag ? Math.SQRT2 : 1), kk = key(hx, hz), O = nodes.get(kk);
-        if (O) {
-          if (O.done || gc >= O.g) continue;
-          O.g = gc; O.from = P; O.y = y; O.f = gc + oct(hx - gx, hz - gz); heapPush(heap, O);
+        if (diag && (y !== py || !this.clear2(px + bx, py, pz) || !this.clear2(px, py, pz + bz))) continue;
+        const gc = G[P] + (diag ? Math.SQRT2 : 1);
+        if (ST[kk] === gen) {
+          if (D[kk] || gc >= G[kk]) continue;
+          G[kk] = gc; FR[kk] = P; Y[kk] = y; F[kk] = gc + octDist(hx - gx, hz - gz); heapPush(kk);
           continue;
         }
-        const hh = oct(hx - gx, hz - gz), N = { x: hx, y, z: hz, from: P, g: gc, f: gc + hh, done: false };
-        nodes.set(kk, N);
-        if (hh < bestH) { bestH = hh; best = N; }
-        heapPush(heap, N);
+        const hh = octDist(hx - gx, hz - gz);
+        ST[kk] = gen; G[kk] = gc; F[kk] = gc + hh; Y[kk] = y; FR[kk] = P; D[kk] = 0;
+        if (hh < bestH) { bestH = hh; best = kk; }
+        heapPush(kk);
       }
     }
-    if (best === start) return null;
+    if (best === s0) return null;
     const out = [];
-    for (let q = best; q && q.from; q = q.from) out.push([q.x + 0.5, q.z + 0.5]);
+    for (let q = best; FR[q] >= 0; q = FR[q]) out.push([sx + ((q / PG) | 0) - PO + 0.5, sz + (q % PG) - PO + 0.5]);
     out.reverse();
     return out;
   }
@@ -1577,52 +1592,64 @@ class Entities {
   }
   renderItems(env, cam) {
     const g = this.game, r = g.r;
-    const list = this.items.concat(this.arrows.map(a => ({ arrow: a, pos: a.pos })));
-    if (!list.length && !this.falling.length) return;
-    const v = [];
+    if (!this.items.length && !this.arrows.length && !this.falling.length) return;
+    // reused buffers: vertex buffer, one box before its spin, face layers and colour
+    const v = this.itemVB || (this.itemVB = new VBuf()), tmp = this.itemTmp || (this.itemTmp = new VBuf());
+    const L = this.itemL || (this.itemL = new Uint16Array(6)), C = this.itemC || (this.itemC = new Float64Array(4));
+    v.n = 0; C[3] = 1;
     // falling blocks: the block model at the entity position, between the last two ticks
     const al = this.alpha ?? 1;
     for (const f of this.falling) {
       const y = f.py + (f.y - f.py) * al;
-      const li = g.lightAt(f.x, y + 0.5, f.z, env);
-      const L = [0, 1, 2, 3, 4, 5].map(k => FTEX[f.id * 6 + k]);
-      g.pushBox(v, f.x - 0.5 - cam[0], y - cam[1], f.z - 0.5 - cam[2], f.x + 0.5 - cam[0], y + 1 - cam[1], f.z + 0.5 - cam[2], 0, [li, li, li, 1], 0, L, [0.6, 0.6, 1, 0.5, 0.8, 0.8]);
+      C[0] = C[1] = C[2] = g.lightAt(f.x, y + 0.5, f.z, env);
+      for (let k = 0; k < 6; k++) L[k] = FTEX[f.id * 6 + k];
+      g.pushBox(v, f.x - 0.5 - cam[0], y - cam[1], f.z - 0.5 - cam[2], f.x + 0.5 - cam[0], y + 1 - cam[1], f.z + 0.5 - cam[2], 0, C, 0, L, FALL_SHADE);
     }
-    const t = performance.now() / 1000;
-    for (const it of list) {
+    for (const a of this.arrows) {
+      C[0] = C[1] = C[2] = g.lightAt(a.pos[0], a.pos[1] + 0.2, a.pos[2], env);
+      const d = a.stuck && a.dir ? a.dir : a.vel, l = (Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) || 1) * 2;
+      const dx = d[0] / l, dz = d[2] / l;
+      const x = a.pos[0] - cam[0], y = a.pos[1] - cam[1], z = a.pos[2] - cam[2];
+      g.pushBox(v, x - 0.03 - Math.max(0, -dx), y - 0.03, z - 0.03 - Math.max(0, -dz), x + 0.03 + Math.max(0, dx), y + 0.03, z + 0.03 + Math.max(0, dz), g.assets.layers.oak_planks, C);
+    }
+    for (const it of this.items) {
       const li = g.lightAt(it.pos[0], it.pos[1] + 0.2, it.pos[2], env);
-      if (it.arrow) {
-        const a = it.arrow, v = a.stuck && a.dir ? a.dir : a.vel, l = Math.hypot(...v) || 1, d = v.map(x => x / l * 0.5);
-        const x = a.pos[0] - cam[0], y = a.pos[1] - cam[1], z = a.pos[2] - cam[2];
-        g.pushBox(v, x - 0.03 - Math.max(0, -d[0]), y - 0.03, z - 0.03 - Math.max(0, -d[2]), x + 0.03 + Math.max(0, d[0]), y + 0.03, z + 0.03 + Math.max(0, d[2]), g.assets.layers.oak_planks, [li, li, li, 1]);
-        continue;
-      }
+      C[0] = C[1] = C[2] = li;
       const id = it.id;
       const bob = Math.sin(it.age * 2.5) * 0.05 + 0.12;
       const rot = it.age * 1.2;
       const cx = it.pos[0] - cam[0], cy = it.pos[1] + bob - cam[1], cz = it.pos[2] - cam[2];
       const cube = !isItem(id) && (SHAPE[id] === SH.CUBE || SHAPE[id] === SH.SLAB || SHAPE[id] === SH.STAIRS || SHAPE[id] === SH.CHEST || SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL || SHAPE[id] === SH.CACTUS);
       const copies = Math.min(3, 1 + Math.floor(it.count / 16));
-      for (let k = 0; k < copies; k++) {
-        const ox = k * 0.06, oy = k * 0.05;
-        if (cube) {
-          const s = 0.125, L = [0, 1, 2, 3, 4, 5].map(f => FTEX[id * 6 + f]);
-          const tmp = [];
-          g.pushBox(tmp, -s, -s, -s, s, s, s, 0, [li, li, li, 1], 0, L, [0.72, 0.72, 1, 0.55, 0.82, 0.82]);
-          const c = Math.cos(rot), sn = Math.sin(rot);
-          for (let i = 0; i < tmp.length; i += 10) { const x = tmp[i], z = tmp[i + 2]; tmp[i] = x * c - z * sn + cx + ox; tmp[i + 1] += cy + oy; tmp[i + 2] = x * sn + z * c + cz; }
-          for (const q of tmp) v.push(q);
-        } else {
-          const layer = isItem(id) ? g.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? g.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
-          const s = 0.2, c = Math.cos(rot) * s, sn = Math.sin(rot) * s;
-          const P = [[-c, -s, -sn, 0, 1], [c, -s, sn, 1, 1], [c, s, sn, 1, 0], [-c, s, -sn, 0, 0]];
-          for (const i of [0, 1, 2, 0, 2, 3]) v.push(P[i][0] + cx + ox, P[i][1] + cy + s + oy, P[i][2] + cz, P[i][3], P[i][4], layer, li, li, li, 1);
+      if (cube) {
+        const s = 0.125, c = Math.cos(rot), sn = Math.sin(rot);
+        for (let k = 0; k < 6; k++) L[k] = FTEX[id * 6 + k];
+        tmp.n = 0;
+        g.pushBox(tmp, -s, -s, -s, s, s, s, 0, C, 0, L, ITEM_SHADE);
+        const T = tmp.a, n = tmp.n;
+        for (let k = 0; k < copies; k++) {
+          const ox = k * 0.06, oy = k * 0.05, o = v.n, a = v.reserve(n);
+          for (let i = 0; i < n; i += 10) {
+            const x = T[i], z = T[i + 2];
+            a[o + i] = x * c - z * sn + cx + ox; a[o + i + 1] = T[i + 1] + cy + oy; a[o + i + 2] = x * sn + z * c + cz;
+            for (let j = 3; j < 10; j++) a[o + i + j] = T[i + j];
+          }
+          v.n = o + n;
+        }
+      } else {
+        const layer = isItem(id) ? g.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? g.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
+        const s = 0.2, c = Math.cos(rot) * s, sn = Math.sin(rot) * s;
+        for (let k = 0; k < copies; k++) {
+          const ox = cx + k * 0.06, oy = cy + s + k * 0.05;
+          for (let j = 0; j < 6; j++) {
+            const i = BOX_TRI[j], sx = i === 1 || i === 2 ? 1 : -1, sy = i >= 2 ? 1 : -1;
+            v.push(sx * c + ox, sy * s + oy, sx * sn + cz, BOX_U[i], BOX_V[i], layer, li, li, li, 1);
+          }
         }
       }
     }
-    void t;
     r.gl.disable(r.gl.CULL_FACE);
-    r.drawArr(r.f32(v), v.length / 10, env, 0.5);
+    r.drawArr(v.view(), v.n / 10, env, 0.5);
     r.gl.enable(r.gl.CULL_FACE);
   }
 }

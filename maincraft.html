@@ -12542,7 +12542,7 @@ class Renderer {
     const dx = cam[0] < x0 ? x0 - cam[0] : cam[0] > x0 + 16 ? cam[0] - x0 - 16 : 0;
     const dz = cam[2] < z0 ? z0 - cam[2] : cam[2] > z0 + 16 ? cam[2] - z0 - 16 : 0;
     const dy = eyeY - (y0 + 17);
-    return Math.max(Math.hypot(dx, dz), dy * 0.5) >= fogEnd + 1;
+    return Math.max(Math.sqrt(dx * dx + dz * dz), dy * 0.5) >= fogEnd + 1;
   }
 
   // ---------------------------------------------------------------- terrain passes
@@ -12749,8 +12749,12 @@ class Renderer {
     // re-orthogonalise a
     ax = by * dir[2] - bz * dir[1]; ay = bz * dir[0] - bx * dir[2]; az = bx * dir[1] - by * dir[0];
     const h = size / 2;
-    const v = [];
-    const corner = (sa, sb, u, w) => v.push(cx + (ax * sa + bx * sb) * h, cy + (ay * sa + by * sb) * h, cz + (az * sa + bz * sb) * h, u, w, 1, 1, 1, alpha);
+    const v = this.spriteV || (this.spriteV = new Float32Array(54));
+    let n = 0;
+    const corner = (sa, sb, u, w) => {
+      v[n] = cx + (ax * sa + bx * sb) * h; v[n + 1] = cy + (ay * sa + by * sb) * h; v[n + 2] = cz + (az * sa + bz * sb) * h;
+      v[n + 3] = u; v[n + 4] = w; v[n + 5] = 1; v[n + 6] = 1; v[n + 7] = 1; v[n + 8] = alpha; n += 9;
+    };
     corner(-1, -1, uv[0], uv[3]); corner(1, -1, uv[2], uv[3]); corner(1, 1, uv[2], uv[1]);
     corner(-1, -1, uv[0], uv[3]); corner(1, 1, uv[2], uv[1]); corner(-1, 1, uv[0], uv[1]);
     gl.useProgram(p);
@@ -12758,7 +12762,7 @@ class Renderer {
     gl.uniform1i(p.u.uKeyBlack, 1);
     gl.uniform1i(p.u.uTex, 3);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tex); gl.activeTexture(gl.TEXTURE0);
-    this.drawDynSprite(this.f32(v), 6);
+    this.drawDynSprite(v, 6);
   }
 
   makeDyn() {
@@ -12777,14 +12781,6 @@ class Renderer {
     gl.bindVertexArray(null);
     return d;
   }
-  // Copies a plain array into a reused scratch Float32Array. The view is valid until the next call,
-  // so it is meant for data that is uploaded right away.
-  scratch(n) {
-    let b = this.f32buf;
-    if (!b || b.length < n) b = this.f32buf = new Float32Array(Math.max(n, b ? b.length * 2 : 16384));
-    return b;
-  }
-  f32(v) { const b = this.scratch(v.length); b.set(v); return b.subarray(0, v.length); }
   // Appends the vertices behind the ones already written (a ring): every draw of the frame keeps its
   // own range, so an upload never overwrites data a pending draw still reads, which would make the
   // GPU wait or copy. When full, the buffer is re-specified (the driver hands out fresh storage).
@@ -13752,25 +13748,39 @@ const MOB_DT = 0.05;   // mob simulation step (20 Hz, as in the original)
 const PATH_NODES = 900, PATH_RANGE = 28;
 const NB8 = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
 // binary heap on node.f for A*
-function heapPush(h, n) {
-  h.push(n);
-  let i = h.length - 1;
-  while (i > 0) { const p = (i - 1) >> 1; if (h[p].f <= h[i].f) break; const t = h[p]; h[p] = h[i]; h[i] = t; i = p; }
+// A* state in reused typed arrays over the columns within PATH_RANGE of the start (index
+// (dx + 32) * 64 + dz + 32); a cell's entries count only when its stamp is the current search's
+const PG = 64, PO = 32, PSZ = PG * PG, PNONE = -2147483648;
+const PS = {
+  gen: 0, stamp: new Uint32Array(PSZ), g: new Float64Array(PSZ), f: new Float64Array(PSZ), y: new Int32Array(PSZ),
+  from: new Int32Array(PSZ), done: new Uint8Array(PSZ),
+  mStamp: new Uint32Array(PSZ), mY: new Int32Array(PSZ), mV: new Int32Array(PSZ),   // last standY query per column
+  heap: new Int32Array(PATH_NODES * 8 + 8), hn: 0,
+};
+// binary heap of cell indices ordered by f (an entry is pushed again when its cost drops; stale
+// entries are skipped by their done flag)
+function heapPush(i) {
+  const h = PS.heap, f = PS.f;
+  let k = PS.hn++;
+  h[k] = i;
+  while (k > 0) { const p = (k - 1) >> 1; if (f[h[p]] <= f[h[k]]) break; const t = h[p]; h[p] = h[k]; h[k] = t; k = p; }
 }
-function heapPop(h) {
-  const top = h[0], last = h.pop();
-  if (!h.length) return top;
-  h[0] = last;
-  for (let i = 0, n = h.length; ;) {
+function heapPop() {
+  const h = PS.heap, f = PS.f, top = h[0], n = --PS.hn;
+  if (!n) return top;
+  h[0] = h[n];
+  for (let i = 0; ;) {
     const a = i * 2 + 1, b = a + 1;
     let m = i;
-    if (a < n && h[a].f < h[m].f) m = a;
-    if (b < n && h[b].f < h[m].f) m = b;
+    if (a < n && f[h[a]] < f[h[m]]) m = a;
+    if (b < n && f[h[b]] < f[h[m]]) m = b;
     if (m === i) break;
     const t = h[m]; h[m] = h[i]; h[i] = t; i = m;
   }
   return top;
 }
+// octile distance
+function octDist(ax, az) { ax = ax < 0 ? -ax : ax; az = az < 0 ? -az : az; return ax > az ? ax - az + Math.SQRT2 * az : az - ax + Math.SQRT2 * ax; }
 
 function slimeChunk(cx, cz, seed) {
   let t = Math.imul(cx, 522133279) ^ Math.imul(cz, 668265261) ^ (seed | 0);
@@ -13782,6 +13792,8 @@ function slimeChunk(cx, cz, seed) {
 // (see buildModel): rotation Z, Y, X as cos/sin pairs (MC order: Z*Y*X applied to the vertex, X
 // first), the pivot, the model scale, the swim pitch, the sneak drop, the death tilt, the body
 // yaw and the entity and camera positions.
+// face shades of falling blocks and of dropped block items (+x, -x, top, bottom, +z, -z)
+const FALL_SHADE = [0.6, 0.6, 1, 0.5, 0.8, 0.8], ITEM_SHADE = [0.72, 0.72, 1, 0.55, 0.82, 0.82];
 function modelXform(P, x, y, z, o) {
   let y1 = y * P[0] - z * P[1], z1 = y * P[1] + z * P[0]; y = y1; z = z1;
   let x1 = x * P[2] + z * P[3]; z1 = -x * P[3] + z * P[2]; x = x1; z = z1;
@@ -14419,45 +14431,44 @@ class Entities {
     const sx = Math.floor(e.pos[0]), sy = Math.floor(e.pos[1] + 0.1), sz = Math.floor(e.pos[2]);
     const gx = Math.floor(tx), gz = Math.floor(tz);
     if (sx === gx && sz === gz) return null;
-    const oct = (ax, az) => { ax = ax < 0 ? -ax : ax; az = az < 0 ? -az : az; return ax > az ? ax - az + Math.SQRT2 * az : az - ax + Math.SQRT2 * ax; };
-    const key = (x, z) => (x - sx + 64) * 256 + (z - sz + 64);
-    const nodes = new Map(), heap = [], memo = new Map();
-    const stand = (x, y, z) => {
-      const k = ((x - sx + 64) * 256 + (z - sz + 64)) * 1024 + (y - sy + 512);
-      let v = memo.get(k);
-      if (v === undefined) { v = this.standY(x, y, z); memo.set(k, v); }
-      return v;
-    };
-    const start = { x: sx, y: sy, z: sz, from: null, g: 0, f: oct(sx - gx, sz - gz), done: false };
-    nodes.set(key(sx, sz), start); heapPush(heap, start);
-    let best = start, bestH = start.f, n = 0;
-    while (heap.length && n < PATH_NODES) {
-      const P = heapPop(heap);
-      if (P.done) continue;
-      P.done = true; n++;
-      if (P.x === gx && P.z === gz) { best = P; break; }
+    if (++PS.gen > 0x3fffffff) { PS.gen = 1; PS.stamp.fill(0); PS.mStamp.fill(0); }
+    const gen = PS.gen, ST = PS.stamp, G = PS.g, F = PS.f, Y = PS.y, FR = PS.from, D = PS.done;
+    const MS = PS.mStamp, MY = PS.mY, MV = PS.mV;
+    const s0 = PO * PG + PO;
+    ST[s0] = gen; G[s0] = 0; F[s0] = octDist(sx - gx, sz - gz); Y[s0] = sy; FR[s0] = -1; D[s0] = 0;
+    PS.hn = 0; heapPush(s0);
+    let best = s0, bestH = F[s0], n = 0;
+    while (PS.hn && n < PATH_NODES) {
+      const P = heapPop();
+      if (D[P]) continue;
+      D[P] = 1; n++;
+      const px = sx + ((P / PG) | 0) - PO, pz = sz + (P % PG) - PO, py = Y[P];
+      if (px === gx && pz === gz) { best = P; break; }
       for (let k = 0; k < 8; k++) {
-        const bx = NB8[k * 2], bz = NB8[k * 2 + 1], hx = P.x + bx, hz = P.z + bz;
+        const bx = NB8[k * 2], bz = NB8[k * 2 + 1], hx = px + bx, hz = pz + bz;
         if (Math.abs(hx - sx) > PATH_RANGE || Math.abs(hz - sz) > PATH_RANGE) continue;
-        const y = stand(hx, P.y, hz);
-        if (y === null) continue;
+        const kk = (hx - sx + PO) * PG + (hz - sz + PO);
+        let y;
+        if (MS[kk] === gen && MY[kk] === py) y = MV[kk];
+        else { const v = this.standY(hx, py, hz); y = v === null ? PNONE : v; MS[kk] = gen; MY[kk] = py; MV[kk] = y; }
+        if (y === PNONE) continue;
         const diag = bx !== 0 && bz !== 0;
-        if (diag && (y !== P.y || !this.clear2(P.x + bx, P.y, P.z) || !this.clear2(P.x, P.y, P.z + bz))) continue;
-        const gc = P.g + (diag ? Math.SQRT2 : 1), kk = key(hx, hz), O = nodes.get(kk);
-        if (O) {
-          if (O.done || gc >= O.g) continue;
-          O.g = gc; O.from = P; O.y = y; O.f = gc + oct(hx - gx, hz - gz); heapPush(heap, O);
+        if (diag && (y !== py || !this.clear2(px + bx, py, pz) || !this.clear2(px, py, pz + bz))) continue;
+        const gc = G[P] + (diag ? Math.SQRT2 : 1);
+        if (ST[kk] === gen) {
+          if (D[kk] || gc >= G[kk]) continue;
+          G[kk] = gc; FR[kk] = P; Y[kk] = y; F[kk] = gc + octDist(hx - gx, hz - gz); heapPush(kk);
           continue;
         }
-        const hh = oct(hx - gx, hz - gz), N = { x: hx, y, z: hz, from: P, g: gc, f: gc + hh, done: false };
-        nodes.set(kk, N);
-        if (hh < bestH) { bestH = hh; best = N; }
-        heapPush(heap, N);
+        const hh = octDist(hx - gx, hz - gz);
+        ST[kk] = gen; G[kk] = gc; F[kk] = gc + hh; Y[kk] = y; FR[kk] = P; D[kk] = 0;
+        if (hh < bestH) { bestH = hh; best = kk; }
+        heapPush(kk);
       }
     }
-    if (best === start) return null;
+    if (best === s0) return null;
     const out = [];
-    for (let q = best; q && q.from; q = q.from) out.push([q.x + 0.5, q.z + 0.5]);
+    for (let q = best; FR[q] >= 0; q = FR[q]) out.push([sx + ((q / PG) | 0) - PO + 0.5, sz + (q % PG) - PO + 0.5]);
     out.reverse();
     return out;
   }
@@ -15119,52 +15130,64 @@ class Entities {
   }
   renderItems(env, cam) {
     const g = this.game, r = g.r;
-    const list = this.items.concat(this.arrows.map(a => ({ arrow: a, pos: a.pos })));
-    if (!list.length && !this.falling.length) return;
-    const v = [];
+    if (!this.items.length && !this.arrows.length && !this.falling.length) return;
+    // reused buffers: vertex buffer, one box before its spin, face layers and colour
+    const v = this.itemVB || (this.itemVB = new VBuf()), tmp = this.itemTmp || (this.itemTmp = new VBuf());
+    const L = this.itemL || (this.itemL = new Uint16Array(6)), C = this.itemC || (this.itemC = new Float64Array(4));
+    v.n = 0; C[3] = 1;
     // falling blocks: the block model at the entity position, between the last two ticks
     const al = this.alpha ?? 1;
     for (const f of this.falling) {
       const y = f.py + (f.y - f.py) * al;
-      const li = g.lightAt(f.x, y + 0.5, f.z, env);
-      const L = [0, 1, 2, 3, 4, 5].map(k => FTEX[f.id * 6 + k]);
-      g.pushBox(v, f.x - 0.5 - cam[0], y - cam[1], f.z - 0.5 - cam[2], f.x + 0.5 - cam[0], y + 1 - cam[1], f.z + 0.5 - cam[2], 0, [li, li, li, 1], 0, L, [0.6, 0.6, 1, 0.5, 0.8, 0.8]);
+      C[0] = C[1] = C[2] = g.lightAt(f.x, y + 0.5, f.z, env);
+      for (let k = 0; k < 6; k++) L[k] = FTEX[f.id * 6 + k];
+      g.pushBox(v, f.x - 0.5 - cam[0], y - cam[1], f.z - 0.5 - cam[2], f.x + 0.5 - cam[0], y + 1 - cam[1], f.z + 0.5 - cam[2], 0, C, 0, L, FALL_SHADE);
     }
-    const t = performance.now() / 1000;
-    for (const it of list) {
+    for (const a of this.arrows) {
+      C[0] = C[1] = C[2] = g.lightAt(a.pos[0], a.pos[1] + 0.2, a.pos[2], env);
+      const d = a.stuck && a.dir ? a.dir : a.vel, l = (Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) || 1) * 2;
+      const dx = d[0] / l, dz = d[2] / l;
+      const x = a.pos[0] - cam[0], y = a.pos[1] - cam[1], z = a.pos[2] - cam[2];
+      g.pushBox(v, x - 0.03 - Math.max(0, -dx), y - 0.03, z - 0.03 - Math.max(0, -dz), x + 0.03 + Math.max(0, dx), y + 0.03, z + 0.03 + Math.max(0, dz), g.assets.layers.oak_planks, C);
+    }
+    for (const it of this.items) {
       const li = g.lightAt(it.pos[0], it.pos[1] + 0.2, it.pos[2], env);
-      if (it.arrow) {
-        const a = it.arrow, v = a.stuck && a.dir ? a.dir : a.vel, l = Math.hypot(...v) || 1, d = v.map(x => x / l * 0.5);
-        const x = a.pos[0] - cam[0], y = a.pos[1] - cam[1], z = a.pos[2] - cam[2];
-        g.pushBox(v, x - 0.03 - Math.max(0, -d[0]), y - 0.03, z - 0.03 - Math.max(0, -d[2]), x + 0.03 + Math.max(0, d[0]), y + 0.03, z + 0.03 + Math.max(0, d[2]), g.assets.layers.oak_planks, [li, li, li, 1]);
-        continue;
-      }
+      C[0] = C[1] = C[2] = li;
       const id = it.id;
       const bob = Math.sin(it.age * 2.5) * 0.05 + 0.12;
       const rot = it.age * 1.2;
       const cx = it.pos[0] - cam[0], cy = it.pos[1] + bob - cam[1], cz = it.pos[2] - cam[2];
       const cube = !isItem(id) && (SHAPE[id] === SH.CUBE || SHAPE[id] === SH.SLAB || SHAPE[id] === SH.STAIRS || SHAPE[id] === SH.CHEST || SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL || SHAPE[id] === SH.CACTUS);
       const copies = Math.min(3, 1 + Math.floor(it.count / 16));
-      for (let k = 0; k < copies; k++) {
-        const ox = k * 0.06, oy = k * 0.05;
-        if (cube) {
-          const s = 0.125, L = [0, 1, 2, 3, 4, 5].map(f => FTEX[id * 6 + f]);
-          const tmp = [];
-          g.pushBox(tmp, -s, -s, -s, s, s, s, 0, [li, li, li, 1], 0, L, [0.72, 0.72, 1, 0.55, 0.82, 0.82]);
-          const c = Math.cos(rot), sn = Math.sin(rot);
-          for (let i = 0; i < tmp.length; i += 10) { const x = tmp[i], z = tmp[i + 2]; tmp[i] = x * c - z * sn + cx + ox; tmp[i + 1] += cy + oy; tmp[i + 2] = x * sn + z * c + cz; }
-          for (const q of tmp) v.push(q);
-        } else {
-          const layer = isItem(id) ? g.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? g.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
-          const s = 0.2, c = Math.cos(rot) * s, sn = Math.sin(rot) * s;
-          const P = [[-c, -s, -sn, 0, 1], [c, -s, sn, 1, 1], [c, s, sn, 1, 0], [-c, s, -sn, 0, 0]];
-          for (const i of [0, 1, 2, 0, 2, 3]) v.push(P[i][0] + cx + ox, P[i][1] + cy + s + oy, P[i][2] + cz, P[i][3], P[i][4], layer, li, li, li, 1);
+      if (cube) {
+        const s = 0.125, c = Math.cos(rot), sn = Math.sin(rot);
+        for (let k = 0; k < 6; k++) L[k] = FTEX[id * 6 + k];
+        tmp.n = 0;
+        g.pushBox(tmp, -s, -s, -s, s, s, s, 0, C, 0, L, ITEM_SHADE);
+        const T = tmp.a, n = tmp.n;
+        for (let k = 0; k < copies; k++) {
+          const ox = k * 0.06, oy = k * 0.05, o = v.n, a = v.reserve(n);
+          for (let i = 0; i < n; i += 10) {
+            const x = T[i], z = T[i + 2];
+            a[o + i] = x * c - z * sn + cx + ox; a[o + i + 1] = T[i + 1] + cy + oy; a[o + i + 2] = x * sn + z * c + cz;
+            for (let j = 3; j < 10; j++) a[o + i + j] = T[i + j];
+          }
+          v.n = o + n;
+        }
+      } else {
+        const layer = isItem(id) ? g.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? g.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
+        const s = 0.2, c = Math.cos(rot) * s, sn = Math.sin(rot) * s;
+        for (let k = 0; k < copies; k++) {
+          const ox = cx + k * 0.06, oy = cy + s + k * 0.05;
+          for (let j = 0; j < 6; j++) {
+            const i = BOX_TRI[j], sx = i === 1 || i === 2 ? 1 : -1, sy = i >= 2 ? 1 : -1;
+            v.push(sx * c + ox, sy * s + oy, sx * sn + cz, BOX_U[i], BOX_V[i], layer, li, li, li, 1);
+          }
         }
       }
     }
-    void t;
     r.gl.disable(r.gl.CULL_FACE);
-    r.drawArr(r.f32(v), v.length / 10, env, 0.5);
+    r.drawArr(v.view(), v.n / 10, env, 0.5);
     r.gl.enable(r.gl.CULL_FACE);
   }
 }
@@ -15950,11 +15973,24 @@ function handXform(P, x, y, z, o) {
   let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
   o[0] = x2 + 0.56 + P[1] - sw2 * 0.2; o[1] = y1 - 0.62 + P[2] + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
 }
-const BUILD_ID = '81b45db';   // filled in by build.py
+// a held item, local -> view: rotate around y by 0.78 and around x by 0.32, translate by P
+const HELD_CY = Math.cos(0.78), HELD_SY = Math.sin(0.78), HELD_CX = Math.cos(0.32), HELD_SX = Math.sin(0.32);
+function heldXform(P, x, y, z, o) {
+  const x1 = x * HELD_CY + z * HELD_SY, z0 = -x * HELD_SY + z * HELD_CY;
+  const y1 = y * HELD_CX - z0 * HELD_SX, z1 = y * HELD_SX + z0 * HELD_CX;
+  o[0] = x1 + P[0]; o[1] = y1 + P[1]; o[2] = z1 + P[2];
+}
+const BUILD_ID = '32a1082';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
 const MB_SHADE = [0.72, 0.72, 1.0, 0.55, 0.8, 0.9], MB_TRI = [0, 1, 2, 0, 2, 3];
+// pushBox faces (+x, -x, top, bottom, +z, -z): per corner whether x, y, z take the max side
+const BOX_C = new Uint8Array([1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0,
+  0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0,
+  0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0]);
+const SEL_EDGE = new Uint8Array([0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]), WHITE4 = [1, 1, 1, 1], SEL_COLOR = new Float32Array([0, 0, 0, 0.55]);
+const BOX_TRI = new Uint8Array([0, 1, 2, 0, 2, 3]), BOX_U = new Uint8Array([0, 1, 1, 0]), BOX_V = new Uint8Array([1, 1, 0, 0]);
 
 // random-tick behaviour per block id, derived once from the block names
 // kind: 1 crop 0-2, 2 ripe stem, 3 sapling, 4 dirt, 5 grass, 6 fire, 7 farmland; next: crop stage / stem fruit
@@ -16008,7 +16044,7 @@ class Game {
     this.spiral.sort((a, b) => a[2] - b[2]);
     this.lastSpace = 0; this.lastW = 0;
     this.saveTimer = 0;
-    this.envObj = { fogColor: new Float32Array(3), zenith: new Float32Array(3), sunDir: [0, 1, 0], sunsetColor: [0.95, 0.5, 0.27] };
+    this.envObj = { fogColor: new Float32Array(3), zenith: new Float32Array(3), sunDir: [0, 1, 0], sunsetColor: [0.95, 0.5, 0.27], cloudColor: [1, 1, 1] };
     this.r.buildClouds(12345);
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -16143,21 +16179,24 @@ class Game {
     const pcx = Math.floor(p[0]) >> 4, pcz = Math.floor(p[2]) >> 4;
     const R = Math.min(Settings.renderDist, 27), L = R + 3; // +3: lit needs sky-init neighbours, meshing needs lit neighbours
     const maxGen = w.pool.workers.length * 3;
+    // squared column distances are integers, so d2 > x is d2 > floor(x): integer bounds, no fractions
+    const LL = Math.floor((L + 0.5) * (L + 0.5)), RR = Math.floor((R + 0.5) * (R + 0.5)), UL = Math.floor((L + 2.5) * (L + 2.5));
     // request columns
     // (index loops over the spiral and the column grid lookup: no per-cell objects every frame)
     const SP = this.spiral;
     for (let i = 0; i < SP.length; i++) {
       const e = SP[i];
-      if (e[2] > (L + 0.5) * (L + 0.5)) break;
+      if (e[2] > LL) break;
       if (w.genInFlight >= maxGen) break;
       const cx = pcx + e[0], cz = pcz + e[1];
       if (!w.col(cx, cz)) w.requestColumn(cx, cz);
     }
     // unload far columns
     if ((this.frameN & 31) === 0) {
-      for (const c of Array.from(w.cols.values())) {
+      // (a Map may drop entries while it is iterated)
+      for (const c of w.cols.values()) {
         const dx = c.cx - pcx, dz = c.cz - pcz;
-        if (dx * dx + dz * dz > (L + 2.5) * (L + 2.5)) w.unloadColumn(c);
+        if (dx * dx + dz * dz > UL) w.unloadColumn(c);
       }
     }
     // light passes (budgeted)
@@ -16182,24 +16221,28 @@ class Game {
       }
       this.litIdleAt = lit || cut ? -1 : w.stats.gen;
     }
-    // meshing
+    this.meshPass(w, pcx, pcz, RR);
+  }
+  // send dirty sections of columns within RR (squared column distance) whose neighbours are all
+  // lit to the mesh workers, nearest columns first
+  meshPass(w, pcx, pcz, RR) {
+    const SP = this.spiral, p = this.player.pos;
     const maxMesh = w.pool.workers.length * 4;
     for (let i = 0; i < SP.length; i++) {
       const e = SP[i];
-      if (e[2] > (R + 0.5) * (R + 0.5)) break;
+      if (e[2] > RR) break;
       if (w.meshInFlight >= maxMesh) break;
       const c = w.col(pcx + e[0], pcz + e[1]);
       if (!c || c.state !== 2 || !c.dirty) continue;
       let ok = true;
       for (let k = 0; k < 9 && ok; k++) { const n = w.col(c.cx + (k % 3) - 1, c.cz + ((k / 3) | 0) - 1); if (!n || n.state !== 2) ok = false; }
       if (!ok) continue;
-      // nearest sections first (vertical distance from the player)
+      // nearest sections first (vertical distance from the player; on a tie the lower one)
       const psy = (Math.floor(p[1]) - WORLD_MIN_Y) >> 4;
-      const order = [];
-      for (let s = 0; s < SECTIONS; s++) if ((c.dirty & (1 << s)) && !(c.meshBusy & (1 << s))) order.push(s);
-      order.sort((a, b) => Math.abs(a - psy) - Math.abs(b - psy));
-      for (const s of order) {
-        if (w.meshInFlight >= maxMesh) break;
+      const lim = Math.max(psy, SECTIONS - 1 - psy);
+      for (let d = 0; d <= lim; d++) for (let t = d ? -1 : 1; t <= 1 && w.meshInFlight < maxMesh; t += 2) {
+        const s = psy + t * d;
+        if (s < 0 || s >= SECTIONS || !(c.dirty & (1 << s)) || (c.meshBusy & (1 << s))) continue;
         if (w.sectionEmpty(c, s)) {
           c.dirty &= ~(1 << s);
           if (c.meshes[s]) this.r.freeSectionMesh(c.meshes[s]);
@@ -16232,20 +16275,24 @@ class Game {
     const s = Math.sin(a);
     const day = Math.max(0, Math.min(1, (s + 0.14) / 0.3));
     const sunset = Math.max(0, 1 - Math.abs(s) * 3.2) * (0.3 + 0.7 * day);
-    let sd = [Math.cos(a), s, 0.18]; const l = Math.hypot(...sd); sd = sd.map(v => v / l);
-    e.sunDir = sd; e.day = day; e.sunset = sunset;
-    const zen = [0.02 + 0.44 * day, 0.03 + 0.62 * day, 0.08 + 0.92 * day];
-    const fog = [0.03 + 0.7 * day, 0.04 + 0.8 * day, 0.09 + 0.91 * day];
+    // (the colours and the sun direction are written into the env object's own arrays)
+    const sd = e.sunDir, ca = Math.cos(a), l = Math.hypot(ca, s, 0.18);
+    sd[0] = ca / l; sd[1] = s / l; sd[2] = 0.18 / l;
+    e.day = day; e.sunset = sunset;
+    const Z = e.zenith, FC = e.fogColor;
+    Z[0] = 0.02 + 0.44 * day; Z[1] = 0.03 + 0.62 * day; Z[2] = 0.08 + 0.92 * day;
+    let f0 = 0.03 + 0.7 * day, f1 = 0.04 + 0.8 * day, f2 = 0.09 + 0.91 * day;
     // sunset tints the horizon when looking towards the sun
-    const look = this.player.look();
-    const towards = Math.max(0, look[0] * Math.sign(sd[0]));
+    const pl = this.player, lookX = Math.sin(pl.yaw) * Math.cos(pl.pitch);   // player.look()[0]
+    const towards = Math.max(0, lookX * Math.sign(sd[0]));
     const k = sunset * (0.25 + 0.55 * towards);
-    fog[0] += (0.98 - fog[0]) * k; fog[1] += (0.55 - fog[1]) * k; fog[2] += (0.3 - fog[2]) * k;
-    e.zenith.set(zen); e.fogColor.set(fog);
-    e.sunsetColor = [1.0, 0.45 + 0.1 * day, 0.2];
+    f0 += (0.98 - f0) * k; f1 += (0.55 - f1) * k; f2 += (0.3 - f2) * k;
+    FC[0] = f0; FC[1] = f1; FC[2] = f2;
+    const SC = e.sunsetColor, CC = e.cloudColor;
+    SC[0] = 1.0; SC[1] = 0.45 + 0.1 * day; SC[2] = 0.2;
     e.stars = Math.max(0, 1 - day * 1.6);
     e.moonPhase = Math.floor(this.days || 0) % 8;
-    e.cloudColor = [0.25 + 0.75 * day, 0.25 + 0.75 * day, 0.3 + 0.7 * day];
+    CC[0] = 0.25 + 0.75 * day; CC[1] = 0.25 + 0.75 * day; CC[2] = 0.3 + 0.7 * day;
     const R = Math.min(Settings.renderDist, 27);
     e.renderDist = R;
     // the rendered area is a circle of whole chunks: fog must be complete before the nearest missing chunk
@@ -17032,6 +17079,10 @@ class Game {
     // a few random ticks per section near the player (20/s): crops, stems, saplings, grass, fire, farmland
     const w = this.world, p = this.player, kind = RT.kind;
     const pcx = Math.floor(p.pos[0]) >> 4, pcz = Math.floor(p.pos[2]) >> 4;
+    // block picks from an integer xorshift generator (a few thousand a second; Math.random would
+    // return each as a new number object here)
+    const RS = this.rtSeed || (this.rtSeed = new Int32Array([(Math.random() * 0x7fffffff) | 1]));
+    let r = RS[0];
     for (let dz = -4; dz <= 4; dz++) for (let dx = -4; dx <= 4; dx++) {
       const c = w.col(pcx + dx, pcz + dz);
       if (!c || c.state !== 2) continue;
@@ -17039,12 +17090,14 @@ class Game {
         const sec = c.secs[s];
         if (!sec) continue;
         for (let k = 0; k < 2; k++) {
-          const i = (Math.random() * 4096) | 0, id = sec.ids[i];
+          r ^= r << 13; r ^= r >>> 17; r ^= r << 5;
+          const i = r & 4095, id = sec.ids[i];
           if (!kind[id]) continue;
           this.randomTick(c.cx * 16 + (i & 15), WORLD_MIN_Y + s * 16 + (i >> 8), c.cz * 16 + ((i >> 4) & 15), id);
         }
       }
     }
+    RS[0] = r;
   }
   randomTick(x, y, z, id) {
     const w = this.world;
@@ -17247,35 +17300,43 @@ class Game {
     if (!id) return;
     const gl = this.r.gl, L = this.particleLayer(id), c = 0.1;
     const I = this.inWallVP || (this.inWallVP = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
-    const v = [-1, -1, 0, 0, 1, L, c, c, c, 1, 1, -1, 0, 1, 1, L, c, c, c, 1, 1, 1, 0, 1, 0, L, c, c, c, 1,
-      -1, -1, 0, 0, 1, L, c, c, c, 1, 1, 1, 0, 1, 0, L, c, c, c, 1, -1, 1, 0, 0, 0, L, c, c, c, 1];
+    const v = this.inWallV || (this.inWallV = new Float32Array([-1, -1, 0, 0, 1, 0, c, c, c, 1, 1, -1, 0, 1, 1, 0, c, c, c, 1, 1, 1, 0, 1, 0, 0, c, c, c, 1,
+      -1, -1, 0, 0, 1, 0, c, c, c, 1, 1, 1, 0, 1, 0, 0, c, c, c, 1, -1, 1, 0, 0, 0, 0, c, c, c, 1]));
+    for (let i = 5; i < 60; i += 10) v[i] = L;
     gl.disable(gl.DEPTH_TEST);
-    this.r.drawArr(this.r.f32(v), 6, null, 0, I);
+    this.r.drawArr(v, 6, null, 0, I);
     gl.enable(gl.DEPTH_TEST);
   }
   drawSelection(env) {
     const r = this.r, gl = r.gl, t = this.target, cam = this.cam;
     const boxes = blockBoxes(this.world, t.id, t.meta, t.x, t.y, t.z);
-    const pts = [];
-    const e = 0.002;
+    const e = 0.002, need = boxes.length * 72;
+    let pts = this.selPts;
+    if (!pts || pts.length < need) pts = this.selPts = new Float32Array(Math.max(need, 72 * 8));
+    let n = 0;
     for (const b of boxes) {
       const x0 = t.x + b[0] - e - cam[0], y0 = t.y + b[1] - e - cam[1], z0 = t.z + b[2] - e - cam[2];
       const x1 = t.x + b[3] + e - cam[0], y1 = t.y + b[4] + e - cam[1], z1 = t.z + b[5] + e - cam[2];
-      const c = [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]];
-      const E = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7];
-      for (const i of E) pts.push(...c[i]);
+      // the 12 edges as corner pairs; corners 0-3 bottom, 4-7 top, each ring (x0 z0), (x1 z0), (x1 z1), (x0 z1)
+      for (let k = 0; k < 24; k++) {
+        const c = SEL_EDGE[k];
+        pts[n++] = c === 1 || c === 2 || c === 5 || c === 6 ? x1 : x0;
+        pts[n++] = c >= 4 ? y1 : y0;
+        pts[n++] = c === 2 || c === 3 || c === 6 || c === 7 ? z1 : z0;
+      }
     }
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
-    r.drawLines(r.f32(pts), [0, 0, 0, 0.55]);
+    r.drawLines(pts.subarray(0, n), SEL_COLOR);
     // crack overlay
     if (this.breaking && this.breaking.p > 0) {
       const stage = Math.min(9, Math.floor(this.breaking.p * 10));
       const layer = this.assets.layers['destroy_stage_' + stage];
-      const v = [];
-      for (const b of boxes) this.pushBox(v, t.x + b[0] - cam[0], t.y + b[1] - cam[1], t.z + b[2] - cam[2], t.x + b[3] - cam[0], t.y + b[4] - cam[1], t.z + b[5] - cam[2], layer, [1, 1, 1, 1], 0.004);
+      const v = this.crackVB || (this.crackVB = new VBuf());
+      v.n = 0;
+      for (const b of boxes) this.pushBox(v, t.x + b[0] - cam[0], t.y + b[1] - cam[1], t.z + b[2] - cam[2], t.x + b[3] - cam[0], t.y + b[4] - cam[1], t.z + b[5] - cam[2], layer, WHITE4, 0.004);
       gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -1);
-      r.drawArr(r.f32(v), v.length / 10, null, 0.01);
+      r.drawArr(v.view(), v.n / 10, null, 0.01);
       gl.disable(gl.POLYGON_OFFSET_FILL);
     }
     gl.depthMask(true); gl.disable(gl.BLEND);
@@ -17284,22 +17345,14 @@ class Game {
   pushBox(v, x0, y0, z0, x1, y1, z1, layer, col, grow, faceLayers, shades, uvFromBox) {
     const g = grow || 0;
     x0 -= g; y0 -= g; z0 -= g; x1 += g; y1 += g; z1 += g;
-    const F = [
-      [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]],
-      [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
-      [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]],
-      [[x1, y0, z1], [x0, y0, z1], [x0, y0, z0], [x1, y0, z0]],
-      [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
-      [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]],
-    ];
-    const UV = [[0, 1], [1, 1], [1, 0], [0, 0]];
     for (let f = 0; f < 6; f++) {
-      const q = F[f], L = faceLayers ? faceLayers[f] : layer, sh = shades ? shades[f] : 1;
+      const L = faceLayers ? faceLayers[f] : layer, sh = shades ? shades[f] : 1;
       const uv = uvFromBox ? uvFromBox[f] : null;
-      for (const i of [0, 1, 2, 0, 2, 3]) {
-        const c = q[i];
-        const u = uv ? uv[i * 2] : UV[i][0], w = uv ? uv[i * 2 + 1] : UV[i][1];
-        v.push(c[0], c[1], c[2], u, w, L, col[0] * sh, col[1] * sh, col[2] * sh, col[3]);
+      const cr = col[0] * sh, cg = col[1] * sh, cb = col[2] * sh, ca = col[3];
+      for (let k = 0; k < 6; k++) {
+        const i = BOX_TRI[k], c = (f * 4 + i) * 3;
+        const u = uv ? uv[i * 2] : BOX_U[i], w = uv ? uv[i * 2 + 1] : BOX_V[i];
+        v.push(BOX_C[c] ? x1 : x0, BOX_C[c + 1] ? y1 : y0, BOX_C[c + 2] ? z1 : z0, u, w, L, cr, cg, cb, ca);
       }
     }
   }
@@ -17309,19 +17362,22 @@ class Game {
     const cy = Math.cos(p.yaw), sy = Math.sin(p.yaw), cp = Math.cos(p.pitch), sp = Math.sin(p.pitch);
     const rx = cy, rz = sy; // right
     const ux = -sy * sp, uy = cp, uz = cy * sp; // up
-    const v = [];
+    const v = this.partVB || (this.partVB = new VBuf());
+    v.n = 0;
     const a = this.partAlpha ?? 1;
     for (const q of this.particles) {
       const qx = q.px + (q.x - q.px) * a, qy = q.py + (q.y - q.py) * a, qz = q.pz + (q.z - q.pz) * a;
       const x = qx - cam[0], y = qy - cam[1], z = qz - cam[2], s = q.s;
       const li = this.lightAt(qx, qy, qz, env) * 0.6;
-      const u0 = q.u / 16, v0 = q.v / 16, u1 = u0 + 0.25, v1 = v0 + 0.25;
-      const c = [[x - rx * s - ux * s, y - uy * s, z - rz * s - uz * s, u0, v1], [x + rx * s - ux * s, y - uy * s, z + rz * s - uz * s, u1, v1],
-        [x + rx * s + ux * s, y + uy * s, z + rz * s + uz * s, u1, v0], [x - rx * s + ux * s, y + uy * s, z - rz * s + uz * s, u0, v0]];
-      for (const i of [0, 1, 2, 0, 2, 3]) v.push(c[i][0], c[i][1], c[i][2], c[i][3], c[i][4], q.layer, li, li, li, 1);
+      const u0 = q.u / 16, v0 = q.v / 16, u1 = u0 + 0.25, v1 = v0 + 0.25, L = q.layer;
+      const Rx = rx * s, Rz = rz * s, Ux = ux * s, Uy = uy * s, Uz = uz * s;
+      for (let k = 0; k < 6; k++) {
+        const i = BOX_TRI[k], sr = i === 1 || i === 2 ? 1 : -1, su = i >= 2 ? 1 : -1;
+        v.push(x + sr * Rx + su * Ux, y + su * Uy, z + sr * Rz + su * Uz, sr > 0 ? u1 : u0, su > 0 ? v0 : v1, L, li, li, li, 1);
+      }
     }
     r.gl.disable(r.gl.CULL_FACE);
-    r.drawArr(r.f32(v), v.length / 10, env, 0.5);
+    r.drawArr(v.view(), v.n / 10, env, 0.5);
     r.gl.enable(r.gl.CULL_FACE);
   }
 
@@ -17355,38 +17411,35 @@ class Game {
     }
     const id = held.id;
     const cube = !isItem(id) && (SHAPE[id] === SH.CUBE || SHAPE[id] === SH.SLAB || SHAPE[id] === SH.STAIRS || SHAPE[id] === SH.CHEST || SHAPE[id] === SH.CACTUS || SHAPE[id] === SH.FARMLAND || SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL);
-    const rotY = 0.78, rotX = 0.32;
-    // held item local -> view, into one reused 3-vector (read right after each call)
-    const TQ = this.heldTQ || (this.heldTQ = new Float64Array(3));
-    const tf = (x, y, z) => {
-      let x1 = x * Math.cos(rotY) + z * Math.sin(rotY), z1 = -x * Math.sin(rotY) + z * Math.cos(rotY);
-      let y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX); z1 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
-      TQ[0] = x1 + 0.56 + bx - swingA * 0.25; TQ[1] = y1 - 0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0); TQ[2] = z1 - 1.0 - swingA * 0.2;
-      return TQ;
-    };
+    // held item local -> view (heldXform), offset by the swing, the view bobbing and eating
+    const HP = this.heldXP || (this.heldXP = new Float64Array(3)), q = this.heldTQ || (this.heldTQ = new Float64Array(3));
+    HP[0] = 0.56 + bx - swingA * 0.25; HP[1] = -0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0); HP[2] = -1.0 - swingA * 0.2;
     if (cube) {
       const s = 0.105;
       const h = SHAPE[id] === SH.SLAB ? 0 : s;
-      const L = [FTEX[id * 6], FTEX[id * 6 + 1], FTEX[id * 6 + 2], FTEX[id * 6 + 3], FTEX[id * 6 + 4], FTEX[id * 6 + 5]];
+      const L = this.heldL || (this.heldL = new Uint16Array(6)), C = this.heldC || (this.heldC = new Float64Array(4));
+      for (let k = 0; k < 6; k++) L[k] = FTEX[id * 6 + k];
       if (FLAGS[id] & BF_FACING) L[4] = FRONT[id];
-      const sh = [0.72, 0.72, 1, 0.55, 0.82, 0.82];
-      const tmp = this.heldTmp || (this.heldTmp = []);
-      tmp.length = 0;
-      this.pushBox(tmp, -s, -s, -s, s, h, s, 0, [li, li, li, 1], 0, L, sh, null);
-      const a = v.reserve(tmp.length);
-      for (let i = 0; i < tmp.length; i += 10) {
-        const q = tf(tmp[i], tmp[i + 1], tmp[i + 2]);
+      C[0] = C[1] = C[2] = li; C[3] = 1;
+      const tmp = this.heldTmp || (this.heldTmp = new VBuf());
+      tmp.n = 0;
+      this.pushBox(tmp, -s, -s, -s, s, h, s, 0, C, 0, L, ITEM_SHADE, null);
+      const T = tmp.a, n = tmp.n, a = v.reserve(n);
+      for (let i = 0; i < n; i += 10) {
+        heldXform(HP, T[i], T[i + 1], T[i + 2], q);
         a[i] = q[0]; a[i + 1] = q[1]; a[i + 2] = q[2];
-        for (let k = 3; k < 10; k++) a[i + k] = tmp[i + k];
+        for (let k = 3; k < 10; k++) a[i + k] = T[i + k];
       }
-      v.n = tmp.length;
+      v.n = n;
     } else {
-      // flat item sprite (double sided)
+      // flat item sprite (double sided), turned by -0.6 around y
       const layer = isItem(id) ? this.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? this.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
-      const s = 0.25;
-      const c = [[-s, -s, 0, 0, 1], [s, -s, 0, 1, 1], [s, s, 0, 1, 0], [-s, s, 0, 0, 0]];
-      const rot = (x, y, z) => { const a = -0.6; return tf(x * Math.cos(a) - z * Math.sin(a) + 0.05, y + 0.08, x * Math.sin(a) + z * Math.cos(a)); };
-      for (const i of [0, 1, 2, 0, 2, 3]) { const q = rot(c[i][0], c[i][1], c[i][2]); v.push(q[0], q[1], q[2], c[i][3], c[i][4], layer, li, li, li, 1); }
+      const s = 0.25, ca = Math.cos(-0.6), sa = Math.sin(-0.6);
+      for (let k = 0; k < 6; k++) {
+        const i = BOX_TRI[k], x = i === 1 || i === 2 ? s : -s, y = i >= 2 ? s : -s;
+        heldXform(HP, x * ca + 0.05, y + 0.08, x * sa, q);
+        v.push(q[0], q[1], q[2], BOX_U[i], BOX_V[i], layer, li, li, li, 1);
+      }
     }
     gl.disable(gl.CULL_FACE);
     r.drawArr(v.view(), v.n / 10, null, 0.5, proj);

@@ -25,11 +25,24 @@ function handXform(P, x, y, z, o) {
   let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
   o[0] = x2 + 0.56 + P[1] - sw2 * 0.2; o[1] = y1 - 0.62 + P[2] + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
 }
+// a held item, local -> view: rotate around y by 0.78 and around x by 0.32, translate by P
+const HELD_CY = Math.cos(0.78), HELD_SY = Math.sin(0.78), HELD_CX = Math.cos(0.32), HELD_SX = Math.sin(0.32);
+function heldXform(P, x, y, z, o) {
+  const x1 = x * HELD_CY + z * HELD_SY, z0 = -x * HELD_SY + z * HELD_CY;
+  const y1 = y * HELD_CX - z0 * HELD_SX, z1 = y * HELD_SX + z0 * HELD_CX;
+  o[0] = x1 + P[0]; o[1] = y1 + P[1]; o[2] = z1 + P[2];
+}
 const BUILD_ID = '@BUILD@';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
 const MB_SHADE = [0.72, 0.72, 1.0, 0.55, 0.8, 0.9], MB_TRI = [0, 1, 2, 0, 2, 3];
+// pushBox faces (+x, -x, top, bottom, +z, -z): per corner whether x, y, z take the max side
+const BOX_C = new Uint8Array([1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0,
+  0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0,
+  0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0]);
+const SEL_EDGE = new Uint8Array([0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]), WHITE4 = [1, 1, 1, 1], SEL_COLOR = new Float32Array([0, 0, 0, 0.55]);
+const BOX_TRI = new Uint8Array([0, 1, 2, 0, 2, 3]), BOX_U = new Uint8Array([0, 1, 1, 0]), BOX_V = new Uint8Array([1, 1, 0, 0]);
 
 // random-tick behaviour per block id, derived once from the block names
 // kind: 1 crop 0-2, 2 ripe stem, 3 sapling, 4 dirt, 5 grass, 6 fire, 7 farmland; next: crop stage / stem fruit
@@ -83,7 +96,7 @@ class Game {
     this.spiral.sort((a, b) => a[2] - b[2]);
     this.lastSpace = 0; this.lastW = 0;
     this.saveTimer = 0;
-    this.envObj = { fogColor: new Float32Array(3), zenith: new Float32Array(3), sunDir: [0, 1, 0], sunsetColor: [0.95, 0.5, 0.27] };
+    this.envObj = { fogColor: new Float32Array(3), zenith: new Float32Array(3), sunDir: [0, 1, 0], sunsetColor: [0.95, 0.5, 0.27], cloudColor: [1, 1, 1] };
     this.r.buildClouds(12345);
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -218,21 +231,24 @@ class Game {
     const pcx = Math.floor(p[0]) >> 4, pcz = Math.floor(p[2]) >> 4;
     const R = Math.min(Settings.renderDist, 27), L = R + 3; // +3: lit needs sky-init neighbours, meshing needs lit neighbours
     const maxGen = w.pool.workers.length * 3;
+    // squared column distances are integers, so d2 > x is d2 > floor(x): integer bounds, no fractions
+    const LL = Math.floor((L + 0.5) * (L + 0.5)), RR = Math.floor((R + 0.5) * (R + 0.5)), UL = Math.floor((L + 2.5) * (L + 2.5));
     // request columns
     // (index loops over the spiral and the column grid lookup: no per-cell objects every frame)
     const SP = this.spiral;
     for (let i = 0; i < SP.length; i++) {
       const e = SP[i];
-      if (e[2] > (L + 0.5) * (L + 0.5)) break;
+      if (e[2] > LL) break;
       if (w.genInFlight >= maxGen) break;
       const cx = pcx + e[0], cz = pcz + e[1];
       if (!w.col(cx, cz)) w.requestColumn(cx, cz);
     }
     // unload far columns
     if ((this.frameN & 31) === 0) {
-      for (const c of Array.from(w.cols.values())) {
+      // (a Map may drop entries while it is iterated)
+      for (const c of w.cols.values()) {
         const dx = c.cx - pcx, dz = c.cz - pcz;
-        if (dx * dx + dz * dz > (L + 2.5) * (L + 2.5)) w.unloadColumn(c);
+        if (dx * dx + dz * dz > UL) w.unloadColumn(c);
       }
     }
     // light passes (budgeted)
@@ -257,24 +273,28 @@ class Game {
       }
       this.litIdleAt = lit || cut ? -1 : w.stats.gen;
     }
-    // meshing
+    this.meshPass(w, pcx, pcz, RR);
+  }
+  // send dirty sections of columns within RR (squared column distance) whose neighbours are all
+  // lit to the mesh workers, nearest columns first
+  meshPass(w, pcx, pcz, RR) {
+    const SP = this.spiral, p = this.player.pos;
     const maxMesh = w.pool.workers.length * 4;
     for (let i = 0; i < SP.length; i++) {
       const e = SP[i];
-      if (e[2] > (R + 0.5) * (R + 0.5)) break;
+      if (e[2] > RR) break;
       if (w.meshInFlight >= maxMesh) break;
       const c = w.col(pcx + e[0], pcz + e[1]);
       if (!c || c.state !== 2 || !c.dirty) continue;
       let ok = true;
       for (let k = 0; k < 9 && ok; k++) { const n = w.col(c.cx + (k % 3) - 1, c.cz + ((k / 3) | 0) - 1); if (!n || n.state !== 2) ok = false; }
       if (!ok) continue;
-      // nearest sections first (vertical distance from the player)
+      // nearest sections first (vertical distance from the player; on a tie the lower one)
       const psy = (Math.floor(p[1]) - WORLD_MIN_Y) >> 4;
-      const order = [];
-      for (let s = 0; s < SECTIONS; s++) if ((c.dirty & (1 << s)) && !(c.meshBusy & (1 << s))) order.push(s);
-      order.sort((a, b) => Math.abs(a - psy) - Math.abs(b - psy));
-      for (const s of order) {
-        if (w.meshInFlight >= maxMesh) break;
+      const lim = Math.max(psy, SECTIONS - 1 - psy);
+      for (let d = 0; d <= lim; d++) for (let t = d ? -1 : 1; t <= 1 && w.meshInFlight < maxMesh; t += 2) {
+        const s = psy + t * d;
+        if (s < 0 || s >= SECTIONS || !(c.dirty & (1 << s)) || (c.meshBusy & (1 << s))) continue;
         if (w.sectionEmpty(c, s)) {
           c.dirty &= ~(1 << s);
           if (c.meshes[s]) this.r.freeSectionMesh(c.meshes[s]);
@@ -307,20 +327,24 @@ class Game {
     const s = Math.sin(a);
     const day = Math.max(0, Math.min(1, (s + 0.14) / 0.3));
     const sunset = Math.max(0, 1 - Math.abs(s) * 3.2) * (0.3 + 0.7 * day);
-    let sd = [Math.cos(a), s, 0.18]; const l = Math.hypot(...sd); sd = sd.map(v => v / l);
-    e.sunDir = sd; e.day = day; e.sunset = sunset;
-    const zen = [0.02 + 0.44 * day, 0.03 + 0.62 * day, 0.08 + 0.92 * day];
-    const fog = [0.03 + 0.7 * day, 0.04 + 0.8 * day, 0.09 + 0.91 * day];
+    // (the colours and the sun direction are written into the env object's own arrays)
+    const sd = e.sunDir, ca = Math.cos(a), l = Math.hypot(ca, s, 0.18);
+    sd[0] = ca / l; sd[1] = s / l; sd[2] = 0.18 / l;
+    e.day = day; e.sunset = sunset;
+    const Z = e.zenith, FC = e.fogColor;
+    Z[0] = 0.02 + 0.44 * day; Z[1] = 0.03 + 0.62 * day; Z[2] = 0.08 + 0.92 * day;
+    let f0 = 0.03 + 0.7 * day, f1 = 0.04 + 0.8 * day, f2 = 0.09 + 0.91 * day;
     // sunset tints the horizon when looking towards the sun
-    const look = this.player.look();
-    const towards = Math.max(0, look[0] * Math.sign(sd[0]));
+    const pl = this.player, lookX = Math.sin(pl.yaw) * Math.cos(pl.pitch);   // player.look()[0]
+    const towards = Math.max(0, lookX * Math.sign(sd[0]));
     const k = sunset * (0.25 + 0.55 * towards);
-    fog[0] += (0.98 - fog[0]) * k; fog[1] += (0.55 - fog[1]) * k; fog[2] += (0.3 - fog[2]) * k;
-    e.zenith.set(zen); e.fogColor.set(fog);
-    e.sunsetColor = [1.0, 0.45 + 0.1 * day, 0.2];
+    f0 += (0.98 - f0) * k; f1 += (0.55 - f1) * k; f2 += (0.3 - f2) * k;
+    FC[0] = f0; FC[1] = f1; FC[2] = f2;
+    const SC = e.sunsetColor, CC = e.cloudColor;
+    SC[0] = 1.0; SC[1] = 0.45 + 0.1 * day; SC[2] = 0.2;
     e.stars = Math.max(0, 1 - day * 1.6);
     e.moonPhase = Math.floor(this.days || 0) % 8;
-    e.cloudColor = [0.25 + 0.75 * day, 0.25 + 0.75 * day, 0.3 + 0.7 * day];
+    CC[0] = 0.25 + 0.75 * day; CC[1] = 0.25 + 0.75 * day; CC[2] = 0.3 + 0.7 * day;
     const R = Math.min(Settings.renderDist, 27);
     e.renderDist = R;
     // the rendered area is a circle of whole chunks: fog must be complete before the nearest missing chunk
@@ -1107,6 +1131,10 @@ class Game {
     // a few random ticks per section near the player (20/s): crops, stems, saplings, grass, fire, farmland
     const w = this.world, p = this.player, kind = RT.kind;
     const pcx = Math.floor(p.pos[0]) >> 4, pcz = Math.floor(p.pos[2]) >> 4;
+    // block picks from an integer xorshift generator (a few thousand a second; Math.random would
+    // return each as a new number object here)
+    const RS = this.rtSeed || (this.rtSeed = new Int32Array([(Math.random() * 0x7fffffff) | 1]));
+    let r = RS[0];
     for (let dz = -4; dz <= 4; dz++) for (let dx = -4; dx <= 4; dx++) {
       const c = w.col(pcx + dx, pcz + dz);
       if (!c || c.state !== 2) continue;
@@ -1114,12 +1142,14 @@ class Game {
         const sec = c.secs[s];
         if (!sec) continue;
         for (let k = 0; k < 2; k++) {
-          const i = (Math.random() * 4096) | 0, id = sec.ids[i];
+          r ^= r << 13; r ^= r >>> 17; r ^= r << 5;
+          const i = r & 4095, id = sec.ids[i];
           if (!kind[id]) continue;
           this.randomTick(c.cx * 16 + (i & 15), WORLD_MIN_Y + s * 16 + (i >> 8), c.cz * 16 + ((i >> 4) & 15), id);
         }
       }
     }
+    RS[0] = r;
   }
   randomTick(x, y, z, id) {
     const w = this.world;
@@ -1322,35 +1352,43 @@ class Game {
     if (!id) return;
     const gl = this.r.gl, L = this.particleLayer(id), c = 0.1;
     const I = this.inWallVP || (this.inWallVP = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
-    const v = [-1, -1, 0, 0, 1, L, c, c, c, 1, 1, -1, 0, 1, 1, L, c, c, c, 1, 1, 1, 0, 1, 0, L, c, c, c, 1,
-      -1, -1, 0, 0, 1, L, c, c, c, 1, 1, 1, 0, 1, 0, L, c, c, c, 1, -1, 1, 0, 0, 0, L, c, c, c, 1];
+    const v = this.inWallV || (this.inWallV = new Float32Array([-1, -1, 0, 0, 1, 0, c, c, c, 1, 1, -1, 0, 1, 1, 0, c, c, c, 1, 1, 1, 0, 1, 0, 0, c, c, c, 1,
+      -1, -1, 0, 0, 1, 0, c, c, c, 1, 1, 1, 0, 1, 0, 0, c, c, c, 1, -1, 1, 0, 0, 0, 0, c, c, c, 1]));
+    for (let i = 5; i < 60; i += 10) v[i] = L;
     gl.disable(gl.DEPTH_TEST);
-    this.r.drawArr(this.r.f32(v), 6, null, 0, I);
+    this.r.drawArr(v, 6, null, 0, I);
     gl.enable(gl.DEPTH_TEST);
   }
   drawSelection(env) {
     const r = this.r, gl = r.gl, t = this.target, cam = this.cam;
     const boxes = blockBoxes(this.world, t.id, t.meta, t.x, t.y, t.z);
-    const pts = [];
-    const e = 0.002;
+    const e = 0.002, need = boxes.length * 72;
+    let pts = this.selPts;
+    if (!pts || pts.length < need) pts = this.selPts = new Float32Array(Math.max(need, 72 * 8));
+    let n = 0;
     for (const b of boxes) {
       const x0 = t.x + b[0] - e - cam[0], y0 = t.y + b[1] - e - cam[1], z0 = t.z + b[2] - e - cam[2];
       const x1 = t.x + b[3] + e - cam[0], y1 = t.y + b[4] + e - cam[1], z1 = t.z + b[5] + e - cam[2];
-      const c = [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]];
-      const E = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7];
-      for (const i of E) pts.push(...c[i]);
+      // the 12 edges as corner pairs; corners 0-3 bottom, 4-7 top, each ring (x0 z0), (x1 z0), (x1 z1), (x0 z1)
+      for (let k = 0; k < 24; k++) {
+        const c = SEL_EDGE[k];
+        pts[n++] = c === 1 || c === 2 || c === 5 || c === 6 ? x1 : x0;
+        pts[n++] = c >= 4 ? y1 : y0;
+        pts[n++] = c === 2 || c === 3 || c === 6 || c === 7 ? z1 : z0;
+      }
     }
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
-    r.drawLines(r.f32(pts), [0, 0, 0, 0.55]);
+    r.drawLines(pts.subarray(0, n), SEL_COLOR);
     // crack overlay
     if (this.breaking && this.breaking.p > 0) {
       const stage = Math.min(9, Math.floor(this.breaking.p * 10));
       const layer = this.assets.layers['destroy_stage_' + stage];
-      const v = [];
-      for (const b of boxes) this.pushBox(v, t.x + b[0] - cam[0], t.y + b[1] - cam[1], t.z + b[2] - cam[2], t.x + b[3] - cam[0], t.y + b[4] - cam[1], t.z + b[5] - cam[2], layer, [1, 1, 1, 1], 0.004);
+      const v = this.crackVB || (this.crackVB = new VBuf());
+      v.n = 0;
+      for (const b of boxes) this.pushBox(v, t.x + b[0] - cam[0], t.y + b[1] - cam[1], t.z + b[2] - cam[2], t.x + b[3] - cam[0], t.y + b[4] - cam[1], t.z + b[5] - cam[2], layer, WHITE4, 0.004);
       gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -1);
-      r.drawArr(r.f32(v), v.length / 10, null, 0.01);
+      r.drawArr(v.view(), v.n / 10, null, 0.01);
       gl.disable(gl.POLYGON_OFFSET_FILL);
     }
     gl.depthMask(true); gl.disable(gl.BLEND);
@@ -1359,22 +1397,14 @@ class Game {
   pushBox(v, x0, y0, z0, x1, y1, z1, layer, col, grow, faceLayers, shades, uvFromBox) {
     const g = grow || 0;
     x0 -= g; y0 -= g; z0 -= g; x1 += g; y1 += g; z1 += g;
-    const F = [
-      [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]],
-      [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
-      [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]],
-      [[x1, y0, z1], [x0, y0, z1], [x0, y0, z0], [x1, y0, z0]],
-      [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
-      [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]],
-    ];
-    const UV = [[0, 1], [1, 1], [1, 0], [0, 0]];
     for (let f = 0; f < 6; f++) {
-      const q = F[f], L = faceLayers ? faceLayers[f] : layer, sh = shades ? shades[f] : 1;
+      const L = faceLayers ? faceLayers[f] : layer, sh = shades ? shades[f] : 1;
       const uv = uvFromBox ? uvFromBox[f] : null;
-      for (const i of [0, 1, 2, 0, 2, 3]) {
-        const c = q[i];
-        const u = uv ? uv[i * 2] : UV[i][0], w = uv ? uv[i * 2 + 1] : UV[i][1];
-        v.push(c[0], c[1], c[2], u, w, L, col[0] * sh, col[1] * sh, col[2] * sh, col[3]);
+      const cr = col[0] * sh, cg = col[1] * sh, cb = col[2] * sh, ca = col[3];
+      for (let k = 0; k < 6; k++) {
+        const i = BOX_TRI[k], c = (f * 4 + i) * 3;
+        const u = uv ? uv[i * 2] : BOX_U[i], w = uv ? uv[i * 2 + 1] : BOX_V[i];
+        v.push(BOX_C[c] ? x1 : x0, BOX_C[c + 1] ? y1 : y0, BOX_C[c + 2] ? z1 : z0, u, w, L, cr, cg, cb, ca);
       }
     }
   }
@@ -1384,19 +1414,22 @@ class Game {
     const cy = Math.cos(p.yaw), sy = Math.sin(p.yaw), cp = Math.cos(p.pitch), sp = Math.sin(p.pitch);
     const rx = cy, rz = sy; // right
     const ux = -sy * sp, uy = cp, uz = cy * sp; // up
-    const v = [];
+    const v = this.partVB || (this.partVB = new VBuf());
+    v.n = 0;
     const a = this.partAlpha ?? 1;
     for (const q of this.particles) {
       const qx = q.px + (q.x - q.px) * a, qy = q.py + (q.y - q.py) * a, qz = q.pz + (q.z - q.pz) * a;
       const x = qx - cam[0], y = qy - cam[1], z = qz - cam[2], s = q.s;
       const li = this.lightAt(qx, qy, qz, env) * 0.6;
-      const u0 = q.u / 16, v0 = q.v / 16, u1 = u0 + 0.25, v1 = v0 + 0.25;
-      const c = [[x - rx * s - ux * s, y - uy * s, z - rz * s - uz * s, u0, v1], [x + rx * s - ux * s, y - uy * s, z + rz * s - uz * s, u1, v1],
-        [x + rx * s + ux * s, y + uy * s, z + rz * s + uz * s, u1, v0], [x - rx * s + ux * s, y + uy * s, z - rz * s + uz * s, u0, v0]];
-      for (const i of [0, 1, 2, 0, 2, 3]) v.push(c[i][0], c[i][1], c[i][2], c[i][3], c[i][4], q.layer, li, li, li, 1);
+      const u0 = q.u / 16, v0 = q.v / 16, u1 = u0 + 0.25, v1 = v0 + 0.25, L = q.layer;
+      const Rx = rx * s, Rz = rz * s, Ux = ux * s, Uy = uy * s, Uz = uz * s;
+      for (let k = 0; k < 6; k++) {
+        const i = BOX_TRI[k], sr = i === 1 || i === 2 ? 1 : -1, su = i >= 2 ? 1 : -1;
+        v.push(x + sr * Rx + su * Ux, y + su * Uy, z + sr * Rz + su * Uz, sr > 0 ? u1 : u0, su > 0 ? v0 : v1, L, li, li, li, 1);
+      }
     }
     r.gl.disable(r.gl.CULL_FACE);
-    r.drawArr(r.f32(v), v.length / 10, env, 0.5);
+    r.drawArr(v.view(), v.n / 10, env, 0.5);
     r.gl.enable(r.gl.CULL_FACE);
   }
 
@@ -1430,38 +1463,35 @@ class Game {
     }
     const id = held.id;
     const cube = !isItem(id) && (SHAPE[id] === SH.CUBE || SHAPE[id] === SH.SLAB || SHAPE[id] === SH.STAIRS || SHAPE[id] === SH.CHEST || SHAPE[id] === SH.CACTUS || SHAPE[id] === SH.FARMLAND || SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL);
-    const rotY = 0.78, rotX = 0.32;
-    // held item local -> view, into one reused 3-vector (read right after each call)
-    const TQ = this.heldTQ || (this.heldTQ = new Float64Array(3));
-    const tf = (x, y, z) => {
-      let x1 = x * Math.cos(rotY) + z * Math.sin(rotY), z1 = -x * Math.sin(rotY) + z * Math.cos(rotY);
-      let y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX); z1 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
-      TQ[0] = x1 + 0.56 + bx - swingA * 0.25; TQ[1] = y1 - 0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0); TQ[2] = z1 - 1.0 - swingA * 0.2;
-      return TQ;
-    };
+    // held item local -> view (heldXform), offset by the swing, the view bobbing and eating
+    const HP = this.heldXP || (this.heldXP = new Float64Array(3)), q = this.heldTQ || (this.heldTQ = new Float64Array(3));
+    HP[0] = 0.56 + bx - swingA * 0.25; HP[1] = -0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0); HP[2] = -1.0 - swingA * 0.2;
     if (cube) {
       const s = 0.105;
       const h = SHAPE[id] === SH.SLAB ? 0 : s;
-      const L = [FTEX[id * 6], FTEX[id * 6 + 1], FTEX[id * 6 + 2], FTEX[id * 6 + 3], FTEX[id * 6 + 4], FTEX[id * 6 + 5]];
+      const L = this.heldL || (this.heldL = new Uint16Array(6)), C = this.heldC || (this.heldC = new Float64Array(4));
+      for (let k = 0; k < 6; k++) L[k] = FTEX[id * 6 + k];
       if (FLAGS[id] & BF_FACING) L[4] = FRONT[id];
-      const sh = [0.72, 0.72, 1, 0.55, 0.82, 0.82];
-      const tmp = this.heldTmp || (this.heldTmp = []);
-      tmp.length = 0;
-      this.pushBox(tmp, -s, -s, -s, s, h, s, 0, [li, li, li, 1], 0, L, sh, null);
-      const a = v.reserve(tmp.length);
-      for (let i = 0; i < tmp.length; i += 10) {
-        const q = tf(tmp[i], tmp[i + 1], tmp[i + 2]);
+      C[0] = C[1] = C[2] = li; C[3] = 1;
+      const tmp = this.heldTmp || (this.heldTmp = new VBuf());
+      tmp.n = 0;
+      this.pushBox(tmp, -s, -s, -s, s, h, s, 0, C, 0, L, ITEM_SHADE, null);
+      const T = tmp.a, n = tmp.n, a = v.reserve(n);
+      for (let i = 0; i < n; i += 10) {
+        heldXform(HP, T[i], T[i + 1], T[i + 2], q);
         a[i] = q[0]; a[i + 1] = q[1]; a[i + 2] = q[2];
-        for (let k = 3; k < 10; k++) a[i + k] = tmp[i + k];
+        for (let k = 3; k < 10; k++) a[i + k] = T[i + k];
       }
-      v.n = tmp.length;
+      v.n = n;
     } else {
-      // flat item sprite (double sided)
+      // flat item sprite (double sided), turned by -0.6 around y
       const layer = isItem(id) ? this.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? this.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
-      const s = 0.25;
-      const c = [[-s, -s, 0, 0, 1], [s, -s, 0, 1, 1], [s, s, 0, 1, 0], [-s, s, 0, 0, 0]];
-      const rot = (x, y, z) => { const a = -0.6; return tf(x * Math.cos(a) - z * Math.sin(a) + 0.05, y + 0.08, x * Math.sin(a) + z * Math.cos(a)); };
-      for (const i of [0, 1, 2, 0, 2, 3]) { const q = rot(c[i][0], c[i][1], c[i][2]); v.push(q[0], q[1], q[2], c[i][3], c[i][4], layer, li, li, li, 1); }
+      const s = 0.25, ca = Math.cos(-0.6), sa = Math.sin(-0.6);
+      for (let k = 0; k < 6; k++) {
+        const i = BOX_TRI[k], x = i === 1 || i === 2 ? s : -s, y = i >= 2 ? s : -s;
+        heldXform(HP, x * ca + 0.05, y + 0.08, x * sa, q);
+        v.push(q[0], q[1], q[2], BOX_U[i], BOX_V[i], layer, li, li, li, 1);
+      }
     }
     gl.disable(gl.CULL_FACE);
     r.drawArr(v.view(), v.n / 10, null, 0.5, proj);
