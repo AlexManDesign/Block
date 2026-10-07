@@ -240,8 +240,32 @@ class TypeInference {
     this.statement(n.body);return;
    case'TryStatement':this.statement(n.block);if(n.handler){if(n.handler.param)this.pattern(n.handler.param);this.statement(n.handler.body);}this.statement(n.finalizer);return;
   }
+  if(n.type==='ForStatement'&&this.induction(n))return;
   // Generic: expressions and nested statements.
   children(n,c=>{if(c.type.endsWith('Statement')||c.type==='VariableDeclaration'||c.type==='FunctionDeclaration'||c.type==='ClassDeclaration'||c.type==='SwitchCase')this.statement(c);else this.expr(c);});
+ }
+ // for (...; i < e; i++) with i and e int32 and i changed nowhere else: the
+ // test bounds i below 2^31-1 before every increment, so i stays int32
+ // (likewise i > e with i--).
+ induction(n){
+  const u=n.update,t=n.test;
+  if(!u||u.type!=='UpdateExpression'||u.argument.type!=='Identifier'||!t||t.type!=='BinaryExpression')return false;
+  const b=u.argument._ref?.binding;
+  if(!b||b.storage==='global'||b.assigns!==1)return false;
+  const up=u.operator==='++',ref=x=>x.type==='Identifier'&&x._ref?.binding===b;
+  let bound,ok=false;
+  if(ref(t.left)&&(up?t.operator==='<':t.operator==='>'))bound=t.right;
+  else if(ref(t.right)&&(up?t.operator==='>':t.operator==='<'))bound=t.left;
+  else return false;
+  if(n.init){if(n.init.type==='VariableDeclaration')this.statement(n.init);else this.expr(n.init);}
+  const l=this.expr(t.left),r=this.expr(t.right);if(this.annotate)t._t=BOOL;
+  // Optimistic while types are still settling: unknown counts as int until
+  // the fixed point proves otherwise (then i widens and stays num).
+  const bt=bound===t.left?l:r;
+  ok=(bt==null||bt===INT)&&(this.types.get(b)??INT)===INT;
+  if(ok){this.expr(u.argument);if(this.annotate){u._t=INT;u._induction=true;}}else this.expr(u);
+  this.statement(n.body);
+  return true;
  }
  // Static type of an expression; also propagates assignments and calls.
  expr(n){

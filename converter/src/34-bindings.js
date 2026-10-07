@@ -259,8 +259,14 @@ const bindings={
   if(this.isGlobal(this.ref(n))){this.integer(this.c.constant(n.name));this.rt('globalDelete');return;}
   this.lit(false);
  },
- updateNatural(n,delta,prefix){
+ updateNatural(n,delta,prefix,induction=false){
   const b=this.ref(n).binding;
+  if(induction&&!this.dynamicOnly&&b.type===INT){
+   // A proven loop induction variable cannot overflow int32.
+   const old=this.local(I32),value=this.local(I32);
+   this.convert(this.readNatural(n),'n',INT);this.tee(old);this.integer(delta);this.out(0x6a);this.set(value);
+   this.writeIdentifier(n,()=>{this.get(value);return 'n';},false);this.get(prefix?value:old);return 'n';
+  }
   if(!this.dynamicOnly&&b&&b.storage!=='global'&&b.type===NUM){
    const old=this.local(F64),value=this.local(F64);
    this.convert(this.readNatural(n),'f',NUM);this.tee(old);this.f64(delta);this.out(0xa0);this.set(value);
@@ -304,7 +310,7 @@ const bindings={
      if(n.operator==='~'&&t===INT){this.emitAs(n.argument,'n');this.integer(-1);this.out(0x73);return 'n';}
      if(n.operator==='void'){const r=this.natural(n.argument);this.out(0x1a);this.lit(undefined);return r&&'r';}
      break;
-    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix);if(n.argument._elem)return this.updateElement(n);if(this.plainMember(n.argument))return this.updateMember(n);break;
+    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix,!!n._induction);if(n.argument._elem)return this.updateElement(n);if(this.plainMember(n.argument))return this.updateMember(n);break;
     case'AssignmentExpression':{
      if(n.left.type==='Identifier')return this.assignNatural(n);
      if(n.left._elem){const r=this.assignElement(n);if(r)return r;}

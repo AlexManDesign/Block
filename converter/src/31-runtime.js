@@ -230,7 +230,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function callValue(fn,self,args){
   const f=functions.get(fn);if(f?.invokeBoxed)return f.invokeBoxed(self,args,environment.undefinedValue());
   if(stringMethodIds.has(fn)&&environment.isString(self))return box(nativeStringCall(fn,self,args.map(unbox)));
-  if((fn===arrayPush||fn===arrayPop)&&environment.isObject(self)&&environment.objectKind(self)===1&&environment.objectHost(self)===null){
+  if((fn===arrayPush||fn===arrayPop)&&environment.isObject(self)&&environment.objectKind(self)===1&&environment.objectHost(self)===null&&(environment.arrayLength(self)>>>0)+args.length<1048576){
    if(fn===arrayPop)return environment.arrayPopValue(self,box('length'));
    for(const v of args)environment.push(self,v);return environment.getProp(self,box('length'));
   }

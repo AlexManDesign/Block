@@ -123,6 +123,8 @@ function addObjectRuntime(def){
  def('pushIntrinsic',[REF,REF],[I32],f=>{
   f.get(0);f.call('isObject');f.out(0x45);f.if(()=>{f.int(0);f.ret();});
   array(f,0);f.out(0x45);f.if(()=>{f.int(0);f.ret();});forwarded(f,0);f.if(()=>{f.int(0);f.ret();});
+  // Near the length limit the real push decides (it throws RangeError).
+  f.field(0,OBJECT,LENGTH);f.int(MAX_DENSE-8);f.out(0x4f);f.if(()=>{f.int(0);f.ret();});
   f.call('prototypeFlags');f.int(16);f.out(0x71,0x45);f.if(()=>{f.int(0);f.ret();});
   f.get(0);f.get(1);f.call('objectFind');f.out(0xd1);
  });

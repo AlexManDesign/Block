@@ -16623,6 +16623,8 @@ function addObjectRuntime(def){
  def('pushIntrinsic',[REF,REF],[I32],f=>{
   f.get(0);f.call('isObject');f.out(0x45);f.if(()=>{f.int(0);f.ret();});
   array(f,0);f.out(0x45);f.if(()=>{f.int(0);f.ret();});forwarded(f,0);f.if(()=>{f.int(0);f.ret();});
+  // Near the length limit the real push decides (it throws RangeError).
+  f.field(0,OBJECT,LENGTH);f.int(MAX_DENSE-8);f.out(0x4f);f.if(()=>{f.int(0);f.ret();});
   f.call('prototypeFlags');f.int(16);f.out(0x71,0x45);f.if(()=>{f.int(0);f.ret();});
   f.get(0);f.get(1);f.call('objectFind');f.out(0xd1);
  });
@@ -16921,7 +16923,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function callValue(fn,self,args){
   const f=functions.get(fn);if(f?.invokeBoxed)return f.invokeBoxed(self,args,environment.undefinedValue());
   if(stringMethodIds.has(fn)&&environment.isString(self))return box(nativeStringCall(fn,self,args.map(unbox)));
-  if((fn===arrayPush||fn===arrayPop)&&environment.isObject(self)&&environment.objectKind(self)===1&&environment.objectHost(self)===null){
+  if((fn===arrayPush||fn===arrayPop)&&environment.isObject(self)&&environment.objectKind(self)===1&&environment.objectHost(self)===null&&(environment.arrayLength(self)>>>0)+args.length<1048576){
    if(fn===arrayPop)return environment.arrayPopValue(self,box('length'));
    for(const v of args)environment.push(self,v);return environment.getProp(self,box('length'));
   }
@@ -17931,8 +17933,14 @@ const bindings={
   if(this.isGlobal(this.ref(n))){this.integer(this.c.constant(n.name));this.rt('globalDelete');return;}
   this.lit(false);
  },
- updateNatural(n,delta,prefix){
+ updateNatural(n,delta,prefix,induction=false){
   const b=this.ref(n).binding;
+  if(induction&&!this.dynamicOnly&&b.type===INT){
+   // A proven loop induction variable cannot overflow int32.
+   const old=this.local(I32),value=this.local(I32);
+   this.convert(this.readNatural(n),'n',INT);this.tee(old);this.integer(delta);this.out(0x6a);this.set(value);
+   this.writeIdentifier(n,()=>{this.get(value);return 'n';},false);this.get(prefix?value:old);return 'n';
+  }
   if(!this.dynamicOnly&&b&&b.storage!=='global'&&b.type===NUM){
    const old=this.local(F64),value=this.local(F64);
    this.convert(this.readNatural(n),'f',NUM);this.tee(old);this.f64(delta);this.out(0xa0);this.set(value);
@@ -17976,7 +17984,7 @@ const bindings={
      if(n.operator==='~'&&t===INT){this.emitAs(n.argument,'n');this.integer(-1);this.out(0x73);return 'n';}
      if(n.operator==='void'){const r=this.natural(n.argument);this.out(0x1a);this.lit(undefined);return r&&'r';}
      break;
-    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix);if(n.argument._elem)return this.updateElement(n);if(this.plainMember(n.argument))return this.updateMember(n);break;
+    case'UpdateExpression':if(n.argument.type==='Identifier')return this.updateNatural(n.argument,n.operator==='++'?1:-1,n.prefix,!!n._induction);if(n.argument._elem)return this.updateElement(n);if(this.plainMember(n.argument))return this.updateMember(n);break;
     case'AssignmentExpression':{
      if(n.left.type==='Identifier')return this.assignNatural(n);
      if(n.left._elem){const r=this.assignElement(n);if(r)return r;}
@@ -18623,8 +18631,32 @@ class TypeInference {
     this.statement(n.body);return;
    case'TryStatement':this.statement(n.block);if(n.handler){if(n.handler.param)this.pattern(n.handler.param);this.statement(n.handler.body);}this.statement(n.finalizer);return;
   }
+  if(n.type==='ForStatement'&&this.induction(n))return;
   // Generic: expressions and nested statements.
   children(n,c=>{if(c.type.endsWith('Statement')||c.type==='VariableDeclaration'||c.type==='FunctionDeclaration'||c.type==='ClassDeclaration'||c.type==='SwitchCase')this.statement(c);else this.expr(c);});
+ }
+ // for (...; i < e; i++) with i and e int32 and i changed nowhere else: the
+ // test bounds i below 2^31-1 before every increment, so i stays int32
+ // (likewise i > e with i--).
+ induction(n){
+  const u=n.update,t=n.test;
+  if(!u||u.type!=='UpdateExpression'||u.argument.type!=='Identifier'||!t||t.type!=='BinaryExpression')return false;
+  const b=u.argument._ref?.binding;
+  if(!b||b.storage==='global'||b.assigns!==1)return false;
+  const up=u.operator==='++',ref=x=>x.type==='Identifier'&&x._ref?.binding===b;
+  let bound,ok=false;
+  if(ref(t.left)&&(up?t.operator==='<':t.operator==='>'))bound=t.right;
+  else if(ref(t.right)&&(up?t.operator==='>':t.operator==='<'))bound=t.left;
+  else return false;
+  if(n.init){if(n.init.type==='VariableDeclaration')this.statement(n.init);else this.expr(n.init);}
+  const l=this.expr(t.left),r=this.expr(t.right);if(this.annotate)t._t=BOOL;
+  // Optimistic while types are still settling: unknown counts as int until
+  // the fixed point proves otherwise (then i widens and stays num).
+  const bt=bound===t.left?l:r;
+  ok=(bt==null||bt===INT)&&(this.types.get(b)??INT)===INT;
+  if(ok){this.expr(u.argument);if(this.annotate){u._t=INT;u._induction=true;}}else this.expr(u);
+  this.statement(n.body);
+  return true;
  }
  // Static type of an expression; also propagates assignments and calls.
  expr(n){
