@@ -181,7 +181,7 @@ function entCollides(world, x, y, z, w, h) {
     for (let bz = Math.floor(z0); bz <= Math.floor(z1 - 1e-7); bz++)
       for (let bx = Math.floor(x0); bx <= Math.floor(x1 - 1e-7); bx++) {
         const id = world.getBlock(bx, by, bz);
-        if (!id || !SOLID[id]) continue;
+        if (!id || !COLLIDE[id]) continue;
         const boxes = collisionBoxes(world, id, world.getMeta(bx, by, bz), bx, by, bz);
         if (!boxes) continue;
         for (const b of boxes) if (bx + b[0] < x1 && bx + b[3] > x0 && by + b[1] < y1 && by + b[4] > y0 && bz + b[2] < z1 && bz + b[5] > z0) return true;

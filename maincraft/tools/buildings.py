@@ -14,7 +14,7 @@ l loot chests [x, y, z, table].
 
     python3 tools/buildings.py
 """
-import base64, json, math, os, random
+import base64, json, math, os, random, zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 S, W, N, E, UP, DOWN = 0, 1, 2, 3, 4, 5
@@ -164,9 +164,9 @@ def ship_hull(length, mast):
     t.set(4, 5, 5, '@D', N); t.set(4, 6, 5, '@D', N | 4)
     t.set(2, 6, 1, 'GLASS_PANE'); t.set(6, 6, 1, 'GLASS_PANE')
     t.set(3, 5, 2, 'CRAFTING_TABLE')
-    # a hatch to the hold with a ladder down
+    # a hatch to the hold right above a ladder down (an open trapdoor over a ladder climbs like one)
     hz = length // 2 - 4
-    t.set(4, 4, hz, '@T', N)
+    t.set(4, 4, hz + 1, '@T', N)
     for y in range(1, 4): t.set(4, y, hz + 1, 'LADDER', N)
     t.set(4, 1, hz + 2, '@P'); t.set(4, 2, hz + 2, '@P'); t.set(4, 3, hz + 2, '@P')
     if mast:
@@ -207,7 +207,7 @@ def shipwrecks():
                 L = 28
                 hull, spots = ship_hull(L, False)
                 t, z0 = transform(hull, kind, half)
-                r = random.Random(hash((kind, half, deg)) & 0xFFFF)
+                r = random.Random(zlib.crc32(('%s %s %s' % (kind, half, deg)).encode()))   # the same on every run
                 if deg:
                     for k in list(t.b):
                         if r.random() < 0.12: del t.b[k]

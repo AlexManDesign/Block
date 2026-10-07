@@ -38,7 +38,7 @@ class Player {
     const bx0 = Math.floor(x0), bx1 = Math.floor(x1 - 1e-7), by0 = Math.floor(y0 - 0.5), by1 = Math.floor(y1 - 1e-7), bz0 = Math.floor(z0), bz1 = Math.floor(z1 - 1e-7);
     for (let y = by0; y <= by1; y++) for (let z = bz0; z <= bz1; z++) for (let x = bx0; x <= bx1; x++) {
       const id = world.getBlock(x, y, z);
-      if (!id || !SOLID[id]) continue;
+      if (!id || !COLLIDE[id]) continue;
       const boxes = collisionBoxes(world, id, world.getMeta(x, y, z), x, y, z);
       if (!boxes) continue;
       for (const b of boxes) {
@@ -96,7 +96,14 @@ class Player {
     const eyY = p[1] + this.eyeOffset - 1 / 9, eyB = Math.floor(eyY);
     this.headInWater = isWaterId(bAt(p[0], eyY, p[2])) && eyB + world.fluidHeight(Math.floor(p[0]), eyB, Math.floor(p[2])) > eyY;
     const feet = bAt(p[0], p[1], p[2]);
-    this.onLadder = !this.flying && ((FLAGS[feet] & BF_CLIMB) !== 0 || SHAPE[feet] === SH.LADDER || SHAPE[feet] === SH.VINE);
+    // LivingEntity.onClimbable: ladders, vines, and an open trapdoor right over a ladder facing the
+    // same way (trapdoorUsableAsLadder), so a hatch over a ladder can be climbed through
+    let trapLadder = false;
+    if (SHAPE[feet] === SH.TRAPDOOR) {
+      const fx = Math.floor(p[0]), fy = Math.floor(p[1]), fz = Math.floor(p[2]), tm = world.getMeta(fx, fy, fz);
+      trapLadder = (tm & 8) !== 0 && SHAPE[world.getBlock(fx, fy - 1, fz)] === SH.LADDER && (world.getMeta(fx, fy - 1, fz) & 3) === (tm & 3);
+    }
+    this.onLadder = !this.flying && ((FLAGS[feet] & BF_CLIMB) !== 0 || SHAPE[feet] === SH.LADDER || SHAPE[feet] === SH.VINE || trapLadder);
     this.inWeb = !this.flying && (feet === B.COBWEB || bAt(p[0], p[1] + 1.1, p[2]) === B.COBWEB);
     // ---- sprinting and swimming (LocalPlayer.aiStep / Player.updateSwimming)
     const forward = -fz >= 0.8;

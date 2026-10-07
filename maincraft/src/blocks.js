@@ -35,6 +35,8 @@ const B = { AIR: 0 };
 const B_KEY = ['AIR'], B_EN = ['Air'], B_RU = ['Воздух'];
 const SHAPE = new Uint8Array(NBX), OPAQUE = new Uint8Array(NBX), RLAYER = new Uint8Array(NBX);
 const LCOST = new Uint8Array(NBX), VDIM = new Uint8Array(NBX), EMIT = new Uint8Array(NBX), SOLID = new Uint8Array(NBX);
+// blocks bodies bump into: the solid ones, and ladders (a thin board against the wall, as in Minecraft)
+const COLLIDE = new Uint8Array(NBX);
 const FLAGS = new Uint16Array(NBX), BASE = new Uint16Array(NBX), TAB = new Uint8Array(NBX);
 const HARD = new Float32Array(NBX), TOOL = new Uint8Array(NBX);
 // face textures (layer index): 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z ; FRONT = facing face texture
@@ -82,6 +84,7 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
       sh === SH.VINE || sh === SH.LICHEN || sh === SH.RAIL || sh === SH.FIRE || sh === SH.BUTTON ||
       sh === SH.PLATE || sh === SH.LADDER || sh === SH.WIRE) ? 0 : 1;
     if (key === 'COBWEB' || key === 'LEVER') SOLID[id] = 0;
+    COLLIDE[id] = SOLID[id] || sh === SH.LADDER ? 1 : 0;
     // hardness / tool heuristics (survival)
     let h = 1.5, tool = 1;
     if (/ORE$|_ORE/.test(key)) { h = 3; }
@@ -132,7 +135,7 @@ const WET = new Uint16Array(NB);
     if (!ok.has(SHAPE[id])) continue;
     const t = WET_BASE + id;
     WET[id] = t;
-    for (const A of [SHAPE, OPAQUE, RLAYER, LCOST, EMIT, SOLID, BASE, TAB, HARD, TOOL]) A[t] = A[id];
+    for (const A of [SHAPE, OPAQUE, RLAYER, LCOST, EMIT, SOLID, COLLIDE, BASE, TAB, HARD, TOOL]) A[t] = A[id];
     FLAGS[t] = FLAGS[id] | BF_WET; VDIM[t] = 1;
     B_KEY[t] = B_KEY[id]; B_EN[t] = B_EN[id]; B_RU[t] = B_RU[id];
   }

@@ -99,7 +99,7 @@ function blockBoxes(world, id, m, x, y, z) {
 
 // collision boxes: none for non-solid blocks, fences/walls are 1.5 high
 function collisionBoxes(world, id, m, x, y, z) {
-  if (!SOLID[id]) return null;
+  if (!COLLIDE[id]) return null;
   const sh = SHAPE[id];
   if (sh === SH.CUBE) return FULL_BOX;
   if (sh === SH.FENCE || sh === SH.WALL) {
