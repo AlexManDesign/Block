@@ -12,6 +12,27 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const hostObjects=new WeakMap();
  const ref=(object,key,strict=false)=>({object,key,strict});
  const toKey=k=>typeof k==='symbol'?k:Reflect.ownKeys({[k]:null})[0];
+ // SetFunctionName: a symbol without a description gives the empty name.
+ const keyName=key=>typeof key==='symbol'?(key.description===undefined?'':'['+key.description+']'):String(key);
+ // Function.prototype.toString of compiled code: the source is not shipped, so
+ // compiled functions read like built-ins, keeping their syntactic kind
+ // (class detection by /^class/ still works).
+ const compiledKinds=new WeakMap(),originalToString=Function.prototype.toString;
+ const compiledToString={toString(){
+  const kind=compiledKinds.get(this);if(kind===undefined)return Reflect.apply(originalToString,this,[]);
+  const name=typeof this.name==='string'?this.name:'';
+  switch(kind){
+   case'class':return (name?'class '+name+' ':'class ')+'{ [native code] }';
+   case'method':return name+'() { [native code] }';
+   case'arrow':return '() => { [native code] }';
+   case'generator':return 'function* '+name+'() { [native code] }';
+   case'async':return 'async function '+name+'() { [native code] }';
+   case'async-generator':return 'async function* '+name+'() { [native code] }';
+  }
+  return 'function '+name+'() { [native code] }';
+ }}.toString;
+ compiledKinds.set(compiledToString,'function');
+ if(Function.prototype.toString!==compiledToString)Object.defineProperty(Function.prototype,'toString',{value:compiledToString,writable:true,configurable:true,enumerable:false});
  const functions=new WeakMap(),classes=new WeakMap(),thisCells=new WeakMap(),privateKeys=new WeakSet(),templateCache=new Map();
  const resolvePromise=Promise.resolve,thenPromise=Promise.prototype.then;
  const resolved=v=>Reflect.apply(resolvePromise,Promise,[v]),upon=(p,yes,no)=>Reflect.apply(thenPromise,p,[yes,no]);
@@ -278,13 +299,15 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   // Record [parent, f] per function object: self name of a named function
   // expression, home object for super, callee for arguments.
   if(flags&64){closure=environment.scopeNew(env,1);environment.scopeSet(closure,1,f);info.record=closure;environmentInfo.set(closure,{callee:f});}
-  functions.set(f,info);
+  functions.set(f,info);compiledKinds.set(f,arrow?'arrow':flags&8?'method':(flags&48)===48?'async-generator':flags&16?'generator':flags&32?'async':'function');
   if(flags&16)Object.defineProperty(f,'prototype',{value:Object.create(flags&32?asyncGeneratorPrototype:generatorPrototype),writable:true});
   return f;
  }
  function setHome(fn,home){const i=functions.get(fn);if(!i)return;i.home=home;if(i.record)environmentInfo.get(i.record).home=home;}
  function addPrivate(d,self,value){if(d.values.has(self))throw new TypeError('Private member already initialized');d.values.set(self,value);}
- function initializeField(field,self){const value=Reflect.apply(field.fn,self,[]);if(field.isBlock)return;if(privateKeys.has(field.key))addPrivate(field.key,self,value);else Object.defineProperty(self,field.key,{value,writable:true,enumerable:true,configurable:true});}
+ function initializeField(field,self){const value=Reflect.apply(field.fn,self,[]);if(field.isBlock)return;
+  // An anonymous function in a computed-key field is named after the key.
+  if(field.named&&typeof value==='function')Object.defineProperty(value,'name',{value:keyName(field.key),configurable:true});if(privateKeys.has(field.key))addPrivate(field.key,self,value);else Object.defineProperty(self,field.key,{value,writable:true,enumerable:true,configurable:true});}
  function initializeFields(c,self){const info=classes.get(c);for(const d of info.privateMethods)if(!d.isStatic)addPrivate(d,self,undefined);for(const field of info.fields)initializeField(field,self);}
  function makeClass(env,base,ctorId,nameIndex,derived){
   let prototype=Object.prototype;if(derived){if(base!==null){if(typeof base!=='function')throw new TypeError('Class extends a non-constructor');Reflect.construct(Object,[],base);}prototype=base===null?null:base.prototype;if(prototype!==null&&typeof prototype!=='object'&&typeof prototype!=='function')throw new TypeError('Invalid superclass prototype');}
@@ -294,10 +317,10 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
    initializeFields(c,this);if(ctorId<0)return this;const result=callCompiled(ctorId,e,this,args,new.target);return result!==null&&(typeof result==='object'||typeof result==='function')?result:this;
   };
   c.prototype=Object.create(prototype,{constructor:{value:c,writable:true,configurable:true}});Object.defineProperty(c,'prototype',{writable:false});Object.defineProperty(c,'name',{value:pool[nameIndex],configurable:true});Object.defineProperty(c,'length',{value:ctorId<0?0:metadata[ctorId].arity,configurable:true});if(derived&&base!==null)Object.setPrototypeOf(c,base);classes.set(c,{fields:[],statics:[],privateMethods:[]});
-  environment.scopeSet(e,1,c);environmentInfo.set(e,{home:c.prototype,classOwner:c});return c;
+  environment.scopeSet(e,1,c);environmentInfo.set(e,{home:c.prototype,classOwner:c});compiledKinds.set(c,'class');return c;
  }
- function classMethod(c,key,fn,kind,isStatic){const home=isStatic?c:c.prototype;setHome(fn,home);const name=privateKeys.has(key)?'#'+key.name:typeof key==='symbol'?'['+(key.description||'')+']':String(key);Object.defineProperty(fn,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});if(privateKeys.has(key)){key[kind===1?'get':kind===2?'set':'fn']=fn;const methods=classes.get(c).privateMethods;if(!methods.includes(key))methods.push(key);return;}Object.defineProperty(home,key,{...(kind===1?{get:fn}:kind===2?{set:fn}:{value:fn,writable:true}),enumerable:false,configurable:true});}
- function classField(c,key,fn,isStatic,isBlock){setHome(fn,isStatic?c:c.prototype);classes.get(c)[isStatic?'statics':'fields'].push({key,fn,isBlock});}
+ function classMethod(c,key,fn,kind,isStatic){const home=isStatic?c:c.prototype;setHome(fn,home);const name=privateKeys.has(key)?'#'+key.name:keyName(key);Object.defineProperty(fn,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});if(privateKeys.has(key)){key[kind===1?'get':kind===2?'set':'fn']=fn;const methods=classes.get(c).privateMethods;if(!methods.includes(key))methods.push(key);return;}Object.defineProperty(home,key,{...(kind===1?{get:fn}:kind===2?{set:fn}:{value:fn,writable:true}),enumerable:false,configurable:true});}
+ function classField(c,key,fn,isStatic,flags){setHome(fn,isStatic?c:c.prototype);classes.get(c)[isStatic?'statics':'fields'].push({key,fn,isBlock:flags&1,named:flags&2});}
  function finishClass(c){const info=classes.get(c);for(const d of info.privateMethods)if(d.isStatic)addPrivate(d,c,undefined);for(const field of info.statics)initializeField(field,c);return c;}
  function superCall(env,cell,args,newTarget){const c=context(env,'classOwner'),value=Reflect.construct(Object.getPrototypeOf(c),args,newTarget);if(thisCells.get(cell)!==UNINIT)throw new ReferenceError('Super constructor may only be called once');thisCells.set(cell,value);initializeFields(c,value);return value;}
  function checkCallable(f){if(f===globalThis.eval||f===globalThis.Function)throw new TypeError('Runtime JS generation is not supported by this AOT compiler');return f;}
@@ -453,7 +476,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  Object.assign(raw,{
   moduleMeta,importModule,
   prepareValue:fn=>({fn,self:undefined}),
-  setFunctionName:(f,key,kind)=>{const name=typeof key==='symbol'?(key.description?'['+key.description+']':''):String(key);Object.defineProperty(f,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});return f;},callable:r=>r.fn,thisValue,makeClass,classMethod,classField,finishClass,superCall,privateDeclare,privateKey,
+  setFunctionName:(f,key,kind)=>{const name=keyName(key);Object.defineProperty(f,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});return f;},callable:r=>r.fn,thisValue,makeClass,classMethod,classField,finishClass,superCall,privateDeclare,privateKey,
   privateProperty:(e,o,i)=>({private:privateKey(e,i),object:o}),privateHas:(e,i,o)=>{requireObject(o);return privateKey(e,i).values.has(o);},
   superProperty:(e,self,key)=>({object:Object.getPrototypeOf(context(e,'home')),key,receiver:thisValue(self),super:true,strict:true}),
   coercible:v=>{if(v==null)throw new TypeError('Cannot destructure null or undefined');return v;},

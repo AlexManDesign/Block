@@ -895,5 +895,6 @@ class Widget { render() { return 1; } static make() { return new Widget(); } }
 const isClass = f => /^class\\b/.test(String(f));
 function plain() {}
 log(isClass(Widget), isClass(plain), isClass(class {}));
-log(String(Widget.prototype.render), String(Widget.make));`,
+// Compiled code does not ship its source: only the syntactic form is checked.
+log(String(Widget.prototype.render).startsWith('render('), String(Widget.make).startsWith('make('), Function.prototype.toString.call(plain).startsWith('function plain('));`,
 };

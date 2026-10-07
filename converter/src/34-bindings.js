@@ -293,6 +293,7 @@ const bindings={
  // ---- typed expressions ----
  expression(n,hint=''){this.convert(this.natural(n,hint),'r',n._t);},
  natural(n,hint=''){
+  if((n.type==='FunctionExpression'||n.type==='ArrowFunctionExpression')&&n._displayName&&!hint)hint=n._displayName;
   if(!this.dynamicOnly){
    const t=n._t;
    switch(n.type){
@@ -475,24 +476,26 @@ const bindings={
   const name=n._math,args=n.arguments;
   if(args.some(a=>a.type==='SpreadElement'))return null;
   // Arguments are evaluated first, then converted with ToNumber in order.
-  const all=(repr='f')=>{
-   const values=args.map(a=>{if(numeric(a._t)){const x=this.local(VALUE_TYPE[repr]);this.emitAs(a,repr);this.set(x);return [x,repr,a._t];}const r=this.natural(a),x=this.local(VALUE_TYPE[r]);this.set(x);return [x,r,a._t];});
-   return values.map(([x,r,t])=>{if(r===repr)return x;const y=this.local(VALUE_TYPE[repr]);this.get(x);this.convert(r,repr,t);this.set(y);return y;});
+  // Every argument is evaluated; only the ones the function reads are
+  // converted with ToNumber (which may run valueOf).
+  const all=(repr='f',count=args.length)=>{
+   const values=args.map((a,i)=>{if(i<count&&numeric(a._t)){const x=this.local(VALUE_TYPE[repr]);this.emitAs(a,repr);this.set(x);return [x,repr,a._t];}const r=this.natural(a),x=this.local(VALUE_TYPE[r]);this.set(x);return [x,r,a._t];});
+   return values.slice(0,count).map(([x,r,t])=>{if(r===repr)return x;const y=this.local(VALUE_TYPE[repr]);this.get(x);this.convert(r,repr,t);this.set(y);return y;});
   };
-  if(MATH_UNARY[name]!==undefined&&args.length>=1){const [x,...rest]=all();this.get(x);this.out(MATH_UNARY[name]);return 'f';}
+  if(MATH_UNARY[name]!==undefined&&args.length>=1){const [x]=all('f',1);this.get(x);this.out(MATH_UNARY[name]);return 'f';}
   if((name==='min'||name==='max')&&args.length>=1){const xs=all();this.get(xs[0]);for(const x of xs.slice(1)){this.get(x);this.out(name==='min'?0xa4:0xa5);}return 'f';}
   if((name==='min'||name==='max')&&!args.length){this.f64(name==='min'?Infinity:-Infinity);return 'f';}
   if(name==='round'&&args.length>=1){
-   const [x]=all(),r=this.local(F64);this.get(x);this.out(0x9b);this.tee(r);this.f64(0.5);this.out(0xa1);this.get(x);this.out(0x64);
+   const [x]=all('f',1),r=this.local(F64);this.get(x);this.out(0x9b);this.tee(r);this.f64(0.5);this.out(0xa1);this.get(x);this.out(0x64);
    this.ifElse(()=>{this.get(r);this.f64(1);this.out(0xa1);},()=>this.get(r),F64);return 'f';
   }
-  if(name==='sign'&&args.length>=1){const [x]=all();this.get(x);this.f64(0);this.out(0x64);this.ifElse(()=>this.f64(1),()=>{this.get(x);this.f64(0);this.out(0x63);this.ifElse(()=>this.f64(-1),()=>this.get(x),F64);},F64);return 'f';}
-  if(name==='fround'&&args.length>=1){const [x]=all();this.get(x);this.out(0xb6,0xbb);return 'f';}
-  if(name==='imul'&&args.length>=2){const [x,y]=all('n');this.get(x);this.get(y);this.out(0x6c);return 'n';}
-  if(name==='clz32'&&args.length>=1){const [x]=all('n');this.get(x);this.out(0x67);return 'n';}
-  if(MATH_IMPORTED1.has(name)&&args.length>=1){const [x]=all();this.get(x);this.rt('math_'+name);return 'f';}
-  if(MATH_IMPORTED2.has(name)&&args.length>=2){const [x,y]=all();this.get(x);this.get(y);this.rt('math_'+name);return 'f';}
-  if(name==='random'){all();this.rt('math_random');return 'f';}
+  if(name==='sign'&&args.length>=1){const [x]=all('f',1);this.get(x);this.f64(0);this.out(0x64);this.ifElse(()=>this.f64(1),()=>{this.get(x);this.f64(0);this.out(0x63);this.ifElse(()=>this.f64(-1),()=>this.get(x),F64);},F64);return 'f';}
+  if(name==='fround'&&args.length>=1){const [x]=all('f',1);this.get(x);this.out(0xb6,0xbb);return 'f';}
+  if(name==='imul'&&args.length>=2){const [x,y]=all('n',2);this.get(x);this.get(y);this.out(0x6c);return 'n';}
+  if(name==='clz32'&&args.length>=1){const [x]=all('n',1);this.get(x);this.out(0x67);return 'n';}
+  if(MATH_IMPORTED1.has(name)&&args.length>=1){const [x]=all('f',1);this.get(x);this.rt('math_'+name);return 'f';}
+  if(MATH_IMPORTED2.has(name)&&args.length>=2){const [x,y]=all('f',2);this.get(x);this.get(y);this.rt('math_'+name);return 'f';}
+  if(name==='random'){all('f',0);this.rt('math_random');return 'f';}
   return null;
  },
  // Direct call of a statically known function: no JS, no argument array.
@@ -628,7 +631,7 @@ const bindings={
     this.get(c);
     if(m.key.type==='PrivateIdentifier'){this.get(this.env);this.integer(this.c.constant(m.key.name));this.rt('privateKey');}else if(m.computed){this.expression(m.key);this.rt('key');}else this.lit(m.key.name??m.key.value);
     if(m.type==='MethodDefinition'){this.function(m.value,m.key.name||'',true);this.integer(m.kind==='get'?1:m.kind==='set'?2:0);this.integer(+m.static);this.rt('classMethod');}
-    else{this.function(m._initializer,'',true);this.integer(+m.static);this.integer(0);this.rt('classField');}
+    else{this.function(m._initializer,'',true);this.integer(+m.static);this.integer(m._nameFromKey?2:0);this.rt('classField');}
    }
    if(bindingName)this.initBinding(n._scope.bindings.get(bindingName),()=>this.get(c));
    this.get(c);this.rt('finishClass');

@@ -268,7 +268,10 @@ class ScopeAnalysis {
    if(m.computed)this.expression(m.key,inner,fn);
    if(m.type==='MethodDefinition'){m.value._outerScope=inner;this.functionNode(m.value,inner,{method:m!==ctor,classConstructor:m===ctor});}
    else if(m.type==='PropertyDefinition'){
-    // Field initializers run as hidden methods.
+    // Field initializers run as hidden methods. An anonymous function or
+    // class value is named after the field key.
+    const v=m.value;
+    if(v&&(v.type==='ArrowFunctionExpression'||(v.type==='FunctionExpression'||v.type==='ClassExpression')&&!v.id)){if(m.computed)m._nameFromKey=true;else v._displayName=m.key.type==='PrivateIdentifier'?'#'+m.key.name:String(m.key.name??m.key.value);}
     const wrapper={type:'FunctionExpression',params:[],body:{type:'BlockStatement',body:[{type:'ReturnStatement',argument:m.value||null}]},start:m.start,end:m.end,loc:m.loc,_synthetic:true};
     m._initializer=wrapper;wrapper._outerScope=inner;this.functionNode(wrapper,inner,{method:true});
    }
@@ -315,7 +318,10 @@ class ScopeAnalysis {
     if(n.object.type==='Identifier'&&!n.object._ref?.binding&&['window','globalThis','self','top','parent','frames'].includes(n.object.name)){if(n.computed)this.globalEscapes=true;else this.globalReads.add(n.property.name);}
     return;
    case'ConditionalExpression':this.expression(n.test,scope,fn);this.expression(n.consequent,scope,fn);this.expression(n.alternate,scope,fn);return;
-   case'CallExpression':case'NewExpression':this.expression(n.callee,scope,fn);n.arguments.forEach(a=>this.expression(a,scope,fn));return;
+   case'CallExpression':case'NewExpression':this.expression(n.callee,scope,fn);
+    // Direct eval needs the caller's scope at run time; eval and Function used
+    // as values are refused by the runtime when called.
+    if(n.type==='CallExpression'&&n.callee.type==='Identifier'&&n.callee.name==='eval'&&!n.callee._ref?.binding)fail(n,'Прямой eval не поддерживается AOT-компилятором');n.arguments.forEach(a=>this.expression(a,scope,fn));return;
    case'SequenceExpression':n.expressions.forEach(e=>this.expression(e,scope,fn));return;
    case'YieldExpression':case'AwaitExpression':this.expression(n.argument,scope,fn);return;
    case'TemplateLiteral':n.expressions.forEach(e=>this.expression(e,scope,fn));return;
@@ -341,7 +347,6 @@ class ScopeAnalysis {
    if(binding){binding.inits++;this.capture(binding,fn);}
    return;
   }
-  if(['eval','Function'].includes(n.name)&&mode==='read')fail(n,'Динамическое создание JS не поддерживается AOT-компилятором');
   let s=scope,binding=null;
   while(s){const b=s.bindings.get(n.name);if(b){binding=b;break;}s=s.parent;}
   n._ref={binding,scope,fn,mode,check:false};
