@@ -69,6 +69,7 @@ function placementFor(world, heldId, hit, fd, player) {
       break;
     case SH.BUTTON:
       if (hdir < 0) return null;
+      if (!OPAQUE[world.getBlock(x - n[0], y, z - n[2])]) return null;
       m = (hdir + 2) & 3; break;
     case SH.CRYSTAL:
       // grows out of the clicked face (meta = face, FN order), needs a full block behind

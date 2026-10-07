@@ -581,6 +581,8 @@ class World {
       const face = (m >> 2) & 3, d = face === 0 ? 5 : face === 2 ? 4 : RS_OPP[m & 3];
       return OPAQUE[this.getBlock(x + RS_DX[d], y + RS_DY[d], z + RS_DZ[d])] === 1;
     }
+    // a button hangs on the block on its back side, like a wall torch
+    if (sh === SH.BUTTON) { const d = m & 3; return OPAQUE[this.getBlock(x + DIRX_W[d], y, z + DIRZ_W[d])] === 1; }
     if (id === B.COCOA) { const d = m & 3; return isJungleLog(this.getBlock(x + DIRX_W[d], y, z + DIRZ_W[d])); }
     if (sh === SH.CRYSTAL) {
       const n = FACE_DIR[m % 6];

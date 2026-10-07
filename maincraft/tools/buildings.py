@@ -199,6 +199,14 @@ def transform(t, kind, half):
     return out, z0
 
 
+def drop_half_doors(t):
+    """After rotting: a door whose other half rotted away goes too (half a door cannot stand)."""
+    door = lambda v: v is not None and (v[0] == '@D' or (v[0].endswith('_DOOR') and 'TRAPDOOR' not in v[0]))
+    for (x, y, z), v in list(t.b.items()):
+        if door(v) and not door(t.b.get((x, y + 1, z))) and not door(t.b.get((x, y - 1, z))):
+            del t.b[(x, y, z)]
+
+
 def shipwrecks():
     out = {}
     for kind in ('rightsideup', 'sideways', 'upsidedown'):
@@ -213,6 +221,7 @@ def shipwrecks():
                     keep = {(x, y, z + 1) for (x, y, z), v in t.b.items() if v[0] == 'LADDER'}
                     for k in list(t.b):
                         if k not in keep and r.random() < 0.12: del t.b[k]
+                    drop_half_doors(t)
                 add_ship_markers(t, spots, kind, z0)
                 out['shipwreck/%s_%s%s' % (kind, half, '_degraded' if deg else '')] = encode(t, WOODS, keep_air=False)[0]
     for deg in (False, True):
@@ -222,6 +231,7 @@ def shipwrecks():
             keep = {(x, y, z + 1) for (x, y, z), v in t.b.items() if v[0] == 'LADDER'}
             for k in list(t.b):
                 if k not in keep and r.random() < 0.12: del t.b[k]
+            drop_half_doors(t)
         add_ship_markers(t, spots, 'rightsideup', 0)
         out['shipwreck/with_mast' + ('_degraded' if deg else '')] = encode(t, WOODS, keep_air=False)[0]
     return out

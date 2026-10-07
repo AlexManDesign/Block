@@ -1209,7 +1209,7 @@ class WorldGen {
         p.y = (yy - 1 - j > 2 && l > Math.abs(c[0]) - 2) ? j + 1 : yy;
         p.marker = function (name, mx, my, mz, i) {
           if (name === 'chest') { const w = isWaterId(this.ids[i]); this.ids[i] = w ? WET[B.CHEST] : B.CHEST; this.meta[i] = 2 | ((large ? LOOT.UNDERWATER_RUIN_BIG : LOOT.UNDERWATER_RUIN_SMALL) << 2); }
-          else if (name === 'drowned') { const w = isWaterId(this.ids[i - 256]); this.ids[i] = w ? B.WATER : 0; this.meta[i] = 0; }
+          else if (name === 'drowned') { const w = isWaterId(this.ids[i + 256]) || isWaterId(this.ids[i]); this.ids[i] = w ? B.WATER : 0; this.meta[i] = 0; }   // water when it is under water (the block above)
         };
         out.push(p);
       };

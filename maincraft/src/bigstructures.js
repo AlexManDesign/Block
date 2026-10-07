@@ -618,6 +618,17 @@ WorldGen.prototype.mineSegment = function (p) {
   const get = (x, y, z) => { const i = at(x, y, z); return i >= 0 ? ids[i] : -1; };
   const r = (x, y, z, k) => hash3(seed + 2300 + k, x, y, z);
   // air for a walkway cell column (floor at y), bridging the floor with planks over gaps
+  // MineshaftPiece.isInInvalidLocation: no part of a piece is built in a chunk where liquid touches
+  // the shell one block outside its dug box (no tunnels opened under the sea floor or into lava)
+  {
+    const c = sg.core || sg.box, ax = c[0] - 1, ay = c[1] - 1, az = c[2] - 1, bx = c[3] + 1, by = c[4] + 1, bz = c[5] + 1;
+    const lx = Math.max(ax, x0), hx = Math.min(bx, x0 + 15), lz = Math.max(az, z0), hz = Math.min(bz, z0 + 15);
+    const wet = (x, y, z) => { const i = at(x, y, z); return i >= 0 && liquid(i); };
+    for (let x = lx; x <= hx; x++) for (let z = lz; z <= hz; z++) {
+      if (x !== ax && x !== bx && z !== az && z !== bz) { if (wet(x, ay, z) || wet(x, by, z)) return; continue; }
+      for (let y = ay; y <= by; y++) if (wet(x, y, z)) return;
+    }
+  }
   const walk = (x, y, z, h) => {
     if (at(x, y, z) < 0) return;
     for (let k = 0; k < h; k++) set(x, y + k, z, 0);
@@ -658,7 +669,8 @@ WorldGen.prototype.mineSegment = function (p) {
       for (const c of [-1, 1]) { set(cx + sxd * c, fy, cz + szd * c, LG); set(cx + sxd * c, fy + 1, cz + szd * c, B.OAK_FENCE); }
       if (r(cx, fy, cz, 5) > 0.15) for (let c = -1; c <= 1; c++) set(cx + sxd * c, fy + 2, cz + szd * c, PL);
       else set(cx, fy, cz, B.GRAVEL);
-      if (r(cx, fy, cz, 6) < 0.12) { const tx = cx - DX[d], tz = cz - DZ[d]; set(tx, fy + 2, tz, B.TORCH, 1 + d); }
+      // a torch on the beam, where the beam is there (a wall torch needs the block it hangs on)
+      if (r(cx, fy, cz, 6) < 0.12 && get(cx, fy + 2, cz) === PL) { const tx = cx - DX[d], tz = cz - DZ[d]; set(tx, fy + 2, tz, B.TORCH, 1 + d); }
     }
   }
   const mx = sg.x + DX[d] * (sg.len >> 1), mz = sg.z + DZ[d] * (sg.len >> 1);
