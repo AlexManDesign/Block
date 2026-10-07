@@ -209,16 +209,19 @@ def shipwrecks():
                 t, z0 = transform(hull, kind, half)
                 r = random.Random(zlib.crc32(('%s %s %s' % (kind, half, deg)).encode()))   # the same on every run
                 if deg:
+                    # rot, but never the board a ladder hangs on (the hold ladder's is south of it)
+                    keep = {(x, y, z + 1) for (x, y, z), v in t.b.items() if v[0] == 'LADDER'}
                     for k in list(t.b):
-                        if r.random() < 0.12: del t.b[k]
+                        if k not in keep and r.random() < 0.12: del t.b[k]
                 add_ship_markers(t, spots, kind, z0)
                 out['shipwreck/%s_%s%s' % (kind, half, '_degraded' if deg else '')] = encode(t, WOODS, keep_air=False)[0]
     for deg in (False, True):
         t, spots = ship_hull(28, True)
         r = random.Random(77 if deg else 78)
         if deg:
+            keep = {(x, y, z + 1) for (x, y, z), v in t.b.items() if v[0] == 'LADDER'}
             for k in list(t.b):
-                if r.random() < 0.12: del t.b[k]
+                if k not in keep and r.random() < 0.12: del t.b[k]
         add_ship_markers(t, spots, 'rightsideup', 0)
         out['shipwreck/with_mast' + ('_degraded' if deg else '')] = encode(t, WOODS, keep_air=False)[0]
     return out

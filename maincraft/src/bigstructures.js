@@ -420,7 +420,8 @@ WorldGen.prototype.strongholdCell = function (p) {
     for (let x = M - 4; x <= M + 4; x++) for (const z of [M - 5, M + 5]) for (let y = 1; y <= 4; y++) if (Math.abs(x - M) > 1) W.set(x, y, z, B.BOOKSHELF);
     W.fill(M - 4, 5, M - 4, M + 4, 5, M + 4, B.DARK_PLANKS); W.fill(M - 2, 5, M - 2, M + 2, 5, M + 2, 0);   // gallery
     for (let k = M - 3; k <= M + 3; k++) { W.set(k, 6, M - 3, B.OAK_FENCE); W.set(k, 6, M + 3, B.OAK_FENCE); W.set(M - 3, 6, k, B.OAK_FENCE); W.set(M + 3, 6, k, B.OAK_FENCE); }
-    for (let y = 1; y <= 5; y++) W.set(M + 4, y, M + 4, B.LADDER, 2);
+    // the ladder up to the gallery, on bookshelves all the way (a ladder needs a block behind it)
+    for (let y = 1; y <= 5; y++) { W.set(M + 4, y, M + 4, B.LADDER, 2); W.set(M + 4, y, M + 5, B.BOOKSHELF); }
     W.set(M, 9, M, B.LANTERN, 1);
     W.chest(M - 4, 1, M - 3, 3, LOOT.STRONGHOLD_LIBRARY); W.chest(M - 4, 6, M + 3, 3, LOOT.STRONGHOLD_LIBRARY);
   } else if (c.kind === 'prison') {
