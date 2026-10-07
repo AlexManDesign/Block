@@ -545,8 +545,8 @@ class Mesher {
         let pts;
         if (f === 2) pts = [X, Y, Z + e, X + 16, Y, Z + e, X + 16, Y + 16, Z + e, X, Y + 16, Z + e];          // north-facing, on south wall
         else if (f === 0) pts = [X + 16, Y, Z + 16 - e, X, Y, Z + 16 - e, X, Y + 16, Z + 16 - e, X + 16, Y + 16, Z + 16 - e];
-        else if (f === 1) pts = [X + 16 - e, Y, Z, X + 16 - e, Y, Z + 16, X + 16 - e, Y + 16, Z + 16, X + 16 - e, Y + 16, Z];
-        else pts = [X + e, Y, Z + 16, X + e, Y, Z, X + e, Y + 16, Z, X + e, Y + 16, Z + 16];
+        else if (f === 1) pts = [X + e, Y, Z, X + e, Y, Z + 16, X + e, Y + 16, Z + 16, X + e, Y + 16, Z];                      // west-facing, on east wall
+        else pts = [X + 16 - e, Y, Z + 16, X + 16 - e, Y, Z, X + 16 - e, Y + 16, Z, X + 16 - e, Y + 16, Z + 16];        // east-facing, on west wall
         this.flat(buf, pts, texs[0], 0, 0, 16, 16, s, b, 0.9, 0, true);
         return;
       }
