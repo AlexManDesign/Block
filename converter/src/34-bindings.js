@@ -21,6 +21,7 @@ const GLOBAL_CONSTANTS=new Map([['undefined',undefined],['NaN',NaN],['Infinity',
 const VALUE_TYPE={r:REF,f:F64,i:I32,n:I32};
 const reprOf=t=>t===NUM?'f':t===INT?'n':t===BOOL?'i':'r';
 const numeric=t=>t===NUM||t===INT||t===BOOL||t===NU;
+const TYPE_NAMES=['number','string','undefined','boolean','function','object','symbol','bigint'];
 const number=t=>t===NUM||t===INT;
 const I32_COMPARE={'<':0x48,'>':0x4a,'<=':0x4c,'>=':0x4e,'==':0x46,'===':0x46,'!=':0x47,'!==':0x47};
 const F64_OPS={'+':0xa0,'-':0xa1,'*':0xa2,'/':0xa3};
@@ -319,7 +320,7 @@ const bindings={
      if(n.left._elem){const r=this.assignElement(n);if(r)return r;}
      if(this.plainMember(n.left))return this.assignMember(n);break;
     }
-    case'BinaryExpression':{const r=this.binaryNatural(n.operator,n.left,n.right,t);if(r)return r;break;}
+    case'BinaryExpression':{const r=this.typeofCompare(n)||this.binaryNatural(n.operator,n.left,n.right,t);if(r)return r;break;}
     case'LogicalExpression':
      if(number(t)&&number(n.left._t)&&number(n.right._t)||t===BOOL&&n.left._t===t&&n.right._t===t){
       const repr=reprOf(t),v=this.local(VALUE_TYPE[repr]);this.emitAs(n.left,repr);this.tee(v);
@@ -334,6 +335,7 @@ const bindings={
      this.condition(n.test);this.ifElse(()=>this.expression(n.consequent),()=>this.expression(n.alternate),REF);return 'r';
     case'SequenceExpression':{let r='r';n.expressions.forEach((e,i)=>{r=this.natural(e);if(i<n.expressions.length-1)this.out(0x1a);});return r;}
     case'CallExpression':{
+     if(n._intrinsic)return this.intrinsicCall(n);
      if(n._direct&&!n.optional)return this.directCall(n,n._direct);
      if(n._math&&!n.optional){const r=this.math(n);if(r)return r;}
      if(n._strMethod){const r=this.stringMethod(n);if(r)return r;}
@@ -513,6 +515,29 @@ const bindings={
   if(MATH_IMPORTED2.has(name)&&args.length>=2){const [x,y]=all('f',2);this.get(x);this.get(y);this.rt('math_'+name);return 'f';}
   if(name==='random'){all('f',0);this.rt('math_random');return 'f';}
   return null;
+ },
+ // typeof x === 'name': WASM answers for its own values, the host only for host values.
+ typeofCompare(n){
+  if(this.dynamicOnly||!['===','!==','==','!='].includes(n.operator))return null;
+  const typeOf=x=>x.type==='UnaryExpression'&&x.operator==='typeof',literal=x=>x.type==='Literal'&&TYPE_NAMES.includes(x.value);
+  const [op,name]=typeOf(n.left)&&literal(n.right)?[n.left,n.right]:typeOf(n.right)&&literal(n.left)?[n.right,n.left]:[null,null];
+  if(!op||op.argument.type==='Identifier'&&this.isGlobal(this.ref(op.argument)))return null;
+  this.expression(op.argument);this.rt('typeofCode');this.integer(TYPE_NAMES.indexOf(name.value));this.out(n.operator[0]==='='?0x46:0x47);
+  return 'i';
+ },
+ // $$name(...) in the self-hosted prelude.
+ intrinsicCall(n){
+  const a=n.arguments;
+  switch(n._intrinsic){
+   case'register':this.expression(a[0]);this.expression(a[1]);this.rt('registerIntrinsic');this.lit(undefined);return 'r';
+   case'native':this.expression(a[0]);this.expression(a[1]);this.expression(a[2]);this.rt('callNative');return 'r';
+   case'call':this.expression(a[0]);this.expression(a[1]);for(const x of a.slice(2))this.expression(x);this.rt('call'+(a.length-2));return 'r';
+   case'plainArray':this.expression(a[0]);this.lit('constructor');this.rt('plainArray');return 'i';
+   case'isWasmArray':this.expression(a[0]);this.rt('isWasmArray');return 'i';
+   case'isWasmObject':this.expression(a[0]);this.rt('isWasmObject');return 'i';
+   case'defineIndex':this.expression(a[0]);this.emitAs(a[1],'f');this.expression(a[2]);this.rt('defineIndex');return 'r';
+  }
+  throw new Error('Внутренняя ошибка: неизвестный интринсик '+n._intrinsic);
  },
  // Direct call of a statically known function: no JS, no argument array.
  directCall(n,fn){

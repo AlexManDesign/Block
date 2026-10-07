@@ -17,6 +17,7 @@ const bindings=require("./bindings.mjs")["bindings"];
 const reprOf=require("./bindings.mjs")["reprOf"];
 const VALUE_TYPE=require("./bindings.mjs")["VALUE_TYPE"];
 const TypeInference=require("./types.mjs")["TypeInference"];
+const compactLocals=require("./locals.mjs")["compactLocals"];
 
 const signatures={
  ...featureSignatures,
@@ -33,7 +34,7 @@ const signatures={
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
  setFunctionName:['rri','r'],fromInt32:['i','r'],
- pushIntrinsic:['rr','i'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ pushIntrinsic:['rr','i'],typeofCode:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -58,6 +59,13 @@ class Compiler {
  import(name){if(!signatures[name])throw new Error('Unknown ABI: '+name);if(!this.importNames.has(name)){const[p,r]=signatures[name];this.importNames.set(name,this.imports.length);this.imports.push({name,params:[...p].map(t=>types[t]),results:[...r].map(t=>types[t])});}return this.importNames.get(name);}
  add(node,strict=false,kind='function',name=''){if(kind==='function'&&node._planId!==undefined)return node._planId;const id=this.plans.length;if(kind==='function')node._planId=id;let arity=node.params?.findIndex(p=>p.type==='AssignmentPattern'||p.type==='RestElement')??0;if(arity<0)arity=node.params.length;this.plans.push({node,kind,name,sourceName:kind==='script'||kind==='handler'?name:this.currentSource||name,strict:strictBody(node.body?.body||node.body,strict),arity});return id;}
  script(source,filename='script'){let ast;try{ast=parse(source,{ecmaVersion:'latest',sourceType:'script',locations:true});}catch(e){throw new SyntaxError(filename+': '+e.message);}return this.add(ast,false,'script',filename);}
+ // Self-hosted built-ins (37-prelude.js): compiled like a script, with
+ // $$name(...) calls as compiler intrinsics. Runs before every other script.
+ prelude(source){
+  const ast=parse(source,{ecmaVersion:'latest',sourceType:'script',locations:true});
+  const mark=x=>{if(!x||typeof x!=='object')return;if(Array.isArray(x)){x.forEach(mark);return;}if(x.type==='CallExpression'&&x.callee.type==='Identifier'&&x.callee.name.startsWith('$$'))x._intrinsic=x.callee.name.slice(2);for(const k in x)if(k!=='loc'&&k[0]!=='_')mark(x[k]);};
+  mark(ast);const id=this.add(ast,true,'script','prelude');this.plans[id].prelude=true;return id;
+ }
  handler(source,name){let ast;try{ast=parse(`function handler(event){\n${source}\n}`,{ecmaVersion:'latest',locations:true});}catch(e){throw new SyntaxError(name+': '+e.message);}return this.add(ast.body[0],false,'handler',name);}
  build(){
   // Resolve every name of the program before emitting any function.
@@ -93,7 +101,9 @@ class Compiler {
     functions[2*id+1]={params:generic,results:[REF],code:[0x00],locals:[]};
    }catch(e){e.message=this.currentSource+': '+e.message;throw e;}
   }
-  const metadata=this.plans.map(p=>({arity:p.arity,name:p.name,frameTypes:p.frameTypes,numeric:!!p.numeric,stringSpecialization:!!p.stringSpecialization,usesArguments:!!p.usesArguments}));
+  // Temporaries share local slots (engine compile time grows with locals).
+  for(let i=0;i<functions.length;i++)functions[i]=compactLocals(functions[i]);
+  const metadata=this.plans.map(p=>({prelude:!!p.prelude,arity:p.arity,name:p.name,frameTypes:p.frameTypes,numeric:!!p.numeric,stringSpecialization:!!p.stringSpecialization,usesArguments:!!p.usesArguments}));
   if(metadata.length)metadata[0].rootSlots=analysis.root.slots;
   const environmentBinary=this.environments?environmentWasm():null;
   if(environmentBinary&&metadata.length)metadata[0].environmentWasm=base64(environmentBinary);

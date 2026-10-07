@@ -150,6 +150,7 @@ exports["compileProject"]=compileProject;
 1:function(module,exports,require){
 const parseHTML=require("parse5")["parse"];
 const Compiler=require("./compiler.mjs")["Compiler"];
+const PRELUDE=require("./prelude.mjs")["PRELUDE"];
 const boot=require("./runtime.mjs")["boot"];
 const ModuleLinker=require("./modules.mjs")["ModuleLinker"];
 const utf8Size=require("./encoding.mjs")["utf8Size"];
@@ -160,6 +161,7 @@ const attr=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</
 function convertHTML(html,{loadExternal=null,loadModule=null,documentURL='file:///project/index.html'}={}){
  if(utf8Size(html)>8*1024*1024)throw new Error('Максимальный размер HTML — 8 МБ.');
  const tree=parseHTML(html,{sourceCodeLocationInfo:true}),compiler=new Compiler(),entries=[],edits=[],linker=new ModuleLinker(compiler,{loadModule,documentURL});
+ compiler.prelude(PRELUDE);
  let key='__own_wasm_app';while(html.includes(key))key+='_';
  let scriptCount=0,eventCount=0,firstScript=null,nonce='';
  const liveScripts=new Set();
@@ -9077,6 +9079,7 @@ const bindings=require("./bindings.mjs")["bindings"];
 const reprOf=require("./bindings.mjs")["reprOf"];
 const VALUE_TYPE=require("./bindings.mjs")["VALUE_TYPE"];
 const TypeInference=require("./types.mjs")["TypeInference"];
+const compactLocals=require("./locals.mjs")["compactLocals"];
 
 const signatures={
  ...featureSignatures,
@@ -9093,7 +9096,7 @@ const signatures={
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
  setFunctionName:['rri','r'],fromInt32:['i','r'],
- pushIntrinsic:['rr','i'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ pushIntrinsic:['rr','i'],typeofCode:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -9118,6 +9121,13 @@ class Compiler {
  import(name){if(!signatures[name])throw new Error('Unknown ABI: '+name);if(!this.importNames.has(name)){const[p,r]=signatures[name];this.importNames.set(name,this.imports.length);this.imports.push({name,params:[...p].map(t=>types[t]),results:[...r].map(t=>types[t])});}return this.importNames.get(name);}
  add(node,strict=false,kind='function',name=''){if(kind==='function'&&node._planId!==undefined)return node._planId;const id=this.plans.length;if(kind==='function')node._planId=id;let arity=node.params?.findIndex(p=>p.type==='AssignmentPattern'||p.type==='RestElement')??0;if(arity<0)arity=node.params.length;this.plans.push({node,kind,name,sourceName:kind==='script'||kind==='handler'?name:this.currentSource||name,strict:strictBody(node.body?.body||node.body,strict),arity});return id;}
  script(source,filename='script'){let ast;try{ast=parse(source,{ecmaVersion:'latest',sourceType:'script',locations:true});}catch(e){throw new SyntaxError(filename+': '+e.message);}return this.add(ast,false,'script',filename);}
+ // Self-hosted built-ins (37-prelude.js): compiled like a script, with
+ // $$name(...) calls as compiler intrinsics. Runs before every other script.
+ prelude(source){
+  const ast=parse(source,{ecmaVersion:'latest',sourceType:'script',locations:true});
+  const mark=x=>{if(!x||typeof x!=='object')return;if(Array.isArray(x)){x.forEach(mark);return;}if(x.type==='CallExpression'&&x.callee.type==='Identifier'&&x.callee.name.startsWith('$$'))x._intrinsic=x.callee.name.slice(2);for(const k in x)if(k!=='loc'&&k[0]!=='_')mark(x[k]);};
+  mark(ast);const id=this.add(ast,true,'script','prelude');this.plans[id].prelude=true;return id;
+ }
  handler(source,name){let ast;try{ast=parse(`function handler(event){\n${source}\n}`,{ecmaVersion:'latest',locations:true});}catch(e){throw new SyntaxError(name+': '+e.message);}return this.add(ast.body[0],false,'handler',name);}
  build(){
   // Resolve every name of the program before emitting any function.
@@ -9153,7 +9163,9 @@ class Compiler {
     functions[2*id+1]={params:generic,results:[REF],code:[0x00],locals:[]};
    }catch(e){e.message=this.currentSource+': '+e.message;throw e;}
   }
-  const metadata=this.plans.map(p=>({arity:p.arity,name:p.name,frameTypes:p.frameTypes,numeric:!!p.numeric,stringSpecialization:!!p.stringSpecialization,usesArguments:!!p.usesArguments}));
+  // Temporaries share local slots (engine compile time grows with locals).
+  for(let i=0;i<functions.length;i++)functions[i]=compactLocals(functions[i]);
+  const metadata=this.plans.map(p=>({prelude:!!p.prelude,arity:p.arity,name:p.name,frameTypes:p.frameTypes,numeric:!!p.numeric,stringSpecialization:!!p.stringSpecialization,usesArguments:!!p.usesArguments}));
   if(metadata.length)metadata[0].rootSlots=analysis.root.slots;
   const environmentBinary=this.environments?environmentWasm():null;
   if(environmentBinary&&metadata.length)metadata[0].environmentWasm=base64(environmentBinary);
@@ -16337,10 +16349,13 @@ function environmentWasm(){
  host('hostGet',[REF,REF],[REF]);host('hostSet',[REF,REF,REF,I32],[REF]);host('hostGetIndex',[REF,F64],[REF]);host('hostSetIndex',[REF,F64,REF,I32],[REF]);
  // Raw variants: the receiver is a host value and value kinds are passed along,
  // so the bridge never has to call back into WASM to classify them.
- host('hostGetRaw',[REF,REF],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
+ host('hostGetRaw',[REF,REF],[REF]);
+ // Numeric reads from host values: the number comes back as f64 (no boxing in
+ // JS); NaN means "look at the stashed value", which holds anything else.
+ host('hostGetF',[REF,REF],[F64]);host('hostGetIndexF',[REF,F64],[F64]);host('hostStash',[],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
  for(let n=0;n<=8;n++)host('hostCall'+n,[REF,REF,I32,...Array(n).fill(REF)],[REF]);
  host('hostNumberToString',[F64],[REF]);
- host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
+ host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostDefineIndex',[REF,F64,REF],[REF]);host('hostTypeof',[REF],[I32]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -16410,11 +16425,12 @@ function environmentWasm(){
   f.get(0);f.call('isClosure');f.if(()=>{f.int(8);f.ret();});
   f.int(0);
  });
+ const stashed=f=>{const n=f.local(F64);f.tee(n);f.get(n);f.out(0x61);f.if(()=>{f.get(n);f.call('number');},()=>f.call('hostStash'),REF);};
  // Property access without reference objects.
  def('getProp',[REF,REF],[REF],f=>{
   f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('objectGet');f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('stringRead');f.ret();});
-  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetRaw');f.ret();});
+  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetF');stashed(f);f.ret();});
   f.get(0);f.get(1);f.call('hostGet');
  });
  def('setProp',[REF,REF,REF,I32],[REF],f=>{
@@ -16426,7 +16442,7 @@ function environmentWasm(){
   const v=f.local();
   f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('denseGet');f.tee(v);f.out(0xd1,0x45);f.if(()=>{f.get(v);f.ret();});f.get(0);f.get(1);f.call('number');f.call('objectGet');f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('number');f.call('stringRead');f.ret();});
-  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetIndexRaw');f.ret();});
+  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetIndexF');stashed(f);f.ret();});
   f.get(0);f.get(1);f.call('hostGetIndex');
  });
  def('setIndex',[REF,F64,REF,I32],[REF],f=>{
@@ -16465,6 +16481,19 @@ function environmentWasm(){
   const k=f.local(I32);f.get(0);f.call('valueKind');f.tee(k);f.int(7);f.out(0x4f);f.if(()=>{f.get(0);f.ret();});
   f.get(k);f.int(2);f.out(0x46);f.get(k);f.int(3);f.out(0x46,0x72);f.if(()=>{f.out(0x23,10);f.ret();});
   f.get(0);f.call('hostToObject');
+ });
+ // typeof v === name without a host call where WASM knows the answer. Codes:
+ // 0 number, 1 string, 2 undefined, 3 boolean, 4 function, 5 object, 6 symbol, 7 bigint.
+ def('typeofCode',[REF],[I32],f=>{
+  const k=f.local(I32);f.get(0);f.call('valueKind');f.tee(k);
+  f.out(0x45);f.if(()=>{f.get(0);f.call('hostTypeof');f.ret();});
+  f.get(k);f.int(1);f.out(0x46);f.if(()=>{f.int(0);f.ret();});
+  f.get(k);f.int(2);f.out(0x46);f.if(()=>{f.int(2);f.ret();});
+  f.get(k);f.int(3);f.out(0x46);f.if(()=>{f.int(5);f.ret();});
+  f.get(k);f.int(6);f.out(0x46);f.if(()=>{f.int(1);f.ret();});
+  f.get(k);f.int(7);f.out(0x46);f.if(()=>{f.int(5);f.ret();});
+  f.get(k);f.int(8);f.out(0x46);f.if(()=>{f.int(4);f.ret();});
+  f.int(3);
  });
  // Calls f<id> through the shared table with the generic ABI (env, this, args, new.target).
  def('closureInvoke',[REF,REF,REF],[REF],f=>{
@@ -16710,6 +16739,25 @@ function addObjectRuntime(def){
   f.call('prototypeFlags');f.int(16);f.out(0x71,0x45);f.if(()=>{f.int(0);f.ret();});
   f.get(0);f.get(1);f.call('objectFind');f.out(0xd1);
  });
+ // Self-hosted built-ins take their fast path only for a plain WASM array:
+ // not materialized, prototypes without index properties and with the original
+ // Array species (flags 2 and 32), and no own `constructor` (key in param 1).
+ def('plainArray',[REF,REF],[I32],f=>{
+  f.get(0);f.call('isObject');f.out(0x45);f.if(()=>{f.int(0);f.ret();});
+  array(f,0);f.out(0x45);f.if(()=>{f.int(0);f.ret();});forwarded(f,0);f.if(()=>{f.int(0);f.ret();});
+  f.call('prototypeFlags');f.int(34);f.out(0x71);f.int(34);f.out(0x47);f.if(()=>{f.int(0);f.ret();});
+  f.get(0);f.get(1);f.call('objectFind');f.out(0xd1);
+ });
+ def('isWasmArray',[REF],[I32],f=>{f.get(0);f.call('isObject');f.if(()=>{array(f,0);},()=>f.int(0),I32);});
+ // CreateDataPropertyOrThrow(o, index, v): never runs setters.
+ def('defineIndex',[REF,F64,REF],[REF],f=>{
+  const i=f.local(I32);
+  f.get(0);f.call('isObject');f.if(()=>{array(f,0);forwarded(f,0);f.out(0x45,0x71);f.if(()=>{
+   f.get(1);f.out(0xfc,0x02);f.tee(i);f.out(0xb7);f.get(1);f.out(0x61);f.get(i);f.int(MAX_DENSE);f.out(0x49,0x71);
+   f.if(()=>{f.get(0);f.get(i);f.get(2);f.call('arrayStore');f.drop();f.get(0);f.ret();});
+  });});
+  f.get(0);f.get(1);f.get(2);f.call('hostDefineIndex');
+ });
  // After the arguments of o.push(...) ran: may the elements still be stored here?
  def('pushStill',[REF],[I32],f=>{
   forwarded(f,0);f.if(()=>{f.int(0);f.ret();});f.field(0,OBJECT,LENGTH);f.int(MAX_DENSE-8);f.out(0x4f);f.if(()=>{f.int(0);f.ret();});
@@ -16844,6 +16892,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const intrinsic=(name)=>{const f=getDescriptor(arrayPrototype,name)?.value;return typeof f==='function'&&Reflect.apply(globalThis.Function.prototype.toString,f,[])===`function ${name}() { [native code] }`?f:null;};
  const stringCache=new Map(),hostStrings=new WeakMap(),characterCode=String.prototype.charCodeAt,fromCharCode=String.fromCharCode,getDescriptor=Object.getOwnPropertyDescriptor;
  const arrayPush=intrinsic('push'),arrayPop=intrinsic('pop');
+ const speciesGetter=getDescriptor(Array,Symbol.species)?.get;
+ // Natives that self-hosted built-ins replace inside WASM, resolved at boot.
+ const nativeAt=path=>{let v=globalObject;for(const k of path.split('.')){v=v==null?undefined:v[k];}return typeof v==='function'?v:null;};
  let pendingObjects=null;
  const stringMethods=['charCodeAt','charAt','slice','substring','indexOf','lastIndexOf','includes','startsWith','endsWith','repeat','concat'];
  const stringIntrinsics=stringMethods.map(name=>{
@@ -16907,7 +16958,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  // runtime relies on when it is handed one of them.
  // Short argument arrays are searched too (Reflect.apply, Function.prototype.apply);
  // a long or sparse array is data, not an argument list.
- const isPrototype=v=>v===objectPrototype||v===arrayPrototype;
+ const isPrototype=v=>v===objectPrototype||v===arrayPrototype||v===Array;
  const touchesPrototypes=(...values)=>values.some(v=>isPrototype(v)||Array.isArray(v)&&v.length<=64&&v.some(isPrototype));
  // ToNumeric: one ToPrimitive (hint number), then BigInt or Number.
  const toNumeric=v=>typeof v==='number'||typeof v==='bigint'?v:-(-v);
@@ -16960,6 +17011,8 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   if(objectChain&&arrayChain&&!keys.some(index)&&!getNames(arrayPrototype).some(index))flags|=2;
   if(objectChain&&keys.length===baseKeys.length&&keys.every((k,i)=>k===baseKeys[i]))flags|=8;
   if(arrayChain&&getDescriptor(arrayPrototype,'push')?.value===arrayPush&&(flags&2))flags|=16;
+  // ArraySpeciesCreate of a plain array is a plain array.
+  if(arrayChain&&getDescriptor(arrayPrototype,'constructor')?.value===Array&&speciesGetter&&getDescriptor(Array,Symbol.species)?.get===speciesGetter)flags|=32;
   return flags;
  }
  // Prototype lookup for a key an ordinary WASM object does not have.
@@ -17001,11 +17054,18 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const mutating=new Set(['hostWrite','hostSet','hostSetIndex','hostUpdate']);
  for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual'||name==='hostToNumber',mutating.has(name));
  const key=k=>typeof k==='object'&&k!==null?fromKind(k,6):k;
+ const typeNames=['number','string','undefined','boolean','function','object','symbol','bigint'];
+ let stash;
  Object.assign(nativeImports,{
   hostGetRaw:boxedBridge((o,k)=>box(o[key(k)])),
+  hostGetF:boxedBridge((o,k)=>{const v=o[key(k)];if(typeof v==='number'&&v===v)return v;stash=v;return NaN;}),
+  hostGetIndexF:boxedBridge((o,i)=>{const v=o[i];if(typeof v==='number'&&v===v)return v;stash=v;return NaN;}),
+  hostStash:()=>{const v=stash;stash=undefined;return box(v);},
+  hostDefineIndex:boxedBridge((o,i,v)=>{defineProperty(unbox(o),i,{value:unbox(v),writable:true,enumerable:true,configurable:true});return o;}),
+  hostTypeof:v=>typeNames.indexOf(typeof v),
   hostGetIndexRaw:boxedBridge((o,i)=>box(o[i])),
-  hostSetRaw:boxedBridge((o,k,v,kind,strict)=>{const value=fromKind(v,kind);setProperty(o,key(k),value,!!strict);if(o===objectPrototype||o===arrayPrototype)environment.invalidatePrototypes();return v;},false,5),
-  hostSetIndexRaw:boxedBridge((o,i,v,kind,strict)=>{const value=fromKind(v,kind);if(ArrayBuffer.isView(o))o[i]=value;else{setProperty(o,i,value,!!strict);if(o===objectPrototype||o===arrayPrototype)environment.invalidatePrototypes();}return v;},false,5),
+  hostSetRaw:boxedBridge((o,k,v,kind,strict)=>{const value=fromKind(v,kind);setProperty(o,key(k),value,!!strict);if(isPrototype(o))environment.invalidatePrototypes();return v;},false,5),
+  hostSetIndexRaw:boxedBridge((o,i,v,kind,strict)=>{const value=fromKind(v,kind);if(ArrayBuffer.isView(o))o[i]=value;else{setProperty(o,i,value,!!strict);if(isPrototype(o))environment.invalidatePrototypes();}return v;},false,5),
   hostCall0:boxedBridge((fn,self,k)=>callKinds(fn,self,k,[])),
   hostCall1:boxedBridge((fn,self,k,a)=>callKinds(fn,self,k,[a])),
   hostCall2:boxedBridge((fn,self,k,a,b)=>callKinds(fn,self,k,[a,b]),false,5),
@@ -17265,7 +17325,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
+  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
   globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
   globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
   globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
@@ -17312,10 +17372,15 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag};
- const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;
+ // A self-hosted built-in answers for its native inside WASM; the native stays
+ // the function's identity for the host (closureFunction returns it).
+ imports.isWasmObject=environment.isObject;
+ imports.registerIntrinsic=boxedBridge((name,c)=>{const native=nativeAt(unbox(name));if(native&&!hostObjects.has(native)){environment.closureSetHost(c,native);hostObjects.set(native,c);}});
+ imports.callNative=boxedBridge((c,self,a)=>applyNative(environment.closureHost(c),unbox(self),argumentList(a)));
  imports.thisValue=boxedBridge(v=>thisCells.has(v)?box(thisValue(v)):v);
  imports.coercible=boxedBridge(v=>{if(environment.nullish(v))throw new TypeError('Cannot destructure null or undefined');return v;});
  imports.prepare=boxedBridge(prepare);
@@ -17337,6 +17402,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const bytes=typeof binary==='string'?Uint8Array.from(atob(binary),c=>c.charCodeAt(0)):binary;
  instance=new WebAssembly.Instance(new WebAssembly.Module(bytes),{r:imports});
  for(let id=0;id<metadata.length;id++)table.set(id,instance.exports['f'+id]);
+ metadata.forEach((m,id)=>{if(m.prelude)callCompiled(id,root,globalObject,[],undefined);});
  initializeModules();
  const handlers=new Map();
  return {run:id=>callCompiled(id,root,globalObject,[],undefined),module:runModule,importModule,event:(id,self,event)=>{if(!handlers.has(id)){let e=root;const fn=function(event){return callCompiled(id,e,this,[event],undefined);};if(metadata[id].usesArguments){e=environment.scopeNew(root,1);environment.scopeSet(e,1,fn);info(e).callee=fn;}handlers.set(id,fn);}return Reflect.apply(handlers.get(id),self,[event]);},exports:instance.exports};
@@ -17858,6 +17924,7 @@ const GLOBAL_CONSTANTS=new Map([['undefined',undefined],['NaN',NaN],['Infinity',
 const VALUE_TYPE={r:REF,f:F64,i:I32,n:I32};
 const reprOf=t=>t===NUM?'f':t===INT?'n':t===BOOL?'i':'r';
 const numeric=t=>t===NUM||t===INT||t===BOOL||t===NU;
+const TYPE_NAMES=['number','string','undefined','boolean','function','object','symbol','bigint'];
 const number=t=>t===NUM||t===INT;
 const I32_COMPARE={'<':0x48,'>':0x4a,'<=':0x4c,'>=':0x4e,'==':0x46,'===':0x46,'!=':0x47,'!==':0x47};
 const F64_OPS={'+':0xa0,'-':0xa1,'*':0xa2,'/':0xa3};
@@ -18156,7 +18223,7 @@ const bindings={
      if(n.left._elem){const r=this.assignElement(n);if(r)return r;}
      if(this.plainMember(n.left))return this.assignMember(n);break;
     }
-    case'BinaryExpression':{const r=this.binaryNatural(n.operator,n.left,n.right,t);if(r)return r;break;}
+    case'BinaryExpression':{const r=this.typeofCompare(n)||this.binaryNatural(n.operator,n.left,n.right,t);if(r)return r;break;}
     case'LogicalExpression':
      if(number(t)&&number(n.left._t)&&number(n.right._t)||t===BOOL&&n.left._t===t&&n.right._t===t){
       const repr=reprOf(t),v=this.local(VALUE_TYPE[repr]);this.emitAs(n.left,repr);this.tee(v);
@@ -18171,6 +18238,7 @@ const bindings={
      this.condition(n.test);this.ifElse(()=>this.expression(n.consequent),()=>this.expression(n.alternate),REF);return 'r';
     case'SequenceExpression':{let r='r';n.expressions.forEach((e,i)=>{r=this.natural(e);if(i<n.expressions.length-1)this.out(0x1a);});return r;}
     case'CallExpression':{
+     if(n._intrinsic)return this.intrinsicCall(n);
      if(n._direct&&!n.optional)return this.directCall(n,n._direct);
      if(n._math&&!n.optional){const r=this.math(n);if(r)return r;}
      if(n._strMethod){const r=this.stringMethod(n);if(r)return r;}
@@ -18350,6 +18418,29 @@ const bindings={
   if(MATH_IMPORTED2.has(name)&&args.length>=2){const [x,y]=all('f',2);this.get(x);this.get(y);this.rt('math_'+name);return 'f';}
   if(name==='random'){all('f',0);this.rt('math_random');return 'f';}
   return null;
+ },
+ // typeof x === 'name': WASM answers for its own values, the host only for host values.
+ typeofCompare(n){
+  if(this.dynamicOnly||!['===','!==','==','!='].includes(n.operator))return null;
+  const typeOf=x=>x.type==='UnaryExpression'&&x.operator==='typeof',literal=x=>x.type==='Literal'&&TYPE_NAMES.includes(x.value);
+  const [op,name]=typeOf(n.left)&&literal(n.right)?[n.left,n.right]:typeOf(n.right)&&literal(n.left)?[n.right,n.left]:[null,null];
+  if(!op||op.argument.type==='Identifier'&&this.isGlobal(this.ref(op.argument)))return null;
+  this.expression(op.argument);this.rt('typeofCode');this.integer(TYPE_NAMES.indexOf(name.value));this.out(n.operator[0]==='='?0x46:0x47);
+  return 'i';
+ },
+ // $$name(...) in the self-hosted prelude.
+ intrinsicCall(n){
+  const a=n.arguments;
+  switch(n._intrinsic){
+   case'register':this.expression(a[0]);this.expression(a[1]);this.rt('registerIntrinsic');this.lit(undefined);return 'r';
+   case'native':this.expression(a[0]);this.expression(a[1]);this.expression(a[2]);this.rt('callNative');return 'r';
+   case'call':this.expression(a[0]);this.expression(a[1]);for(const x of a.slice(2))this.expression(x);this.rt('call'+(a.length-2));return 'r';
+   case'plainArray':this.expression(a[0]);this.lit('constructor');this.rt('plainArray');return 'i';
+   case'isWasmArray':this.expression(a[0]);this.rt('isWasmArray');return 'i';
+   case'isWasmObject':this.expression(a[0]);this.rt('isWasmObject');return 'i';
+   case'defineIndex':this.expression(a[0]);this.emitAs(a[1],'f');this.expression(a[2]);this.rt('defineIndex');return 'r';
+  }
+  throw new Error('Внутренняя ошибка: неизвестный интринсик '+n._intrinsic);
  },
  // Direct call of a statically known function: no JS, no argument array.
  directCall(n,fn){
@@ -18940,6 +19031,7 @@ class TypeInference {
  }
  call(n){
   const callee=n.callee;
+  if(n._intrinsic){n.arguments.forEach(a=>this.expr(a));return ['plainArray','isWasmArray','isWasmObject'].includes(n._intrinsic)?BOOL:ANY;}
   if(callee.type==='Identifier'){
    const b=callee._ref?.binding,fn=b?.fnNode?this.a.functions.get(b.fnNode):null;
    const args=n.arguments.map(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
@@ -18995,9 +19087,307 @@ exports["TAI"]=TAI;
 exports["TAF"]=TAF;
 exports["BOOL"]=BOOL;
 exports["ANY"]=ANY;
+},
+36:function(module,exports,require){
+// Local slot compaction: temporaries whose live ranges do not overlap share
+// one WASM local. Engines compile a function in time that grows with
+// locals x control-flow merges, so a top-level script with thousands of
+// temporaries took over a second to compile before this pass.
+//
+// A local qualifies when every read is dominated by a write. In structured
+// control flow, an instruction p dominates a later instruction q when p's
+// enclosing frame (block, loop, if/else arm, try/catch arm) is q's frame or
+// one of its ancestors: branches only leave frames forward to an enclosing
+// end, or go back to the start of an enclosing loop. A qualifying local is
+// live from its first write to its last access; a range that starts before a
+// loop and reaches into it is extended to the loop's end, because the back
+// edge reads it again. Every other local keeps a slot of its own.
+const u32=require("./wasm.mjs")["u32"];
+
+const NO_IMMEDIATE=new Set([0x00,0x01,0x05,0x0b,0x0f,0x19,0x1a,0x1b,0xd1,0xd3,0xd4]);
+const SINGLE_BYTE_TYPES=new Set([0x40,0x7f,0x7e,0x7d,0x7c,0x7b,0x70,0x6f,0x6e,0x6d,0x6c,0x6b,0x6a,0x69,0x71,0x72,0x73,0x74]);
+
+// Splits a function body (without its final end) into instructions:
+// {start, end, op, local, kind (1 read, 2 write), frame}.
+function decode(code){
+ let i=0;
+ const leb=()=>{let v=0,s=0,b;do{b=code[i++];if(b===undefined)throw new Error('truncated');v+=(b&127)*2**s;s+=7;}while(b&128);return v;};
+ const sleb=()=>{let b;do{b=code[i++];if(b===undefined)throw new Error('truncated');}while(b&128);};
+ const blockType=()=>{const t=code[i];if(SINGLE_BYTE_TYPES.has(t)){i++;return;}if(t===0x63||t===0x64){i++;sleb();return;}sleb();};
+ const heapType=()=>sleb();
+ const frames=[{parent:-1,depth:0}],stack=[0],loops=[],loopOf=new Map(),out=[];
+ const open=kind=>{const f=frames.length;frames.push({parent:stack.at(-1),depth:stack.length,kind});stack.push(f);return f;};
+ const sibling=()=>{const old=stack.pop();const f=frames.length;frames.push({parent:frames[old].parent,depth:frames[old].depth,kind:frames[old].kind});stack.push(f);};
+ while(i<code.length){
+  const start=i,op=code[i++];let local=-1,kind=0,frame=stack.at(-1);
+  if(op===0x02||op===0x03||op===0x04||op===0x06){blockType();const f=open(op);if(op===0x03){const loop={start:out.length,end:-1};loops.push(loop);loopOf.set(f,loop);}}
+  else if(op===0x05||op===0x07||op===0x19){if(op===0x07)leb();if(stack.length<2)throw new Error('else outside a block');sibling();}
+  else if(op===0x0b||op===0x18){if(op===0x18)leb();if(stack.length<2)throw new Error('end outside a block');const f=stack.pop();const loop=loopOf.get(f);if(loop)loop.end=out.length;}
+  else if(op>=0x20&&op<=0x22){local=leb();kind=op===0x20?1:2;}
+  else if(NO_IMMEDIATE.has(op)||op>=0x45&&op<=0xc4){}
+  else if(op===0x0c||op===0x0d||op===0x10||op===0x12||op===0x14||op===0x15||op===0x08||op===0x09||op===0x23||op===0x24||op===0x25||op===0x26||op===0xd2||op===0xd5||op===0xd6||op===0x3f||op===0x40)leb();
+  else if(op===0x0e){const n=leb();for(let k=0;k<=n;k++)leb();}
+  else if(op===0x11||op===0x13)(leb(),leb());
+  else if(op===0x1c){const n=leb();i+=n;}
+  else if(op>=0x28&&op<=0x3e)(leb(),leb());
+  else if(op===0x41||op===0x42)sleb();
+  else if(op===0x43)i+=4;
+  else if(op===0x44)i+=8;
+  else if(op===0xd0)heapType();
+  else if(op===0xfb){
+   const sub=leb();
+   if([0,1,6,7,11,12,13,14,16].includes(sub))leb();
+   else if([2,3,4,5,8,9,10,17,18,19].includes(sub))(leb(),leb());
+   else if(sub>=20&&sub<=23)heapType();
+   else if(sub===24||sub===25){i++;leb();heapType();heapType();}
+   else if(sub===15||sub>=26&&sub<=30){}
+   else throw new Error('unknown GC opcode '+sub);
+  }
+  else if(op===0xfc){
+   const sub=leb();
+   if(sub<=7){}else if(sub===9||sub===11||sub===13||sub>=15&&sub<=17)leb();else if(sub===8||sub===10||sub===12||sub===14)(leb(),leb());else throw new Error('unknown 0xfc opcode '+sub);
+  }
+  else throw new Error('unknown opcode 0x'+op.toString(16));
+  out.push({start,end:i,op,local,kind,frame});
+ }
+ if(stack.length!==1)throw new Error('unterminated block');
+ return {instructions:out,frames,loops};
+}
+
+function compactLocals(fn){
+ const params=fn.params.length,count=fn.locals.length;
+ if(count<2)return fn;
+ let decoded;try{decoded=decode(fn.code);}catch(e){return fn;}
+ const {instructions,frames,loops}=decoded;
+ const ancestor=(a,b)=>{const depth=frames[a].depth;while(frames[b].depth>depth)b=frames[b].parent;return a===b;};
+ const info=Array.from({length:count},()=>({defs:[],uses:[]}));
+ instructions.forEach((x,index)=>{if(x.local>=params){const l=info[x.local-params];(x.kind===1?l.uses:l.defs).push(index);}});
+ const ranges=[],exclusive=[];
+ info.forEach((l,k)=>{
+  const type=fn.locals[k];
+  if(!l.defs.length&&!l.uses.length)return; // never used: dropped
+  let temp=l.defs.length>0&&l.defs.length*l.uses.length<=20000;
+  if(temp)for(const u of l.uses){if(!l.defs.some(d=>d<u&&ancestor(instructions[d].frame,instructions[u].frame))){temp=false;break;}}
+  if(!temp){exclusive.push(k);return;}
+  let start=Math.min(l.defs[0],l.uses[0]??Infinity),end=Math.max(l.defs.at(-1),l.uses.at(-1)??-1);
+  for(let changed=true;changed;){changed=false;for(const loop of loops)if(start<loop.start&&end>=loop.start&&end<loop.end){end=loop.end;changed=true;}}
+  ranges.push({k,type,start,end});
+ });
+ // Linear scan: a slot is free for a range that starts after its last end.
+ const mapping=new Int32Array(count).fill(-1),locals=[];
+ for(const k of exclusive){mapping[k]=params+locals.length;locals.push(fn.locals[k]);}
+ const slots=[];
+ ranges.sort((a,b)=>a.start-b.start);
+ for(const r of ranges){
+  let slot=slots.find(s=>s.type===r.type&&s.end<r.start);
+  if(!slot){slot={type:r.type,index:params+locals.length,end:-1};locals.push(r.type);slots.push(slot);}
+  slot.end=r.end;mapping[r.k]=slot.index;
+ }
+ if(locals.length>=count)return fn;
+ const code=[];let at=0;
+ for(const x of instructions){
+  if(x.local<params)continue;
+  for(;at<x.start;at++)code.push(fn.code[at]);
+  code.push(fn.code[x.start],...u32(mapping[x.local-params]));at=x.end;
+ }
+ for(;at<fn.code.length;at++)code.push(fn.code[at]);
+ return {...fn,code,locals};
+}
+
+exports["compactLocals"]=compactLocals;
+},
+37:function(module,exports,require){
+// Self-hosted built-ins: library functions written in JS and compiled to WASM
+// together with the program, the way IL2CPP compiles the base class library
+// for Unity. Without them, arr.map(f) on a WASM array calls the native method:
+// the array and every object reachable from it become host objects, and each
+// later access to them crosses into JS.
+//
+// Each function is registered for a native (`$$register`): inside WASM the
+// native's value is this closure, for the host the closure is the native.
+// The fast path runs only for a plain WASM array ($$plainArray: not
+// materialized, prototypes without index properties, original species); any
+// other receiver gets the native ($$native), with the arguments as given.
+// The code follows the specification steps, so callbacks that change the
+// array, its prototype or materialize it see exactly what they would in JS.
+//
+// Intrinsics (only here): $$register(path, fn), $$native(fn, self, args),
+// $$call(f, self, ...args), $$plainArray(o), $$isWasmArray(o), $$isWasmObject(o),
+// $$defineIndex(o, index, value) (CreateDataPropertyOrThrow).
+//
+// The prelude is assembled from parts: each part is a function whose body is
+// pasted into one strict IIFE, so parts share the helpers defined in `core`.
+// A new part lives in its own module (38-prelude-<name>.js exporting PART) and
+// is added to PARTS below.
+function core(){
+ const toInteger=v=>{const n=+v;return n!==n||n===0?0:Math.trunc(n);};
+ const notCallable=()=>{throw new TypeError('callback is not a function');};
+
+ function forEach(callbackfn,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(forEach,O,[callbackfn,thisArg]);
+  const len=O.length;
+  if(typeof callbackfn!=='function')notCallable();
+  for(let k=0;k<len;k++)if(k in O)$$call(callbackfn,thisArg,O[k],k,O);
+  return undefined;
+ }
+ function map(callbackfn,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(map,O,[callbackfn,thisArg]);
+  const len=O.length;
+  if(typeof callbackfn!=='function')notCallable();
+  const A=[];A.length=len;
+  for(let k=0;k<len;k++)if(k in O)$$defineIndex(A,k,$$call(callbackfn,thisArg,O[k],k,O));
+  return A;
+ }
+ function filter(callbackfn,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(filter,O,[callbackfn,thisArg]);
+  const len=O.length;
+  if(typeof callbackfn!=='function')notCallable();
+  const A=[];let to=0;
+  for(let k=0;k<len;k++)if(k in O){const kValue=O[k];if($$call(callbackfn,thisArg,kValue,k,O)){$$defineIndex(A,to,kValue);to++;}}
+  return A;
+ }
+ function some(callbackfn,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(some,O,[callbackfn,thisArg]);
+  const len=O.length;
+  if(typeof callbackfn!=='function')notCallable();
+  for(let k=0;k<len;k++)if(k in O&&$$call(callbackfn,thisArg,O[k],k,O))return true;
+  return false;
+ }
+ function every(callbackfn,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(every,O,[callbackfn,thisArg]);
+  const len=O.length;
+  if(typeof callbackfn!=='function')notCallable();
+  for(let k=0;k<len;k++)if(k in O&&!$$call(callbackfn,thisArg,O[k],k,O))return false;
+  return true;
+ }
+ // find/findIndex/findLast/findLastIndex visit holes as undefined.
+ function find(predicate,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(find,O,[predicate,thisArg]);
+  const len=O.length;
+  if(typeof predicate!=='function')notCallable();
+  for(let k=0;k<len;k++){const kValue=O[k];if($$call(predicate,thisArg,kValue,k,O))return kValue;}
+  return undefined;
+ }
+ function findIndex(predicate,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(findIndex,O,[predicate,thisArg]);
+  const len=O.length;
+  if(typeof predicate!=='function')notCallable();
+  for(let k=0;k<len;k++)if($$call(predicate,thisArg,O[k],k,O))return k;
+  return -1;
+ }
+ function findLast(predicate,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(findLast,O,[predicate,thisArg]);
+  const len=O.length;
+  if(typeof predicate!=='function')notCallable();
+  for(let k=len-1;k>=0;k--){const kValue=O[k];if($$call(predicate,thisArg,kValue,k,O))return kValue;}
+  return undefined;
+ }
+ function findLastIndex(predicate,thisArg){
+  const O=this;
+  if(!$$plainArray(O))return $$native(findLastIndex,O,[predicate,thisArg]);
+  const len=O.length;
+  if(typeof predicate!=='function')notCallable();
+  for(let k=len-1;k>=0;k--)if($$call(predicate,thisArg,O[k],k,O))return k;
+  return -1;
+ }
+ // The number of arguments matters for fromIndex: rest parameters keep it.
+ function indexOf(...args){
+  const O=this;
+  if(!$$plainArray(O))return $$native(indexOf,O,args);
+  const searchElement=args[0],len=O.length;
+  if(len===0)return -1;
+  let n=args.length>1?toInteger(args[1]):0;
+  if(n===Infinity)return -1;
+  if(n===-Infinity)n=0;
+  for(let k=n>=0?n:Math.max(len+n,0);k<len;k++)if(k in O&&O[k]===searchElement)return k;
+  return -1;
+ }
+ function lastIndexOf(...args){
+  const O=this;
+  if(!$$plainArray(O))return $$native(lastIndexOf,O,args);
+  const searchElement=args[0],len=O.length;
+  if(len===0)return -1;
+  const n=args.length>1?toInteger(args[1]):len-1;
+  if(n===-Infinity)return -1;
+  for(let k=n>=0?Math.min(n,len-1):len+n;k>=0;k--)if(k in O&&O[k]===searchElement)return k;
+  return -1;
+ }
+ // SameValueZero, and holes read as undefined.
+ function includes(...args){
+  const O=this;
+  if(!$$plainArray(O))return $$native(includes,O,args);
+  const searchElement=args[0],len=O.length;
+  if(len===0)return false;
+  let n=args.length>1?toInteger(args[1]):0;
+  if(n===Infinity)return false;
+  if(n===-Infinity)n=0;
+  const nan=searchElement!==searchElement;
+  for(let k=n>=0?n:Math.max(len+n,0);k<len;k++){const e=O[k];if(e===searchElement||nan&&e!==e)return true;}
+  return false;
+ }
+ function slice(start,end){
+  const O=this;
+  if(!$$plainArray(O))return $$native(slice,O,[start,end]);
+  const len=O.length,relativeStart=toInteger(start);
+  let k=relativeStart<0?Math.max(len+relativeStart,0):Math.min(relativeStart,len);
+  const relativeEnd=end===undefined?len:toInteger(end);
+  const final=relativeEnd<0?Math.max(len+relativeEnd,0):Math.min(relativeEnd,len);
+  // valueOf of start/end may have changed the array or its species: the
+  // native then continues with the converted (side-effect free) numbers.
+  if(!$$plainArray(O))return $$native(slice,O,[relativeStart,relativeEnd]);
+  const A=[];let n=0;
+  for(;k<final;k++,n++)if(k in O)$$defineIndex(A,n,O[k]);
+  A.length=n;
+  return A;
+ }
+ // Only arrays of primitives join here: element toString calls (and V8's
+ // cycle detection for nested arrays) stay with the native.
+ function join(separator){
+  const O=this;
+  if(!$$plainArray(O)||separator!==undefined&&typeof separator!=='string')return $$native(join,O,[separator]);
+  const len=O.length;
+  for(let k=0;k<len;k++){const e=O[k];if(e!==null&&typeof e!=='undefined'&&typeof e!=='string'&&typeof e!=='number'&&typeof e!=='boolean')return $$native(join,O,[separator]);}
+  const sep=separator===undefined?',':separator;
+  let R='';
+  for(let k=0;k<len;k++){if(k>0)R+=sep;const e=O[k];if(e!==undefined&&e!==null)R+=e;}
+  return R;
+ }
+ function isArray(arg){
+  if($$isWasmObject(arg))return $$isWasmArray(arg);
+  return $$native(isArray,undefined,[arg]);
+ }
+
+ $$register('Array.prototype.forEach',forEach);
+ $$register('Array.prototype.map',map);
+ $$register('Array.prototype.filter',filter);
+ $$register('Array.prototype.some',some);
+ $$register('Array.prototype.every',every);
+ $$register('Array.prototype.find',find);
+ $$register('Array.prototype.findIndex',findIndex);
+ $$register('Array.prototype.findLast',findLast);
+ $$register('Array.prototype.findLastIndex',findLastIndex);
+ $$register('Array.prototype.indexOf',indexOf);
+ $$register('Array.prototype.lastIndexOf',lastIndexOf);
+ $$register('Array.prototype.includes',includes);
+ $$register('Array.prototype.slice',slice);
+ $$register('Array.prototype.join',join);
+ $$register('Array.isArray',isArray);
+}
+
+const PARTS=[core];
+const body=f=>{const s=f.toString();return s.slice(s.indexOf('{')+1,s.lastIndexOf('}'));};
+exports["PRELUDE"]="(function(){'use strict';\n"+PARTS.map(body).join('\n')+'\n})();';
 }
 };
-const dependencies=[{"./html.mjs":1,"./encoding.mjs":30},{"parse5":2,"./compiler.mjs":21,"./runtime.mjs":31,"./modules.mjs":32,"./encoding.mjs":30},{"./parser/index.js":3,"./tree-adapters/default.js":16,"./serializer/index.js":19,"./common/error-codes.js":7,"./common/foreign-content.js":18,"./common/html.js":13,"./common/token.js":8,"./tokenizer/index.js":4},{"../tokenizer/index.js":4,"./open-element-stack.js":14,"./formatting-element-list.js":15,"../tree-adapters/default.js":16,"../common/doctype.js":17,"../common/foreign-content.js":18,"../common/error-codes.js":7,"../common/unicode.js":6,"../common/html.js":13,"../common/token.js":8},{"./preprocessor.js":5,"../common/unicode.js":6,"../common/token.js":8,"entities/decode":9,"../common/error-codes.js":7,"../common/html.js":13},{"../common/unicode.js":6,"../common/error-codes.js":7},{},{},{},{"./generated/decode-data-html.js":10,"./generated/decode-data-xml.js":11,"./decode-codepoint.js":12},{},{},{},{},{"../common/html.js":13},{},{"../common/html.js":13},{"./html.js":13},{"./html.js":13},{"../common/html.js":13,"entities/escape":20,"../tree-adapters/default.js":16},{},{"acorn":22,"./wasm.mjs":23,"./compiler-features.mjs":24,"./resumable.mjs":25,"./numeric.mjs":26,"./environment-wasm.mjs":28,"./string-wasm.mjs":27,"./encoding.mjs":30,"./scope.mjs":33,"./bindings.mjs":34,"./types.mjs":35},{},{},{"./wasm.mjs":23},{"./wasm.mjs":23},{"./wasm.mjs":23,"./string-wasm.mjs":27},{"./wasm.mjs":23},{"./wasm.mjs":23,"./string-wasm.mjs":27,"./object-wasm.mjs":29},{"./wasm.mjs":23,"./string-wasm.mjs":27},{},{},{"acorn":22,"./encoding.mjs":30},{},{"./wasm.mjs":23,"./scope.mjs":33,"./types.mjs":35},{}],cache=Object.create(null);
+const dependencies=[{"./html.mjs":1,"./encoding.mjs":30},{"parse5":2,"./compiler.mjs":21,"./prelude.mjs":37,"./runtime.mjs":31,"./modules.mjs":32,"./encoding.mjs":30},{"./parser/index.js":3,"./tree-adapters/default.js":16,"./serializer/index.js":19,"./common/error-codes.js":7,"./common/foreign-content.js":18,"./common/html.js":13,"./common/token.js":8,"./tokenizer/index.js":4},{"../tokenizer/index.js":4,"./open-element-stack.js":14,"./formatting-element-list.js":15,"../tree-adapters/default.js":16,"../common/doctype.js":17,"../common/foreign-content.js":18,"../common/error-codes.js":7,"../common/unicode.js":6,"../common/html.js":13,"../common/token.js":8},{"./preprocessor.js":5,"../common/unicode.js":6,"../common/token.js":8,"entities/decode":9,"../common/error-codes.js":7,"../common/html.js":13},{"../common/unicode.js":6,"../common/error-codes.js":7},{},{},{},{"./generated/decode-data-html.js":10,"./generated/decode-data-xml.js":11,"./decode-codepoint.js":12},{},{},{},{},{"../common/html.js":13},{},{"../common/html.js":13},{"./html.js":13},{"./html.js":13},{"../common/html.js":13,"entities/escape":20,"../tree-adapters/default.js":16},{},{"acorn":22,"./wasm.mjs":23,"./compiler-features.mjs":24,"./resumable.mjs":25,"./numeric.mjs":26,"./environment-wasm.mjs":28,"./string-wasm.mjs":27,"./encoding.mjs":30,"./scope.mjs":33,"./bindings.mjs":34,"./types.mjs":35,"./locals.mjs":36},{},{},{"./wasm.mjs":23},{"./wasm.mjs":23},{"./wasm.mjs":23,"./string-wasm.mjs":27},{"./wasm.mjs":23},{"./wasm.mjs":23,"./string-wasm.mjs":27,"./object-wasm.mjs":29},{"./wasm.mjs":23,"./string-wasm.mjs":27},{},{},{"acorn":22,"./encoding.mjs":30},{},{"./wasm.mjs":23,"./scope.mjs":33,"./types.mjs":35},{},{"./wasm.mjs":23},{}],cache=Object.create(null);
 function load(id){if(cache[id])return cache[id].exports;const module={exports:{}};cache[id]=module;factories[id](module,module.exports,name=>{const target=dependencies[id][name];if(target===undefined)throw new Error('Missing bundled dependency: '+name);return load(target);});return module.exports;}
 return load(0).compileProject;
 }</script>

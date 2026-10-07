@@ -1,5 +1,6 @@
 const parseHTML=require("parse5")["parse"];
 const Compiler=require("./compiler.mjs")["Compiler"];
+const PRELUDE=require("./prelude.mjs")["PRELUDE"];
 const boot=require("./runtime.mjs")["boot"];
 const ModuleLinker=require("./modules.mjs")["ModuleLinker"];
 const utf8Size=require("./encoding.mjs")["utf8Size"];
@@ -10,6 +11,7 @@ const attr=s=>String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</
 function convertHTML(html,{loadExternal=null,loadModule=null,documentURL='file:///project/index.html'}={}){
  if(utf8Size(html)>8*1024*1024)throw new Error('Максимальный размер HTML — 8 МБ.');
  const tree=parseHTML(html,{sourceCodeLocationInfo:true}),compiler=new Compiler(),entries=[],edits=[],linker=new ModuleLinker(compiler,{loadModule,documentURL});
+ compiler.prelude(PRELUDE);
  let key='__own_wasm_app';while(html.includes(key))key+='_';
  let scriptCount=0,eventCount=0,firstScript=null,nonce='';
  const liveScripts=new Set();

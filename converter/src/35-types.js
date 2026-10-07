@@ -363,6 +363,7 @@ class TypeInference {
  }
  call(n){
   const callee=n.callee;
+  if(n._intrinsic){n.arguments.forEach(a=>this.expr(a));return ['plainArray','isWasmArray','isWasmObject'].includes(n._intrinsic)?BOOL:ANY;}
   if(callee.type==='Identifier'){
    const b=callee._ref?.binding,fn=b?.fnNode?this.a.functions.get(b.fnNode):null;
    const args=n.arguments.map(a=>this.expr(a.type==='SpreadElement'?a.argument:a));

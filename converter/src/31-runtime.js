@@ -50,6 +50,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const intrinsic=(name)=>{const f=getDescriptor(arrayPrototype,name)?.value;return typeof f==='function'&&Reflect.apply(globalThis.Function.prototype.toString,f,[])===`function ${name}() { [native code] }`?f:null;};
  const stringCache=new Map(),hostStrings=new WeakMap(),characterCode=String.prototype.charCodeAt,fromCharCode=String.fromCharCode,getDescriptor=Object.getOwnPropertyDescriptor;
  const arrayPush=intrinsic('push'),arrayPop=intrinsic('pop');
+ const speciesGetter=getDescriptor(Array,Symbol.species)?.get;
+ // Natives that self-hosted built-ins replace inside WASM, resolved at boot.
+ const nativeAt=path=>{let v=globalObject;for(const k of path.split('.')){v=v==null?undefined:v[k];}return typeof v==='function'?v:null;};
  let pendingObjects=null;
  const stringMethods=['charCodeAt','charAt','slice','substring','indexOf','lastIndexOf','includes','startsWith','endsWith','repeat','concat'];
  const stringIntrinsics=stringMethods.map(name=>{
@@ -113,7 +116,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  // runtime relies on when it is handed one of them.
  // Short argument arrays are searched too (Reflect.apply, Function.prototype.apply);
  // a long or sparse array is data, not an argument list.
- const isPrototype=v=>v===objectPrototype||v===arrayPrototype;
+ const isPrototype=v=>v===objectPrototype||v===arrayPrototype||v===Array;
  const touchesPrototypes=(...values)=>values.some(v=>isPrototype(v)||Array.isArray(v)&&v.length<=64&&v.some(isPrototype));
  // ToNumeric: one ToPrimitive (hint number), then BigInt or Number.
  const toNumeric=v=>typeof v==='number'||typeof v==='bigint'?v:-(-v);
@@ -166,6 +169,8 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   if(objectChain&&arrayChain&&!keys.some(index)&&!getNames(arrayPrototype).some(index))flags|=2;
   if(objectChain&&keys.length===baseKeys.length&&keys.every((k,i)=>k===baseKeys[i]))flags|=8;
   if(arrayChain&&getDescriptor(arrayPrototype,'push')?.value===arrayPush&&(flags&2))flags|=16;
+  // ArraySpeciesCreate of a plain array is a plain array.
+  if(arrayChain&&getDescriptor(arrayPrototype,'constructor')?.value===Array&&speciesGetter&&getDescriptor(Array,Symbol.species)?.get===speciesGetter)flags|=32;
   return flags;
  }
  // Prototype lookup for a key an ordinary WASM object does not have.
@@ -207,11 +212,18 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const mutating=new Set(['hostWrite','hostSet','hostSetIndex','hostUpdate']);
  for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual'||name==='hostToNumber',mutating.has(name));
  const key=k=>typeof k==='object'&&k!==null?fromKind(k,6):k;
+ const typeNames=['number','string','undefined','boolean','function','object','symbol','bigint'];
+ let stash;
  Object.assign(nativeImports,{
   hostGetRaw:boxedBridge((o,k)=>box(o[key(k)])),
+  hostGetF:boxedBridge((o,k)=>{const v=o[key(k)];if(typeof v==='number'&&v===v)return v;stash=v;return NaN;}),
+  hostGetIndexF:boxedBridge((o,i)=>{const v=o[i];if(typeof v==='number'&&v===v)return v;stash=v;return NaN;}),
+  hostStash:()=>{const v=stash;stash=undefined;return box(v);},
+  hostDefineIndex:boxedBridge((o,i,v)=>{defineProperty(unbox(o),i,{value:unbox(v),writable:true,enumerable:true,configurable:true});return o;}),
+  hostTypeof:v=>typeNames.indexOf(typeof v),
   hostGetIndexRaw:boxedBridge((o,i)=>box(o[i])),
-  hostSetRaw:boxedBridge((o,k,v,kind,strict)=>{const value=fromKind(v,kind);setProperty(o,key(k),value,!!strict);if(o===objectPrototype||o===arrayPrototype)environment.invalidatePrototypes();return v;},false,5),
-  hostSetIndexRaw:boxedBridge((o,i,v,kind,strict)=>{const value=fromKind(v,kind);if(ArrayBuffer.isView(o))o[i]=value;else{setProperty(o,i,value,!!strict);if(o===objectPrototype||o===arrayPrototype)environment.invalidatePrototypes();}return v;},false,5),
+  hostSetRaw:boxedBridge((o,k,v,kind,strict)=>{const value=fromKind(v,kind);setProperty(o,key(k),value,!!strict);if(isPrototype(o))environment.invalidatePrototypes();return v;},false,5),
+  hostSetIndexRaw:boxedBridge((o,i,v,kind,strict)=>{const value=fromKind(v,kind);if(ArrayBuffer.isView(o))o[i]=value;else{setProperty(o,i,value,!!strict);if(isPrototype(o))environment.invalidatePrototypes();}return v;},false,5),
   hostCall0:boxedBridge((fn,self,k)=>callKinds(fn,self,k,[])),
   hostCall1:boxedBridge((fn,self,k,a)=>callKinds(fn,self,k,[a])),
   hostCall2:boxedBridge((fn,self,k,a,b)=>callKinds(fn,self,k,[a,b]),false,5),
@@ -471,7 +483,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
+  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
   globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
   globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
   globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
@@ -518,10 +530,15 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag};
- const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;
+ // A self-hosted built-in answers for its native inside WASM; the native stays
+ // the function's identity for the host (closureFunction returns it).
+ imports.isWasmObject=environment.isObject;
+ imports.registerIntrinsic=boxedBridge((name,c)=>{const native=nativeAt(unbox(name));if(native&&!hostObjects.has(native)){environment.closureSetHost(c,native);hostObjects.set(native,c);}});
+ imports.callNative=boxedBridge((c,self,a)=>applyNative(environment.closureHost(c),unbox(self),argumentList(a)));
  imports.thisValue=boxedBridge(v=>thisCells.has(v)?box(thisValue(v)):v);
  imports.coercible=boxedBridge(v=>{if(environment.nullish(v))throw new TypeError('Cannot destructure null or undefined');return v;});
  imports.prepare=boxedBridge(prepare);
@@ -543,6 +560,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const bytes=typeof binary==='string'?Uint8Array.from(atob(binary),c=>c.charCodeAt(0)):binary;
  instance=new WebAssembly.Instance(new WebAssembly.Module(bytes),{r:imports});
  for(let id=0;id<metadata.length;id++)table.set(id,instance.exports['f'+id]);
+ metadata.forEach((m,id)=>{if(m.prelude)callCompiled(id,root,globalObject,[],undefined);});
  initializeModules();
  const handlers=new Map();
  return {run:id=>callCompiled(id,root,globalObject,[],undefined),module:runModule,importModule,event:(id,self,event)=>{if(!handlers.has(id)){let e=root;const fn=function(event){return callCompiled(id,e,this,[event],undefined);};if(metadata[id].usesArguments){e=environment.scopeNew(root,1);environment.scopeSet(e,1,fn);info(e).callee=fn;}handlers.set(id,fn);}return Reflect.apply(handlers.get(id),self,[event]);},exports:instance.exports};

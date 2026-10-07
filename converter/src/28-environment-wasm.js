@@ -75,10 +75,13 @@ function environmentWasm(){
  host('hostGet',[REF,REF],[REF]);host('hostSet',[REF,REF,REF,I32],[REF]);host('hostGetIndex',[REF,F64],[REF]);host('hostSetIndex',[REF,F64,REF,I32],[REF]);
  // Raw variants: the receiver is a host value and value kinds are passed along,
  // so the bridge never has to call back into WASM to classify them.
- host('hostGetRaw',[REF,REF],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
+ host('hostGetRaw',[REF,REF],[REF]);
+ // Numeric reads from host values: the number comes back as f64 (no boxing in
+ // JS); NaN means "look at the stashed value", which holds anything else.
+ host('hostGetF',[REF,REF],[F64]);host('hostGetIndexF',[REF,F64],[F64]);host('hostStash',[],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
  for(let n=0;n<=8;n++)host('hostCall'+n,[REF,REF,I32,...Array(n).fill(REF)],[REF]);
  host('hostNumberToString',[F64],[REF]);
- host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
+ host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostDefineIndex',[REF,F64,REF],[REF]);host('hostTypeof',[REF],[I32]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -148,11 +151,12 @@ function environmentWasm(){
   f.get(0);f.call('isClosure');f.if(()=>{f.int(8);f.ret();});
   f.int(0);
  });
+ const stashed=f=>{const n=f.local(F64);f.tee(n);f.get(n);f.out(0x61);f.if(()=>{f.get(n);f.call('number');},()=>f.call('hostStash'),REF);};
  // Property access without reference objects.
  def('getProp',[REF,REF],[REF],f=>{
   f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('objectGet');f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('stringRead');f.ret();});
-  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetRaw');f.ret();});
+  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetF');stashed(f);f.ret();});
   f.get(0);f.get(1);f.call('hostGet');
  });
  def('setProp',[REF,REF,REF,I32],[REF],f=>{
@@ -164,7 +168,7 @@ function environmentWasm(){
   const v=f.local();
   f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('denseGet');f.tee(v);f.out(0xd1,0x45);f.if(()=>{f.get(v);f.ret();});f.get(0);f.get(1);f.call('number');f.call('objectGet');f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('number');f.call('stringRead');f.ret();});
-  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetIndexRaw');f.ret();});
+  f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetIndexF');stashed(f);f.ret();});
   f.get(0);f.get(1);f.call('hostGetIndex');
  });
  def('setIndex',[REF,F64,REF,I32],[REF],f=>{
@@ -203,6 +207,19 @@ function environmentWasm(){
   const k=f.local(I32);f.get(0);f.call('valueKind');f.tee(k);f.int(7);f.out(0x4f);f.if(()=>{f.get(0);f.ret();});
   f.get(k);f.int(2);f.out(0x46);f.get(k);f.int(3);f.out(0x46,0x72);f.if(()=>{f.out(0x23,10);f.ret();});
   f.get(0);f.call('hostToObject');
+ });
+ // typeof v === name without a host call where WASM knows the answer. Codes:
+ // 0 number, 1 string, 2 undefined, 3 boolean, 4 function, 5 object, 6 symbol, 7 bigint.
+ def('typeofCode',[REF],[I32],f=>{
+  const k=f.local(I32);f.get(0);f.call('valueKind');f.tee(k);
+  f.out(0x45);f.if(()=>{f.get(0);f.call('hostTypeof');f.ret();});
+  f.get(k);f.int(1);f.out(0x46);f.if(()=>{f.int(0);f.ret();});
+  f.get(k);f.int(2);f.out(0x46);f.if(()=>{f.int(2);f.ret();});
+  f.get(k);f.int(3);f.out(0x46);f.if(()=>{f.int(5);f.ret();});
+  f.get(k);f.int(6);f.out(0x46);f.if(()=>{f.int(1);f.ret();});
+  f.get(k);f.int(7);f.out(0x46);f.if(()=>{f.int(5);f.ret();});
+  f.get(k);f.int(8);f.out(0x46);f.if(()=>{f.int(4);f.ret();});
+  f.int(3);
  });
  // Calls f<id> through the shared table with the generic ABI (env, this, args, new.target).
  def('closureInvoke',[REF,REF,REF],[REF],f=>{
