@@ -153,8 +153,14 @@ class ScopeAnalysis {
    visit(n.params);visit(n.body);
    fn.usesArguments=uses&&!n.params.some(p=>patternNames(p).some(id=>id.name==='arguments'));
   }
+  // A method needs its own record only for super (the home object lives there).
+  if(method){
+   let uses=false;
+   const visit=x=>{if(uses||!x||typeof x!=='object')return;if(Array.isArray(x)){x.forEach(visit);return;}if(x.type==='FunctionDeclaration'||x.type==='FunctionExpression')return;if(x.type==='Super')uses=true;for(const k in x){if(k==='loc'||k[0]==='_')continue;const v=x[k];if(v&&typeof v==='object')visit(v);}};
+   visit(n.params);visit(n.body);fn.usesSuper=uses;
+  }
   const named=n.type==='FunctionExpression'&&!!n.id;
-  fn.fscope=!!(named||method||fn.usesArguments||classConstructor);
+  fn.fscope=!!(named||method&&fn.usesSuper||fn.usesArguments||classConstructor);
   // Per-function-object record created by the runtime: [parent, function].
   // Holds the self binding of a named function expression and the
   // callee/home data used by arguments.callee and super.
@@ -271,7 +277,7 @@ class ScopeAnalysis {
     // Field initializers run as hidden methods. An anonymous function or
     // class value is named after the field key.
     const v=m.value;
-    if(v&&(v.type==='ArrowFunctionExpression'||(v.type==='FunctionExpression'||v.type==='ClassExpression')&&!v.id)){if(m.computed)m._nameFromKey=true;else v._displayName=m.key.type==='PrivateIdentifier'?'#'+m.key.name:String(m.key.name??m.key.value);}
+    if(v&&(v.type==='ArrowFunctionExpression'||(v.type==='FunctionExpression'||v.type==='ClassExpression')&&!v.id)){if(m.computed){m._nameFromKey=true;if(v.type==='ClassExpression')v._nameArg=true;}else v._displayName=m.key.type==='PrivateIdentifier'?'#'+m.key.name:String(m.key.name??m.key.value);}
     const wrapper={type:'FunctionExpression',params:[],body:{type:'BlockStatement',body:[{type:'ReturnStatement',argument:m.value||null}]},start:m.start,end:m.end,loc:m.loc,_synthetic:true};
     m._initializer=wrapper;wrapper._outerScope=inner;this.functionNode(wrapper,inner,{method:true});
    }

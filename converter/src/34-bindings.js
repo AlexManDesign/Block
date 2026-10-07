@@ -144,11 +144,13 @@ const bindings={
  },
  // a[i] = v / a[i] op= v / a[i]++ on a typed array receiver.
  assignElement(n){
+  // Decided before anything is emitted: the generic path evaluates it all again.
+  // An out-of-bounds element is undefined, not NaN, for string concatenation.
+  if(['&&=','||=','??='].includes(n.operator)||n.operator==='+='&&!numeric(n.right._t))return null;
   const m=n.left,o=this.local(),i=this.local(F64);
   this.expression(m.object);this.set(o);this.emitAs(m.property,'f');this.set(i);
   let r;
   if(n.operator==='=')r=this.natural(n.right);
-  else if(['&&=','||=','??='].includes(n.operator))return null;
   else r=this.binaryAny(n.operator.slice(0,-1),{type:'Emit',_t:NUM,emit:()=>{this.get(o);this.get(i);this.rt('taGetF');return 'f';}},n.right,n._t);
   return this.storeElement(o,i,r);
  },
@@ -360,8 +362,10 @@ const bindings={
    let key=null;
    if(p.computed){this.expression(p.key);this.rt('key');key=this.local();this.tee(key);}else this.lit(p.key.name??p.key.value);
    const name=p.computed?'':String(p.key.name??p.key.value);
+   // An anonymous class takes a computed name before its static elements run.
+   const namedClass=key!==null&&anonymous&&p.value.type==='ClassExpression';if(namedClass)p.value._nameLocal=key;
    if(p.method||accessor)this.function(p.value,name,true);else this.expression(p.value,kind===3?'':name);
-   if(key!==null&&(p.method||accessor||anonymous)||accessor){if(key!==null)this.get(key);else this.lit(name);this.integer(p.kind==='get'?1:p.kind==='set'?2:0);this.rt('setFunctionName');}
+   if(key!==null&&(p.method||accessor||anonymous)&&!namedClass||accessor){if(key!==null)this.get(key);else this.lit(name);this.integer(p.kind==='get'?1:p.kind==='set'?2:0);this.rt('setFunctionName');}
    this.integer(kind);this.rt('define');
   }
  },
@@ -422,6 +426,9 @@ const bindings={
   this.get(self);this.lit('push');this.rt('pushIntrinsic');this.tee(fast);
   this.ifElse(()=>this.out(0xd0,REF),()=>{this.get(self);this.lit('push');this.rt('getProp');},REF);this.set(fn);
   const args=n.arguments.map(a=>{const x=this.local();this.expression(a);this.set(x);return x;});
+  // The arguments may have grown the array, materialized it or added index
+  // setters: then the intrinsic found before them runs in JS.
+  this.get(fast);this.ifElse(()=>{this.get(self);this.rt('pushStill');this.tee(fast);this.out(0x45);this.ifElse(()=>{this.rt('arrayPushFunction');this.set(fn);},null);},null);
   this.get(fast);
   this.ifElse(()=>{for(const x of args){this.get(self);this.get(x);this.rt('push');this.out(0x1a);}this.get(self);this.lit('length');this.rt('getProp');},
    ()=>{this.get(fn);this.get(self);for(const x of args)this.get(x);this.rt('call'+args.length);},REF);
@@ -437,13 +444,15 @@ const bindings={
   if(F64_COMPARE[op]!==undefined&&numeric(a)&&numeric(b)){
    // A number is never strictly equal to a boolean.
    if((op==='==='||op==='!==')&&(a===BOOL)!==(b===BOOL)){this.natural(left);this.out(0x1a);this.natural(right);this.out(0x1a);this.integer(op==='!=='?1:0);return 'i';}
-   if(a!==NUM&&b!==NUM){this.operandsAs(left,right,a===BOOL&&b===BOOL?'i':'n');this.out(I32_COMPARE[op]);return 'i';}
+   // NU (a typed array element) may be a fraction or undefined: compared as f64.
+   if(a!==NUM&&b!==NUM&&a!==NU&&b!==NU){this.operandsAs(left,right,a===BOOL&&b===BOOL?'i':'n');this.out(I32_COMPARE[op]);return 'i';}
    this.operands(left,right);this.out(F64_COMPARE[op]);return 'i';
   }
   if(t===INT&&I32_OPS[op]!==undefined){this.operandsAs(left,right,'n');this.out(I32_OPS[op]);return 'n';}
   if(op==='>>>'&&t===NUM){this.operandsAs(left,right,'n');this.out(0x76,0xb8);return 'f';}
   if(t!==NUM)return null;
   if(F64_OPS[op]!==undefined){this.operands(left,right);this.out(F64_OPS[op]);return 'f';}
+  if(op==='%'&&a===INT&&b===INT){this.operandsAs(left,right,'n');this.intRemainder();return 'f';}
   if(op==='%'){this.operands(left,right);this.remainder();return 'f';}
   if(op==='**'){this.operands(left,right);this.rt('pow');return 'f';}
   return null;
@@ -458,6 +467,13 @@ const bindings={
   const a=this.natural(left);
   if(a==='r'&&!numeric(left._t)){const x=this.local();this.set(x);const b=this.natural(right),y=this.local(VALUE_TYPE[b]);this.set(y);this.get(x);this.convert('r',repr,left._t);this.get(y);this.convert(b,repr,right._t);return;}
   this.convert(a,repr,left._t);this.emitAs(right,repr);
+ },
+ // int32 % int32: NaN for a zero divisor, -0 for a zero result of a negative
+ // dividend (i32.rem_s does not trap, and INT_MIN % -1 is 0 there).
+ intRemainder(){
+  const x=this.local(I32),y=this.local(I32),r=this.local(I32);this.set(y);this.set(x);
+  this.get(y);this.out(0x45);
+  this.ifElse(()=>this.f64(NaN),()=>{this.get(x);this.get(y);this.out(0x6f);this.tee(r);this.out(0x45);this.get(x);this.integer(0);this.out(0x48,0x71);this.ifElse(()=>this.f64(-0),()=>{this.get(r);this.out(0xb7);},F64);},F64);
  },
  // JS remainder: exact for int32 operands inline, otherwise the host's %.
  remainder(){
@@ -631,9 +647,13 @@ const bindings={
     this.get(c);
     if(m.key.type==='PrivateIdentifier'){this.get(this.env);this.integer(this.c.constant(m.key.name));this.rt('privateKey');}else if(m.computed){this.expression(m.key);this.rt('key');}else this.lit(m.key.name??m.key.value);
     if(m.type==='MethodDefinition'){this.function(m.value,m.key.name||'',true);this.integer(m.kind==='get'?1:m.kind==='set'?2:0);this.integer(+m.static);this.rt('classMethod');}
-    else{this.function(m._initializer,'',true);this.integer(+m.static);this.integer(m._nameFromKey?2:0);this.rt('classField');}
+    else{this.function(m._initializer,'',true);this.integer(+m.static);this.integer(m._nameFromKey&&m.value.type!=='ClassExpression'?2:0);this.rt('classField');}
    }
    if(bindingName)this.initBinding(n._scope.bindings.get(bindingName),()=>this.get(c));
+   // Computed names (from the object literal's key, or the key the runtime
+   // passes to a field initializer) are set after the methods, as V8 does,
+   // and before static fields and blocks run.
+   if(n._nameLocal!==undefined||n._nameArg){this.get(c);if(n._nameArg){this.get(2);this.integer(0);this.rt('arg');}else this.get(n._nameLocal);this.integer(0);this.rt('setFunctionName');this.out(0x1a);}
    this.get(c);this.rt('finishClass');
   });
   this.strict=strict;

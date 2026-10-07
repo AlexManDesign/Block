@@ -1,6 +1,7 @@
 // Differential cases for classes: fields, accessors, statics, privates,
 // inheritance and super, method extraction, coercion hooks, built-in
 // subclasses, prototype mutation and numeric hot loops over instances.
+// Code merged into a case from elsewhere sits in its own { block }.
 export const cases = {
   'classes: field initializer order vs constructor': `
 class A {
@@ -68,7 +69,35 @@ const g = new GetOnly();
 g.x = 5;
 log(g.x, g.strictSet());
 class SetOnly { set y(v) { this._y = v; } }
-const s = new SetOnly(); s.y = 3; log(s.y, s._y);`,
+const s = new SetOnly(); s.y = 3; log(s.y, s._y);
+{
+const order = [];
+class P {
+  constructor() { this._v = '5'; }
+  get v() { order.push('get'); return this._v; }
+  set v(x) { order.push('set ' + typeof x + ' ' + x); this._v = x; }
+}
+const p = new P();
+const old = p.v++;
+log(old, typeof old, p.v, order.join(',')); order.length = 0;
+p.v += 1; p.v **= 2; p.v ||= 'no'; p.v &&= p.v + 1; p.v ??= 'nn';
+log(p._v, order.join(',')); order.length = 0;
+[p.v, p._w] = [1, 2]; log(order.join(','), p._v);
+class M { m() {} static s() {} get a() { return 1; } constructor(a, b = 1, c) {} }
+const dm = Object.getOwnPropertyDescriptor(M.prototype, 'm');
+log(dm.writable, dm.enumerable, dm.configurable, Object.hasOwn(M.prototype.m, 'prototype'), M.length, M.prototype.m.length);
+try { new M.prototype.m(); } catch (e) { logError(e); }
+try { new M.s(); } catch (e) { logError(e); }
+const dn = Object.getOwnPropertyDescriptor(M, 'name'); log(dn.writable, dn.enumerable, dn.configurable);
+class Cm { ['constructor']() { return 'computed ctor method'; } }
+log(Cm.prototype.constructor === Cm, typeof Cm.prototype.constructor, new Cm().constructor === Cm);
+class Lit { 'constructor'() { this.made = 1; } }
+log(new Lit().made, Lit.prototype.constructor === Lit);
+class Nums { 0x10() { return 'hex'; } 1e3 = 'k'; 0.5 = 'half'; static 1n = 'big'; }
+log(new Nums()[16](), Object.keys(new Nums()), Nums[1]);
+class Names { static name() { return 'fn'; } static length = 9; }
+log(typeof Names.name, Names.length);
+}`,
 
   'classes: static members and static blocks order': `
 const order = [];
@@ -83,7 +112,24 @@ class S {
 log(order.join(' '), S.a, S.b, S.c, S.d);
 log(Object.keys(S), typeof S.helper);
 class L { static { var leaked = 1; this.l = typeof leaked; } }
-log(L.l, typeof leaked);`,
+log(L.l, typeof leaked);
+{
+let created = 0;
+class Node2 {
+  static all = [];
+  constructor(val, parent = null) {
+    this.val = val; this.parent = parent; this.children = [];
+    if (parent) parent.children.push(this);
+    Node2.all.push(this); created++;
+  }
+  path() { return this.parent ? this.parent.path() + '/' + this.val : String(this.val); }
+  depth() { let d = 0, n = this; while (n.parent) { d++; n = n.parent; } return d; }
+  sum() { return this.val + this.children.reduce((s, c) => s + c.sum(), 0); }
+}
+const root = new Node2(1); const c1 = new Node2(2, root); const c2 = new Node2(3, c1); new Node2(4, root);
+log(c2.path(), c2.depth(), root.sum(), created, Node2.all.length, root.children.map(c => c.val));
+log(Node2.all.indexOf(c2), Node2.all[1] === c1, c2.parent.parent === root);
+}`,
 
   'classes: static inheritance, super in statics and private statics': `
 class A {
@@ -140,7 +186,23 @@ class Early { x = this.#m(); #m() { return 'pm'; } #y = 'late'; get y() { return
 log(new Early().x, new Early().y);
 class Base2 { constructor() { try { this.r = this.callPm(); } catch (e) { this.r = e.name; } } }
 class D2 extends Base2 { #pm() { return 'ok'; } callPm() { return this.#pm(); } }
-log(new D2().r);`,
+log(new D2().r);
+{
+class C { #x = 1; getX() { return this.#x; } inc() { this.#x++; return this.#x; } static has(o) { return #x in o; } }
+const c = new C();
+const p = new Proxy(c, {});
+try { p.getX(); } catch (e) { logError(e); }
+log(C.has(p), C.has(c));
+const f = Object.freeze(new C());
+log(f.inc(), f.inc(), Object.isFrozen(f));
+class S { static f = () => this.name; static g = function () { return this?.name; }; }
+const sf = S.f, sg = S.g;
+log(sf(), sg(), S.g());
+const traps = [];
+const pc = new Proxy(class P { constructor(v) { this.v = v; } }, { construct(t, args, nt) { traps.push('construct ' + args); return Reflect.construct(t, args, nt); } });
+class Q extends pc { constructor() { super(9); this.q = 1; } }
+const q = new Q(); log(q.v, q.q, q instanceof Q, traps);
+}`,
 
   'classes: private names per evaluation, nesting and siblings': `
 function make() { return class { #x = 1; static has(o) { return #x in o; } get x() { return this.#x; } }; }
@@ -216,7 +278,23 @@ class Y { constructor() { this.from = 'Y'; } }
 class Z1 extends X { constructor() { super(); } }
 class Z2 extends X {}
 Object.setPrototypeOf(Z1, Y); Object.setPrototypeOf(Z2, Y);
-log(new Z1().from, new Z2().from, new Z1() instanceof X, new Z1() instanceof Y);`,
+log(new Z1().from, new Z2().from, new Z1() instanceof X, new Z1() instanceof Y);
+{
+class A { m() { return 'A'; } get g() { return 'gA'; } static s() { return 'sA'; } }
+class X { m() { return 'X'; } get g() { return 'gX'; } static s() { return 'sX'; } }
+class B extends A { m() { return 'B>' + super.m(); } get g() { return super.g + '!'; } static s() { return 'B>' + super.s(); } }
+const b = new B();
+log(b.m(), b.g, B.s());
+Object.setPrototypeOf(B.prototype, X.prototype); Object.setPrototypeOf(B, X);
+log(b.m(), b.g, B.s(), b instanceof A, b instanceof X);
+const o2 = { m: B.prototype.m, g: 'own' };
+log(o2.m());
+const obj = { __proto__: { v: 'p1' }, read() { return super.v; } };
+const read = obj.read;
+log(obj.read(), read.call({}));
+Object.setPrototypeOf(obj, { v: 'p2' }); log(read());
+A.prototype.m = () => 'A2'; X.prototype.m = function () { return 'X2:' + (this === b); }; log(b.m());
+}`,
 
   'classes: super property assignment and compound ops': `
 class A { m() { return 'A.m'; } get count() { return this._c ?? 0; } set count(v) { this._c = v; } }
@@ -275,7 +353,28 @@ class T {
 }
 const t = new T();
 log(t.tag\`a\${1}b\${2}c\`, t.getFn()(), t.missing?.(), (t.tag)\`p\`, (t.getFn)()());
-try { (0, t.getFn)()(); } catch (e) { logError(e); }`,
+try { (0, t.getFn)()(); } catch (e) { logError(e); }
+{
+const btn = document.getElementById('btn');
+class Counter {
+  count = 0;
+  constructor(el) { this.el = el; el.addEventListener('click', this); el.addEventListener('click', this.onClick); el.addEventListener('click', this.bound, { once: true }); }
+  bound = (e) => { this.boundHits = (this.boundHits || 0) + 1; };
+  handleEvent(e) { this.count++; this.lastType = e.type; this.cur = e.currentTarget === this.el; }
+  onClick(e) { this.unbound = (this.unbound || 0) + 1; }
+}
+const c = new Counter(btn);
+btn.click(); btn.click();
+log(c.count, c.lastType, c.cur, c.boundHits, btn.unbound, c.unbound);
+c.handleEvent = function () { this.count += 100; };
+btn.click(); log(c.count);
+btn.removeEventListener('click', c); btn.click(); log(c.count);
+const items = [1, 2, 3];
+class Ctx { constructor() { this.sum = 0; } }
+const ctx = new Ctx();
+items.forEach(function (x) { this.sum += x; }, ctx);
+log(ctx.sum);
+}`,
 
   'classes: valueOf, toString and toPrimitive coercions': `
 class Money {
@@ -297,6 +396,49 @@ const xs = [new Child(1), new Child2(2)];
 log(\`\${xs[0]}|\${xs[1]}\`, xs[0] + xs[1], xs.join(), 'x' + xs[1]);
 const o = {}; o[xs[0]] = 'key'; log(Object.keys(o));
 let total = 0; total -= a; total *= b; log(total, Number(a), parseFloat(b), isNaN(a));`,
+
+  'classes: coercion order of instance operands and Math arguments': `
+const order = [];
+class V { constructor(n) { this.n = n; } valueOf() { order.push('valueOf ' + this.n); return this.n; } }
+const mk = n => (order.push('make ' + n), new V(n));
+log(Math.abs(mk(-1), mk(2)), order.join()); order.length = 0;
+log(Math.max(mk(1), mk(3), mk(2)), order.join()); order.length = 0;
+log(Math.round(mk(1.5), mk(9)), Math.sqrt(mk(4), mk(8)), order.join()); order.length = 0;
+log(Math.pow(mk(2), mk(3), mk(4)), Math.imul(mk(3), mk(4), mk(5)), order.join()); order.length = 0;
+log(Math.floor(mk(2.5), mk(6)), Math.sign(mk(-3), mk(7)), order.join());
+{
+const order = [];
+class V { constructor(n, t) { this.n = n; this.t = t; } valueOf() { order.push('v' + this.t); return this.n; } }
+const a = () => new V(1, 'a'), b = () => new V(2, 'b');
+const r = [a() > b(), a() >= b(), a() <= b(), a() < b(), a() - b(), a() | b(), a() ** b(), a() % b(), a() << b(), a() & b(), a() >>> b(), a() * b(), a() / b(), a() == b(), a() != b()];
+log(r, order.join(''));
+class S { constructor(s) { this.s = s; } valueOf() { return this.s; } }
+log(new S('10') < new S('9'), new S('10') > new S('9'), new S('10') < 9, new S('a') < new S('b'));
+let t = 1; t += new S('5'); log(t, typeof t);
+let u = 0; for (let i = 0; i < 3; i++) u += new S(i); log(u, typeof u);
+let w = new V(5, 'w'); w++; log(w, typeof w);
+let x = new V(5, 'x'); x += 1; log(x);
+log(-new V(3, 'n'), ~new V(3, 'n'), +new V(3, 'n'), new V(3, 'n') | 0, new V(-1, 'n') >>> 0);
+}
+{
+class B { valueOf() { return 10n; } }
+const b = new B();
+log(b + 1n, b * 2n, b > 5, b == 10n, typeof (b + 1n));
+try { log(b * 2); } catch (e) { logError(e); }
+try { log(b | 0); } catch (e) { logError(e); }
+try { log(Math.abs(b)); } catch (e) { logError(e); }
+class O { valueOf() { return {}; } toString() { return '7'; } }
+log(new O() * 2, new O() + 1, \`\${new O()}\`);
+class Bad { [Symbol.toPrimitive]() { return {}; } }
+try { log(new Bad() + 1); } catch (e) { logError(e); }
+try { log(\`\${new Bad()}\`); } catch (e) { logError(e); }
+class Sy { [Symbol.toPrimitive]() { return Symbol('q'); } }
+try { log(new Sy() + ''); } catch (e) { logError(e); }
+try { log(new Sy() * 1); } catch (e) { logError(e); }
+const k = {}; k[new Sy()] = 1; log(Object.getOwnPropertySymbols(k).length);
+class N { toString() { return null; } valueOf() { return undefined; } }
+log(String(new N()), new N() + 1, \`\${new N()}\`);
+}`,
 
   'classes: instances in arrays maps sets and JSON': `
 class Pt {
@@ -338,7 +480,42 @@ const h2 = new Holder([], {});
 h2.arr[5] = 'x'; log(h2.arr.length, 4 in h2.arr, h2.arr);
 const p = new Box(1);
 const lit = { __proto__: p, own: 2 };
-lit.v = 5; log(lit.get(), p.v, lit instanceof Box, Object.keys(lit));`,
+lit.v = 5; log(lit.get(), p.v, lit instanceof Box, Object.keys(lit));
+{
+class A { constructor() { this.x = 1; } m() { this.y = (this.y || 0) + this.x; return this.y; } get g() { return 'g' + this.x; } }
+const lit = { x: 10 };
+log(A.prototype.m.call(lit), lit.y, lit.m, lit instanceof A);
+Object.setPrototypeOf(lit, A.prototype);
+log(lit.m(), lit.y, lit.g, lit instanceof A, Object.keys(lit));
+lit.x = 20; log(lit.m(), lit.g);
+const arr = [new A(), { x: 3, __proto__: A.prototype }, Object.assign(Object.create(A.prototype), { x: 4 })];
+log(arr.map(o => o.m()), arr.map(o => o.g));
+const holder = { inner: new A() };
+holder.inner.x = 'S'; log(holder.inner.m(), holder.inner.g);
+const lit2 = { x: 2, m() { return 'own ' + super.g; } };
+Object.setPrototypeOf(lit2, A.prototype);
+log(lit2.m());
+}
+{
+class S { set v(x) { this._v = x * 10; } get v() { return this._v; } m() { 'use strict'; try { this.ro = 5; return 'no'; } catch (e) { return e.name; } } }
+Object.defineProperty(S.prototype, 'ro', { value: 'proto-ro' });
+const o = { __proto__: new S(), a: 1 };
+o.v = 2; log(o._v, Object.keys(o), o.v);
+o.v++; log(o._v, o.v);
+o.v += 1; log(o._v);
+o.ro = 'mine'; log(o.ro, Object.keys(o), o.m());
+const o2 = { b: 1 };
+Object.setPrototypeOf(o2, S.prototype);
+o2.v = 3; o2.ro = 9; log(o2._v, o2.ro, Object.keys(o2), 'v' in o2, o2.hasOwnProperty('v'));
+const o3 = { c: 1 };
+Object.setPrototypeOf(o3, new Proxy({}, { set(t, k, v, r) { log('trap', k, v, r === o3); return Reflect.set(t, k, v, r); }, get(t, k, r) { return k === 'z' ? 'from proxy' : Reflect.get(t, k, r); } }));
+o3.c = 2; o3.d = 3; log(o3.z, Object.keys(o3), o3.d);
+class Late {}
+const o4 = { __proto__: Late.prototype };
+Object.defineProperty(Late.prototype, 'w', { set(x) { this.got = x; }, configurable: true });
+o4.w = 'late'; log(o4.got, Object.keys(o4));
+for (let i = 0; i < 3; i++) { const q = { __proto__: new S() }; q.v = i; log(q._v); }
+}`,
 
   'classes: class expressions and name inference': `
 const A = class {};
@@ -385,7 +562,29 @@ for (let i = 0; i < 2; i++) {
 const y = 'outer';
 class F { x = y; z = typeof q; constructor(y, q) { this.p = y; } }
 const f = new F('param', 1);
-log(f.x, f.z, f.p);`,
+log(f.x, f.z, f.p);
+switch (1) { case 0: class K {} ; break; case 1: try { new K(); } catch (e) { logError(e); } }
+{
+{
+  class Math { static abs(x) { return 'mine ' + x; } static max() { return 'max'; } }
+  log(Math.abs(-1), Math.max(1, 2));
+}
+{
+  class Int32Array { constructor(n) { this.n = n; this.stored = {}; } }
+  const t = new Int32Array(3); t[0] = 5.5; log(t[0], t.n, t.length);
+}
+{
+  class String { constructor(x) { this.x = x; } }
+  try { log(String(1)); } catch (e) { logError(e); }
+  log(new String(2).x);
+}
+{
+  class Number2 {}
+  let Number = class { static isInteger() { return 'mine'; } };
+  log(Number.isInteger(1));
+}
+log(Math.abs(-2));
+}`,
 
   'classes: new.target and bound classes': `
 class A { constructor() { this.t = new.target.name; this.isA = new.target === A; } }
@@ -468,7 +667,28 @@ Old.prototype.hi = function () { return 'hi ' + this.x; };
 class New extends Old { constructor() { super(5); } }
 log(new New().hi(), new New() instanceof Old);
 function Bad() { Args.call(this); }
-try { new Bad(); } catch (e) { logError(e); }`,
+try { new Bad(); } catch (e) { logError(e); }
+{
+class A { constructor(...xs) { this.xs = xs; this.n = arguments.length; } }
+class B extends A { constructor() { const n = arguments.length; super(...arguments); this.bn = n; } }
+log(new B(1, 2, 3).xs, new B().n, new B('a').bn);
+class P {
+  constructor() { this.x = 'tx'; }
+  m(a = this.x, b = () => a) { a = 5; return [a, b()]; }
+  v(a = this.x, b = () => a) { var a; a = 6; return [a, b()]; }
+  w(a, b = () => a) { var a = 7; return [a, b()]; }
+  ar() { const f = () => arguments[0]; return f(9); }
+  mapped(a) { arguments[0] = 'changed'; return a; }
+  d({ x = 1, y = x * 2 } = {}, ...rest) { return [x, y, rest]; }
+}
+const p = new P();
+log(p.m(), p.v(), p.w(1), p.ar('first'), p.mapped('orig'), p.d(), p.d({ x: 3 }, 4, 5), P.prototype.d.length);
+const ns = { B: class { constructor(v) { this.v = v ?? 'none'; } m() { return 'm:' + this.v; } } };
+const getC = () => ns.B;
+log(new ns.B().m(), new ns.B(1).m(), new (getC())(2).v, (new ns.B)?.v, new ns.B()?.m?.());
+const tag = (s) => class { constructor() { this.s = s.raw[0]; } };
+log(new tag\`raw\`().s);
+}`,
 
   'classes: extending Array': `
 class Stack extends Array {
@@ -484,7 +704,47 @@ s.length = 1; log(s.length, s[1], Stack.of(7, 8).peek(), Stack.from('ab').peek()
 log(s.constructor.name, JSON.stringify(s.concat([9])));
 class Plain extends Array { static get [Symbol.species]() { return Array; } extra() { return 'x'; } }
 const p = Plain.from([1, 2, 3]), mapped = p.map(x => x);
-log(p instanceof Plain, mapped instanceof Plain, Array.isArray(mapped), typeof mapped.extra, p.extra());`,
+log(p instanceof Plain, mapped instanceof Plain, Array.isArray(mapped), typeof mapped.extra, p.extra());
+{
+class Doubler extends Array { push(...xs) { return super.push(...xs.map(x => x * 2)); } }
+const d = new Doubler(); d.push(1, 2); log(d, d.length);
+const a = []; a.push(1);
+Object.setPrototypeOf(a, Doubler.prototype);
+a.push(5); log(a, a instanceof Doubler, a.length);
+const b = [1]; b.push = function (x) { log('own push', x); return 0; };
+log(b.push(9), b.length);
+const c = [];
+class Logged extends Array {}
+Logged.prototype.push = function (x) { log('logged push', x); return Array.prototype.push.call(this, x); };
+Object.setPrototypeOf(c, Logged.prototype);
+for (let i = 0; i < 3; i++) c.push(i);
+log(c.length, Array.from(c));
+}
+{
+class M {
+  constructor(...a) { this.a = a.length; }
+  m(a, b, c, d, e, f, g, h, i, j) { return [a, j, arguments.length, this.a]; }
+  #p(a, b, c, d, e, f, g, h, i) { return i + h; }
+  callP() { return this.#p(1, 2, 3, 4, 5, 6, 7, 8, 9); }
+}
+class N extends M { constructor() { super(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11); } m(...xs) { return super.m(...xs, 'extra').concat(super.m(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)); } }
+const n = new N();
+log(n.m(1, 2, 3, 4, 5, 6, 7, 8, 9), new M(1, 2, 3, 4, 5, 6, 7, 8, 9).a, n.callP(), n.m(), M.prototype.m.call(n, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11));
+class Sink { static keep(a) { Sink.kept = a; return 'k'; } static freeze(a) { Object.freeze(a); return 'f'; } }
+const arr = [];
+arr.push(Sink.keep(arr), 2);
+log(arr, Sink.kept === arr, Sink.kept.length);
+const fr = [0];
+try { fr.push(Sink.freeze(fr)); } catch (e) { logError(e); }
+log(fr, fr.length, Object.isFrozen(fr));
+const a = [1]; a.push((a.length = 3, 'x')); log(a, a.length);
+const b = []; class Proto extends Array { push(x) { return 'override ' + x; } }
+log(b.push((Object.setPrototypeOf(b, Proto.prototype), 'v')), b.length, b.push('w'), b.length);
+const c = [1, 2]; Object.defineProperty(c, 'length', { writable: false });
+try { c.push(3); } catch (e) { logError(e); }
+log(c, c.length);
+const d = [1]; Object.seal(d); try { d.push(2); } catch (e) { logError(e); } log(d);
+}`,
 
   'classes: extending Map, Set and Error': `
 class DefaultMap extends Map {
@@ -509,7 +769,24 @@ try { throw new NotFound('page'); } catch (e) {
 class PlainErr extends Error {}
 const p = new PlainErr('x'); log(p.name, p.message, String(p), p instanceof PlainErr);
 class WithCause extends Error { constructor(m, c) { super(m, { cause: c }); } }
-log(new WithCause('m', 'why').cause);`,
+log(new WithCause('m', 'why').cause);
+{
+class LoggingMap extends Map {
+  set(k, v) { log('set', k, v); return super.set(k, v * 2); }
+}
+const m = new LoggingMap([['a', 1], ['b', 2]]);
+log(m.get('a'), m.size, [...m.entries()]);
+class Stack2 extends Array { static get [Symbol.species]() { return Array; } }
+class Tracked extends Array {}
+const t = Tracked.from([3, 1, 2]);
+log(t.slice(1) instanceof Tracked, t.filter(Boolean) instanceof Tracked, t.concat([]) instanceof Tracked, [].concat(t) instanceof Tracked);
+log(t.sort() === t, t instanceof Tracked, t.reverse()[0], new Tracked(3).length, new Tracked('3').length, Tracked.of(1, 2).length);
+const s = new Stack2(1, 2, 3); log(s.map(x => x).constructor.name);
+class E2 extends Error { get name() { return 'Getter' + 'Name'; } }
+log(String(new E2('m')), new E2('q') + '');
+class TE extends TypeError {}
+try { throw new TE('t'); } catch (e) { log(e instanceof TypeError, e instanceof TE, e.name, e.constructor.name); }
+}`,
 
   'classes: extending Promise, typed arrays, EventTarget and HTMLElement': `
 class Bytes extends Uint8Array { sum() { let s = 0; for (let i = 0; i < this.length; i++) s += this[i]; return s; } }
@@ -743,7 +1020,18 @@ window.__done = (async () => {
   log(q2.items, await q2.total());
   log(await b.am(1, 2), await b.arrow());
   const out = []; for await (const v of b.agm()) out.push(v); log(out);
-})();`,
+})();
+{
+class A { cleanup() { return 'A.cleanup'; } }
+class B extends A {
+  *g() { try { yield 1; yield 2; } finally { log('finally', super.cleanup(), this.tag); } }
+  static async *[Symbol.asyncIterator]() { yield this.name; await null; yield super.name ?? 'none'; }
+}
+const b = new B(); b.tag = 't';
+const it = b.g(); it.next(); log(JSON.stringify(it.return(9)), JSON.stringify(it.next()));
+for (const x of b.g()) { log('x', x); break; }
+window.__done = Promise.resolve(window.__done).then(async () => { const out = []; for await (const v of B) out.push(v); log(out); });
+}`,
 
   'classes: yield and await inside class definitions': `
 function* gen() {
@@ -796,7 +1084,38 @@ try { new (class extends 5 {})(); } catch (e) { logError(e); }
 class N extends null { static s() { return 's'; } }
 log(N.s(), Object.getPrototypeOf(N.prototype));
 try { new N(); } catch (e) { logError(e); }
-log(typeof window.A, Object.hasOwn(globalThis, 'A'));`,
+log(typeof window.A, Object.hasOwn(globalThis, 'A'));
+{
+class Widget { render() { return 1; } static make() { return new Widget(); } }
+const isClass = f => /^class\\b/.test(String(f));
+const plain = function plain() {};
+log(isClass(Widget), isClass(plain), isClass(class {}));
+// Compiled code does not ship its source: only the syntactic form is checked.
+log(String(Widget.prototype.render).startsWith('render('), String(Widget.make).startsWith('make('), Function.prototype.toString.call(plain).startsWith('function plain('));
+}
+{
+class A {
+  m() { try { leak1 = 1; return 'no'; } catch (e) { return e.name; } }
+  inner() { function f() { return this; } return typeof f(); }
+  ro() { const o = Object.freeze({ a: 1 }); try { o.a = 2; return 'no'; } catch (e) { return e.name; } }
+  nan() { try { NaN = 1; return 'no'; } catch (e) { return e.name; } }
+  args(a) { a = 5; return arguments[0]; }
+  callee() { try { return typeof arguments.callee; } catch (e) { return e.name; } }
+  prim() { try { 'str'.x = 1; return 'no'; } catch (e) { return e.name; } }
+  static f = function () { return typeof this; };
+}
+const a = new A();
+log(a.m(), typeof leak1, a.inner(), a.ro(), a.nan(), a.args(1), a.callee(), a.prim(), (0, A.f)());
+try { class K { [(leak2 = 'k')]() {} } } catch (e) { logError(e); }
+log(typeof leak2);
+try { class K2 extends (leak3 = Object, Object) {} } catch (e) { logError(e); }
+log(typeof leak3);
+class K3 { [(function () { return typeof this; })()]() { return 1; } }
+log(Object.getOwnPropertyNames(K3.prototype));
+const sloppy = function () { return typeof this; };
+class K4 { m() { return sloppy(); } }
+log(new K4().m());
+}`,
 
   'classes: class instances as iterators': `
 const order = [];
@@ -836,25 +1155,7 @@ class K {
 const k = new K();
 log(k.get(), k.set(1), k.static(), k.async(), K.static(), k['quoted key'](), k[123](), k.of(), k.let(), k.yield(), k.new());`,
 
-  'classes: tree of instances with shared static state': `
-let created = 0;
-class Node2 {
-  static all = [];
-  constructor(val, parent = null) {
-    this.val = val; this.parent = parent; this.children = [];
-    if (parent) parent.children.push(this);
-    Node2.all.push(this); created++;
-  }
-  path() { return this.parent ? this.parent.path() + '/' + this.val : String(this.val); }
-  depth() { let d = 0, n = this; while (n.parent) { d++; n = n.parent; } return d; }
-  sum() { return this.val + this.children.reduce((s, c) => s + c.sum(), 0); }
-}
-const root = new Node2(1); const c1 = new Node2(2, root); const c2 = new Node2(3, c1); new Node2(4, root);
-log(c2.path(), c2.depth(), root.sum(), created, Node2.all.length, root.children.map(c => c.val));
-log(Node2.all.indexOf(c2), Node2.all[1] === c1, c2.parent.parent === root);`,
-
-  // ---------- findings ----------
-  'classes: symbol-keyed method names': `
+  'classes: function names of symbol keys and field initializers': `
 const anon = Symbol(), empty = Symbol(''), desc = Symbol('d');
 class A { [anon]() {} [empty]() {} [desc]() {} get [anon]() { return 1; } static [desc]() {} }
 log(JSON.stringify(Object.getOwnPropertyDescriptor(A.prototype, anon).get.name));
@@ -862,9 +1163,8 @@ log(JSON.stringify(A.prototype[empty].name), JSON.stringify(A.prototype[desc].na
 class B { [anon]() {} }
 log(JSON.stringify(B.prototype[anon].name));
 const o = { [anon]() {}, [empty]() {}, [desc]: function () {} };
-log(JSON.stringify(o[anon].name), JSON.stringify(o[empty].name), JSON.stringify(o[desc].name));`,
-
-  'classes: anonymous functions in field initializers get the field name': `
+log(JSON.stringify(o[anon].name), JSON.stringify(o[empty].name), JSON.stringify(o[desc].name));
+{
 const sym = Symbol('sy');
 class A {
   x = () => {};
@@ -878,23 +1178,106 @@ class A {
   w = function named() {};
 }
 const a = new A();
-log(a.x.name, a.y.name, A.z.name, A.K.name, a.c1.name, a[sym].name, a.pn(), a.w.name);`,
+log(a.x.name, a.y.name, A.z.name, A.K.name, a.c1.name, a[sym].name, a.pn(), a.w.name);
+}`,
 
-  'classes: Math intrinsics do not coerce extra arguments': `
-const order = [];
-class V { constructor(n) { this.n = n; } valueOf() { order.push('valueOf ' + this.n); return this.n; } }
-const mk = n => (order.push('make ' + n), new V(n));
-log(Math.abs(mk(-1), mk(2)), order.join()); order.length = 0;
-log(Math.max(mk(1), mk(3), mk(2)), order.join()); order.length = 0;
-log(Math.round(mk(1.5), mk(9)), Math.sqrt(mk(4), mk(8)), order.join()); order.length = 0;
-log(Math.pow(mk(2), mk(3), mk(4)), Math.imul(mk(3), mk(4), mk(5)), order.join()); order.length = 0;
-log(Math.floor(mk(2.5), mk(6)), Math.sign(mk(-3), mk(7)), order.join());`,
+  'classes: await and yield keep references read before suspension': `
+{
+class Acc {
+  total = 0; #p = 0;
+  *feed() { while (true) { this.total += yield this.total; this.#p -= yield; } }
+  get p() { return this.#p; }
+}
+const a = new Acc();
+const g = a.feed();
+g.next(); a.total = 100;
+log(g.next(5).value, a.total);
+a.total = 7; g.next(3); log(a.total, a.p);
+class Obj { constructor() { this.k = 'a'; this.o = { a: 1, b: 2 }; } *g() { this.o[this.k] += yield; } }
+const o = new Obj(); const it = o.g(); it.next(); o.k = 'b'; it.next(10); log(o.o);
+}
+const out = [];
+class C {
+  #n = 0; n = 0;
+  get pn() { return this.#n; }
+  async addPriv(v) { this.#n += await v; }
+  async addPub(v) { this.n += await v; }
+  m(x) { return 'old m ' + x; }
+  async callLater(p) { return this.m(await p); }
+  async arr(p) { return [this.n, await p, this.n]; }
+  async tmpl(p) { return \`\${this.n}|\${await p}|\${this.n}\`; }
+}
+const c = new C();
+window.__done = (async () => {
+  await Promise.all([c.addPriv(1), c.addPriv(2)]);
+  await Promise.all([c.addPub(10), c.addPub(20)]);
+  log(c.pn, c.n);
+  const pr = c.callLater(Promise.resolve('x'));
+  c.m = (x) => 'new m ' + x;
+  log(await pr);
+  c.n = 1; const pa = c.arr(Promise.resolve('mid')); c.n = 2; log(await pa);
+  c.n = 3; const pt = c.tmpl(Promise.resolve('mid')); c.n = 4; log(await pt);
+  class D extends C { async sup(p) { return super.m(await p); } }
+  const d = new D(); const ps = d.sup(Promise.resolve('s'));
+  C.prototype.m = () => 'patched';
+  log(await ps);
+})();`,
 
-  'classes: Function.prototype.toString of classes and methods': `
-class Widget { render() { return 1; } static make() { return new Widget(); } }
-const isClass = f => /^class\\b/.test(String(f));
-function plain() {}
-log(isClass(Widget), isClass(plain), isClass(class {}));
-// Compiled code does not ship its source: only the syntactic form is checked.
-log(String(Widget.prototype.render).startsWith('render('), String(Widget.make).startsWith('make('), Function.prototype.toString.call(plain).startsWith('function plain('));`,
+  'classes: anonymous classes named by computed keys see their name in static initializers': `
+const k = 'comp';
+let A = class { static n = this.name; };
+let C; C ??= class { static n = this.name; };
+const { F = class { static n = this.name; } } = {};
+function h(H = class { static n = this.name; }) { return H.n; }
+log('named contexts', A.n, C.n, F.n, h());
+const o = { plain: class { static n = this.name; }, [k]: class { static n = this.name; } };
+log('literal', o.plain.n, o.plain.name, o[k].n, o[k].name);
+const seen = [];
+const o2 = { [k + 2]: class { static { seen.push(this.name); } } };
+log('static block', seen, o2.comp2.name);
+const o3 = { ['s']: class { static name = 'own field'; }, ['m']: class { static name() { return 'M'; } } };
+log('own static name', o3.s.name, typeof o3.m.name);
+class W {
+  static K = class { static n = this.name; };
+  static [k] = class { static n = this.name; };
+  static ['x'] = class { static name = 'own'; };
+  ['y'] = class { static n = this.name; };
+}
+log('fields', W.K.n, W[k].n, W[k].name, W.x.name, new W().y.n, new W().y.name);
+const f = { [k]: function () {}, [k + 'Arrow']: () => {} };
+log('functions', f[k].name, f.compArrow.name);`,
+
+  'classes: increment and decrement of instances whose valueOf returns a BigInt': `
+class P { v = 5n; static total = 0n; }
+const p = new P();
+p.v++; ++p.v; p.v += 2n; p.v *= 3n; p.v -= 1n; p.v **= 2n; p.v %= 1000n; p.v >>= 1n;
+log('bigint field', p.v, typeof p.v, p.v--, p.v, -p.v, ~p.v);
+for (let i = 0; i < 5; i++) P.total += BigInt(i);
+log('static', P.total);
+try { p.v += 1; } catch (e) { logError(e); }
+class B { constructor(v) { this.v = v; } valueOf() { return this.v; } }
+const w = new B(10n);
+log('operators', -w, w - 1n, w / 3n, w % 3n, ~w, w > 9, w == 10n);
+let n = new B(3); n++;
+log('number valueOf', n, typeof n);
+let x = new B(10n);
+try { x++; log('x++', x, typeof x); } catch (e) { logError(e); }
+let y = new B(7n);
+try { log('--y', --y); } catch (e) { logError(e); }
+const o = { b: new B(5n) };
+try { o.b++; log('o.b++', o.b); } catch (e) { logError(e); }
+const arr = [new B(2n)];
+try { arr[0]--; log('arr[0]--', arr[0]); } catch (e) { logError(e); }
+class C {
+  n = new B(1n); #m = new B(1n); static s = new B(4n);
+  inc() { const old = this.n++; return [old, this.n]; }
+  incPriv() { this.#m++; return this.#m; }
+  static dec() { return [this.s--, this.s]; }
+}
+try { log('this.n++', new C().inc()); } catch (e) { logError(e); }
+try { log('this.#m++', new C().incPriv()); } catch (e) { logError(e); }
+try { log('this.s--', C.dec()); } catch (e) { logError(e); }
+class S { constructor(v) { this.v = v; } [Symbol.toPrimitive](hint) { return hint === 'number' ? this.v : 'str'; } }
+let s = new S(1n);
+try { s--; log('toPrimitive s--', s); } catch (e) { logError(e); }`,
 };

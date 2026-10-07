@@ -164,4 +164,11 @@ export const cases = {
   'state machine with closures': `function machine(){ const handlers = {idle: e => e === 'go' ? 'run' : 'idle', run: e => e === 'stop' ? 'idle' : e === 'jump' ? 'air' : 'run', air: e => 'run'}; let state = 'idle'; const hist = []; return {send(e){ state = handlers[state](e); hist.push(state); return this; }, get history(){ return hist.join('>'); }}; } log(machine().send('go').send('jump').send('x').send('stop').history);`,
   'sort numbers objects strings': `const people = [{n: 'Боб', a: 30}, {n: 'Аня', a: 25}, {n: 'Вера', a: 30}]; log(people.sort((x, y) => x.a - y.a || x.n.localeCompare(y.n)).map(p => p.n).join()); log([10, 9, 1, 100].sort(), [10, 9, 1, 100].sort((a, b) => a - b));`,
   'inventory crafting': `const recipes = {plank: {log: 1}, stick: {plank: 2}, torch: {stick: 1, coal: 1}}; const inv = {log: 3, coal: 2}; function can(item){ const r = recipes[item]; return Object.entries(r).every(([k, n]) => (inv[k] || 0) >= n); } function craft(item, out = 1){ if (!can(item)) return false; for (const [k, n] of Object.entries(recipes[item])) inv[k] -= n; inv[item] = (inv[item] || 0) + out; return true; } craft('plank', 4); craft('stick', 4); craft('torch', 4); log(JSON.stringify(inv));`,
+  'int32 remainder edge cases': `
+function rem(a, b) { return a % b; }
+const out = [];
+for (let i = -3; i <= 3; i++) for (let j = -2; j <= 2; j++) { const r = (i | 0) % (j | 0); out.push(Object.is(r, -0) ? '-0' : String(r)); }
+log(out.join(' '));
+let m = -2147483648 | 0, n = -1 | 0; log(Object.is(m % n, -0), (2147483647 | 0) % (2 | 0), m % 7, (m % (m | 0)));
+let k = 0; for (let t = 0; t < 250; t++) k += t % 7; log(k, rem(7, 0), rem(-7, 7));`,
 };

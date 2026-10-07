@@ -614,4 +614,421 @@ export const cases = {
       const ints = [5, 3]; ints[1] -= 3; ints[0] /= 2; log(ints, Object.is(ints[1], 0));
     }
     run();`,
+  // ---------- typed values (int32 / f64 / str) flowing through objects ----------
+  'objects: int32 values and keys': `
+    function run(){
+      const o = {};
+      for (let i = -3; i < 3; i++) o[i] = i * 2;
+      log(JSON.stringify(o), Object.keys(o).join());
+      const big = 1 << 30, min = 1 << 31, m1 = ~0;
+      o.big = big; o.min = min; o.m1 = m1; o.u = -1 >>> 0; o.sh = 5 >> 1; o.x = 7 ^ 2;
+      log(o.big, o.min, o.m1, o.u, o.sh, o.x, typeof o.big, o.big === 1073741824, o.min === -2147483648);
+      const a = [];
+      a[m1] = 'neg'; a[big] = 'big'; a[min] = 'min';
+      log(a.length, a[-1], a['-1'], a[-2147483648], Object.keys(a).join());
+      let k = 0;
+      for (let i = 0; i < 40; i++) k = (k * 31 + i) | 0;
+      o.hash = k; log(o.hash, k);
+      const arr = [10, 20, 30, 40];
+      log(arr[k & 3], arr[k >>> 30], arr[k >> 30], arr[1 << 1], arr[~-2]);
+      const ints = {a: 1 | 0, b: 2 & 3, c: Math.imul(3, 4), d: Math.clz32(1)};
+      log(JSON.stringify(ints), ints.a + ints.b, ints.c / ints.d);
+    }
+    run();`,
+  'objects: -0 and integral floats through typed locals': `
+    function run(){
+      const z = -0;
+      function mk(v){ return {v, w: v * 1, s: '' + v, t: \`\${v}\`}; }
+      for (const o of [mk(z), mk(0 * -1), mk(0.5 + 0.5), mk(1e21), mk(NaN), mk(2 ** 30), mk(-(2 ** 30)), mk(-1073741825)])
+        log(o.v, Object.is(o.v, -0), Object.is(o.w, -0), o.s, o.t);
+      const n = {}; n.x = z; n.y = -z; n.q = z + 0; n.r = z - 0; n.p = z * -1;
+      log(Object.is(n.x, -0), Object.is(n.y, -0), Object.is(n.q, -0), Object.is(n.r, -0), Object.is(n.p, -0));
+      const arr = [z, -z, z * 1]; arr.push(z);
+      log(Object.is(arr[0], -0), Object.is(arr[1], -0), Object.is(arr[2], -0), Object.is(arr[3], -0), 1 / arr[3]);
+      const f = {v: 0.5}; f.v += 0.5;
+      log(f.v === 1, [1, 2].indexOf(f.v), new Set([1]).has(f.v), new Map([[1, 'one']]).get(f.v), ['zero', 'one'][f.v], ({1: 'x'})[f.v]);
+      switch (f.v) { case 1: log('case 1'); break; default: log('default'); }
+      const keyed = {}; keyed[f.v] = 'k'; log(Object.keys(keyed).join(), keyed['1']);
+      let s = 0; for (let i = 0; i < 10; i++) s += 0.1; f.s = s; log(f.s, f.s === 1, f.s < 1);
+      const m = {x: 2 ** 31}; m.x -= 2 ** 31; log(m.x === 0, Object.is(m.x, 0));
+    }
+    run();`,
+  'objects: keys built from strings and numbers': `
+    function run(){
+      const s = 'abcdef';
+      const o = {};
+      for (let i = 0; i < s.length; i++) o[s.charAt(i)] = s.charCodeAt(i);
+      log(JSON.stringify(o));
+      const a = [];
+      a[s.indexOf('c')] = 'c'; a['' + s.indexOf('e')] = 'e'; a[s.slice(1, 2)] = 'b';
+      log(a.length, JSON.stringify(a), a.b, Object.keys(a).join());
+      const k = {};
+      k[s.slice(0, 0)] = 'empty'; k[s.charAt(99)] = 'oob'; k[String(-0)] = 'negzero'; k['' + 1 / 3] = 'third';
+      k[s.repeat(2)] = 'rep'; k[s.substring(4, 1)] = 'sub';
+      log(JSON.stringify(k), k[''], k[0], k[1 / 3]);
+      const arr = [];
+      for (const p of ['1', '0', '01', '4294967295', '4294967294', '-0', '1.0']) arr['' + p] = p;
+      log(arr.length, Object.keys(arr).join());
+      const em = '\\uD83D' + '\\uDE00'; const lit = {'\\uD83D\\uDE00': 'smile'}; lit[em + ''] = 'set';
+      log(lit['\\uD83D\\uDE00'], Object.keys(lit).length, em.length);
+      const x = 1 << 31; const ik = {}; ik['n' + x] = 1; ik[x] = 2; ik[x + ''] = 3; log(JSON.stringify(ik));
+      const nk = {};
+      for (const v of [0.1, 1e21, -1e-7, -0, 2 ** 53, NaN, -Infinity, 4294967295, 2 ** 31, 5e-324, 100, -5]) { const y = v * 1; nk['' + y] = 1; nk[\`k\${y}\`] = 1; }
+      log(Object.keys(nk).join('|'));
+      const L = 'len' + 'gth', P = '__pro' + 'to__';
+      const b = [1, 2, 3, 4]; b[L] = 2; log(b.length, b.join(), b[L]);
+      const base = {hello(){ return 'hi'; }}; const c = {}; c[P] = base;
+      log(typeof c.hello, Object.keys(c).join(), Object.getPrototypeOf(c) === base);
+      const nlit = {0x10: 'hex', 1e3: 'exp', .5: 'half', 1_000_0: 'sep', 0b11: 'bin', 1e21: 'big', 0.1: 'tenth', 5(){ return 'm5'; }, '007': 'bond'};
+      log(Object.keys(nlit).join('|'), nlit[16], nlit[0.5], nlit['1e+21'], nlit[5](), nlit[5].name);
+    }
+    run();`,
+  'objects: loop-built objects with induction variables': `
+    function run(){
+      const n = 5 | 0;
+      const items = [];
+      for (let i = 0; i < n; i++) items.push({i, get: () => i, sq: i * i, half: i / 2, key: 'k' + i});
+      log(items.map(o => o.i + ':' + o.get() + ':' + o.sq + ':' + o.half + ':' + o.key).join(' '));
+      const byKey = {};
+      for (let i = n; i > -3; i--) byKey[i] = i;
+      log(Object.keys(byKey).join(), JSON.stringify(byKey));
+      const grid = [];
+      for (let y = 0; y < 3; y++) { grid.push([]); for (let x = 0; x < 3; x++) grid[y].push(x * 3 + y); }
+      log(JSON.stringify(grid));
+      const near = {total: 0};
+      for (let i = 2147483640; i < 2147483647; i++) near.total += i - 2147483640;
+      log(near.total);
+      const lim = {v: 3};
+      for (let i = 0; i < (lim.v | 0); i++) lim.v = i < 5 ? lim.v + 1 : lim.v;
+      log(lim.v);
+    }
+    run();`,
+  // ---------- push in WASM ----------
+  'objects: push argument evaluation order': `
+    function run(){
+      const a = [1, 2];
+      log(a.push(a.length, a.pop(), a.push(9)), a.join());
+      const b = [1];
+      log(b.push((b.length = 0, 'x'), b.length), b.join());
+      const c = [1, 2, 3];
+      try { log(c.push(Object.freeze(c).length)); } catch (e) { logError(e); }
+      log(c.length, c.join());
+      const d = [1];
+      try { log(d.push((Object.preventExtensions(d), 2))); } catch (e) { logError(e); }
+      log(d.length);
+      const s = [1];
+      try { s.push((Object.seal(s), 2)); } catch (e) { logError(e); }
+      log(s.length);
+      const e = [0];
+      log(e.push((e.push = function(...v){ log('own push', v.length); return -1; }, 'arg')), e.length, e[1]);
+      log(e.push('again'), e.length);
+      delete e.push; log(e.push('restored'), e.length, e.join());
+      let n = null, evaluated = false;
+      try { n.push((evaluated = true)); } catch (err) { logError(err); }
+      log(evaluated);
+      let ev2 = false;
+      try { ({}).push((ev2 = true)); } catch (err) { logError(err); }
+      log(ev2);
+      try { 'abc'.push(1); } catch (err) { logError(err); }
+    }
+    run();`,
+  'objects: push onto aliased escaped and holey arrays': `
+    function run(){
+      const a = [];
+      for (let i = 0; i < 20; i++) a.push(i, i * 0.5, 'x' + i);
+      log(a.length, a[59], a[58], a[57], a.slice(0, 6).join());
+      const holes = [1, , 3]; holes.length = 5; holes.push('p');
+      log(holes.length, 3 in holes, holes[5], JSON.stringify(holes));
+      const s = [1, 2, 3]; s.length = 1; s.push('q'); log(s.length, s.join(), 2 in s);
+      const nested = []; nested.push(nested); log(nested[0] === nested, nested.length);
+      const holder = {list: []}; const alias = holder.list;
+      holder.list.push(1); alias.push(2); holder['list'].push(3);
+      log(holder.list.join(), alias.length);
+      const esc = [1]; JSON.stringify(esc); esc.push(2); window.esc = esc; esc.push(3); window.esc.push(4);
+      log(esc.join(), window.esc.length, esc === window.esc);
+      const iter = [1, 2, 3];
+      iter.forEach(v => { if (v < 3) iter.push(v + 10); });
+      log(iter.join());
+      const notArr = {length: 1, 0: 'a', push: Array.prototype.push};
+      log(notArr.push('b', 'c'), notArr.length, notArr[2]);
+      const pr = Array.prototype.push; const own = [7];
+      log(pr.call(own, 8), pr.apply(own, [9, 10]), own.push.call(own, 11), own.join());
+    }
+    run();`,
+  'objects: push across the dense limit': `
+    function run(){
+      const big = [];
+      big.length = 1048560;
+      for (let i = 0; i < 20; i++) big.push(i);
+      log(big.length, big[1048560], big[1048579], 1048570 in big, 5 in big);
+      const b2 = [];
+      b2[1048574] = 'a';
+      log(b2.push('b', 'c', 'd'), b2.length, b2[1048577], b2[1048574]);
+      const b3 = []; b3[2000000] = 1; log(b3.length, b3.push(2), b3[2000001]);
+      const b4 = [0]; b4.length = 1048566; log(b4.push(1), b4.push(2, 3, 4), b4.length, b4[1048569]);
+    }
+    run();`,
+  'objects: push arguments that change the array or its prototype': `
+    function run(){
+      const a = [1, 2];
+      let r = 'unset';
+      try { r = a.push((a.length = 4294967295, 'x')); } catch (e) { logError(e); }
+      log(r, a.length, a[4294967295]);
+      const b = [1, 2, 3];
+      const calls = [];
+      try {
+        r = b.push((Object.defineProperty(Array.prototype, '3', {set(v){ calls.push('setter ' + v); }, configurable: true}), 4));
+      } finally { delete Array.prototype[3]; }
+      log(r, b.length, 3 in b, b[3], calls.join());
+    }
+    run();`,
+  // ---------- prototype chain ----------
+  'objects: prototype changes through Reflect.apply': `
+    const o = {own: 1}; const a = [1, , 3];
+    log(o.extra, a[1]);
+    Reflect.apply(Object.defineProperty, null, [Object.prototype, 'extra', {value: 'e', configurable: true, writable: true}]);
+    log(o.extra, ({}).extra);
+    delete Object.prototype.extra;
+    log(o.extra, a[1]);
+    Object.assign.apply(null, [Array.prototype, {1: 'p1'}]);
+    log(a[1], [7, , 9][1]);
+    delete Array.prototype[1];
+    log(a[1]);
+    const args = [Object.prototype, {extra: 'spread'}];
+    Object.assign(...args);
+    log(o.extra);
+    delete Object.prototype.extra;
+    log(o.extra);`,
+  'objects: reading through null and undefined with coercible keys': `
+    function run(){
+      const seq = [];
+      const key = name => ({toString(){ seq.push('key ' + name); return name; }});
+      const val = v => { seq.push('val ' + v); return v; };
+      const o = {};
+      o[key('a')] = val(1); log(seq.splice(0).join(', '));
+      o[key('a')] += val(2); log(seq.splice(0).join(', '), o.a);
+      const lit = {[key('b')]: val(3), [key('c')]: val(4)}; log(seq.splice(0).join(', '), Object.keys(lit).join());
+      log(key('a') in o, delete o[key('a')], seq.splice(0).join(', '));
+      const n = null;
+      try { n[key('x')] = val(5); } catch (e) { logError(e); }
+      log(seq.splice(0).join(', '));
+      try { n[key('y')]; } catch (e) { logError(e); }
+      log(seq.splice(0).join(', '));
+      const bad = {toString(){ throw new RangeError('no'); }};
+      let u;
+      try { u[bad]; } catch (e) { logError(e); }
+      try { n[bad] = 1; } catch (e) { logError(e); }
+      const {[key('d')]: d = val('def')} = {}; log(seq.splice(0).join(', '), d);
+    }
+    run();`,
+  // ---------- destructuring and iteration ----------
+  'objects: destructuring defaults holes and rest': `
+    function run(){
+      const arr = [1, , 3, undefined, null];
+      const [a = 'da', b = 'db', c = 'dc', d = 'dd', e = 'de', f = 'df'] = arr;
+      log(a, b, c, d, e, f);
+      const [x, ...rest] = arr; rest.push('r'); log(x, rest.length, 0 in rest, JSON.stringify(rest), arr.length);
+      const o = {p: 1, q: {r: [10, 20]}, 'a-b': 'dash'};
+      const {p, q: {r: [, second]}, 'a-b': dash, missing = p + 1, ...others} = o;
+      log(p, second, dash, missing, JSON.stringify(others));
+      const k = 'q'; const {[k]: qq, ['a' + '-b']: dd, ...noQ} = o; log(qq === o.q, dd, Object.keys(noQ).join());
+      let s = 0; for (const {p: pv = 5, v = 0} of [{p: 1}, {v: 2}, {p: undefined, v: 3}]) s += pv * 10 + v; log(s);
+      let m, n; ({m, n = m} = {m: 'mm'}); log(m, n);
+      [o.p, o.q] = [o.q, o.p]; log(typeof o.p, o.q);
+      function f2({a, b: [c, d] = [7, 8]} = {}, ...more){ return [a, c, d, more.length].join(); }
+      log(f2(), f2({a: 1}), f2({a: 1, b: [2]}, 3, 4));
+    }
+    run();`,
+  'objects: object rest after numeric keys': `
+    function run(){
+      const {0: z, ...others} = {0: 'zero', x: 1};
+      log(z, JSON.stringify(others));
+      const {1.5: h, ...o2} = {'1.5': 'h', y: 2};
+      log(h, JSON.stringify(o2));
+      const i = 0; const {[i]: z2, ...o3} = {0: 'zero', w: 3};
+      log(z2, JSON.stringify(o3));
+      const {0: first, ...tail} = ['p', 'q'];
+      log(first, JSON.stringify(tail));
+      const {'2': two, ...o4} = {2: 'two', v: 4};
+      log(two, JSON.stringify(o4));
+    }
+    run();`,
+  'objects: for-in while deleting': `
+    function run(){
+      const o = {a: 1, b: 2, c: 3, 1: 'one'};
+      const seen = [];
+      for (const k in o) { seen.push(k); if (k === 'a') delete o.b; }
+      log(seen.join(), Object.keys(o).join());
+      const p = {a: 1, b: 2}; const s2 = [];
+      for (const k in p) { s2.push(k); delete p.b; }
+      log(s2.join());
+      const a = [1, 2, 3, 4]; const s3 = [];
+      for (const k in a) { s3.push(k); if (k === '0') a.length = 2; }
+      log(s3.join());
+      const host = JSON.parse('{"a":1,"b":2}'); const s4 = [];
+      for (const k in host) { s4.push(k); delete host.b; }
+      log(s4.join());
+      const r = {a: 1, b: 2, c: 3}; const s5 = [];
+      for (const k in r) { s5.push(k); if (k === 'a') { delete r.c; r.c = 'readded'; } }
+      log(s5.join());
+      const proto = {inherited: 1}; const child = Object.create(proto); child.own = 2;
+      const s6 = []; for (const k in child) s6.push(k); log(s6.join());
+    }
+    run();`,
+  'objects: optional chaining on nested objects': `
+    function run(){
+      const o = {a: {b: [{c: 1}]}, f(){ return this.a; }, n: null};
+      log(o?.a?.b?.[0]?.c, o.x?.y.z, o.n?.x, o.f?.()?.b.length, o.g?.(), o.a?.['b']?.[5]?.c);
+      const i = 0; log(o.a.b?.[i].c, o.a.b?.[i + 1]?.c);
+      let u; log(u?.x, u?.[0], u?.(), delete u?.x, delete o?.n, 'n' in o);
+      const list = [null, {v: 1}, undefined, {v: 2}];
+      log(list.map(e => e?.v ?? '-').join());
+      let count = 0; const side = () => { count++; return 'x'; };
+      u?.[side()]; o.n?.[side()]; o.a?.[side()]; log(count);
+      log((o?.a).b.length, (o.n)?.x);
+    }
+    run();`,
+  // ---------- host interplay ----------
+  'objects: JSON hooks and structuredClone': `
+    function run(){
+      const o = {n: 1, d: new Date(0), nested: {toJSON(key){ return 'nested@' + key; }}, u: undefined, f(){}, s: Symbol('x'), arr: [undefined, function(){}, NaN, -0, Infinity]};
+      log(JSON.stringify(o));
+      log(JSON.stringify(o, ['n', 'arr']), JSON.stringify({a: [1, {b: 2}]}, null, 2).split('\\n').length);
+      log(JSON.stringify(o, (k, v) => typeof v === 'number' ? v * 2 : v));
+      const lit = {toJSON(){ return {replaced: true}; }};
+      log(JSON.stringify([lit, {lit}]));
+      const parsed = JSON.parse('{"a":[1,2,{"b":null}],"1":"one","__proto__":{"x":1}}', function(k, v){ return Array.isArray(v) ? v.concat('r') : v; });
+      parsed.a.push('p'); parsed.c = parsed.a.length;
+      log(JSON.stringify(parsed), parsed.x, Object.keys(parsed).join(), parsed.__proto__.x);
+      const clone = structuredClone({m: new Map([[1, {deep: [1]}]]), list: [1, , 3]});
+      clone.list.push(4); log(clone.m.get(1).deep.length, clone.list.length, 1 in clone.list);
+      const original = {v: [1, 2]}; const sc = structuredClone(original); sc.v.push(3); original.v.push('o');
+      log(original.v.join(), sc.v.join());
+    }
+    run();`,
+  'objects: DOM objects and event callbacks': `
+    function run(){
+      const state = {clicks: 0, history: [], opts: {once: false}};
+      const btn = document.getElementById('btn'), app = document.getElementById('app');
+      const handler = e => { state.clicks++; state.history.push(e.type + state.clicks); state.last = e.target.id; };
+      btn.addEventListener('click', handler, state.opts);
+      btn.click(); btn.click();
+      log(state.clicks, state.history.join(), state.last);
+      btn.removeEventListener('click', handler);
+      btn.click(); log(state.clicks);
+      Object.assign(app.dataset, {count: state.clicks, name: 'n' + state.clicks});
+      app.dataset.extra = state.history.length;
+      log(app.getAttribute('data-count'), app.dataset.name, app.dataset.extra, typeof app.dataset.extra);
+      const rec = {tag: 'span', text: 'hi'};
+      const el = document.createElement(rec.tag); el.textContent = rec.text; app.appendChild(el);
+      rec.text = 'changed';
+      log(app.innerHTML, el.textContent);
+      const custom = new CustomEvent('ping', {detail: state});
+      app.addEventListener('ping', e => { e.detail.pinged = (e.detail.pinged || 0) + 1; });
+      app.dispatchEvent(custom); app.dispatchEvent(custom);
+      log(state.pinged, custom.detail === state);
+    }
+    run();`,
+  'objects: copying and generic array methods': `
+    function run(){
+      const a = [5, 1, 4];
+      log(a.at(-1), a.at(1.7), a.at(-4), a.indexOf(4, -1), a.lastIndexOf(5, -3), a.includes(5, 1));
+      log(a.fill(0, 1, 2).join(), a.copyWithin(0, 1).join(), [1, [2, [3, [4]]]].flat(Infinity).join());
+      log(Array.from({length: 3}, (_, i) => ({i})).map(o => o.i * 2).join(), Array.of(7).length, Array(3).fill().map((_, i) => i).join());
+      const objs = [{k: 'b', v: 1}, {k: 'a', v: 2}, {k: 'b', v: 3}, {k: 'a', v: 4}];
+      const grouped = {}; for (const o of objs) (grouped[o.k] ||= []).push(o.v);
+      log(JSON.stringify(grouped));
+      log(objs.toSorted((x, y) => x.k < y.k ? -1 : x.k > y.k ? 1 : 0).map(o => o.v).join(), objs.map(o => o.v).join());
+      const w = objs.with(1, {k: 'z', v: 0}); log(w[1].k, objs[1].k, objs.toReversed()[0].v, objs.toSpliced(0, 2).length);
+      log(objs.findLast(o => o.k === 'b').v, objs.findLastIndex(o => o.k === 'a'));
+      log(Object.entries(['x', , 'z']).join('|'), Object.values('hi').join(), Object.keys(5).length);
+      log(Object.entries({b: 1, a: 2, 1: 3}).map(([k, v]) => k + v).join());
+      log(Array.isArray(a), a instanceof Array, Object.prototype.toString.call(a), typeof a);
+    }
+    run();`,
+  // ---------- coercion ----------
+  'objects: valueOf BigInt and loose equality': `
+    function run(){
+      const seq = [];
+      const a = {valueOf(){ seq.push('a'); return 6; }}, b = {valueOf(){ seq.push('b'); return 4; }};
+      log(a * b, a - b, a / b, a % b, a | b, a & 2, a >>> 0, a << 1, +a, -a, ~a, a ** 2, seq.join(''));
+      seq.length = 0; log(a < b, a >= b, a == 6, a + b, seq.join(''));
+      const o = {n: 10n};
+      o.n += 2n; o.n++; log(String(o.n), typeof o.n);
+      try { o.n *= 2; } catch (e) { logError(e); }
+      try { log(o.n | 0); } catch (e) { logError(e); }
+      try { log(o.n >>> 0n); } catch (e) { logError(e); }
+      log(String(o.n * 2n), String(-o.n), o.n > 5, o.n == 13);
+      const counted = {count: 0, valueOf(){ return ++this.count; }};
+      log(counted | 0, counted * 1, counted + 0, \`\${counted}\`, counted.count);
+      const one = [1], pair = [1, 2], empty = [], obj = {}, zero = [0];
+      log(one == 1, pair == '1,2', obj == '[object Object]', empty == false, zero == false, [null] == '', one == true);
+      log(obj == {}, empty == null, [[]] == 0, [[2]] == 2, [NaN] == 'NaN');
+      const v = {valueOf(){ return 3; }, toString(){ return 'str'; }};
+      log(v == 3, v == 'str', v + '', \`\${v}\`, String(v), [v] + '', v === 3);
+    }
+    run();`,
+  'objects: accessors with typed backing values': `
+    function run(){
+      let backing = 0;
+      const o = {x: 1};
+      Object.defineProperty(o, 'v', {get(){ return backing * 2; }, set(n){ backing = n | 0; }, enumerable: true, configurable: true});
+      for (let i = 0; i < 4; i++) { o.v = i + 0.75; o.x += o.v; }
+      log(o.x, backing, o.v, JSON.stringify(o));
+      o.v++; o.v += 0.5; log(backing, o.v);
+      const counts = {get size(){ return Object.keys(this).length; }};
+      counts.a = 1; counts.b = 2; log(counts.size, JSON.stringify(counts));
+      const temps = {_c: 25, get f(){ return this._c * 9 / 5 + 32; }, set f(v){ this._c = (v - 32) * 5 / 9; }};
+      temps.f = 212; log(temps._c, temps.f); temps.f -= 180; log(temps._c, temps.f);
+      const sq = Object.defineProperties({}, {side: {value: 3, writable: true, enumerable: true}, area: {get(){ return this.side ** 2; }, enumerable: false}});
+      sq.side += 1; log(sq.area, Object.keys(sq).join(), JSON.stringify(sq));
+      const sym = Symbol('tag');
+      const s = {a: 1, [sym]: 'sym', 2: 'two', [Symbol.toStringTag]: 'Custom'};
+      log(s[sym], Object.keys(s).join(), Object.getOwnPropertySymbols(s).length, String(s), JSON.stringify(s), ({...s})[sym]);
+      const names = {[1.5]: () => 0, [sym]: function(){}, ['x' + 1]: class {}, 2: function(){}, [-0]: () => 0, get [3](){ return 3; }};
+      log(names[1.5].name, names[sym].name, names.x1.name, names[2].name, names[0].name, Object.getOwnPropertyDescriptor(names, 3).get.name);
+    }
+    run();`,
+  'objects: particles with typed step factors': `
+    function run(){
+      const ps = [];
+      for (let i = 0; i < 6; i++) ps.push({x: i, y: 0, vx: 1, vy: i % 2 ? 0.5 : -1});
+      let vx = 1;
+      for (let t = 0; t < 5; t++) {
+        for (const p of ps) { p.x += p.vx * vx; p.y += p.vy; if (p.y < -2) { p.y = -2; p.vy = -p.vy; } p.vx *= -1; }
+        vx = vx * 0.5;
+        log(ps.map(p => p.x + '/' + p.y).join(' '));
+      }
+      log(ps.map(p => p.x | 0).join(), ps.filter(p => Number.isInteger(p.x)).length);
+      const acc = {sum: 0, sq: 0, min: Infinity, max: -Infinity};
+      for (const p of ps) { acc.sum += p.x; acc.sq += p.x * p.x; acc.min = Math.min(acc.min, p.y); acc.max = Math.max(acc.max, p.y); }
+      log(JSON.stringify(acc));
+      const q = {v: 1073741823}; q.v++; q.v++; q.v -= 2; q.v--; log(q.v, q.v + 1);
+      const r = {v: 0}; r.v -= 0; log(Object.is(r.v, 0)); r.v = -r.v; log(Object.is(r.v, -0));
+      r.v += 0; log(Object.is(r.v, 0)); r.v *= -1; log(Object.is(r.v, -0)); r.v++; r.v--; log(Object.is(r.v, 0));
+    }
+    run();`,
+  'objects: typed array elements beside plain array elements': `
+    function run(){
+      const plain = [0.5, -5], f64 = new Float64Array(2), i8 = new Int8Array(2);
+      f64[0] = 0.5; i8[1] = -5;
+      log(plain[0] > 0, f64[0] > 0, plain[0] === 0, f64[0] === 0);
+      log(plain[5] >= 0, f64[5] >= 0, i8[5] >= 0, plain[5] == 0, i8[5] == 0, i8[5] !== 0);
+      log(plain[1] < 0, i8[1] < 0, i8[1] === -5, i8[0] === i8[5]);
+      const f32 = new Float32Array(2); f32[1] = 2.5;
+      log(f32[1] < 3, f32[1] > 2, f32[1] === 2, f32[9] <= 0);
+      log(plain[3] += 'x', f64[3] += 'x', f64[0] += 'y', f64[0]);
+      log((f64[9] ?? 5) + 1, f64[9] && 1, (f64[9] || 7) * 2, typeof f64[9]);
+      const idx = 1.5; log(i8[idx], i8[idx] | 0, i8[idx] + 1, i8[-0], plain[idx]);
+    }
+    run();`,
+  'objects: delete and re-add in a long loop': `
+    function run(){
+      const flags = {};
+      let seen = 0;
+      for (let i = 0; i < 100000; i++) { flags.busy = i; if (flags.busy === i) seen++; delete flags.busy; }
+      log(seen, 'busy' in flags, Object.keys(flags).length);
+    }
+    run();
+    log('after');`,
 };

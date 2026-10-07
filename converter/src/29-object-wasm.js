@@ -74,6 +74,20 @@ function addObjectRuntime(def){
  def('arrayResize',[REF,I32],[],f=>{
   const cap=f.local(I32);f.get(0);f.call('arrayCapacity');f.set(cap);f.get(1);f.get(cap);f.out(0x49);f.if(()=>{dense(f,0);f.get(1);f.nil();f.get(cap);f.get(1);f.out(0x6b,0xfb,0x10,...u32(POOL));});f.put(0,OBJECT,LENGTH,()=>f.get(1));
  });
+ // a[i] with an integer index inside a dense, not forwarded array: the element,
+ // or null when the generic path must decide (holes, out of range, other keys).
+ const denseIndex=(f,i)=>{
+  array(f,0);f.out(0x45);f.if(()=>{f.int(-1);f.ret();});forwarded(f,0);f.if(()=>{f.int(-1);f.ret();});
+  f.get(1);f.out(0xfc,0x02);f.tee(i);f.out(0xb7);f.get(1);f.out(0x62);f.if(()=>{f.int(-1);f.ret();});
+  f.get(i);f.field(0,OBJECT,LENGTH);f.out(0x4f);f.if(()=>{f.int(-1);f.ret();});f.get(i);
+ };
+ def('denseSlot',[REF,F64],[I32],f=>denseIndex(f,f.local(I32)));
+ def('denseGet',[REF,F64],[REF],f=>{const i=f.local(I32);f.get(0);f.get(1);f.call('denseSlot');f.tee(i);f.int(0);f.out(0x48);f.if(()=>{f.nil();f.ret();});f.get(0);f.get(i);f.call('arrayOwn');});
+ def('denseSet',[REF,F64,REF],[I32],f=>{
+  const i=f.local(I32);f.get(0);f.get(1);f.call('denseSlot');f.tee(i);f.int(0);f.out(0x48);f.if(()=>{f.int(0);f.ret();});
+  f.get(0);f.get(i);f.call('arrayOwn');f.out(0xd1);f.if(()=>{f.int(0);f.ret();});
+  dense(f,0);f.get(i);f.get(2);f.out(0xfb,0x0e,...u32(POOL));f.int(1);
+ });
  def('objectGet',[REF,REF],[REF],f=>{
   const index=f.local(I32),node=f.local();f.get(1);f.call('key');f.set(1);forwarded(f,0);f.if(()=>host(f,'hostObjectGet',2));
   array(f,0);f.if(()=>{
@@ -114,6 +128,8 @@ function addObjectRuntime(def){
  def('objectDefine',[REF,REF,REF,I32],[REF],f=>{
   forwarded(f,0);f.if(()=>host(f,'hostObjectDefine',4));
   f.get(3);f.int(3);f.out(0x46);f.if(()=>{f.get(2);f.call('atomKind');f.int(1);f.out(0x46);f.if(()=>{f.put(0,OBJECT,KIND,()=>f.int(2));f.get(0);f.ret();});host(f,'hostObjectDefine',4);});
+  // A method that is a closure needs no home object: a plain data property.
+  f.get(3);f.int(4);f.out(0x46);f.if(()=>{f.get(2);f.call('isClosure');f.if(()=>{f.int(0);f.set(3);});});
   f.get(3);f.if(()=>host(f,'hostObjectDefine',4));
   f.get(1);f.call('isString');f.out(0x45);f.if(()=>{f.get(1);f.call('hostKey');f.set(1);});
   f.get(1);f.call('isString');f.out(0x45);f.if(()=>host(f,'hostObjectDefine',4));
@@ -128,6 +144,11 @@ function addObjectRuntime(def){
   f.call('prototypeFlags');f.int(16);f.out(0x71,0x45);f.if(()=>{f.int(0);f.ret();});
   f.get(0);f.get(1);f.call('objectFind');f.out(0xd1);
  });
+ // After the arguments of o.push(...) ran: may the elements still be stored here?
+ def('pushStill',[REF],[I32],f=>{
+  forwarded(f,0);f.if(()=>{f.int(0);f.ret();});f.field(0,OBJECT,LENGTH);f.int(MAX_DENSE-8);f.out(0x4f);f.if(()=>{f.int(0);f.ret();});
+  f.call('prototypeFlags');f.int(2);f.out(0x71,0x45,0x45);
+ });
  def('push',[REF,REF],[REF],f=>{
   forwarded(f,0);f.if(()=>{f.get(0);f.get(1);f.call('hostArrayPush');f.ret();});
   f.field(0,OBJECT,LENGTH);f.int(MAX_DENSE);f.out(0x4f);f.if(()=>{f.get(0);f.get(1);f.call('hostArrayPush');f.ret();});
@@ -136,14 +157,28 @@ function addObjectRuntime(def){
  def('hole',[REF],[REF],f=>{
   forwarded(f,0);f.if(()=>host(f,'hostArrayHole',1));f.field(0,OBJECT,LENGTH);f.int(-1);f.out(0x46);f.if(()=>f.fail(6));f.put(0,OBJECT,LENGTH,()=>{f.field(0,OBJECT,LENGTH);f.int(1);f.out(0x6a);});f.get(0);
  });
- def('arg',[REF,I32],[REF],f=>{f.get(0);f.call('isObject');f.if(()=>{f.get(1);f.field(0,OBJECT,LENGTH);f.out(0x4f);f.if(()=>{f.undef();f.ret();});f.get(0);f.get(1);f.out(0xb8);f.call('number');f.call('objectGet');},()=>{f.get(0);f.get(1);f.call('hostArg');},REF);});
+ def('objectArg',[REF,I32],[REF],f=>{f.get(0);f.call('isObject');f.if(()=>{f.get(1);f.field(0,OBJECT,LENGTH);f.out(0x4f);f.if(()=>{f.undef();f.ret();});f.get(0);f.get(1);f.out(0xb8);f.call('number');f.call('objectGet');},()=>{f.get(0);f.get(1);f.call('hostArg');},REF);});
  def('objectDelete',[REF,REF,I32],[I32],f=>{
   const index=f.local(I32),node=f.local();f.get(1);f.call('key');f.set(1);forwarded(f,0);f.if(()=>host(f,'hostObjectDelete',3));
   array(f,0);f.if(()=>{
    f.get(1);f.call('isLengthKey');f.if(()=>{f.get(2);f.if(()=>f.fail(7));f.int(0);f.ret();});
    f.get(1);f.call('arrayIndex');f.tee(index);f.int(-1);f.out(0x47);f.if(()=>{f.get(index);f.get(0);f.call('arrayCapacity');f.out(0x49);f.if(()=>{dense(f,0);f.get(index);f.nil();f.out(0xfb,0x0e,...u32(POOL));});f.int(1);f.ret();});
   });f.get(1);f.call('isNumber');f.if(()=>{f.get(1);f.call('hostKey');f.set(1);});
-  f.get(1);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('objectFind');f.set(node);f.nonnull(node);f.if(()=>f.put(node,PROPERTY,1,()=>f.nil()));});f.int(1);
+  f.get(1);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('objectUnlink');});f.int(1);
+ });
+ // Removes a key's node from the list, so delete/re-add cycles do not grow it.
+ def('objectUnlink',[REF,REF],[],f=>{
+  const node=f.local(),prev=f.local(),next=f.local();f.field(0,OBJECT,HEAD);f.set(node);
+  f.block('end',end=>f.block('loop',loop=>{
+   f.get(node);f.out(0xd1);f.branch(end,true);
+   f.field(node,PROPERTY,0);f.internal(STRING);f.get(1);f.internal(STRING);f.out(0xd3);f.if(()=>f.int(1),()=>{f.field(node,PROPERTY,0);f.get(1);f.call('stringCompare');f.out(0x45);},I32);
+   f.if(()=>{
+    f.field(node,PROPERTY,2);f.set(next);
+    f.nonnull(prev);f.if(()=>f.put(prev,PROPERTY,2,()=>f.get(next)),()=>f.put(0,OBJECT,HEAD,()=>f.get(next)));
+    f.nonnull(next);f.out(0x45);f.if(()=>f.put(0,OBJECT,TAIL,()=>f.get(prev)));f.ret();
+   });
+   f.get(node);f.set(prev);f.field(node,PROPERTY,2);f.set(node);f.branch(loop);
+  }));
  });
  def('has',[REF,REF],[I32],f=>{
   const index=f.local(I32),node=f.local();f.get(0);f.call('isObject');f.out(0x45);f.if(()=>host(f,'hostHas',2));

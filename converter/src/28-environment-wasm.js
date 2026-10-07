@@ -8,6 +8,7 @@ const u32=require("./wasm.mjs")["u32"];
 const i32=require("./wasm.mjs")["i32"];
 const utf8=require("./wasm.mjs")["utf8"];
 const section=require("./wasm.mjs")["section"];
+const nameSection=require("./wasm.mjs")["nameSection"];
 const STRING=require("./string-wasm.mjs")["STRING"];
 const STRING_REF=require("./string-wasm.mjs")["STRING_REF"];
 const stringTypes=require("./string-wasm.mjs")["stringTypes"];
@@ -17,7 +18,10 @@ const OBJECT_REF=require("./object-wasm.mjs")["OBJECT_REF"];
 const objectTypes=require("./object-wasm.mjs")["objectTypes"];
 const addObjectRuntime=require("./object-wasm.mjs")["addObjectRuntime"];
 
-const NUMBER=3,ATOM=4,POOL=5,TOKEN=6,SCOPE=14;
+const NUMBER=3,ATOM=4,POOL=5,TOKEN=6,SCOPE=14,CLOSURE=15;
+// Closure fields: function id (table index), flags, name, scope record,
+// captured this/new.target (arrows), materialized host function, brand.
+const C_ID=0,C_FLAGS=1,C_NAME=2,C_ENV=3,C_SELF=4,C_TARGET=5,C_HOST=6,C_BRAND=7;
 let cached;
 
 class Emitter {
@@ -55,6 +59,7 @@ function environmentWasm(){
   ...stringTypes,
   ...objectTypes,
   [0x5e,REF,1],                                   // scope record
+  [0x5f,8,I32,0,I32,0,REF,1,REF,0,REF,0,REF,0,REF,1,0x6d,0], // closure
  ],typeKeys=new Map(),imports=[],functions=[],ids=new Map();
  const type=(p,r)=>{const key=JSON.stringify([p,r]);if(!typeKeys.has(key)){typeKeys.set(key,types.length);types.push([0x60,...u32(p.length),...p,...u32(r.length),...r]);}return typeKeys.get(key);};
  const host=(name,p,r)=>{ids.set(name,imports.length);imports.push({name,type:type(p,r)});};
@@ -73,6 +78,7 @@ function environmentWasm(){
  host('hostGetRaw',[REF,REF],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
  for(let n=0;n<=8;n++)host('hostCall'+n,[REF,REF,I32,...Array(n).fill(REF)],[REF]);
  host('hostNumberToString',[F64],[REF]);
+ host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -113,7 +119,7 @@ function environmentWasm(){
   const value=f.local(F64),kind=f.local(I32);f.get(0);f.call('isNumber');f.if(()=>{
   f.get(0);f.call('toNumber');f.tee(value);f.float(0);f.out(0x62);f.get(value);f.get(value);f.out(0x61,0x71);f.ret();
   });f.get(0);f.call('atomKind');f.tee(kind);f.int(0);f.out(0x4e);f.if(()=>{f.get(kind);f.int(3);f.out(0x46);f.ret();});
-  f.get(0);f.call('isString');f.if(()=>{f.get(0);f.call('stringLength');f.out(0x45,0x45);f.ret();});f.get(0);f.call('isObject');f.if(()=>{f.int(1);f.ret();});f.get(0);f.call('hostTruth');
+  f.get(0);f.call('isString');f.if(()=>{f.get(0);f.call('stringLength');f.out(0x45,0x45);f.ret();});f.get(0);f.call('isObject');f.if(()=>{f.int(1);f.ret();});f.get(0);f.call('isClosure');f.if(()=>{f.int(1);f.ret();});f.get(0);f.call('hostTruth');
  });
  def('nullish',[REF],[I32],f=>{f.get(0);f.call('atomKind');f.int(2);f.out(0x49);});
  def('isUndefined',[REF],[I32],f=>{f.get(0);f.call('atomKind');f.out(0x45);});
@@ -125,16 +131,21 @@ function environmentWasm(){
   f.get(0);f.call('isNumber');f.get(1);f.call('isNumber');f.out(0x71);f.if(()=>{f.get(0);f.call('toNumber');f.get(1);f.call('toNumber');f.out(0x61);f.ret();});
   f.get(0);f.call('isObject');f.if(()=>{f.get(1);f.call('isObject');f.if(()=>{f.get(0);f.internal(OBJECT);f.get(1);f.internal(OBJECT);f.out(0xd3);},()=>f.int(0),I32);f.ret();});
   f.get(1);f.call('isObject');f.if(()=>{f.int(0);f.ret();});
+  // A materialized closure always re-enters WASM as its struct.
+  f.get(0);f.call('isClosure');f.if(()=>{f.get(1);f.call('isClosure');f.if(()=>{f.get(0);f.internal(CLOSURE);f.get(1);f.internal(CLOSURE);f.out(0xd3);},()=>f.int(0),I32);f.ret();});
+  f.get(1);f.call('isClosure');f.if(()=>{f.int(0);f.ret();});
   f.get(0);f.get(1);f.call('hostEqual');
  });
  // One call tells the bridge what a value is: 0 foreign (host value or an
- // internal record), 1 number, 2..5 undefined/null/false/true, 6 string, 7 object.
+ // internal record), 1 number, 2..5 undefined/null/false/true, 6 string, 7 object,
+ // 8 closure.
  def('valueKind',[REF],[I32],f=>{
   const kind=f.local(I32);
   f.get(0);f.call('isNumber');f.if(()=>{f.int(1);f.ret();});
   f.get(0);f.call('atomKind');f.tee(kind);f.int(0);f.out(0x4e);f.if(()=>{f.get(kind);f.int(2);f.out(0x6a);f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.int(6);f.ret();});
   f.get(0);f.call('isObject');f.if(()=>{f.int(7);f.ret();});
+  f.get(0);f.call('isClosure');f.if(()=>{f.int(8);f.ret();});
   f.int(0);
  });
  // Property access without reference objects.
@@ -150,27 +161,73 @@ function environmentWasm(){
   f.get(0);f.get(1);f.get(2);f.get(3);f.call('hostSet');
  });
  def('getIndex',[REF,F64],[REF],f=>{
-  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('number');f.call('objectGet');f.ret();});
+  const v=f.local();
+  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('denseGet');f.tee(v);f.out(0xd1,0x45);f.if(()=>{f.get(v);f.ret();});f.get(0);f.get(1);f.call('number');f.call('objectGet');f.ret();});
   f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.call('number');f.call('stringRead');f.ret();});
   f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.call('hostGetIndexRaw');f.ret();});
   f.get(0);f.get(1);f.call('hostGetIndex');
  });
  def('setIndex',[REF,F64,REF,I32],[REF],f=>{
-  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.call('number');f.get(2);f.get(3);f.call('objectSet');f.ret();});
+  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.get(2);f.call('denseSet');f.if(()=>{f.get(2);f.ret();});f.get(0);f.get(1);f.call('number');f.get(2);f.get(3);f.call('objectSet');f.ret();});
   f.get(0);f.call('valueKind');f.out(0x45);f.if(()=>{f.get(0);f.get(1);f.get(2);f.get(2);f.call('valueKind');f.get(3);f.call('hostSetIndexRaw');f.ret();});
   f.get(0);f.get(1);f.get(2);f.get(3);f.call('hostSetIndex');
  });
  // Calls with up to 8 arguments: kinds of `self` and each argument are packed
- // three bits each so the host can unbox them without calling back.
+ // three bits each so the host can unbox them without calling back (closures
+ // share kind 7: both are unboxed by the host). Closures are called in WASM.
+ const packed=(f,k)=>{f.call('valueKind');f.tee(k);f.int(7);f.get(k);f.int(7);f.out(0x49,0x1b);};
  for(let n=0;n<=8;n++)def('call'+n,[REF,REF,...Array(n).fill(REF)],[REF],f=>{
-  f.get(0);f.get(1);f.get(1);f.call('valueKind');
-  for(let i=0;i<n;i++){f.get(2+i);f.call('valueKind');f.int(3*(i+1));f.out(0x74,0x72);}
+  const k=f.local(I32);
+  f.get(0);f.call('isClosure');f.if(()=>{f.get(0);f.get(1);for(let i=0;i<n;i++)f.get(2+i);f.out(0xfb,8,...u32(SCOPE),...u32(n),0xfb,0x1b);f.call('closureInvoke');f.ret();});
+  f.get(0);f.get(1);f.get(1);packed(f,k);
+  for(let i=0;i<n;i++){f.get(2+i);packed(f,k);f.int(3*(i+1));f.out(0x74,0x72);}
   for(let i=0;i<n;i++)f.get(2+i);
   f.call('hostCall'+n);
  });
  def('templateString',[REF],[REF],f=>{f.get(0);f.call('isString');f.if(()=>f.get(0),()=>{f.get(0);f.call('hostTemplateString');},REF);});
  def('property',[REF,REF,I32],[REF],f=>{f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.get(1);f.get(2);f.int(1);f.out(0x23,6);f.create(OBJECT_REF);f.ret();});f.get(0);f.call('isString');f.if(()=>{f.get(0);f.get(1);f.get(2);f.out(0x23,6);f.create(STRING_REF);},()=>{f.get(0);f.get(1);f.get(2);f.call('hostProperty');},REF);});
 
+ // Closures: functions created by compiled code are structs until they reach
+ // the host. Generators, async functions and functions that need their own
+ // record (named expressions, arguments, super) are host functions.
+ def('func',[REF,I32,I32,I32,REF,REF],[REF],f=>{
+  f.get(3);f.int(16|32|64);f.out(0x71);f.if(()=>{for(let i=0;i<6;i++)f.get(i);f.call('hostMakeFunction');f.ret();});
+  f.get(1);f.get(3);f.get(2);f.call('lit');f.get(0);f.get(4);f.get(5);f.nil();f.out(0x23,6);f.create(CLOSURE);
+ });
+ def('isClosure',[REF],[I32],f=>{f.test(0,CLOSURE);f.if(()=>{f.field(0,CLOSURE,C_BRAND);f.out(0x23,6,0xd3);},()=>f.int(0),I32);});
+ for(const [name,index,t]of [['closureId',C_ID,I32],['closureFlags',C_FLAGS,I32],['closureName',C_NAME,REF],['closureEnv',C_ENV,REF],['closureSelf',C_SELF,REF],['closureNewTarget',C_TARGET,REF],['closureHost',C_HOST,REF]])def(name,[REF],[t],f=>f.field(0,CLOSURE,index));
+ def('closureSetHost',[REF,REF],[],f=>f.put(0,CLOSURE,C_HOST,()=>f.get(1)));
+ def('setGlobalObject',[REF],[],f=>{f.get(0);f.out(0x24,10);});
+ // `this` of a sloppy function: nullish becomes the global object, primitives are wrapped.
+ def('sloppyThis',[REF],[REF],f=>{
+  const k=f.local(I32);f.get(0);f.call('valueKind');f.tee(k);f.int(7);f.out(0x4f);f.if(()=>{f.get(0);f.ret();});
+  f.get(k);f.int(2);f.out(0x46);f.get(k);f.int(3);f.out(0x46,0x72);f.if(()=>{f.out(0x23,10);f.ret();});
+  f.get(0);f.call('hostToObject');
+ });
+ // Calls f<id> through the shared table with the generic ABI (env, this, args, new.target).
+ def('closureInvoke',[REF,REF,REF],[REF],f=>{
+  const flags=f.local(I32);f.field(0,CLOSURE,C_FLAGS);f.set(flags);
+  f.field(0,CLOSURE,C_ENV);
+  f.get(flags);f.int(2);f.out(0x71);f.if(()=>f.field(0,CLOSURE,C_SELF),()=>{f.get(flags);f.int(1);f.out(0x71);f.if(()=>f.get(1),()=>{f.get(1);f.call('sloppyThis');},REF);},REF);
+  f.get(2);
+  f.get(flags);f.int(2);f.out(0x71);f.if(()=>f.field(0,CLOSURE,C_TARGET),()=>f.undef(),REF);
+  f.field(0,CLOSURE,C_ID);f.out(0x11,...u32(type([REF,REF,REF,REF],[REF])),0);
+ });
+ // Argument lists: fixed arrays from WASM calls, WASM arrays, or host arrays.
+ def('argCount',[REF],[I32],f=>{
+  f.test(0,SCOPE);f.if(()=>{f.get(0);f.internal(SCOPE);f.out(0xfb,0x0f);f.ret();});
+  f.get(0);f.call('isObject');f.if(()=>{f.get(0);f.call('arrayLength');f.ret();});
+  f.get(0);f.call('hostArgCount');
+ });
+ def('arg',[REF,I32],[REF],f=>{
+  f.test(0,SCOPE);f.if(()=>{f.get(1);f.get(0);f.internal(SCOPE);f.out(0xfb,0x0f);f.out(0x4f);f.if(()=>{f.undef();f.ret();});f.get(0);f.internal(SCOPE);f.get(1);f.out(0xfb,0x0b,...u32(SCOPE));f.ret();});
+  f.get(0);f.get(1);f.call('objectArg');
+ });
+ def('rest',[REF,I32],[REF],f=>{
+  const out=f.local(),n=f.local(I32);f.call('array');f.set(out);f.get(0);f.call('argCount');f.set(n);
+  f.block('end',end=>f.block('loop',loop=>{f.get(1);f.get(n);f.out(0x4e);f.branch(end,true);f.get(out);f.get(0);f.get(1);f.call('arg');f.call('push');f.drop();f.get(1);f.int(1);f.out(0x6a);f.set(1);f.branch(loop);}));
+  f.get(out);
+ });
  // Scope records: (array (mut externref)); element 0 is the parent record,
  // elements 1..n are the captured bindings. null marks an uninitialized
  // (TDZ) binding. The compiler resolves (hops, slot) statically.
@@ -230,10 +287,13 @@ function environmentWasm(){
  });
  const entries=imports.map(fn=>[...utf8('h'),...utf8(fn.name),0,...u32(fn.type)]);
  entries.push([...utf8('h'),...utf8('undefined'),3,REF,0]);
+ // Shared function table: index = plan id, filled by the runtime with f<id>.
+ entries.push([...utf8('h'),...utf8('table'),1,0x70,0,0]);
  const exports=functions.map((fn,i)=>[...utf8(fn.name),0,...u32(imports.length+i)]);
  const bytes=[0,97,115,109,1,0,0,0];
- const globals=[...u32(9),...Array.from({length:5},()=>[REF,1,0xd0,REF,0x0b]).flat(),0x6d,1,0xd0,0x6d,0x0b,I32,1,0x41,0,0x0b,REF,1,0xd0,REF,0x0b,REF,1,0xd0,REF,0x0b];
+ const globals=[...u32(10),...Array.from({length:5},()=>[REF,1,0xd0,REF,0x0b]).flat(),0x6d,1,0xd0,0x6d,0x0b,I32,1,0x41,0,0x0b,REF,1,0xd0,REF,0x0b,REF,1,0xd0,REF,0x0b,REF,1,0xd0,REF,0x0b];
  for(const [id,data]of [[1,[...u32(types.length),...types.flat()]],[2,[...u32(entries.length),...entries.flat()]],[3,[...u32(functions.length),...functions.flatMap(fn=>u32(fn.type))]],[6,globals],[7,[...u32(exports.length),...exports.flat()]],[10,[...u32(bodies.length),...bodies.flat()]]])bytes.push(...section(id,data));
+ bytes.push(...nameSection(functions.map((fn,i)=>[imports.length+i,fn.name])));
  const binary=new Uint8Array(bytes);
  // Module() provides an offset/function diagnostic if the own encoder is wrong.
  new WebAssembly.Module(binary);cached=binary;return binary;
