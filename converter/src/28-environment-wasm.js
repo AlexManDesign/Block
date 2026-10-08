@@ -81,7 +81,7 @@ function environmentWasm(){
  host('hostGetF',[REF,REF],[F64]);host('hostGetIndexF',[REF,F64],[F64]);host('hostStash',[],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
  for(let n=0;n<=8;n++)host('hostCall'+n,[REF,REF,I32,...Array(n).fill(REF)],[REF]);
  host('hostNumberToString',[F64],[REF]);
- host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostDefineIndex',[REF,F64,REF],[REF]);host('hostTypeof',[REF],[I32]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
+ host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostTypedArrayClass',[REF],[I32]);host('hostDefineIndex',[REF,F64,REF],[REF]);host('hostTypeof',[REF],[I32]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -208,6 +208,16 @@ function environmentWasm(){
   f.get(k);f.int(2);f.out(0x46);f.get(k);f.int(3);f.out(0x46,0x72);f.if(()=>{f.out(0x23,10);f.ret();});
   f.get(0);f.call('hostToObject');
  });
+ // Argument checks of a typed function's entry (int32 excludes -0).
+ def('isInt',[REF],[I32],f=>{
+  const d=f.local(F64);f.get(0);f.call('isNumber');f.out(0x45);f.if(()=>{f.int(0);f.ret();});
+  f.get(0);f.call('toNumber');f.tee(d);f.out(0xfc,0x02,0xb7);f.get(d);f.out(0x61);
+  f.get(d);f.float(0);f.out(0x62);f.get(d);f.out(0xbd,0x50,0x72,0x71);
+ });
+ def('isBool',[REF],[I32],f=>{f.get(0);f.call('atomKind');f.int(2);f.out(0x4e);});
+ def('isNumberOrUndefined',[REF],[I32],f=>{f.get(0);f.call('isNumber');f.get(0);f.call('isUndefined');f.out(0x72);});
+ // 1: integer element typed array, 2: Uint32/Float32/Float64 array, 0: other.
+ def('typedArrayClass',[REF],[I32],f=>{f.get(0);f.call('valueKind');f.if(()=>{f.int(0);f.ret();});f.get(0);f.call('hostTypedArrayClass');});
  // typeof v === name without a host call where WASM knows the answer. Codes:
  // 0 number, 1 string, 2 undefined, 3 boolean, 4 function, 5 object, 6 symbol, 7 bigint.
  def('typeofCode',[REF],[I32],f=>{

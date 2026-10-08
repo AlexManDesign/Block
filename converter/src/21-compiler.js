@@ -34,7 +34,7 @@ const signatures={
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
  setFunctionName:['rri','r'],fromInt32:['i','r'],
- pushIntrinsic:['rr','i'],typeofCode:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ pushIntrinsic:['rr','i'],typeofCode:['r','i'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -88,7 +88,10 @@ class Compiler {
     if(plan.kind==='function'&&fn?.typedBody){
      const params=plan.node.params.map((p,i)=>VALUE_TYPE[this.paramRepr(fn,i)]),ret=VALUE_TYPE[reprOf(fn.ret)];
      const typed=new FunctionEmitter(this,id,{typed:true,base:4+params.length,retRepr:reprOf(fn.ret)}).compile();
-     functions[2*id]={params:generic,results:[REF],...this.adapter(id,fn)};
+     // A global function can also be called by the host (handlers created at run
+     // time, setTimeout strings, window.f(...)) with any arguments: its entry
+     // checks them and runs an untyped body when they do not fit.
+     functions[2*id]=fn.binding?.storage==='global'?this.guardedEntry(id,fn):{params:generic,results:[REF],...this.adapter(id,fn)};
      functions[2*id+1]={params:[...generic,...params],results:[ret],...typed};
      plan.typed=true;
      continue;
@@ -113,6 +116,20 @@ class Compiler {
   // Readable names in profiles: f<id>/t<id> plus the source name.
   const names=this.plans.flatMap((p,id)=>{const label=(p.name||p.kind).replace(/[^\w$.-]/g,'_').slice(0,40);return [[this.genericIndex(id),'f'+id+'_'+label],[this.genericIndex(id)+1,'t'+id+'_'+label]];});
   return {binary:makeModule(this.imports,functions,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]],exported,names),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
+ }
+ guardedEntry(id,fn){
+  const body=new FunctionEmitter(this,id,{dynamicOnly:true}).compile();
+  const code=[],out=(...b)=>code.push(...b),call=name=>out(0x10,...u32(this.import(name)));
+  const GUARDS={int:'isInt',num:'isNumber',bool:'isBool',str:'isString',nu:'isNumberOrUndefined',tai:1,taf:2};
+  out(0x02,0x40);
+  fn.node.params.forEach((p,i)=>{
+   const check=p.type==='Identifier'?GUARDS[p._ref.binding.type]:undefined;if(check===undefined)return;
+   out(0x20,2,0x41,...i32(i));call('arg');
+   if(typeof check==='number'){call('typedArrayClass');out(0x41,check,0x47);}else{call(check);out(0x45);}
+   out(0x0d,0);
+  });
+  code.push(...this.adapter(id,fn).code);out(0x0f,0x0b);
+  return {params:[REF,REF,REF,REF],results:[REF],code:[...code,...body.code],locals:body.locals};
  }
  // Generic entry of a typed function: unpack the argument array, call t<id>.
  adapter(id,fn){

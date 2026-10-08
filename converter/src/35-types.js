@@ -47,7 +47,7 @@ class TypeInference {
  // written through window/globalThis/self.
  builtin(n,name){
   if(name==='Math'&&this.a.mathWrites)return false;
-  return n?.type==='Identifier'&&n.name===name&&n._ref&&!n._ref.binding&&!this.a.globalWrites.has(name)&&!this.a.dynamicGlobalWrites;
+  return n?.type==='Identifier'&&n.name===name&&n._ref&&!n._ref.binding&&!this.a.globalWrites.has(name)&&!this.a.dynamicGlobalWrites&&!this.a.globalEscapes;
  }
  type(b){return this.types.get(b);}
  widen(b,t){if(!b)return;const old=this.types.get(b),next=join(old,t);if(next!==old){this.types.set(b,next);this.changed=true;}}
@@ -128,6 +128,10 @@ class TypeInference {
    for(const b of scope.bindings.values()){
     let t;
     if(b.storage==='global'||resumable)t=ANY;
+    // A global function can also be called by host code with any arguments;
+    // its entry then runs an untyped body, which must not break bindings
+    // that closures read with their inferred type.
+    else if(b.captured&&owner?.binding?.storage==='global')t=ANY;
     else if(['arguments','catch','callee','class','class-inner','import','namespace','function','function-block'].includes(b.kind))t=ANY;
     else if(b.storage==='local'&&b.tdzChecks)t=ANY;
     else if(b.kind==='param'){
@@ -143,11 +147,13 @@ class TypeInference {
  }
  varSafety(){
   // A var is typed only when it behaves like a let: one initialized
-  // declaration and every read inside the same block, after it.
+  // declaration, directly in a block's statement list (not the unbraced body
+  // of an if/while/label, which may not run), and every read inside the same
+  // block, after it.
   for(const fn of this.fns){
    const n=fn.node;if(!n)continue;
    const blocks=[];
-   const walk=x=>{
+   const walk=(x,parent)=>{
     if(x!==n&&FUNCTIONS.has(x.type))return;
     if(x.type==='PropertyDefinition'||x.type==='StaticBlock')return;
     const block=['BlockStatement','Program','ForStatement','ForInStatement','ForOfStatement','SwitchStatement'].includes(x.type);
@@ -156,13 +162,13 @@ class TypeInference {
      if(d.id.type!=='Identifier'){for(const id of collect(d.id))if(id._ref?.binding)id._ref.binding.unsafeVar=true;continue;}
      const b=d.id._ref?.binding;if(!b)continue;
      const owner=blocks.at(-1);
-     if(!d.init||b.varBlock||owner?.type==='SwitchStatement'||blocks.some(k=>k.type==='SwitchStatement'))b.unsafeVar=true;
+     if(!d.init||b.varBlock||parent!==owner||owner?.type==='SwitchStatement'||blocks.some(k=>k.type==='SwitchStatement'))b.unsafeVar=true;
      b.varBlock=owner;b.firstInit=d.end;
     }
-    children(x,walk);
+    children(x,c=>walk(c,x));
     if(block)blocks.pop();
    };
-   walk(n);
+   walk(n,null);
   }
   for(const fn of this.fns){
    const n=fn.node;if(!n)continue;
@@ -331,7 +337,8 @@ class TypeInference {
     const o=this.expr(n.object);
     if(n.computed){
      const k=this.expr(n.property);
-     if(typedArray(o)&&numeric(k)){if(this.annotate)n._elem=o;return NU;}
+     // Only Number keys are indices: true, undefined or a string name a property.
+     if(typedArray(o)&&(k===INT||k===NUM)){if(this.annotate)n._elem=o;return NU;}
      return ANY;
     }
     if(typedArray(o)&&n.property.name==='length'){if(this.annotate)n._taLength=true;return NUM;}
@@ -394,7 +401,7 @@ class TypeInference {
    if(name==='fromCharCode'&&this.builtin(callee.object,'String')){if(this.annotate&&argTypes.length===1)n._fromCharCode=true;return STR;}
   }
   // slice/subarray of a typed array keep its element kind.
-  if(callee.type==='MemberExpression'&&!callee.computed&&typedArray(receiver)&&['slice','subarray'].includes(callee.property.name))return receiver;
+  if(callee.type==='MemberExpression'&&!callee.computed&&typedArray(receiver)&&['slice','subarray'].includes(callee.property.name)&&!this.a.speciesKeys)return receiver;
   return ANY;
  }
 }

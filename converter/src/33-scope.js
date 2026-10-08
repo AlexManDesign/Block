@@ -22,6 +22,7 @@ function patternNames(n,out=[]){
  return out;
 }
 
+const SPECIES_KEYS=new Set(['constructor','slice','subarray','species']);
 class Binding {
  constructor(name,kind,scope,node){
   this.name=name;this.kind=kind;this.scope=scope;this.node=node;
@@ -56,7 +57,7 @@ class ScopeAnalysis {
  constructor(){
   this.root=new Scope('root',null,null,null);this.root.forced=true;
   this.globals=new Map();this.scriptErrors=new Map();this.modules=new Map();this.functions=new Map();
-  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;this.stringPrototype=false;
+  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;this.stringPrototype=false;this.speciesKeys=false;
  }
  // ---- pass 1: scopes and declarations ----
  declare(scope,name,kind,node){
@@ -292,7 +293,8 @@ class ScopeAnalysis {
   if(!n)return;
   switch(n.type){
    case'Identifier':this.reference(n,scope,fn,'read');return;
-   case'Literal':case'ThisExpression':case'Super':case'MetaProperty':case'TemplateElement':case'PrivateIdentifier':return;
+   case'Literal':if(SPECIES_KEYS.has(n.value))this.speciesKeys=true;return;
+   case'ThisExpression':case'Super':case'MetaProperty':case'TemplateElement':case'PrivateIdentifier':return;
    case'ArrayExpression':n.elements.forEach(e=>this.expression(e,scope,fn));return;
    case'ObjectExpression':
     for(const p of n.properties){
@@ -317,6 +319,7 @@ class ScopeAnalysis {
    case'BinaryExpression':case'LogicalExpression':this.expression(n.left,scope,fn);this.expression(n.right,scope,fn);return;
    case'MemberExpression':
     if(n.object.type==='Identifier')n.object._memberObject=true;
+    if(!n.computed&&n.property.name==='species')this.speciesKeys=true;
     // Code that touches String.prototype may replace the methods compiled inline.
     if(n.object.type==='Identifier'&&n.object.name==='String'&&!n.computed&&n.property.name==='prototype')this.stringPrototype=true;
     this.expression(n.object,scope,fn);if(n.computed)this.expression(n.property,scope,fn);
@@ -339,6 +342,9 @@ class ScopeAnalysis {
  }
  // Writes to properties of the global object through window/globalThis/self.
  globalTarget(n){
+  // A write to .constructor/.slice/.subarray (or such a key in a string) can
+  // change what slice/subarray return, so their results are not typed.
+  if(n.type==='MemberExpression'&&!n.computed&&SPECIES_KEYS.has(n.property.name))this.speciesKeys=true;
   if(n.type!=='MemberExpression'||n.object.type!=='Identifier')return;
   if(n.object.name==='Math')this.mathWrites=true;
   if(!['window','globalThis','self'].includes(n.object.name))return;
@@ -359,6 +365,8 @@ class ScopeAnalysis {
   if(!binding){
    if(mode==='write'||mode==='update')this.globalWrites.add(n.name);
    if(mode==='read'&&['window','globalThis','self','top','parent','frames'].includes(n.name)&&!n._memberObject)this.globalEscapes=true;
+   // Math handed out as a value (Object.assign(Math, ...)) may be changed.
+   if(mode==='read'&&n.name==='Math'&&!n._memberObject)this.mathWrites=true;
    return;
   }
   if(mode==='write'||mode==='update')binding.assigns++;

@@ -212,6 +212,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const mutating=new Set(['hostWrite','hostSet','hostSetIndex','hostUpdate']);
  for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual'||name==='hostToNumber',mutating.has(name));
  const key=k=>typeof k==='object'&&k!==null?fromKind(k,6):k;
+ const typedArrayTag=getDescriptor(getPrototype(Int8Array.prototype),Symbol.toStringTag).get;
  const typeNames=['number','string','undefined','boolean','function','object','symbol','bigint'];
  let stash;
  Object.assign(nativeImports,{
@@ -221,6 +222,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   hostStash:()=>{const v=stash;stash=undefined;return box(v);},
   hostDefineIndex:boxedBridge((o,i,v)=>{defineProperty(unbox(o),i,{value:unbox(v),writable:true,enumerable:true,configurable:true});return o;}),
   hostTypeof:v=>typeNames.indexOf(typeof v),
+  hostTypedArrayClass:v=>{const tag=ArrayBuffer.isView(v)?Reflect.apply(typedArrayTag,v,[]):undefined;return tag===undefined?0:tag==='Uint32Array'||tag==='Float32Array'||tag==='Float64Array'?2:tag.startsWith('Big')?0:1;},
   hostGetIndexRaw:boxedBridge((o,i)=>box(o[i])),
   hostSetRaw:boxedBridge((o,k,v,kind,strict)=>{const value=fromKind(v,kind);setProperty(o,key(k),value,!!strict);if(isPrototype(o))environment.invalidatePrototypes();return v;},false,5),
   hostSetIndexRaw:boxedBridge((o,i,v,kind,strict)=>{const value=fromKind(v,kind);if(ArrayBuffer.isView(o))o[i]=value;else{setProperty(o,i,value,!!strict);if(isPrototype(o))environment.invalidatePrototypes();}return v;},false,5),
@@ -483,7 +485,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
+  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,isInt:null,isBool:null,isNumberOrUndefined:null,typedArrayClass:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
   globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
   globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
   globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
@@ -530,7 +532,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag};
- const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;

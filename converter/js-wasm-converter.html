@@ -9096,7 +9096,7 @@ const signatures={
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
  setFunctionName:['rri','r'],fromInt32:['i','r'],
- pushIntrinsic:['rr','i'],typeofCode:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ pushIntrinsic:['rr','i'],typeofCode:['r','i'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -9150,7 +9150,10 @@ class Compiler {
     if(plan.kind==='function'&&fn?.typedBody){
      const params=plan.node.params.map((p,i)=>VALUE_TYPE[this.paramRepr(fn,i)]),ret=VALUE_TYPE[reprOf(fn.ret)];
      const typed=new FunctionEmitter(this,id,{typed:true,base:4+params.length,retRepr:reprOf(fn.ret)}).compile();
-     functions[2*id]={params:generic,results:[REF],...this.adapter(id,fn)};
+     // A global function can also be called by the host (handlers created at run
+     // time, setTimeout strings, window.f(...)) with any arguments: its entry
+     // checks them and runs an untyped body when they do not fit.
+     functions[2*id]=fn.binding?.storage==='global'?this.guardedEntry(id,fn):{params:generic,results:[REF],...this.adapter(id,fn)};
      functions[2*id+1]={params:[...generic,...params],results:[ret],...typed};
      plan.typed=true;
      continue;
@@ -9175,6 +9178,20 @@ class Compiler {
   // Readable names in profiles: f<id>/t<id> plus the source name.
   const names=this.plans.flatMap((p,id)=>{const label=(p.name||p.kind).replace(/[^\w$.-]/g,'_').slice(0,40);return [[this.genericIndex(id),'f'+id+'_'+label],[this.genericIndex(id)+1,'t'+id+'_'+label]];});
   return {binary:makeModule(this.imports,functions,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]],exported,names),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
+ }
+ guardedEntry(id,fn){
+  const body=new FunctionEmitter(this,id,{dynamicOnly:true}).compile();
+  const code=[],out=(...b)=>code.push(...b),call=name=>out(0x10,...u32(this.import(name)));
+  const GUARDS={int:'isInt',num:'isNumber',bool:'isBool',str:'isString',nu:'isNumberOrUndefined',tai:1,taf:2};
+  out(0x02,0x40);
+  fn.node.params.forEach((p,i)=>{
+   const check=p.type==='Identifier'?GUARDS[p._ref.binding.type]:undefined;if(check===undefined)return;
+   out(0x20,2,0x41,...i32(i));call('arg');
+   if(typeof check==='number'){call('typedArrayClass');out(0x41,check,0x47);}else{call(check);out(0x45);}
+   out(0x0d,0);
+  });
+  code.push(...this.adapter(id,fn).code);out(0x0f,0x0b);
+  return {params:[REF,REF,REF,REF],results:[REF],code:[...code,...body.code],locals:body.locals};
  }
  // Generic entry of a typed function: unpack the argument array, call t<id>.
  adapter(id,fn){
@@ -16355,7 +16372,7 @@ function environmentWasm(){
  host('hostGetF',[REF,REF],[F64]);host('hostGetIndexF',[REF,F64],[F64]);host('hostStash',[],[REF]);host('hostSetRaw',[REF,REF,REF,I32,I32],[REF]);host('hostGetIndexRaw',[REF,F64],[REF]);host('hostSetIndexRaw',[REF,F64,REF,I32,I32],[REF]);
  for(let n=0;n<=8;n++)host('hostCall'+n,[REF,REF,I32,...Array(n).fill(REF)],[REF]);
  host('hostNumberToString',[F64],[REF]);
- host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostDefineIndex',[REF,F64,REF],[REF]);host('hostTypeof',[REF],[I32]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
+ host('hostMakeFunction',[REF,I32,I32,I32,REF,REF],[REF]);host('hostTypedArrayClass',[REF],[I32]);host('hostDefineIndex',[REF,F64,REF],[REF]);host('hostTypeof',[REF],[I32]);host('hostToObject',[REF],[REF]);host('hostArgCount',[REF],[I32]);
  host('hostToNumeric',[REF],[REF]);host('hostIncrement',[REF,I32],[REF]);host('hostToNumber',[REF],[F64]);
  const def=(name,p,r,body)=>{ids.set(name,imports.length+functions.length);functions.push({name,params:p,type:type(p,r),body});};
 
@@ -16482,6 +16499,16 @@ function environmentWasm(){
   f.get(k);f.int(2);f.out(0x46);f.get(k);f.int(3);f.out(0x46,0x72);f.if(()=>{f.out(0x23,10);f.ret();});
   f.get(0);f.call('hostToObject');
  });
+ // Argument checks of a typed function's entry (int32 excludes -0).
+ def('isInt',[REF],[I32],f=>{
+  const d=f.local(F64);f.get(0);f.call('isNumber');f.out(0x45);f.if(()=>{f.int(0);f.ret();});
+  f.get(0);f.call('toNumber');f.tee(d);f.out(0xfc,0x02,0xb7);f.get(d);f.out(0x61);
+  f.get(d);f.float(0);f.out(0x62);f.get(d);f.out(0xbd,0x50,0x72,0x71);
+ });
+ def('isBool',[REF],[I32],f=>{f.get(0);f.call('atomKind');f.int(2);f.out(0x4e);});
+ def('isNumberOrUndefined',[REF],[I32],f=>{f.get(0);f.call('isNumber');f.get(0);f.call('isUndefined');f.out(0x72);});
+ // 1: integer element typed array, 2: Uint32/Float32/Float64 array, 0: other.
+ def('typedArrayClass',[REF],[I32],f=>{f.get(0);f.call('valueKind');f.if(()=>{f.int(0);f.ret();});f.get(0);f.call('hostTypedArrayClass');});
  // typeof v === name without a host call where WASM knows the answer. Codes:
  // 0 number, 1 string, 2 undefined, 3 boolean, 4 function, 5 object, 6 symbol, 7 bigint.
  def('typeofCode',[REF],[I32],f=>{
@@ -17054,6 +17081,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const mutating=new Set(['hostWrite','hostSet','hostSetIndex','hostUpdate']);
  for(const [name,fn]of Object.entries(host))nativeImports[name]=bridge(fn,name==='hostTruth'||name==='hostEqual'||name==='hostToNumber',mutating.has(name));
  const key=k=>typeof k==='object'&&k!==null?fromKind(k,6):k;
+ const typedArrayTag=getDescriptor(getPrototype(Int8Array.prototype),Symbol.toStringTag).get;
  const typeNames=['number','string','undefined','boolean','function','object','symbol','bigint'];
  let stash;
  Object.assign(nativeImports,{
@@ -17063,6 +17091,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   hostStash:()=>{const v=stash;stash=undefined;return box(v);},
   hostDefineIndex:boxedBridge((o,i,v)=>{defineProperty(unbox(o),i,{value:unbox(v),writable:true,enumerable:true,configurable:true});return o;}),
   hostTypeof:v=>typeNames.indexOf(typeof v),
+  hostTypedArrayClass:v=>{const tag=ArrayBuffer.isView(v)?Reflect.apply(typedArrayTag,v,[]):undefined;return tag===undefined?0:tag==='Uint32Array'||tag==='Float32Array'||tag==='Float64Array'?2:tag.startsWith('Big')?0:1;},
   hostGetIndexRaw:boxedBridge((o,i)=>box(o[i])),
   hostSetRaw:boxedBridge((o,k,v,kind,strict)=>{const value=fromKind(v,kind);setProperty(o,key(k),value,!!strict);if(isPrototype(o))environment.invalidatePrototypes();return v;},false,5),
   hostSetIndexRaw:boxedBridge((o,i,v,kind,strict)=>{const value=fromKind(v,kind);if(ArrayBuffer.isView(o))o[i]=value;else{setProperty(o,i,value,!!strict);if(isPrototype(o))environment.invalidatePrototypes();}return v;},false,5),
@@ -17325,7 +17354,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
+  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,isInt:null,isBool:null,isNumberOrUndefined:null,typedArrayClass:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
   globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
   globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
   globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
@@ -17372,7 +17401,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag};
- const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;
@@ -17512,6 +17541,7 @@ function patternNames(n,out=[]){
  return out;
 }
 
+const SPECIES_KEYS=new Set(['constructor','slice','subarray','species']);
 class Binding {
  constructor(name,kind,scope,node){
   this.name=name;this.kind=kind;this.scope=scope;this.node=node;
@@ -17546,7 +17576,7 @@ class ScopeAnalysis {
  constructor(){
   this.root=new Scope('root',null,null,null);this.root.forced=true;
   this.globals=new Map();this.scriptErrors=new Map();this.modules=new Map();this.functions=new Map();
-  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;this.stringPrototype=false;
+  this.globalWrites=new Set();this.globalReads=new Set();this.dynamicGlobalWrites=false;this.globalEscapes=false;this.mathWrites=false;this.stringPrototype=false;this.speciesKeys=false;
  }
  // ---- pass 1: scopes and declarations ----
  declare(scope,name,kind,node){
@@ -17782,7 +17812,8 @@ class ScopeAnalysis {
   if(!n)return;
   switch(n.type){
    case'Identifier':this.reference(n,scope,fn,'read');return;
-   case'Literal':case'ThisExpression':case'Super':case'MetaProperty':case'TemplateElement':case'PrivateIdentifier':return;
+   case'Literal':if(SPECIES_KEYS.has(n.value))this.speciesKeys=true;return;
+   case'ThisExpression':case'Super':case'MetaProperty':case'TemplateElement':case'PrivateIdentifier':return;
    case'ArrayExpression':n.elements.forEach(e=>this.expression(e,scope,fn));return;
    case'ObjectExpression':
     for(const p of n.properties){
@@ -17807,6 +17838,7 @@ class ScopeAnalysis {
    case'BinaryExpression':case'LogicalExpression':this.expression(n.left,scope,fn);this.expression(n.right,scope,fn);return;
    case'MemberExpression':
     if(n.object.type==='Identifier')n.object._memberObject=true;
+    if(!n.computed&&n.property.name==='species')this.speciesKeys=true;
     // Code that touches String.prototype may replace the methods compiled inline.
     if(n.object.type==='Identifier'&&n.object.name==='String'&&!n.computed&&n.property.name==='prototype')this.stringPrototype=true;
     this.expression(n.object,scope,fn);if(n.computed)this.expression(n.property,scope,fn);
@@ -17829,6 +17861,9 @@ class ScopeAnalysis {
  }
  // Writes to properties of the global object through window/globalThis/self.
  globalTarget(n){
+  // A write to .constructor/.slice/.subarray (or such a key in a string) can
+  // change what slice/subarray return, so their results are not typed.
+  if(n.type==='MemberExpression'&&!n.computed&&SPECIES_KEYS.has(n.property.name))this.speciesKeys=true;
   if(n.type!=='MemberExpression'||n.object.type!=='Identifier')return;
   if(n.object.name==='Math')this.mathWrites=true;
   if(!['window','globalThis','self'].includes(n.object.name))return;
@@ -17849,6 +17884,8 @@ class ScopeAnalysis {
   if(!binding){
    if(mode==='write'||mode==='update')this.globalWrites.add(n.name);
    if(mode==='read'&&['window','globalThis','self','top','parent','frames'].includes(n.name)&&!n._memberObject)this.globalEscapes=true;
+   // Math handed out as a value (Object.assign(Math, ...)) may be changed.
+   if(mode==='read'&&n.name==='Math'&&!n._memberObject)this.mathWrites=true;
    return;
   }
   if(mode==='write'||mode==='update')binding.assigns++;
@@ -18200,6 +18237,8 @@ const bindings={
  expression(n,hint=''){this.convert(this.natural(n,hint),'r',n._t);},
  natural(n,hint=''){
   if((n.type==='FunctionExpression'||n.type==='ArrowFunctionExpression')&&n._displayName&&!hint)hint=n._displayName;
+  // Object literals name their anonymous function values in every mode.
+  if(n.type==='ObjectExpression'){this.objectLiteral(n);return 'r';}
   if(!this.dynamicOnly){
    const t=n._t;
    switch(n.type){
@@ -18268,7 +18307,7 @@ const bindings={
    if(p.computed){this.expression(p.key);this.rt('key');key=this.local();this.tee(key);}else this.lit(p.key.name??p.key.value);
    const name=p.computed?'':String(p.key.name??p.key.value);
    // An anonymous class takes a computed name before its static elements run.
-   const namedClass=key!==null&&anonymous&&p.value.type==='ClassExpression';if(namedClass)p.value._nameLocal=key;
+   const namedClass=key!==null&&anonymous&&p.value.type==='ClassExpression';if(namedClass)p.value._nameLocal={emitter:this,local:key};
    if(p.method||accessor)this.function(p.value,name,true);else this.expression(p.value,kind===3?'':name);
    if(key!==null&&(p.method||accessor||anonymous)&&!namedClass||accessor){if(key!==null)this.get(key);else this.lit(name);this.integer(p.kind==='get'?1:p.kind==='set'?2:0);this.rt('setFunctionName');}
    this.integer(kind);this.rt('define');
@@ -18382,15 +18421,15 @@ const bindings={
  },
  // JS remainder: exact for int32 operands inline, otherwise the host's %.
  remainder(){
+  // Saturating truncation: NaN, infinities and huge values fail the integer
+  // test instead of trapping. A zero result keeps the dividend's sign
+  // (-4 % 2 and -0 % 5 are -0).
   const a=this.local(F64),b=this.local(F64),r=this.local(I32);this.set(b);this.set(a);
-  this.get(a);this.get(a);this.out(0xaa,0xb7,0x61);this.get(b);this.get(b);this.out(0xaa,0xb7,0x61,0x71);
-  this.get(b);this.f64(0);this.out(0x62,0x71);this.get(b);this.f64(-1);this.out(0x62,0x71);
-  this.get(a);this.f64(-2147483648);this.out(0x66,0x71);this.get(a);this.f64(2147483648);this.out(0x63,0x71);
-  this.get(b);this.f64(-2147483648);this.out(0x66,0x71);this.get(b);this.f64(2147483648);this.out(0x63,0x71);
+  this.get(a);this.out(0xfc,0x02,0xb7);this.get(a);this.out(0x61);this.get(b);this.out(0xfc,0x02,0xb7);this.get(b);this.out(0x61,0x71);
+  this.get(b);this.f64(0);this.out(0x62,0x71);
   this.ifElse(()=>{
-   // A zero result takes the dividend's sign (-4 % 2 is -0).
-   this.get(a);this.out(0xaa);this.get(b);this.out(0xaa,0x6f);this.tee(r);this.out(0x45);this.get(a);this.f64(0);this.out(0x63,0x71);
-   this.ifElse(()=>this.f64(-0),()=>{this.get(r);this.out(0xb7);},F64);
+   this.get(a);this.out(0xfc,0x02);this.get(b);this.out(0xfc,0x02,0x6f);this.tee(r);this.out(0x45);
+   this.ifElse(()=>{this.f64(0);this.get(a);this.out(0xa6);},()=>{this.get(r);this.out(0xb7);},F64);
   },()=>{this.get(a);this.get(b);this.rt('fmod');},F64);
  },
  math(n){
@@ -18581,7 +18620,10 @@ const bindings={
    // Computed names (from the object literal's key, or the key the runtime
    // passes to a field initializer) are set after the methods, as V8 does,
    // and before static fields and blocks run.
-   if(n._nameLocal!==undefined||n._nameArg){this.get(c);if(n._nameArg){this.get(2);this.integer(0);this.rt('arg');}else this.get(n._nameLocal);this.integer(0);this.rt('setFunctionName');this.out(0x1a);}
+   // (_nameLocal belongs to the emission of the enclosing literal: a function
+   // is emitted more than once, e.g. typed and untyped.)
+   const nameLocal=n._nameLocal?.emitter===this?n._nameLocal.local:undefined;
+   if(nameLocal!==undefined||n._nameArg){this.get(c);if(n._nameArg){this.get(2);this.integer(0);this.rt('arg');}else this.get(nameLocal);this.integer(0);this.rt('setFunctionName');this.out(0x1a);}
    this.get(c);this.rt('finishClass');
   });
   this.strict=strict;
@@ -18715,7 +18757,7 @@ class TypeInference {
  // written through window/globalThis/self.
  builtin(n,name){
   if(name==='Math'&&this.a.mathWrites)return false;
-  return n?.type==='Identifier'&&n.name===name&&n._ref&&!n._ref.binding&&!this.a.globalWrites.has(name)&&!this.a.dynamicGlobalWrites;
+  return n?.type==='Identifier'&&n.name===name&&n._ref&&!n._ref.binding&&!this.a.globalWrites.has(name)&&!this.a.dynamicGlobalWrites&&!this.a.globalEscapes;
  }
  type(b){return this.types.get(b);}
  widen(b,t){if(!b)return;const old=this.types.get(b),next=join(old,t);if(next!==old){this.types.set(b,next);this.changed=true;}}
@@ -18796,6 +18838,10 @@ class TypeInference {
    for(const b of scope.bindings.values()){
     let t;
     if(b.storage==='global'||resumable)t=ANY;
+    // A global function can also be called by host code with any arguments;
+    // its entry then runs an untyped body, which must not break bindings
+    // that closures read with their inferred type.
+    else if(b.captured&&owner?.binding?.storage==='global')t=ANY;
     else if(['arguments','catch','callee','class','class-inner','import','namespace','function','function-block'].includes(b.kind))t=ANY;
     else if(b.storage==='local'&&b.tdzChecks)t=ANY;
     else if(b.kind==='param'){
@@ -18811,11 +18857,13 @@ class TypeInference {
  }
  varSafety(){
   // A var is typed only when it behaves like a let: one initialized
-  // declaration and every read inside the same block, after it.
+  // declaration, directly in a block's statement list (not the unbraced body
+  // of an if/while/label, which may not run), and every read inside the same
+  // block, after it.
   for(const fn of this.fns){
    const n=fn.node;if(!n)continue;
    const blocks=[];
-   const walk=x=>{
+   const walk=(x,parent)=>{
     if(x!==n&&FUNCTIONS.has(x.type))return;
     if(x.type==='PropertyDefinition'||x.type==='StaticBlock')return;
     const block=['BlockStatement','Program','ForStatement','ForInStatement','ForOfStatement','SwitchStatement'].includes(x.type);
@@ -18824,13 +18872,13 @@ class TypeInference {
      if(d.id.type!=='Identifier'){for(const id of collect(d.id))if(id._ref?.binding)id._ref.binding.unsafeVar=true;continue;}
      const b=d.id._ref?.binding;if(!b)continue;
      const owner=blocks.at(-1);
-     if(!d.init||b.varBlock||owner?.type==='SwitchStatement'||blocks.some(k=>k.type==='SwitchStatement'))b.unsafeVar=true;
+     if(!d.init||b.varBlock||parent!==owner||owner?.type==='SwitchStatement'||blocks.some(k=>k.type==='SwitchStatement'))b.unsafeVar=true;
      b.varBlock=owner;b.firstInit=d.end;
     }
-    children(x,walk);
+    children(x,c=>walk(c,x));
     if(block)blocks.pop();
    };
-   walk(n);
+   walk(n,null);
   }
   for(const fn of this.fns){
    const n=fn.node;if(!n)continue;
@@ -18999,7 +19047,8 @@ class TypeInference {
     const o=this.expr(n.object);
     if(n.computed){
      const k=this.expr(n.property);
-     if(typedArray(o)&&numeric(k)){if(this.annotate)n._elem=o;return NU;}
+     // Only Number keys are indices: true, undefined or a string name a property.
+     if(typedArray(o)&&(k===INT||k===NUM)){if(this.annotate)n._elem=o;return NU;}
      return ANY;
     }
     if(typedArray(o)&&n.property.name==='length'){if(this.annotate)n._taLength=true;return NUM;}
@@ -19062,7 +19111,7 @@ class TypeInference {
    if(name==='fromCharCode'&&this.builtin(callee.object,'String')){if(this.annotate&&argTypes.length===1)n._fromCharCode=true;return STR;}
   }
   // slice/subarray of a typed array keep its element kind.
-  if(callee.type==='MemberExpression'&&!callee.computed&&typedArray(receiver)&&['slice','subarray'].includes(callee.property.name))return receiver;
+  if(callee.type==='MemberExpression'&&!callee.computed&&typedArray(receiver)&&['slice','subarray'].includes(callee.property.name)&&!this.a.speciesKeys)return receiver;
   return ANY;
  }
 }

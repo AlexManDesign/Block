@@ -297,6 +297,8 @@ const bindings={
  expression(n,hint=''){this.convert(this.natural(n,hint),'r',n._t);},
  natural(n,hint=''){
   if((n.type==='FunctionExpression'||n.type==='ArrowFunctionExpression')&&n._displayName&&!hint)hint=n._displayName;
+  // Object literals name their anonymous function values in every mode.
+  if(n.type==='ObjectExpression'){this.objectLiteral(n);return 'r';}
   if(!this.dynamicOnly){
    const t=n._t;
    switch(n.type){
@@ -365,7 +367,7 @@ const bindings={
    if(p.computed){this.expression(p.key);this.rt('key');key=this.local();this.tee(key);}else this.lit(p.key.name??p.key.value);
    const name=p.computed?'':String(p.key.name??p.key.value);
    // An anonymous class takes a computed name before its static elements run.
-   const namedClass=key!==null&&anonymous&&p.value.type==='ClassExpression';if(namedClass)p.value._nameLocal=key;
+   const namedClass=key!==null&&anonymous&&p.value.type==='ClassExpression';if(namedClass)p.value._nameLocal={emitter:this,local:key};
    if(p.method||accessor)this.function(p.value,name,true);else this.expression(p.value,kind===3?'':name);
    if(key!==null&&(p.method||accessor||anonymous)&&!namedClass||accessor){if(key!==null)this.get(key);else this.lit(name);this.integer(p.kind==='get'?1:p.kind==='set'?2:0);this.rt('setFunctionName');}
    this.integer(kind);this.rt('define');
@@ -479,15 +481,15 @@ const bindings={
  },
  // JS remainder: exact for int32 operands inline, otherwise the host's %.
  remainder(){
+  // Saturating truncation: NaN, infinities and huge values fail the integer
+  // test instead of trapping. A zero result keeps the dividend's sign
+  // (-4 % 2 and -0 % 5 are -0).
   const a=this.local(F64),b=this.local(F64),r=this.local(I32);this.set(b);this.set(a);
-  this.get(a);this.get(a);this.out(0xaa,0xb7,0x61);this.get(b);this.get(b);this.out(0xaa,0xb7,0x61,0x71);
-  this.get(b);this.f64(0);this.out(0x62,0x71);this.get(b);this.f64(-1);this.out(0x62,0x71);
-  this.get(a);this.f64(-2147483648);this.out(0x66,0x71);this.get(a);this.f64(2147483648);this.out(0x63,0x71);
-  this.get(b);this.f64(-2147483648);this.out(0x66,0x71);this.get(b);this.f64(2147483648);this.out(0x63,0x71);
+  this.get(a);this.out(0xfc,0x02,0xb7);this.get(a);this.out(0x61);this.get(b);this.out(0xfc,0x02,0xb7);this.get(b);this.out(0x61,0x71);
+  this.get(b);this.f64(0);this.out(0x62,0x71);
   this.ifElse(()=>{
-   // A zero result takes the dividend's sign (-4 % 2 is -0).
-   this.get(a);this.out(0xaa);this.get(b);this.out(0xaa,0x6f);this.tee(r);this.out(0x45);this.get(a);this.f64(0);this.out(0x63,0x71);
-   this.ifElse(()=>this.f64(-0),()=>{this.get(r);this.out(0xb7);},F64);
+   this.get(a);this.out(0xfc,0x02);this.get(b);this.out(0xfc,0x02,0x6f);this.tee(r);this.out(0x45);
+   this.ifElse(()=>{this.f64(0);this.get(a);this.out(0xa6);},()=>{this.get(r);this.out(0xb7);},F64);
   },()=>{this.get(a);this.get(b);this.rt('fmod');},F64);
  },
  math(n){
@@ -678,7 +680,10 @@ const bindings={
    // Computed names (from the object literal's key, or the key the runtime
    // passes to a field initializer) are set after the methods, as V8 does,
    // and before static fields and blocks run.
-   if(n._nameLocal!==undefined||n._nameArg){this.get(c);if(n._nameArg){this.get(2);this.integer(0);this.rt('arg');}else this.get(n._nameLocal);this.integer(0);this.rt('setFunctionName');this.out(0x1a);}
+   // (_nameLocal belongs to the emission of the enclosing literal: a function
+   // is emitted more than once, e.g. typed and untyped.)
+   const nameLocal=n._nameLocal?.emitter===this?n._nameLocal.local:undefined;
+   if(nameLocal!==undefined||n._nameArg){this.get(c);if(n._nameArg){this.get(2);this.integer(0);this.rt('arg');}else this.get(nameLocal);this.integer(0);this.rt('setFunctionName');this.out(0x1a);}
    this.get(c);this.rt('finishClass');
   });
   this.strict=strict;
