@@ -51,8 +51,7 @@ function blockBoxes(world, id, m, x, y, z) {
         const n = world.getBlock(x + DIRX_W[d], y, z + DIRZ_W[d]);
         if (OPAQUE[n] || SHAPE[n] === SH.PANE || (FLAGS[n] & (BF_GLASS | BF_TRANS))) bx.push(rotBoxU([7 / 16, 0, 0, 9 / 16, 1, 7 / 16], (d + 2) & 3));
       }
-      if (bx.length === 1) return [[7 / 16, 0, 0, 9 / 16, 1, 1], [0, 0, 7 / 16, 1, 1, 9 / 16]];
-      return bx;
+      return bx;          // a pane with nothing to join is just its post (CrossCollisionBlock)
     }
     case SH.GATE: {
       const f = m & 3;
@@ -114,6 +113,56 @@ function collisionBoxes(world, id, m, x, y, z) {
   if (sh === SH.CARPET || sh === SH.LILY) return [[0, 0, 0, 1, 1 / 16, 1]];
   if (id === B.COBWEB) return null;
   return blockBoxes(world, id, m, x, y, z);
+}
+
+// Outline of a shape made of boxes, as Minecraft draws it (VoxelShape.forAllEdges): the boxes'
+// bounds cut the block into a grid of cells, a cell is full when a box covers it, and a grid line
+// along an axis is an edge where the four cells around it make a crease (one or three full, or two
+// across the diagonal); runs of edge along the same line are joined. Returns [x0,y0,z0,x1,y1,z1, ...]
+// in block units. Cached per shape.
+const SHAPE_EDGES = new Map();
+function shapeEdges(boxes) {
+  const key = boxes.map(b => b.join(',')).join(';');
+  let out = SHAPE_EDGES.get(key);
+  if (out) return out;
+  const C = [new Set(), new Set(), new Set()];
+  for (const b of boxes) for (let a = 0; a < 3; a++) { C[a].add(b[a]); C[a].add(b[a + 3]); }
+  const X = [...C[0]].sort((p, q) => p - q), Y = [...C[1]].sort((p, q) => p - q), Z = [...C[2]].sort((p, q) => p - q);
+  const nx = X.length - 1, ny = Y.length - 1, nz = Z.length - 1;
+  const full = new Uint8Array(nx * ny * nz);
+  for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) for (let k = 0; k < nz; k++) {
+    const cx = (X[i] + X[i + 1]) / 2, cy = (Y[j] + Y[j + 1]) / 2, cz = (Z[k] + Z[k + 1]) / 2;
+    for (const b of boxes) if (cx > b[0] && cx < b[3] && cy > b[1] && cy < b[4] && cz > b[2] && cz < b[5]) { full[(i * ny + j) * nz + k] = 1; break; }
+  }
+  const at = (i, j, k) => i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz ? full[(i * ny + j) * nz + k] : 0;
+  const G = [X, Y, Z];
+  out = [];
+  // edges along axis a: the grid line at (u, v) of the other two axes, cell runs along a
+  for (let a = 0; a < 3; a++) {
+    const ua = (a + 1) % 3, va = (a + 2) % 3, A = G[a], U = G[ua], V = G[va];
+    const cell = (s, u, v) => { const q = [0, 0, 0]; q[a] = s; q[ua] = u; q[va] = v; return at(q[0], q[1], q[2]); };
+    for (let u = 0; u < U.length; u++) for (let v = 0; v < V.length; v++) {
+      let start = -1;
+      for (let s = 0; s <= A.length - 1; s++) {
+        let on = false;
+        if (s < A.length - 1) {
+          const c00 = cell(s, u - 1, v - 1), c10 = cell(s, u, v - 1), c01 = cell(s, u - 1, v), c11 = cell(s, u, v);
+          const n = c00 + c10 + c01 + c11;
+          on = n === 1 || n === 3 || (n === 2 && c00 === c11);
+        }
+        if (on && start < 0) start = s;
+        if (!on && start >= 0) {
+          const p0 = [0, 0, 0], p1 = [0, 0, 0];
+          p0[a] = A[start]; p1[a] = A[s]; p0[ua] = p1[ua] = U[u]; p0[va] = p1[va] = V[v];
+          out.push(p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]);
+          start = -1;
+        }
+      }
+    }
+  }
+  if (SHAPE_EDGES.size > 512) SHAPE_EDGES.clear();
+  SHAPE_EDGES.set(key, out);
+  return out;
 }
 
 // ray vs world: returns {x,y,z, face (0..5 per FN order), id, meta, px,py,pz (hit point)}

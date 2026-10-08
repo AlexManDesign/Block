@@ -409,6 +409,8 @@ def collect():
     import art
     drawn, drawn_anim = art.all_textures(load)
     extra.update(drawn)
+    # a drawing replaces the pack's tile of the same name (no unused layer left behind)
+    tiles = [t for t in tiles if t[0] not in extra]
     for k, frames in drawn_anim.items():
         tiles.append((k, frames, ANIM_TICKS.get(k, 4)))
     for k, v in extra.items():

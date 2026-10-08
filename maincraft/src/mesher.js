@@ -707,19 +707,34 @@ class Mesher {
       this.box(p, id, x, y, z, r[0], r[1], r[2], r[3], r[4], r[5], texs, 0, buf);
     }
   }
+  // Glass pane / iron bars as Minecraft's multipart pane model: the post (its top and bottom edge
+  // always), toward each connected side an arm (its two flat faces and its top and bottom edge, no
+  // faces inside the pane), toward each free side the post's face. Edges use the glass's edge
+  // texture. Faces meeting a pane above / below that runs the same way are left out, so stacked
+  // panes and rows of panes are one flat sheet.
   pane(p, id, x, y, z, texs, buf) {
-    let any = false;
-    const ex = { cullSame: false };
+    const ids = this.ids, pane = texs[0], edge = PANE_EDGE[id] || pane;
+    const up = p + SY, dn = p - SY, isUp = SHAPE[ids[up]] === SH.PANE, isDn = SHAPE[ids[dn]] === SH.PANE;
+    const T = this.paneTex || (this.paneTex = [0, 0, 0, 0, 0, 0]);
+    T[0] = T[1] = T[4] = T[5] = pane; T[2] = T[3] = edge;
+    const ALL = 0b111111, conn = this.paneConn || (this.paneConn = [false, false, false, false]);
+    for (let d = 0; d < 4; d++) conn[d] = this.connects(p + DIRX[d] * SX + DIRZ[d] * SZ, SH.PANE);
+    // post: top and bottom, and its face toward each free side
+    let mask = ALL & ~((isUp ? 0 : 4) | (isDn ? 0 : 8));
+    for (let d = 0; d < 4; d++) if (!conn[d]) mask &= ~(1 << FACE_OF_DIR[d]);
+    this.box(p, id, x, y, z, 7, 0, 7, 9, 16, 9, T, mask, buf);
     for (let d = 0; d < 4; d++) {
-      if (!this.connects(p + DIRX[d] * SX + DIRZ[d] * SZ, SH.PANE)) continue;
-      any = true;
-      const r = rotBox([7, 0, 0, 9, 16, 7], (d + 2) & 3);
-      this.box(p, id, x, y, z, r[0], r[1], r[2], r[3], r[4], r[5], texs, 0, buf, ex);
+      if (!conn[d]) continue;
+      const o = DIRX[d] * SX + DIRZ[d] * SZ;
+      const hideUp = isUp && this.connects(up + o, SH.PANE), hideDn = isDn && this.connects(dn + o, SH.PANE);
+      // the flat faces are the two across the arm; ends and the inner face are never drawn
+      const flat = d & 1 ? 0b110000 : 0b000011;
+      const m = ALL & ~(flat | (hideUp ? 0 : 4) | (hideDn ? 0 : 8));
+      if (d === 0) this.box(p, id, x, y, z, 7, 0, 9, 9, 16, 16, T, m, buf);
+      else if (d === 1) this.box(p, id, x, y, z, 0, 0, 7, 7, 16, 9, T, m, buf);
+      else if (d === 2) this.box(p, id, x, y, z, 7, 0, 0, 9, 16, 7, T, m, buf);
+      else this.box(p, id, x, y, z, 9, 0, 7, 16, 16, 9, T, m, buf);
     }
-    if (!any) {
-      this.box(p, id, x, y, z, 7, 0, 0, 9, 16, 16, texs, 0, buf, ex);
-      this.box(p, id, x, y, z, 0, 0, 7, 16, 16, 9, texs, 0b110011, buf, ex);
-    } else this.box(p, id, x, y, z, 7, 0, 7, 9, 16, 9, texs, 0, buf, ex);
   }
   gate(p, id, m, x, y, z, texs, buf) {
     const f = m & 3, open = (m >> 2) & 1;
@@ -918,6 +933,8 @@ const DEFAULT_TINTS = (() => {
 })();
 // fast leaves (Minecraft's fast graphics): leaf layer -> its opaque variant, drawn in the solid pass
 const OPAQUE_LEAF = new Uint16Array(4096);
+// edge texture of each pane block (its glass's '<name>_pane_top'), 0: the pane's own texture
+const PANE_EDGE = new Uint16Array(NBX);
 function initMesherTextures(layers) {
   TINT_KIND.fill(0); OPAQUE_LEAF.fill(0);
   for (const n in layers) if (layers[n + '_opaque'] !== undefined) OPAQUE_LEAF[layers[n]] = layers[n + '_opaque'];
@@ -935,5 +952,11 @@ function initMesherTextures(layers) {
     if (l !== undefined) LAYER_BED_HEAD[id] = l;
   }
   BED_LEG = layers['oak_planks'] | 0;
+  PANE_EDGE.fill(0);
+  for (let id = 1; id < NB; id++) {
+    if (SHAPE[id] !== SH.PANE || !TEXNAMES[id]) continue;
+    const l = layers[TEXNAMES[id][0] + '_pane_top'];
+    if (l !== undefined) { PANE_EDGE[id] = l; if (WET[id]) PANE_EDGE[WET[id]] = l; }
+  }
   WIRE_TEX[0] = layers['redstone_dust_dot'] | 0; WIRE_TEX[1] = layers['redstone_dust_line'] | 0;
 }

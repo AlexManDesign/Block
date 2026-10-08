@@ -551,11 +551,48 @@ def redstone(load):
     return out
 
 
+GLASS_COLORS = ['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan', 'purple', 'blue',
+                'brown', 'green', 'red', 'black']
+
+
+def glass(load):
+    """Glass: the frame of the pack's texture with light glints across the pane, so a window reads as
+    glass and not as an empty hole (own pattern: two short parallel glints up left, one down right);
+    and for every glass the edge texture of its panes (the pane's top, bottom and free ends): an even
+    strip in the colour of the glass's frame."""
+    out = {}
+    names = ['glass'] + ['%s_stained_glass' % c for c in GLASS_COLORS]
+    for n in names:
+        im = load(n).convert('RGBA')
+        px = im.load()
+        # frame colour: the mean of the border pixels
+        ring = [px[x, y] for x in range(16) for y in range(16) if x in (0, 15) or y in (0, 15)]
+        fc = tuple(sum(c[k] for c in ring) // len(ring) for k in range(4))
+        if n == 'glass':
+            g = im.copy(); q = g.load()
+            light = (226, 236, 240, 255)
+            # a solid band two pixels wide up left (x + y = 8, 9), a thin glint beside it and a
+            # short band down right
+            spots = [(x, k - x) for k in (8, 9) for x in range(2, 7) if 2 <= k - x <= 7]
+            spots += [(x, 12 - x) for x in range(5, 8)]
+            spots += [(x, k - x) for k in (22, 23) for x in range(10, 13) if 10 <= k - x <= 13]
+            for (x, y) in spots:
+                q[x, y] = light
+            out['glass'] = g
+        e = Image.new('RGBA', (16, 16)); ep = e.load(); r = rng(181 + len(n))
+        for y in range(16):
+            for x in range(16):
+                k = 1 + (r.random() - 0.5) * 0.08
+                ep[x, y] = (min(255, int(fc[0] * k)), min(255, int(fc[1] * k)), min(255, int(fc[2] * k)), fc[3])
+        out[n + '_pane_top'] = e
+    return out
+
+
 def all_textures(load):
     """name -> image, and name -> [frames] for animated ones"""
     static, anim = {}, {}
     for f in (barrel, blast_furnace, smoker, cartography_table, fletching_table, smithing_table, loom, lectern, grindstone, stonecutter,
-              composter, pointed_dripstone, azalea, pale_garden, small_items, redstone):
+              composter, pointed_dripstone, azalea, pale_garden, small_items, redstone, glass):
         static.update(f(load))
     for f in (bell, lantern, brewing_stand, cauldron, beetroots, dripleaf, spore_blossom):
         static.update(f())

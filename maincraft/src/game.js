@@ -52,7 +52,7 @@ const MB_SHADE = [0.72, 0.72, 1.0, 0.55, 0.8, 0.9], MB_TRI = [0, 1, 2, 0, 2, 3];
 const BOX_C = new Uint8Array([1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0,
   0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0,
   0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0]);
-const SEL_EDGE = new Uint8Array([0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]), WHITE4 = [1, 1, 1, 1], SEL_COLOR = new Float32Array([0, 0, 0, 0.55]);
+const WHITE4 = [1, 1, 1, 1], SEL_COLOR = new Float32Array([0, 0, 0, 0.55]);
 const BOX_TRI = new Uint8Array([0, 1, 2, 0, 2, 3]), BOX_U = new Uint8Array([0, 1, 1, 0]), BOX_V = new Uint8Array([1, 1, 0, 0]);
 
 // random-tick behaviour per block id, derived once from the block names
@@ -1628,20 +1628,16 @@ class Game {
   drawSelection(env) {
     const r = this.r, gl = r.gl, t = this.target, cam = this.cam;
     const boxes = blockBoxes(this.world, t.id, t.meta, t.x, t.y, t.z);
-    const e = 0.002, need = boxes.length * 72;
+    // the outline of the whole shape (no lines where its boxes meet), each point pulled a little
+    // toward the eye so the lines stay in front of the faces they lie on
+    const E = shapeEdges(boxes), need = E.length;
     let pts = this.selPts;
     if (!pts || pts.length < need) pts = this.selPts = new Float32Array(Math.max(need, 72 * 8));
     let n = 0;
-    for (const b of boxes) {
-      const x0 = t.x + b[0] - e - cam[0], y0 = t.y + b[1] - e - cam[1], z0 = t.z + b[2] - e - cam[2];
-      const x1 = t.x + b[3] + e - cam[0], y1 = t.y + b[4] + e - cam[1], z1 = t.z + b[5] + e - cam[2];
-      // the 12 edges as corner pairs; corners 0-3 bottom, 4-7 top, each ring (x0 z0), (x1 z0), (x1 z1), (x0 z1)
-      for (let k = 0; k < 24; k++) {
-        const c = SEL_EDGE[k];
-        pts[n++] = c === 1 || c === 2 || c === 5 || c === 6 ? x1 : x0;
-        pts[n++] = c >= 4 ? y1 : y0;
-        pts[n++] = c === 2 || c === 3 || c === 6 || c === 7 ? z1 : z0;
-      }
+    for (let i = 0; i < E.length; i += 3) {
+      const x = t.x + E[i] - cam[0], y = t.y + E[i + 1] - cam[1], z = t.z + E[i + 2] - cam[2];
+      const k = 1 - 0.004 / (Math.sqrt(x * x + y * y + z * z) || 1);
+      pts[n++] = x * k; pts[n++] = y * k; pts[n++] = z * k;
     }
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.depthMask(false);
