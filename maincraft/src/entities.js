@@ -640,7 +640,10 @@ class Entities {
       // stuck against something: take a short detour sideways
       if (wl > 0.5) {
         const moved = Math.hypot(e.pos[0] - ox, e.pos[2] - oz);
-        if (moved < wl * dt * 0.3) e.stuckT += dt; else e.stuckT = Math.max(0, e.stuckT - dt * 2);
+        // the pace it should make: walking, or in water a fraction of it (acceleration 0.02 x the
+        // input a tick, drag 0.8: settles at 0.1 x the input a tick, 2 x the input blocks/s)
+        const pace = inW ? Math.min(1, Math.sqrt(wl / MOB_SPEED_K)) * 0.98 * 2 : wl;
+        if (moved < pace * dt * 0.3) e.stuckT += dt; else e.stuckT = Math.max(0, e.stuckT - dt * 2);
         if (e.stuckT > 0.5 && e.detourT <= 0) {
           e.stuckT = 0; e.detourT = 0.7; e.path = null;
           const sgn = Math.random() < 0.5 ? 1 : -1;
