@@ -87,7 +87,7 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     COLLIDE[id] = SOLID[id] || sh === SH.LADDER ? 1 : 0;
     // hardness / tool heuristics (survival)
     let h = 1.5, tool = 1;
-    if (/ORE$|_ORE/.test(key)) { h = 3; }
+    if (/ORE$|_ORE|^(COAL|IRON|GOLD|DIAMOND)$/.test(key)) { h = 3; }   // the four first ores are keyed without _ORE
     else if (/OBSIDIAN/.test(key)) h = 50;
     else if (key === 'BEDROCK') h = -1;
     else if (/DIRT|GRASS$|^GRASS|PODZOL|MYCELIUM|FARMLAND|^MUD$|CLAY|SOUL|NYLIUM/.test(key)) { h = 0.6; tool = 3; }
@@ -121,6 +121,42 @@ for (let i = 0; i < BLOCK_TABLE.length; i++) {
     if (key === 'SHIP_WHEEL') { h = 2; tool = 2; }
     if (sh === SH.WATER || sh === SH.LAVA) h = -1;
     HARD[id] = h; TOOL[id] = tool;
+  }
+})();
+// Minecraft's explosion resistance (an explosion's ray loses (resistance + 0.3) x 0.3 in each block
+// it crosses): the hardness for most blocks, stone-like building blocks and metal 6, obsidian 1200,
+// fluids 100, unbreakable blocks out of reach
+const BLAST = new Float32Array(NBX);
+(function () {
+  const V = { FURNACE: 3.5, FURNACE_LIT: 3.5, BLAST_FURNACE: 3.5, SMOKER: 3.5, STONECUTTER: 3.5, LANTERN: 3.5, BOOKSHELF: 1.5,
+    ICE: 0.5, PACKED_ICE: 0.5, BLUE_ICE: 2.8, SNOW: 0.2, SNOW_LAYER: 0.1, DIRT: 0.5, COARSE_DIRT: 0.5, ROOTED_DIRT: 0.5, PODZOL: 0.5,
+    MUD: 0.5, DIRT_PATH: 0.65, GRAVEL: 0.6, LADDER: 0.4, RAIL: 0.7, TNT: 0, MAGMA_BLOCK: 0.5, SOUL_SAND: 0.5, SOUL_SOIL: 0.5,
+    CRIMSON_NYLIUM: 0.4, WARPED_NYLIUM: 0.4, SHROOMLIGHT: 1, NETHER_WART_BLOCK: 1, WARPED_WART_BLOCK: 1, SPONGE: 0.6, WET_SPONGE: 0.6,
+    HAY_BLOCK: 0.5, BONE_BLOCK: 2, DRIED_KELP_BLOCK: 2.5, HONEYCOMB_BLOCK: 0.6, BROWN_MUSHROOM_BLOCK: 0.2, RED_MUSHROOM_BLOCK: 0.2,
+    MUSHROOM_STEM: 0.2, MOSS_BLOCK: 0.1, PALE_MOSS_BLOCK: 0.1, CALCITE: 0.75, DRIPSTONE: 1, CACTUS: 0.4, COMPOSTER: 0.6, CAMPFIRE: 2,
+    CHEST: 2.5, CRAFTING_TABLE: 2.5, CREAKING_HEART: 10, AMETHYST_BLOCK: 1.5, BUDDING_AMETHYST: 1.5, GLOW: 0.3, SEA_LANTERN: 0.3,
+    COCOA: 3, VINE: 0.2, GLOW_LICHEN: 0.2 };
+  for (let id = 1; id < NB; id++) {
+    const k = B_KEY[id], sh = SHAPE[id];
+    let r = HARD[id];
+    if (sh === SH.WATER || sh === SH.LAVA) r = 100;
+    else if (r < 0) r = 3600000;
+    else if (V[k] !== undefined) r = V[k];
+    else if (/OBSIDIAN|^NETHERITE_BLOCK$|^ANCIENT_DEBRIS$/.test(k)) r = 1200;
+    else if (/PRESSURE_PLATE|BUTTON|^LEVER$/.test(k)) r = 0.5;
+    else if (/^IRON_(DOOR|TRAPDOOR)$|^BELL$|^SPAWNER$/.test(k)) r = 5;
+    else if (/^END_STONE/.test(k)) r = 9;
+    else if (/_ORE$|^(COAL|IRON|GOLD|DIAMOND)$|^LAPIS_BLOCK$|^POINTED_DRIPSTONE$|^OBSERVER$|^SCULK_(CATALYST|SHRIEKER)$|^MUD_BRICKS/.test(k)) r = 3;
+    else if (/_GLAZED$/.test(k)) r = 1.4;
+    else if (/CONCRETE_POWDER/.test(k)) r = 0.5;
+    else if (/CONCRETE$/.test(k)) r = 1.8;
+    else if (/BASALT|TERRACOTTA|^TERRA_/.test(k)) r = 4.2;
+    else if (/^SMOOTH_(RED_)?SANDSTONE|^SMOOTH_QUARTZ/.test(k)) r = 6;
+    else if (/SANDSTONE|QUARTZ/.test(k)) r = 0.8;
+    else if (/^(STONE|COBBLE|MOSSY|SMOOTH_STONE|ANDESITE|DIORITE|GRANITE|POLISHED_|BRICK|DEEPSLATE|COBBLED_DEEPSLATE|CHISELED_|CRACKED_|TUFF|BLACKSTONE|GILDED_|PRISMARINE|DARK_PRISMARINE|PURPUR|NETHER_BRICK|RED_NETHER|IRON_BARS|GRINDSTONE)|_WALL$|COPPER|^RAW_.*_BLOCK$|^(IRON|GOLD|DIAMOND|EMERALD|REDSTONE|COAL)_BLOCK$|CORAL_BLOCK$/.test(k)) r = 6;
+    else if (/PLANKS|_SLAB$|_STAIRS$|FENCE|_GATE$|_DOOR$|_TRAPDOOR$/.test(k)) r = 3;
+    else if (/CARPET$/.test(k)) r = 0.1;
+    BLAST[id] = r;
   }
 })();
 

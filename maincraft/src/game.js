@@ -162,13 +162,14 @@ class Game {
       for (const s of slots) if (s && s.count) { f += s.count / maxStack(s.id); any = true; }
       return any ? Math.floor(1 + (f / n) * 14) : 0;
     };
-    rs.onTnt = (x, y, z) => { Sfx.fuse(); setTimeout(() => { if (this.world === w) this.explode(x + 0.5, y + 0.5, z + 0.5, 4, { x, y, z }); }, 4000); };
+    rs.onTnt = (x, y, z) => { Sfx.fuse(); setTimeout(() => { if (this.world === w) this.explode(x + 0.5, y + 0.0625, z + 0.5, 4, { x, y, z }); }, 4000); };
     rs.sound = (kind, x, y, z, on) => { if (kind === 'door') Sfx.door(on); else if (kind === 'piston') Sfx.door(on); else Sfx.click(); };
     this.world = w;
     this.pendingSave = new Map();
     this.particles.length = 0;
     this.ents = new Entities(this);
     this.ents.loadMobs(meta.mobs);
+    this.ents.loadPopulated(meta.popd);
     this.ships = this.ships || new Ships(this);
     this.ships.ship = null;
     this.boats = new Boats(this);
@@ -249,6 +250,7 @@ class Game {
       ship: this.pendingShip || (this.ships ? this.ships.serialize() : null),
       boats: this.pendingBoats || (this.boats ? this.boats.serialize() : null),
       mobs: this.ents ? this.ents.saveMobs() : null,
+      popd: this.ents ? this.ents.savePopulated() : null,
     });
     await DB.putWorld(this.meta);
     if (await DB.saveCols(this.meta.id, entries)) {
@@ -983,7 +985,8 @@ class Game {
       if (sh === SH.BUTTON) { w.rs.press(tg.x, tg.y, tg.z); Sfx.click(); this.swing(); return; }
       if (id === B.REPEATER) { w.setBlock(tg.x, tg.y, tg.z, id, (m & ~12) | ((((m >> 2) & 3) + 1) & 3) << 2); Sfx.click(); this.swing(); return; }
       if (id === B.COMPARATOR) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 4); Sfx.click(); this.swing(); return; }
-      if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { this.explode(tg.x + 0.5, tg.y + 0.5, tg.z + 0.5, 4, tg); return; }
+      // flint and steel primes TNT: it blows after its 80-tick fuse (PrimedTnt)
+      if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { w.rs.onTnt(tg.x, tg.y, tg.z); this.swing(); this.damageTool(); return; }
       // an axe strips a log or wood (the axis stays)
       if (STRIPPED_OF[id] && hid && isItem(hid) && (itemDef(hid)[5] || {}).tool === 'axe') {
         w.setBlock(tg.x, tg.y, tg.z, STRIPPED_OF[id], m);
@@ -1116,31 +1119,94 @@ class Game {
     return true;
   }
 
+  // Minecraft's Explosion. Blocks: 1352 rays leave the centre (toward the surface of a 16 x 16 x 16
+  // grid), each with a strength of radius x 0.7..1.3 that drops by 0.225 every 0.3 step and by
+  // (resistance + 0.3) x 0.3 in each block it crosses; the blocks reached with strength left are
+  // destroyed, each dropping as an item one time in radius (explosion decay), a chest its contents.
+  // Entities within 2 x radius: impact = (1 - distance / 2r) x the part of the body the centre sees,
+  // damage (impact^2 + impact) / 2 x 7 x 2r + 1, pushed away (from the centre to the eyes) by impact.
   explode(cx, cy, cz, r, tg) {
-    const w = this.world;
+    const w = this.world, E = this.ents;
     if (tg) w.setBlock(tg.x, tg.y, tg.z, 0, 0);
     Sfx.noise && Sfx.ctx && Sfx.noise(Sfx.ctx.currentTime, 1.2, 0.9, 'lowpass', 600, 60, 0.7);
-    const R = Math.ceil(r);
-    for (let dy = -R; dy <= R; dy++) for (let dz = -R; dz <= R; dz++) for (let dx = -R; dx <= R; dx++) {
-      const d = Math.hypot(dx, dy, dz);
-      if (d > r * (0.75 + Math.random() * 0.4)) continue;
-      const x = Math.floor(cx + dx), y = Math.floor(cy + dy), z = Math.floor(cz + dz);
+    const blow = new Map();
+    for (let j = 0; j < 16; j++) for (let k = 0; k < 16; k++) for (let l = 0; l < 16; l++) {
+      if (j > 0 && j < 15 && k > 0 && k < 15 && l > 0 && l < 15) continue;
+      let dx = j / 15 * 2 - 1, dy = k / 15 * 2 - 1, dz = l / 15 * 2 - 1;
+      const n = Math.hypot(dx, dy, dz); dx /= n; dy /= n; dz /= n;
+      let x = cx, y = cy, z = cz;
+      for (let h = r * (0.7 + Math.random() * 0.6); h > 0; h -= 0.22500001) {
+        const bx = Math.floor(x), by = Math.floor(y), bz = Math.floor(z);
+        if (by < WORLD_MIN_Y || by >= WORLD_MAX_Y) break;
+        const id = w.getBlock(bx, by, bz);
+        if (id) {
+          // a block standing in water resists like the water
+          h -= ((FLAGS[id] & (BF_AQUATIC | BF_WET) ? Math.max(BLAST[id], 100) : BLAST[id]) + 0.3) * 0.3;
+          if (h > 0) blow.set(bx + ',' + by + ',' + bz, [bx, by, bz]);
+        }
+        x += dx * 0.3; y += dy * 0.3; z += dz * 0.3;
+      }
+    }
+    // the entities first (the blocks' drops come after and are not hit)
+    const q = r * 2, centre = [cx, cy, cz];
+    const seen = (x0, y0, z0, x1, y1, z1) => {
+      // Explosion.getSeenPercent: a grid over the body, each point checked against the centre
+      const a = 1 / ((x1 - x0) * 2 + 1), b = 1 / ((y1 - y0) * 2 + 1), c = 1 / ((z1 - z0) * 2 + 1);
+      const ox = (1 - Math.floor(1 / a) * a) / 2, oz = (1 - Math.floor(1 / c) * c) / 2;
+      let hit = 0, all = 0;
+      for (let u = 0; u <= 1; u += a) for (let v = 0; v <= 1; v += b) for (let t = 0; t <= 1; t += c) {
+        if (E && !E.rayBlocked([x0 + (x1 - x0) * u + ox, y0 + (y1 - y0) * v, z0 + (z1 - z0) * t + oz], centre)) hit++;
+        all++;
+      }
+      return all ? hit / all : 0;
+    };
+    // (out of reach: -1; within it even a hidden body takes the 1)
+    const impact = (pos, w2, h2) => {
+      const d = Math.hypot(pos[0] - cx, pos[1] - cy, pos[2] - cz) / q;
+      return d > 1 || d === 0 ? -1 : (1 - d) * seen(pos[0] - w2 / 2, pos[1], pos[2] - w2 / 2, pos[0] + w2 / 2, pos[1] + h2, pos[2] + w2 / 2);
+    };
+    const push = (vel, pos, eye, f) => {
+      const vx = pos[0] - cx, vy = pos[1] + eye - cy, vz = pos[2] - cz, l = Math.hypot(vx, vy, vz);
+      if (l) { vel[0] += vx / l * f * 20; vel[1] += vy / l * f * 20; vel[2] += vz / l * f * 20; }
+    };
+    const p = this.player;
+    {
+      const f = impact(p.pos, PLAYER_W, p.h);
+      if (f >= 0) {
+        if (this.mode === 'survival') this.hurt(Math.floor((f * f + f) / 2 * 7 * q + 1));
+        if (!(this.mode !== 'survival' && p.flying)) push(p.vel, p.pos, p.h * 0.9, f);
+      }
+    }
+    if (E) {
+      for (const e of E.mobs.slice()) {
+        if (e.deathT > 0) continue;
+        const f = impact(e.pos, e.w, e.h);
+        if (f < 0) continue;
+        E.damageMob(e, Math.floor((f * f + f) / 2 * 7 * q + 1), null, null, true);
+        push(e.vel, e.pos, e.h * 0.85, f);
+      }
+      // dropped items have 5 health
+      E.items = E.items.filter(it => { const f = impact(it.pos, 0.25, 0.25); return f < 0 || Math.floor((f * f + f) / 2 * 7 * q + 1) < 5; });
+    }
+    const pick = { id: IT.DIAMOND_PICKAXE, count: 1 };
+    for (const [x, y, z] of blow.values()) {
       const id = w.getBlock(x, y, z);
-      if (!id || HARD[id] < 0 || id === B.OBSIDIAN || id === B.WATER || id === B.LAVA) continue;
-      if (id === B.TNT) { setTimeout(() => this.world && this.explode(x + 0.5, y + 0.5, z + 0.5, 4, { x, y, z }), 300 + Math.random() * 400); continue; }
-      w.setBlock(x, y, z, 0, 0, { noUpdate: true });
+      if (!id || HARD[id] < 0) continue;
+      if (id === B.TNT) { w.setBlock(x, y, z, 0, 0); setTimeout(() => this.world && this.explode(x + 0.5, y + 0.0625, z + 0.5, 4), 500 + Math.random() * 1000); continue; }
+      const m = w.getMeta(x, y, z);
+      if (dryId(id) === B.CHEST) this.onBlockBroken(x, y, z, id, m, true);
+      else if (E && Math.random() < 1 / r) for (const d of dropsFor(id, m, pick)) E.dropItem(d.id, d.count, x + 0.5, y + 0.3, z + 0.5);
+      w.setBlock(x, y, z, (FLAGS[id] & (BF_AQUATIC | BF_WET)) ? B.WATER : 0, 0, { noUpdate: true });
+      // the other half of a door or a bed goes with it
+      const sh = SHAPE[id];
+      if (sh === SH.DOOR || sh === SH.TALL) { const oy = ((sh === SH.DOOR ? m >> 2 : m) & 1) ? y - 1 : y + 1; if (w.getBlock(x, oy, z) === id) w.setBlock(x, oy, z, 0, 0, { noUpdate: true }); }
+      if (sh === SH.BED) {
+        const f = m & 3, head = (m >> 2) & 1, ox = head ? -DIRX_W[f] : DIRX_W[f], oz = head ? -DIRZ_W[f] : DIRZ_W[f];
+        if (w.getBlock(x + ox, y, z + oz) === id) w.setBlock(x + ox, y, z + oz, 0, 0, { noUpdate: true });
+      }
       if (Math.random() < 0.08) this.spawnParticles(x, y, z, id, 3);
     }
-    for (let dy = -R - 1; dy <= R + 1; dy++) for (let dz = -R - 1; dz <= R + 1; dz++) for (let dx = -R - 1; dx <= R + 1; dx++) {
-      if (Math.abs(dx) === R + 1 || Math.abs(dy) === R + 1 || Math.abs(dz) === R + 1) w.scheduleAround(Math.floor(cx + dx), Math.floor(cy + dy), Math.floor(cz + dz));
-    }
-    const p = this.player;
-    const d = Math.hypot(p.pos[0] - cx, p.pos[1] + 0.9 - cy, p.pos[2] - cz);
-    if (d < r * 2) {
-      const f = (1 - d / (r * 2));
-      p.vel[0] += (p.pos[0] - cx) / (d + 0.1) * f * 18; p.vel[1] += 6 * f; p.vel[2] += (p.pos[2] - cz) / (d + 0.1) * f * 18;
-      if (this.mode === 'survival') this.hurt(Math.round(f * 20));
-    }
+    for (const [x, y, z] of blow.values()) w.scheduleAround(x, y, z);
   }
 
   // ------------------------------------------------------------------ inventory helpers

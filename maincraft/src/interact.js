@@ -162,8 +162,9 @@ const TIER_SPEED = [1, 2, 4, 6, 12, 8];
 function needTier(id) {
   const k = B_KEY[id];
   if (k === 'OBSIDIAN' || k === 'CRYING_OBSIDIAN' || k === 'ANCIENT_DEBRIS' || k === 'NETHERITE_BLOCK') return 5;
-  if (/DIAMOND|GOLD|EMERALD|REDSTONE/.test(k) && (/ORE|BLOCK/.test(k))) return 3;
-  if (/IRON|LAPIS|COPPER/.test(k) && (/ORE|BLOCK/.test(k))) return 2;
+  // (the diamond, gold and iron ores are keyed DIAMOND, GOLD and IRON)
+  if (/DIAMOND|GOLD|EMERALD|REDSTONE/.test(k) && (/ORE|BLOCK/.test(k) || k === 'DIAMOND' || k === 'GOLD')) return 3;
+  if (/IRON|LAPIS|COPPER/.test(k) && (/ORE|BLOCK/.test(k) || k === 'IRON')) return 2;
   if (TOOL[id] === 1) return 1;
   return 0;
 }

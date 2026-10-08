@@ -144,19 +144,19 @@ function humanoid(armW, wide, hat) {
 const MOB_DEFS = {
   // meat comes cooked from an animal that died burning (the loot tables' furnace_smelt when on fire)
   pig: { w: 0.9, h: 0.9, hp: 10, attr: 0.25, tempt: 1.2, food: [IT.CARROT, IT.POTATO, IT.BEETROOT], panic: 1.25, drops: (e) => [[e.fire > 0 ? IT.COOKED_PORKCHOP : IT.PORKCHOP, 1 + (Math.random() * 3 | 0)]], passive: true },
-  cow: { w: 0.9, h: 1.4, hp: 10, attr: 0.2, tempt: 1.25, food: [IT.WHEAT], panic: 2.0, drops: (e) => [[e.fire > 0 ? IT.COOKED_BEEF : IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
+  cow: { w: 0.9, h: 1.4, hp: 10, attr: 0.2, tempt: 1.25, parent: 1.25, food: [IT.WHEAT], panic: 2.0, drops: (e) => [[e.fire > 0 ? IT.COOKED_BEEF : IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
   sheep: { w: 0.9, h: 1.3, hp: 8, attr: 0.23, tempt: 1.1, food: [IT.WHEAT], panic: 1.25, drops: (e) => [[e.fire > 0 ? IT.COOKED_MUTTON : IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
   chicken: { w: 0.4, h: 0.7, hp: 4, attr: 0.25, tempt: 1.0, food: [IT.WHEAT_SEEDS, IT.PUMPKIN_SEEDS, IT.MELON_SEEDS, IT.BEETROOT_SEEDS], panic: 1.4, drops: (e) => [[e.fire > 0 ? IT.COOKED_CHICKEN : IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
   // zombie loot: 0-2 rotten flesh, and when the player killed it one in 40 an iron ingot, a carrot
   // or a potato (killed_by_player, random_chance 0.025)
-  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true },
-  skeleton: { w: 0.6, h: 1.95, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
-  creeper: { w: 0.6, h: 1.6, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
-  spider: { w: 1.4, h: 0.9, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
-  cave_spider: { w: 0.7, h: 0.5, hp: 12, attr: 0.3, wander: 0.8, dmg: 2, poison: 7, climber: true, neutralLight: 12, spiderAI: true, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
+  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true },
+  skeleton: { w: 0.6, h: 1.99, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
+  creeper: { w: 0.6, h: 1.7, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
+  spider: { w: 1.4, h: 0.9, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
+  cave_spider: { w: 0.7, h: 0.5, hp: 12, attr: 0.3, wander: 0.8, dmg: 2, poison: 7, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
   enderman: { w: 0.6, h: 2.9, hp: 40, attr: 0.3, dmg: 7, detect: 64, drops: () => [[IT.ENDER_PEARL, Math.random() * 2 | 0]], hostile: true, neutral: true },
   slime: { w: 1.02, h: 1.02, hp: 4, speed: 2.7, dmg: 2, drops: (e) => [[IT.SLIME_BALL, e.size === 1 ? Math.random() * 3 | 0 : 0]], hostile: true, slime: true },
-  salmon: { w: 0.7, h: 0.4, hp: 3, speed: 1.6, drops: (e) => [[e.fire > 0 ? IT.COOKED_SALMON : IT.RAW_SALMON, 1]], passive: true, aquatic: true },
+  salmon: { w: 0.7, h: 0.4, hp: 3, speed: 1.6, drops: (e) => [[e.fire > 0 ? IT.COOKED_SALMON : IT.RAW_SALMON, 1], [Math.random() < 0.05 ? IT.BONE_MEAL : 0, 1]], passive: true, aquatic: true },
   shark: { w: 0.9, h: 0.8, hp: 24, speed: 4.2, dmg: 6, drops: (e) => [[e.fire > 0 ? IT.COOKED_COD : IT.RAW_COD, 1 + (Math.random() * 2 | 0)], [IT.BONE, Math.random() < 0.35 ? 1 : 0]], hostile: true, aquatic: true },
 };
 // Ground mobs move like Minecraft's: MoveControl sets both the speed and the forward input to
@@ -167,14 +167,44 @@ const MOB_DEFS = {
 const MOB_SPEED_K = 0.98 / (1 - 0.546) * 20;
 for (const k in MOB_DEFS) { const d = MOB_DEFS[k]; if (d.attr) d.speed = MOB_SPEED_K * d.attr * d.attr; }
 const goalSpeed = (speed, m) => speed * m * m;
-// slime sizes as in the original: [size, hp, contact damage, speed]
-const SLIME_SIZES = { 4: [16, 4, 2.1], 2: [4, 2, 2.7], 1: [1, 0, 3.2] };
+// slime sizes (Slime.setSize): [health size^2, contact damage size (none when tiny), movement
+// speed attribute 0.2 + 0.1 x size]
+const SLIME_SIZES = { 4: [16, 4, 0.6], 2: [4, 2, 0.4], 1: [1, 0, 0.3] };
 // sheep colours with the original's odds, wool block and fur tint
 const SHEEP_COLORS = [['black', 0.05, [30, 30, 34]], ['gray', 0.1, [125, 125, 125]], ['light_gray', 0.15, [190, 190, 185]],
   ['brown', 0.18, [114, 71, 40]], ['pink', 0.1816, [237, 141, 172]]];
 function sheepWool(e) { return B['WOOL_' + (e.color || 'white').toUpperCase()] || B.WOOL_WHITE; }
+const DYE_MIX = { 'black+white': 'gray', 'gray+white': 'light_gray', 'red+white': 'pink', 'red+yellow': 'orange', 'blue+white': 'light_blue',
+  'green+white': 'lime', 'blue+green': 'cyan', 'blue+red': 'purple', 'pink+purple': 'magenta' };
+function sheepMix(a, b) { return DYE_MIX[[a, b].sort().join('+')] || (Math.random() < 0.5 ? a : b); }
 function sheepTint(e) { for (const c of SHEEP_COLORS) if (c[0] === e.color) return c[2].map(v => v / 255); return null; }
 const MOB_TYPES = Object.keys(MOB_DEFS);
+// Minecraft's animals per biome (MobSpawnSettings, the creature category) for the kinds this game
+// has: [kind, weight, group min, max]; a null kind stands for the weight of those it lacks (horses,
+// wolves, rabbits, foxes, llamas, parrots, pandas, frogs, ...), so ours come as often as there; prob:
+// the chance a new chunk gets a group (creatureGenerationProbability). Biomes not listed have none.
+const ANIMAL_SPAWNS = [];
+(function () {
+  const farm = (other, extra) => [['sheep', 12, 4, 4], ['pig', 10, 4, 4], ['chicken', 10, 4, 4], ['cow', 8, 4, 4], ...(extra || []), [null, other, 1, 1]];
+  const set = (names, list, prob) => {
+    const total = list.reduce((a, e) => a + e[1], 0);
+    for (const n of names.split(' ')) if (BI[n] !== undefined) ANIMAL_SPAWNS[BI[n]] = { list: list.filter(e => e[1] > 0), total, prob: prob || 0.1 };
+  };
+  set('PLAINS SUNFLOWER_PLAINS', farm(6));                                   // + horses 5, donkeys 1
+  set('FOREST', farm(5));                                                     // + wolves 5
+  set('FLOWER_FOREST', farm(4));                                              // + rabbits 4
+  set('BIRCH_FOREST OLD_GROWTH_BIRCH_FOREST DARK_FOREST', farm(0));
+  set('TAIGA OLD_GROWTH_SPRUCE_TAIGA OLD_GROWTH_PINE_TAIGA', farm(20));       // + wolves 8, rabbits 4, foxes 8
+  set('SNOWY_TAIGA', farm(20), 0.07);
+  set('SAVANNA WINDSWEPT_SAVANNA', farm(12));                                 // + horses 1, donkeys 1, armadillos 10
+  set('SAVANNA_PLATEAU', farm(20));                                           // + llamas 8 as well
+  set('JUNGLE SPARSE_JUNGLE', farm(41, [['chicken', 10, 4, 4]]));             // + parrots 40, pandas 1
+  set('BAMBOO_JUNGLE', farm(120, [['chicken', 10, 4, 4]]));                   // + parrots 40, pandas 80
+  set('SWAMP', farm(10));                                                     // + frogs 10
+  set('WINDSWEPT_HILLS WINDSWEPT_GRAVELLY_HILLS WINDSWEPT_FOREST', farm(5));  // + llamas 5
+  set('MEADOW', [['sheep', 2, 2, 4], [null, 3, 1, 1]]);                       // + donkeys 1, rabbits 2
+  set('CHERRY_GROVE', [['pig', 1, 1, 2], [null, 2, 1, 1]]);                   // + rabbits 2
+})();
 
 // entity AABB collision with the world
 function entCollides(world, x, y, z, w, h) {
@@ -286,8 +316,10 @@ class Entities {
     // animals of the columns not simulated now (left behind or not yet loaded): column key -> records.
     // As in Minecraft, animals never despawn: they wait with their chunk and come back with it
     this.dormant = new Map();
+    this.populated = new Set();     // columns that had their animals at generation
+    this.creatureT = 20;
   }
-  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; this.dormant.clear(); }
+  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; this.dormant.clear(); this.populated.clear(); }
 
   // ------------------------------------------------------------------ keeping animals
   keeps(e) { const d = MOB_DEFS[e.type]; return e.deathT <= 0 && ((!d.hostile && !d.aquatic) || e.persist); }
@@ -397,18 +429,18 @@ class Entities {
     const e = { type, pos: [x, y, z], vel: [0, 0, 0], wish: [0, 0, 0], bodyYaw: yaw, tgtYaw: yaw, headYaw: yaw, hp: d.hp, w: d.w, h: d.h,
       onGround: false, walk: 0, walkAmt: 0, hurtT: 0, invT: 0, lastHurt: 0, deathT: 0, age: 0, fire: 0,
       // behaviour state (see ai / aiFish)
-      aiT: Math.random() * 2, tgt: null, fleeT: 0, angryT: 0, noJump: 0, wantJump: false, atkT: 0, shootT: Math.random(), fuse: -1,
-      leapT: 1.5 + Math.random() * 1.5, hopT: Math.random() * 0.8, stuckT: 0, detourT: 0, detX: 0, detZ: 0,
+      aiT: Math.random() * 2, tgt: null, fleeT: 0, angryT: 0, noJump: 0, wantJump: false, atkT: 0, drawT: -1, bowCd: 0, fuse: -1,
+      hopT: Math.random() * 0.8, stuckT: 0, detourT: 0, detX: 0, detZ: 0,
       path: null, pathI: 0, pathT: Math.random() * 0.6, pathTx: 0, pathTz: 0, tpT: 0, stareT: 0, burnT: 0, wetT: 0, lavaT: 0,
       dryT: 0, swimT: 0, huntT: 0, prey: null, esc: null, escT: 0, escD: null, fleeing: false, aggro: false,
-      seeT: Math.random() * 0.5, sees: false, unseenT: 0, hunting: false, provoked: false, chase: null, chaseT: 0, seenT: 0, strafeT: 0,
+      seeT: Math.random() * 0.5, sees: false, unseenT: 0, hunting: false, provoked: false, chase: null, chaseT: 0, seenT: 0, strafeT: -1,
       // Mob.finalizeSpawn: follow range x (1 + triangle(0, 0.11485)), the "random spawn bonus"
       followMul: 1 + (Math.random() - Math.random()) * 0.11485, strafeCw: Math.random() < 0.5, strafeBack: false,
       lookT: 0, lookP: false, lookYaw: 0, loveT: 0, breedCd: 0, baby: false, growT: 0, eatT: 0 };
     if (opts && opts.baby && d.food) { e.baby = true; e.growT = 1200; e.w = d.w * 0.5; e.h = d.h * 0.5; e.persist = true; }
     if (d.slime) {
       const size = (opts && opts.size) || [1, 2, 4][Math.random() * 3 | 0], S = SLIME_SIZES[size];
-      e.size = size; e.hp = S[0]; e.w = e.h = 0.51 * size; e.squish = 0; e.tsq = 0; e.hopT = 0.5 + Math.random() * 1.5;
+      e.size = size; e.hp = S[0]; e.w = e.h = 0.52 * size; e.squish = 0; e.tsq = 0; e.hopT = 0;   // SlimeMoveControl: the first jump at once
     }
     if (type === 'sheep') {
       const r = Math.random(); e.color = 'white';
@@ -431,11 +463,13 @@ class Entities {
     if (this.spawnT <= 0) {
       this.spawnT = 1.0;
       this.wake();
-      let passive = 0, hostile = 0, fish = 0, sharks = 0;
-      for (const m of this.mobs) { const md = MOB_DEFS[m.type]; if (md.aquatic) { fish++; if (m.type === 'shark') sharks++; } else if (md.hostile) hostile++; else passive++; }
-      if (passive < 14) this.trySpawn(false);
+      // newly generated columns get their animals, once ever (lit, so the light rule can be read)
+      for (const c of w.cols.values()) if (c.state === 2 && !this.populated.has(c.key)) { this.populated.add(c.key); this.populate(c); }
+      if ((this.creatureT -= 1) <= 0) { this.creatureT = 20; this.spawnAnimals(); }
+      let hostile = 0, fish = 0, sharks = 0;
+      for (const m of this.mobs) { const md = MOB_DEFS[m.type]; if (md.aquatic) { fish++; if (m.type === 'shark') sharks++; } else if (md.hostile) hostile++; }
       // hostile mobs spawn in creative too (as in Minecraft); they just never target a creative player
-      if (hostile < 22) this.trySpawn(true);          // one monster cap day and night, as in Minecraft
+      if (hostile < 22) this.trySpawnMonsters();          // one monster cap day and night, as in Minecraft
       this.fishT = (this.fishT || 0) - 1;
       if (this.fishT <= 0) { this.fishT = 5; if (fish < 10) this.trySpawnFish(); }
       this.sharkT = (this.sharkT || 0) - 1;
@@ -506,7 +540,7 @@ class Entities {
         if (a.hostile && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
           if (hb && hb.t <= 1 && hb.t < bt && !a.bounced) {
-            if (g.hurt(a.dmg)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base))) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
             // AbstractArrow.onHitEntity: a hit that does no harm (creative, or just hurt) turns the
             // arrow back at a tenth of its speed
             a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
@@ -563,13 +597,14 @@ class Entities {
       if (e.invT > 0) e.invT -= dt;
       if (e.angryT > 0) e.angryT -= dt;
       if (e.tpT > 0) e.tpT -= dt;
-      e.atkT += dt; e.shootT += dt;
+      e.atkT += dt;
       if (e.breedCd > 0) e.breedCd -= dt;
       // lava and fire
       if (e.lavaT > 0) e.lavaT -= dt;
       else {
         const fb = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2]));
-        if (fb === B.LAVA || fb === B.FIRE) { e.lavaT = 0.7; e.fire = 3; this.damageMob(e, fb === B.LAVA ? 4 : 1, null); if (e.hp <= 0) continue; }
+        // Entity.lavaHurt: 4 damage and 15 s of fire; a fire block 1 damage and 8 s (hurt every 10 ticks)
+        if (fb === B.LAVA || fb === B.FIRE) { e.lavaT = 0.5; e.fire = Math.max(e.fire, fb === B.LAVA ? 15 : 8); this.damageMob(e, fb === B.LAVA ? 4 : 1, null, null, true); if (e.hp <= 0) continue; }
       }
       if (e.fire > 0) e.fire -= dt;
       if (d.aquatic) { this.aiFish(e, d, dt, dx, dz, h); continue; }
@@ -608,8 +643,9 @@ class Entities {
       } else e.burnT = 0;
       this.ai(e, d, dt, dx, dz, h, hunt);
       if (e.deathT > 0 || this.mobs[i] !== e) continue;
-      // don't walk off cliffs (drops over 3 blocks) and keep animals out of water
-      if (e.onGround && this.cliffAhead(e)) {
+      // don't walk off cliffs (drops over 3 blocks) and keep animals out of water (a slime has no
+      // path finding: it hops where it faces)
+      if (e.onGround && !d.slime && this.cliffAhead(e)) {
         const l = Math.hypot(e.wish[0], e.wish[2]) || 1, sgn = Math.random() < 0.5 ? 1 : -1;
         const px = e.wish[2] / l, pz = -e.wish[0] / l;
         this.stop(e); e.path = null; e.stuckT = 0; e.detourT = 0.5;
@@ -634,11 +670,11 @@ class Entities {
       const fallStart = e.onGround ? e.pos[1] : e.fallY ?? e.pos[1];
       e.fallY = Math.max(fallStart, e.pos[1]);
       this.walkPhysics(e, d, dt, inW);
-      if (d.slime && e.onGround && !wasGround) e.tsq = -0.5;
+      if (d.slime && e.onGround && !wasGround) { e.tsq = -0.5; this.stop(e); }
       if (d.slime) { e.squish += (e.tsq - e.squish) * 0.5; e.tsq *= 0.6; }
       if (e.onGround) { const fh = e.fallY - e.pos[1]; if (fh > 3 && e.type !== 'chicken' && !d.slime && !inW) this.damageMob(e, Math.ceil(fh - 3), null); e.fallY = e.pos[1]; }
       // stuck against something: take a short detour sideways
-      if (wl > 0.5) {
+      if (wl > 0.5 && !d.slime) {
         const moved = Math.hypot(e.pos[0] - ox, e.pos[2] - oz);
         // the pace it should make: walking, or in water a fraction of it (acceleration 0.02 x the
         // input a tick, drag 0.8: settles at 0.1 x the input a tick, 2 x the input blocks/s)
@@ -659,14 +695,14 @@ class Entities {
 
   // ------------------------------------------------------------------ land mob behaviour
   ai(e, d, dt, dx, dz, h, hunt) {
-    const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? S[2] : d.speed;
-    e.aiming = false;
+    const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? MOB_SPEED_K * S[2] * S[2] : d.speed;
+    e.aiming = false; e.strafe = false;
     const face = () => { e.headYaw = Math.atan2(dx, -dz); };
     // spiders hunt in the dark; in bright light one that has the player drops it now and then
-    // (SpiderAttackGoal: 1 in 100 a tick)
+    // (SpiderAttackGoal.canContinueToUse: 1 in 100, checked every other tick as goals are)
     let aggressive = e.angryT > 0 || (d.neutralLight ? this.lightAt(e) < d.neutralLight : !d.neutral);
     if (!aggressive && d.neutralLight && e.hunting) {
-      if (Math.random() < 1 - Math.pow(0.99, dt * 20)) { e.hunting = false; e.provoked = false; } else aggressive = true;
+      if (Math.random() < 1 - Math.pow(0.99, dt * 10)) { e.hunting = false; e.provoked = false; } else aggressive = true;
     }
     // a player in creative (or dead) is no target (EntitySelector.NO_CREATIVE_OR_SPECTATOR): a target
     // held is dropped and has to be found again later
@@ -709,7 +745,7 @@ class Entities {
         e.fuse += dt; this.stop(e); face();
         if (e.fuse >= 1.5) {
           this.mobs.splice(this.mobs.indexOf(e), 1);
-          g.explode(Math.round(e.pos[0]), Math.round(e.pos[1] + 0.5), Math.round(e.pos[2]), 3);
+          g.explode(e.pos[0], e.pos[1], e.pos[2], 3);     // Creeper.explodeCreeper: at its feet, power 3
         }
         return;
       }
@@ -717,62 +753,80 @@ class Entities {
       if (e.fuse <= 0) e.fuse = -1;
     }
     const dy = p.pos[1] - e.pos[1];
+    // Slime.playerTouch: a slime that is not tiny hurts a player it touches, hunting or not (in reach
+    // and sight; the player's hurt cooldown spaces the hits half a second)
+    if (d.slime && S[1] > 0 && hunt && e.atkT > 0.5 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, S[1], dx, dz); }
     if (hunting) {
       face();
       if (d.slime) {
         if (e.onGround) {
           e.hopT -= dt;
           // SlimeMoveControl: jump delay 10..29 ticks, a third of it when attacking
-          if (e.hopT <= 0) { e.hopT = (10 + (Math.random() * 20 | 0)) / 20 / 3; this.hop(e, dx, dz, speed); }
+          if (e.hopT <= 0) { e.hopT = (10 + (Math.random() * 20 | 0)) / 20 / 3; this.hop(e, dx, dz, S[2]); }
           else this.stop(e);
         }
-        if (S[1] > 0 && h < e.w * 0.5 + 1.1 && Math.abs(dy) < e.h + 0.6 && e.atkT > 0.5) { e.atkT = 0; this.hitPlayer(e, S[1], dx, dz); }
         return;
       }
       if (d.spiderAI) {
         this.steer(e, p.pos[0], p.pos[2], speed);
         const hd = Math.hypot(dx, dz);
-        if (e.onGround && hd >= 2 && hd <= 4 && Math.random() < 1 - Math.pow(0.8, dt * 20)) {
+        // LeapAtTargetGoal.canUse: 2..4 blocks off, on the ground, 1 in 3 (every other tick)
+        if (e.onGround && hd >= 2 && hd <= 4 && Math.random() < 1 - Math.pow(2 / 3, dt * 10)) {
           const l = hd || 1;
           // LeapAtTargetGoal(0.4): 0.4 toward the target plus 0.2 x velocity, 0.4 up (blocks/tick)
           e.vel[0] = dx / l * 8 + e.vel[0] * 0.2; e.vel[2] = dz / l * 8 + e.vel[2] * 0.2; e.vel[1] = 8;
         }
-        if (h < 1.6 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; if (this.hitPlayer(e, d.dmg, dx, dz) && d.poison) this.game.poison(d.poison); }
+        if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; if (this.hitPlayer(e, d.dmg, dx, dz) && d.poison) this.game.poison(d.poison); }
         return;
       }
       if (e.type === 'enderman') {
-        // close in to striking range (the original stopped at 3 but struck only within 2.2)
-        // an angry enderman gets Minecraft's attacking speed bonus: attribute 0.3 + 0.15
-        if (h > 2) { const c = this.chasePoint(e, d, dt); this.goTo(e, c[0], c[1], goalSpeed(speed, 0.45 / 0.3), dt); } else this.stop(e);
         // EndermanLookForPlayerGoal.tick: looked at from within 4 blocks it teleports away (anywhere
-        // within 32); with the player more than 16 blocks off it teleports 16 blocks toward it,
-        // at most every 30 ticks
-        if (h < 4 && this.stared(e, h)) { if (this.teleportNear(e, e.pos[0], e.pos[2], 32)) e.tpT = 1.5; }
-        else if (h > 16 && e.tpT <= 0) {
+        // within 32); not looked at, with the player more than 16 blocks off, it teleports 16 blocks
+        // toward it at most every 30 ticks
+        const st = this.stared(e, h);
+        if (st && h < 4) { if (this.teleportNear(e, e.pos[0], e.pos[2], 32)) e.tpT = 1.5; }
+        else if (!st && h > 16 && e.tpT <= 0) {
           const hd = Math.hypot(dx, dz) || 1;
           const tx = e.pos[0] + (Math.random() - 0.5) * 8 + dx / hd * 16, tz = e.pos[2] + (Math.random() - 0.5) * 8 + dz / hd * 16;
           e.tpT = this.teleportNear(e, tx, tz, 1) ? 1.5 : 0.5;
         }
-        if (h < 2.2 && Math.abs(dy) < 3 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+        // EndermanFreezeWhenLookedAtGoal: while the player it hunts looks at it from within 16 blocks
+        // it stands still and stares back (no walking, no striking)
+        if (st && h <= 16) { this.stop(e); e.path = null; return; }
+        // MeleeAttackGoal, with Minecraft's attacking speed bonus: attribute 0.3 + 0.15
+        const c = this.chasePoint(e, d, dt);
+        this.goTo(e, c[0], c[1], goalSpeed(speed, 0.45 / 0.3), dt);
+        if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
         return;
       }
       if (d.ranged) {
         e.aiming = true;                    // bow raised (Minecraft's skeleton pose while attacking)
-        // Minecraft's bow attack: close in until within 15 blocks and in sight, then strafe around
-        // the target (backing off under 3.75), shooting every 2 s after seeing it for a second
+        // RangedBowAttackGoal(speed 1, range 15): the sight time counts up while the player is seen
+        // and down while not (from 0 at each change). Within 15 blocks and seen for 20 ticks it
+        // stops and strafes (MoveControl.strafe at 0.25 of its speed, sideways and back or forth,
+        // each way flipped 3 times in 10 every second; backing off under 7.5 blocks, coming on
+        // beyond 13), facing the player; otherwise it walks up. The bow is drawn 20 ticks and loosed
+        // if the player is in sight, then 40 ticks (normal difficulty) pass before it draws again;
+        // it lowers the bow once the player has been out of sight 3 s
         const sees = e.sees;
-        e.seenT = sees ? Math.max(0, e.seenT) + dt : Math.min(0, e.seenT) - dt;
-        const hd = Math.hypot(dx, dz) || 1;
-        if (h > 15 || !sees) { this.goTo(e, p.pos[0], p.pos[2], speed, dt); e.strafeT = 0; }
-        else {
-          e.strafeT += dt;
-          if (e.strafeT >= 1) { if (Math.random() < 0.3) e.strafeCw = !e.strafeCw; if (Math.random() < 0.3) e.strafeBack = !e.strafeBack; e.strafeT = 0; }
-          if (h > 11.25) e.strafeBack = false; else if (h < 3.75) e.strafeBack = true;
-          const fx = dx / hd, fz = dz / hd, sd = e.strafeCw ? 1 : -1, fb = e.strafeBack ? -1 : 1, sp = speed;
-          e.wish[0] = (fx * fb + -fz * sd) * sp; e.wish[2] = (fz * fb + fx * sd) * sp;
-          e.path = null;
+        if (sees !== (e.seenT > 0)) e.seenT = 0;
+        e.seenT += sees ? dt : -dt;
+        if (h <= 15 && e.seenT >= 1) { this.stop(e); e.path = null; e.strafeT = Math.max(0, e.strafeT) + dt; }
+        else { this.goTo(e, p.pos[0], p.pos[2], speed, dt); e.strafeT = -1; }
+        if (e.strafeT >= 1) { if (Math.random() < 0.3) e.strafeCw = !e.strafeCw; if (Math.random() < 0.3) e.strafeBack = !e.strafeBack; e.strafeT = 0; }
+        if (e.strafeT > -1) {
+          if (h > 15 * Math.sqrt(0.75)) e.strafeBack = false; else if (h < 15 * 0.5) e.strafeBack = true;
+          // inputs (+-0.5, +-0.5) x 0.98 at speed 0.25 x 0.25: (0.0625 x 0.693) / (1 - 0.546) blocks a tick
+          const hd = Math.hypot(dx, dz) || 1, fx = dx / hd, fz = dz / hd, sd = e.strafeCw ? 1 : -1, fb = e.strafeBack ? -1 : 1;
+          const sp = d.attr * 0.25 * Math.hypot(0.49, 0.49) / (1 - 0.546) * 20 / Math.SQRT2;
+          e.wish[0] = (fx * fb - fz * sd) * sp; e.wish[2] = (fz * fb + fx * sd) * sp;
+          e.strafe = true;
         }
-        if (sees && e.seenT >= 1 && e.shootT >= 2 && h < 15) { e.shootT = 0; this.shootArrow(e); }
+        if (e.drawT >= 0) {
+          e.drawT += dt;
+          if (!sees && e.seenT < -3) e.drawT = -1;
+          else if (sees && e.drawT >= 1) { e.drawT = -1; e.bowCd = 2; this.shootArrow(e); }
+        } else if ((e.bowCd -= dt) <= 0 && e.seenT >= -3) e.drawT = 0;
         return;
       }
       if (d.creeper) {
@@ -784,33 +838,36 @@ class Entities {
       }
       const c = this.chasePoint(e, d, dt);
       this.goTo(e, c[0], c[1], speed, dt);
-      if (h < 1.4 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+      if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
       return;
     }
+    // RangedBowAttackGoal.stop: the bow lowered, the sight time and the attack time reset
+    if (d.ranged) { e.drawT = -1; e.bowCd = 0; e.seenT = 0; e.strafeT = -1; }
     // FleeSunGoal (skeletons): burning in the sun with no target, off to a spot within 10 blocks
     // (3 up or down) out of the open sky
     if (d.ranged && d.burns && e.fire > 0 && e.sunlit) {
       if (!e.shade || e.stuckT > 1) e.shade = this.findShade(e);
       if (e.shade) { if (this.goTo(e, e.shade[0], e.shade[1], speed, dt)) e.shade = null; e.headYaw = e.bodyYaw; return; }
     } else e.shade = null;
-    this.look(e, dt, dx, dz, h);
+    this.look(e, dt, dx, dz, h, d.hostile ? 8 : 6);
     if (!d.hostile && this.animalGoals(e, d, dt, dx, dz, h, speed)) return;
+    if (d.slime) {
+      // SlimeRandomDirectionGoal: a new random heading every 40..99 ticks; SlimeKeepOnJumpingGoal:
+      // it never stops hopping (jump delay 10..29 ticks)
+      e.dirT = (e.dirT || 0) - dt;
+      if (e.dirT <= 0) { e.dirT = (40 + (Math.random() * 60 | 0)) / 20; e.hopYaw = Math.random() * 6.2832; }
+      if (e.onGround) {
+        e.hopT -= dt;
+        if (e.hopT <= 0) { e.hopT = (10 + (Math.random() * 20 | 0)) / 20; this.hop(e, Math.sin(e.hopYaw), -Math.cos(e.hopYaw), S[2]); }
+        else this.stop(e);
+      }
+      return;
+    }
     // wander: every 3-8 s either pick a spot within 10 blocks (Minecraft's random stroll) or rest
     e.aiT -= dt;
     if (e.aiT <= 0) {
       e.aiT = 3 + Math.random() * 5;
       e.tgt = Math.random() < 0.6 ? [e.pos[0] + (Math.random() - 0.5) * 20, e.pos[2] + (Math.random() - 0.5) * 20] : null;
-    }
-    if (d.slime) {
-      if (e.onGround) {
-        e.hopT -= dt;
-        if (e.hopT <= 0 && e.tgt) {
-          e.hopT = (10 + (Math.random() * 20 | 0)) / 20;
-          const tx = e.tgt[0] - e.pos[0], tz = e.tgt[1] - e.pos[2];
-          if (Math.hypot(tx, tz) > 0.5) this.hop(e, tx, tz, speed * 0.8);
-        } else this.stop(e);
-      }
-      return;
     }
     if (e.tgt) { if (this.goTo(e, e.tgt[0], e.tgt[1], goalSpeed(speed, d.wander || 1), dt)) e.tgt = null; }
     else this.stop(e);
@@ -854,6 +911,12 @@ class Entities {
     }
     return null;
   }
+  // Mob.isWithinMeleeAttackRange: the mob's box widened by sqrt(2.04) - 0.6 on each side (not in
+  // height) overlaps the player's
+  inReach(e) {
+    const p = this.game.player, r = e.w / 2 + Math.sqrt(2.04) - 0.6 + PLAYER_W / 2;
+    return Math.abs(p.pos[0] - e.pos[0]) < r && Math.abs(p.pos[2] - e.pos[2]) < r && e.pos[1] < p.pos[1] + p.h && e.pos[1] + e.h > p.pos[1];
+  }
   canSee(e) {
     const eye = this.game.player.eye();
     return !this.rayBlocked([e.pos[0], e.pos[1] + e.h * 0.85, e.pos[2]], eye);
@@ -866,19 +929,23 @@ class Entities {
     const v = [dx, dy + hd * 0.2, dz], l = Math.hypot(v[0], v[1], v[2]) || 1;
     const gauss = () => { let u = 0; for (let k = 0; k < 6; k++) u += Math.random(); return (u - 3) / Math.sqrt(0.5); };
     for (let k = 0; k < 3; k++) v[k] = v[k] / l + gauss() * 0.0075 * 6;
-    this.arrows.push({ pos: src, vel: [v[0] * 32, v[1] * 32, v[2] * 32], age: 0, hostile: true, dmg: 2 + (Math.random() * 3 | 0) });
+    // base damage 2 x power (1 at full draw) + triangle(0.11 x difficulty 2, 0.57425); on a hit it
+    // deals ceil(speed in blocks a tick x base): about 3..5
+    this.arrows.push({ pos: src, vel: [v[0] * 32, v[1] * 32, v[2] * 32], age: 0, hostile: true, base: 2 + 0.22 + 0.57425 * (Math.random() - Math.random()) });
   }
   // head: now and then look at a nearby player or around (Minecraft LookAtPlayer / RandomLookAround)
-  look(e, dt, dx, dz, h) {
-    const chance = 1 - Math.pow(0.98, dt * 20);
+  // (LookAtPlayerGoal range: 8 blocks for monsters, 6 for animals; both goals start with 2% at each
+  // try, every other tick; looking at the player 40..79 ticks, around 20..39 goal ticks = 2..4 s)
+  look(e, dt, dx, dz, h, R) {
+    const chance = 1 - Math.pow(0.98, dt * 10);
     if (e.lookT > 0) {
       e.lookT -= dt;
-      e.headYaw = e.lookP ? (h < 8 ? Math.atan2(dx, -dz) : e.bodyYaw) : e.lookYaw;
+      e.headYaw = e.lookP ? (h < R ? Math.atan2(dx, -dz) : e.bodyYaw) : e.lookYaw;
       return;
     }
     e.headYaw = e.bodyYaw;
-    if (h < 8 && Math.random() < chance) { e.lookP = true; e.lookT = 2 + Math.random() * 2; }
-    else if (Math.random() < chance) { e.lookP = false; e.lookT = 1 + Math.random(); e.lookYaw = e.bodyYaw + (Math.random() - 0.5) * 3; }
+    if (h < R && Math.random() < chance) { e.lookP = true; e.lookT = 2 + Math.random() * 2; }
+    else if (Math.random() < chance) { e.lookP = false; e.lookT = 2 + Math.random() * 2; e.lookYaw = e.bodyYaw + (Math.random() - 0.5) * 3; }
   }
   // animal goals by Minecraft's priorities: breed > tempt > follow parent > eat grass; true = busy
   animalGoals(e, d, dt, dx, dz, h, speed) {
@@ -893,19 +960,28 @@ class Entities {
         if (l < md) { md = l; mate = o; }
       }
       if (mate) {
+        // BreedGoal: it walks to the partner, and after 60 ticks together within 3 blocks of it
+        // the young one is born
         e.headYaw = Math.atan2(mate.pos[0] - e.pos[0], -(mate.pos[2] - e.pos[2]));
-        if (md < 1.5) this.breed(e, mate);
-        else this.goTo(e, mate.pos[0], mate.pos[2], speed, dt);
+        e.breedT = (e.breedT || 0) + dt;
+        if (e.breedT >= 3 && md < 3) this.breed(e, mate);
+        else if (md > 1.5) this.goTo(e, mate.pos[0], mate.pos[2], speed, dt);
+        else { this.stop(e); e.path = null; }       // the path to it ends a block off (accuracy 1)
         return true;
       }
     }
-    // tempted by the food in the player's hand (within 10 blocks)
+    e.breedT = 0;
+    // TemptGoal: drawn by its food in the player's hand within 10 blocks, it comes up to 2.5; once the
+    // player lets it go it ignores the food for 100 ticks
     const held = g.inv[g.sel];
-    if (d.food && held && d.food.includes(held.id) && h < 10 && !g.surv.dead) {
+    if (e.temptCd > 0) e.temptCd -= dt;
+    else if (d.food && held && d.food.includes(held.id) && h < 10 && !g.surv.dead) {
+      e.tempted = true;
       e.headYaw = Math.atan2(dx, -dz);
-      if (h > 2.5) this.goTo(e, p.pos[0], p.pos[2], goalSpeed(speed, d.tempt || 1), dt); else this.stop(e);
+      if (h > 2.5) this.goTo(e, p.pos[0], p.pos[2], goalSpeed(speed, d.tempt || 1), dt); else { this.stop(e); e.path = null; }
       return true;
     }
+    if (e.tempted) { e.tempted = false; e.temptCd = 5; this.stop(e); }
     if (e.baby) {
       e.growT -= dt;
       if (e.growT <= 0) { e.baby = false; e.w = d.w; e.h = d.h; }
@@ -915,7 +991,8 @@ class Entities {
         const l = Math.hypot(o.pos[0] - e.pos[0], o.pos[2] - e.pos[2]);
         if (l < pd) { pd = l; par = o; }
       }
-      if (par && pd > 3) { this.goTo(e, par.pos[0], par.pos[2], goalSpeed(speed, 1.1), dt); return true; }
+      // FollowParentGoal: 1.1 x its speed (a calf 1.25)
+      if (par && pd > 3) { this.goTo(e, par.pos[0], par.pos[2], goalSpeed(speed, d.parent || 1.1), dt); return true; }
     }
     // sheep graze: grass under them turns to dirt and their wool grows back
     if (e.type === 'sheep') {
@@ -939,11 +1016,14 @@ class Entities {
     }
     return false;
   }
+  // Animal.spawnChildFromBreeding: the young one where the first parent stands; both parents wait
+  // 6000 ticks before breeding again. A lamb's wool is the dye the parents' two would craft into
+  // (white and black: gray, white and gray: light gray), else either parent's
   breed(a, b) {
     const g = this.game;
-    a.loveT = b.loveT = 0; a.breedCd = b.breedCd = 300;
-    const c = this.spawnMob(a.type, (a.pos[0] + b.pos[0]) / 2, Math.max(a.pos[1], b.pos[1]), (a.pos[2] + b.pos[2]) / 2, { baby: true });
-    if (a.type === 'sheep') c.color = Math.random() < 0.5 ? a.color : b.color;
+    a.loveT = b.loveT = 0; a.breedCd = b.breedCd = 300; a.breedT = b.breedT = 0;
+    const c = this.spawnMob(a.type, a.pos[0], a.pos[1], a.pos[2], { baby: true });
+    if (a.type === 'sheep') c.color = sheepMix(a.color || 'white', b.color || 'white');
     g.spawnParticles(c.pos[0] - 0.5, c.pos[1] + 0.5, c.pos[2] - 0.5, B.WOOL_RED, 7);
     Sfx.pop();
   }
@@ -957,12 +1037,13 @@ class Entities {
     this.game.spawnParticles(e.pos[0] - 0.5, e.pos[1] + e.h, e.pos[2] - 0.5, B.WOOL_RED, 5);
     return true;
   }
-  hop(e, dx, dz, speed) {
-    const l = Math.hypot(dx, dz) || 1;
-    e.wish[0] = dx / l * speed; e.wish[2] = dz / l * speed;
-    e.vel[0] = e.wish[0]; e.vel[2] = e.wish[2]; e.vel[1] = 8.4;   // slime jump power 0.42
+  // SlimeMoveControl: facing the way, it jumps (0.42) at its movement speed attribute, which the
+  // ground tick of the jump and then the air (0.02 x input a tick) carry; it waits with no input
+  hop(e, dx, dz, attr) {
+    const l = Math.hypot(dx, dz) || 1, sp = MOB_SPEED_K * attr * attr;
+    e.wish[0] = dx / l * sp; e.wish[2] = dz / l * sp; e.wantJump = true;
     e.bodyYaw = e.tgtYaw = Math.atan2(dx, -dz);
-    e.tsq = 1; e.onGround = false;
+    e.tsq = 1;
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
@@ -984,14 +1065,15 @@ class Entities {
     if ((lt >> 4) > ((Math.random() * 32) | 0) || (lt & 15) > 0) return false;
     return this.rawLight(x, y, z) <= ((Math.random() * 8) | 0);
   }
-  // the player looks the enderman in the face (original's cone test + line of sight)
+  // EnderMan.isLookingAtMe: the player's view within 0.025 / distance of the way to its eyes (2.55
+  // up), in sight
   stared(e, h) {
-    if (h > 64 || h < 0.5) return false;
+    if (h > 64) return false;
     const p = this.game.player, eye = p.eye(), look = p.look();
-    const hy = e.pos[1] + e.h * 0.9;
-    const vx = e.pos[0] - eye[0], vy = hy - eye[1], vz = e.pos[2] - eye[2], u = Math.hypot(vx, vy, vz) || 1;
-    const dot = (vx * look[0] + vy * look[1] + vz * look[2]) / u, r = e.w * 0.6 / u;
-    if (dot <= Math.min(0.999, 1 - r * r * 0.5)) return false;
+    const hy = e.pos[1] + 2.55;
+    const vx = e.pos[0] - eye[0], vy = hy - eye[1], vz = e.pos[2] - eye[2], u = Math.hypot(vx, vy, vz);
+    if (u < 1e-6) return false;
+    if ((vx * look[0] + vy * look[1] + vz * look[2]) / u <= 1 - 0.025 / u) return false;
     return !this.rayBlocked(eye, [e.pos[0], hy, e.pos[2]]);
   }
 
@@ -1151,15 +1233,18 @@ class Entities {
     const w = this.game.world, v = [e.vel[0] * 0.05, e.vel[1] * 0.05, e.vel[2] * 0.05];
     if (e.noJump > 0) e.noJump--;
     const wl = Math.hypot(e.wish[0], e.wish[2]);
-    let s = 0;
+    let s = 0, my = e.bodyYaw;
     if (wl > 0.05) {
-      e.tgtYaw = Math.atan2(e.wish[0], -e.wish[2]);
+      // strafing (a skeleton's bow attack): the body turns to the player, the walk goes its own way
+      const wy = Math.atan2(e.wish[0], -e.wish[2]);
+      e.tgtYaw = e.strafe ? e.headYaw : wy;
       let dy = e.tgtYaw - e.bodyYaw;
       while (dy > Math.PI) dy -= 6.2832; while (dy < -Math.PI) dy += 6.2832;
       e.bodyYaw += Math.max(-Math.PI / 2, Math.min(Math.PI / 2, dy));
       s = Math.min(1, Math.sqrt(wl / MOB_SPEED_K));
+      my = e.strafe ? wy : e.bodyYaw;
     }
-    const fx = Math.sin(e.bodyYaw), fz = -Math.cos(e.bodyYaw), input = s * 0.98;
+    const fx = Math.sin(my), fz = -Math.cos(my), input = s * 0.98;
     // jumping (JumpControl acts on the tick after it was asked; FloatGoal in water). Zombies and
     // skeletons have no FloatGoal: they sink and walk the bottom, rising only while they want to
     // jump (LivingEntity.jumpInLiquid)
@@ -1234,14 +1319,14 @@ class Entities {
     const water = (x, y, z) => isWaterId(w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)));
     e.inWater = water(e.pos[0], e.pos[1] + 0.05, e.pos[2]);
     if (!e.inWater) {
-      // on land: flop and suffocate
+      // WaterAnimal.handleAirSupply: out of the water its 300 ticks of air run out, then it takes 2
+      // damage a second
       e.dryT += dt;
-      if (e.dryT >= 1) { e.dryT -= 1; this.damageMob(e, 1, null); if (e.hp <= 0) return; }
-      e.hopT -= dt;
-      if (e.onGround && e.hopT <= 0) {
-        e.hopT = 0.5 + Math.random() * 0.5;
-        const a = Math.random() * 6.2832;
-        e.vel[1] = 2.6; e.vel[0] = Math.cos(a) * 0.7; e.vel[2] = Math.sin(a) * 0.7; e.bodyYaw = e.tgtYaw = a;
+      if (e.dryT >= 16) { e.dryT -= 1; this.damageMob(e, 2, null); if (e.hp <= 0) return; }
+      // AbstractFish.aiStep: on the ground it flops, 0.4 up and up to 0.05 aside, at every landing
+      if (e.onGround) {
+        e.vel[0] += (Math.random() * 2 - 1) * 1; e.vel[2] += (Math.random() * 2 - 1) * 1; e.vel[1] = 8; e.onGround = false;
+        e.tgtYaw = Math.random() * 6.2832;
       }
       this.stop(e); this.fishPhysics(e, d, dt);
       return;
@@ -1371,12 +1456,10 @@ class Entities {
   fishPhysics(e, d, dt) {
     const w = this.game.world, water = (x, y, z) => isWaterId(w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)));
     e.inWater = water(e.pos[0], e.pos[1] + 0.05, e.pos[2]);
-    if (e.inWater) {
+    const wet = e.inWater;
+    if (wet) {
       const a = Math.min(1, dt * (e.fleeing ? 10 : 4));
       for (let k = 0; k < 3; k++) e.vel[k] += (e.wish[k] - e.vel[k]) * a;
-    } else {
-      e.vel[1] -= 23 * dt;
-      const f = Math.max(0, 1 - dt * 4); e.vel[0] *= f; e.vel[2] *= f;
     }
     const sp = Math.hypot(e.vel[0], e.vel[1], e.vel[2]);
     if (sp > 0.15) {
@@ -1399,6 +1482,9 @@ class Entities {
     if (ok(e.pos[0], e.pos[1] + vy, e.pos[2])) { e.pos[1] += vy; e.onGround = false; }
     else if (vy <= 0) { this.moveAxis(e, 1, vy); e.vel[1] = 0; e.onGround = true; }
     else e.vel[1] = 0;
+    // out of the water: LivingEntity.travel after the move, gravity 0.08 and x0.98, sideways x0.546 on
+    // the ground, x0.91 in the air (per tick; velocities here in blocks a second)
+    if (!wet) { e.vel[1] = (e.vel[1] - 1.6) * 0.98; const f = e.onGround ? 0.546 : 0.91; e.vel[0] *= f; e.vel[2] *= f; }
     e.walk += dt * (0.6 + sp * 0.5);
     e.walkAmt = 0;
   }
@@ -1408,7 +1494,9 @@ class Entities {
   rayBlocked(a, b) {
     const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], l = Math.hypot(dx, dy, dz);
     if (l < 1e-6) return false;
-    return raycast(this.game.world, a[0], a[1], a[2], dx / l, dy / l, dz / l, l, { collider: true }) !== null;
+    // (AABB.clip: a box touched just at the end of the segment does not block it)
+    const h = raycast(this.game.world, a[0], a[1], a[2], dx / l, dy / l, dz / l, l, { collider: true });
+    return h !== null && h.t < l - 1e-6;
   }
   // enderman teleport (original): up to 32 random spots within r of (cx, cz), scanning 8 up to 16
   // down for dry ground with room for the body
@@ -1441,7 +1529,7 @@ class Entities {
       const ys = [];
       for (let y = SEA; y >= SEA - 24; y--) if (isWaterId(w.getBlock(x, y, z)) && isWaterId(w.getBlock(x, y + 1, z))) ys.push(y);
       if (ys.length < 2) continue;
-      const n = 3 + (Math.random() * 3 | 0);
+      const n = 1 + (Math.random() * 5 | 0);          // a salmon group 1..5
       for (let k = 0; k < n; k++) {
         const ox = x + (Math.random() * 5 | 0) - 2, oz = z + (Math.random() * 5 | 0) - 2, oy = ys[Math.random() * ys.length | 0];
         if (isWaterId(w.getBlock(ox, oy, oz)) && isWaterId(w.getBlock(ox, oy + 1, oz))) this.spawnMob('salmon', ox + 0.5, oy + 0.2, oz + 0.5);
@@ -1462,70 +1550,148 @@ class Entities {
     }
   }
 
-  trySpawn(hostile) {
+  // a floor monsters may stand on at y (Block.isValidSpawn: a full, opaque top; not bedrock) with
+  // room for the feet and the head (NaturalSpawner.isValidEmptySpawnBlock: no full collision, no
+  // fluid, no rails or redstone parts, nothing that hurts)
+  emptySpawn(id) {
+    return !id || (!COLLIDE[id] && !isWaterId(id) && id !== B.LAVA && id !== B.FIRE && id !== B.RAIL && !RS_KIND[id] &&
+      id !== B.SWEET_BERRY_BUSH && id !== B.WITHER_ROSE && id !== B.CACTUS);
+  }
+  floorAt(x, y, z) {
+    const w = this.game.world, f = w.getBlock(x, y - 1, z);
+    return SOLID[f] && OPAQUE[f] && f !== B.BEDROCK && this.emptySpawn(w.getBlock(x, y, z)) && this.emptySpawn(w.getBlock(x, y + 1, z));
+  }
+  // NaturalSpawner.isRightDistanceToPlayerAndSpawnPoint: not within 24 blocks of the player or of the
+  // world spawn
+  farEnough(x, y, z) {
+    const g = this.game, p = g.player.pos, S = g.spawn;
+    if (Math.hypot(x + 0.5 - p[0], y - p[1], z + 0.5 - p[2]) <= 24) return false;
+    return !S || Math.hypot(x + 0.5 - S[0], y - S[1], z + 0.5 - S[2]) >= 24;
+  }
+  // Monster spawn rules: dark enough (Monster.isDarkEnoughToSpawn), slimes by their own
+  // (Slime.checkSlimeSpawnRules: one try in 10 in a slime chunk below y 40; in swamps at y 51..69 half
+  // the tries, as often as the moon is bright, where the raw light is not above a random 0..7)
+  monsterRules(type, x, y, z) {
+    if (type !== 'slime') return this.darkEnough(x, y, z);
+    const g = this.game, w = g.world, b = BPROP[w.biomeAt(x, z)], swamp = b && (b.base === BI.SWAMP || b.base === BI.MANGROVE_SWAMP);
+    const moon = [1, 0.75, 0.5, 0.25, 0, 0.25, 0.5, 0.75][((g.days || 0) % 8 + 8) % 8];
+    if (swamp && y > 50 && y < 70 && Math.random() < 0.5 && Math.random() < moon && this.rawLight(x, y, z) <= ((Math.random() * 8) | 0)) return true;
+    return Math.random() < 0.1 && slimeChunk(x >> 4, z >> 4, w.seed) && y < 40;
+  }
+  // NaturalSpawner, monsters: a spot on a floor near the player's height; the kind by the overworld's
+  // weights (spider, zombie, skeleton, creeper, slime 100 each, enderman 10); up to 4 of it (an
+  // enderman group 1..4) over three packs of 1..4 random steps of up to 5 blocks at that height, each
+  // where the kind's rules hold
+  trySpawnMonsters() {
     const g = this.game, w = g.world, p = g.player;
     for (let tries = 0; tries < 6; tries++) {
       const a = Math.random() * 6.2832, r = 24 + Math.random() * 40;
       const x = Math.floor(p.pos[0] + Math.cos(a) * r), z = Math.floor(p.pos[2] + Math.sin(a) * r);
       if (!w.isLoaded(x, z)) continue;
-      let y;
-      if (hostile) {
-        y = Math.floor(p.pos[1]) + Math.floor((Math.random() - 0.5) * 40);
-        // find a floor near y
-        let ok = false;
-        for (let k = 0; k < 20; k++, y--) if (SOLID[w.getBlock(x, y - 1, z)] && OPAQUE[w.getBlock(x, y - 1, z)] && !w.getBlock(x, y, z) && !w.getBlock(x, y + 1, z)) { ok = true; break; }
-        if (!ok) continue;
-        if (Math.random() < 0.15) {
-          // Slime.checkSlimeSpawnRules: slime chunks below y 40; swamps at y 51..69, half the tries,
-          // as often as the moon is bright (full 1 .. new 0) and where it is dark (raw light <= 0..7)
-          const b = BPROP[w.biomeAt(x, z)], swamp = b && (b.base === BI.SWAMP || b.base === BI.MANGROVE_SWAMP);
-          const moon = [1, 0.75, 0.5, 0.25, 0, 0.25, 0.5, 0.75][((g.days || 0) % 8 + 8) % 8];
-          if ((slimeChunk(x >> 4, z >> 4, w.seed) && y < 40) ||
-            (swamp && y > 50 && y < 70 && Math.random() < 0.5 && Math.random() < moon && this.rawLight(x, y, z) <= ((Math.random() * 8) | 0))) {
-            const e = this.spawnMob('slime', x + 0.5, y, z + 0.5, { size: [1, 2, 4][Math.random() * 3 | 0] });
-            if (entCollides(w, e.pos[0], e.pos[1], e.pos[2], e.w, e.h)) this.mobs.pop();
-            return;
-          }
-        }
-        if (!this.darkEnough(x, y, z)) continue;
-        // the overworld's monster weights (spider, zombie, skeleton, creeper 100 each, enderman 10)
-        const r = Math.random() * 410, type = r < 100 ? 'spider' : r < 200 ? 'zombie' : r < 300 ? 'skeleton' : r < 400 ? 'creeper' : 'enderman';
-        // NaturalSpawner: a group of up to 4 of the kind, each a random step of up to 5 blocks from
-        // the last, where the spawn rules hold again
-        const want = 1 + (Math.random() * 4 | 0);
-        let cx = x, cy = y, cz = z, made = 0;
-        for (let k = 0; k < 8 && made < want; k++) {
-          if (k > 0) {
-            cx += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0); cz += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0);
-            if (!w.isLoaded(cx, cz)) continue;
-            let fy = cy + 2, ok2 = false;
-            for (let s = 0; s < 5; s++, fy--) if (SOLID[w.getBlock(cx, fy - 1, cz)] && OPAQUE[w.getBlock(cx, fy - 1, cz)] && !w.getBlock(cx, fy, cz) && !w.getBlock(cx, fy + 1, cz)) { ok2 = true; break; }
-            if (!ok2) continue;
-            if (!this.darkEnough(cx, fy, cz)) continue;
-            cy = fy;
-          }
-          if (type === 'enderman' && w.getBlock(cx, cy + 2, cz)) continue;
-          if (Math.hypot(cx + 0.5 - p.pos[0], cz + 0.5 - p.pos[2]) < 24) continue;
-          const e = this.spawnMob(type, cx + 0.5, cy, cz + 0.5);
+      let y = Math.floor(p.pos[1]) + Math.floor((Math.random() - 0.5) * 40), ok = false;
+      for (let k = 0; k < 20; k++, y--) if (this.floorAt(x, y, z)) { ok = true; break; }
+      if (!ok) continue;
+      const k0 = Math.random() * 510;
+      const type = k0 < 100 ? 'spider' : k0 < 200 ? 'zombie' : k0 < 300 ? 'skeleton' : k0 < 400 ? 'creeper' : k0 < 500 ? 'slime' : 'enderman';
+      const group = type === 'enderman' ? 1 + (Math.random() * 4 | 0) : 4;
+      let cx = x, cz = z, made = 0;
+      for (let pk = 0; pk < 3 && made < group; pk++) {
+        const steps = 1 + (Math.random() * 4 | 0);
+        for (let st = 0; st < steps && made < group; st++) {
+          cx += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0); cz += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0);
+          if (!w.isLoaded(cx, cz) || !this.farEnough(cx, y, cz) || !this.floorAt(cx, y, cz) || !this.monsterRules(type, cx, y, cz)) continue;
+          const e = this.spawnMob(type, cx + 0.5, y, cz + 0.5);
           if (entCollides(w, e.pos[0], e.pos[1], e.pos[2], e.w, e.h)) this.mobs.pop(); else made++;
         }
-        return;
-      } else {
-        y = WORLD_MAX_Y - 2;
-        while (y > WORLD_MIN_Y && !w.getBlock(x, y, z)) y--;
-        if (w.getBlock(x, y, z) !== B.GRASS || (w.getLight(x, y + 1, z) >> 4) < 9) continue;
-        const type = ['pig', 'cow', 'sheep', 'chicken'][Math.random() * 4 | 0];
-        const n = 2 + (Math.random() * 3 | 0);
-        for (let k = 0; k < n; k++) {
-          const ox = x + (Math.random() * 5 | 0) - 2, oz = z + (Math.random() * 5 | 0) - 2;
-          let oy = y + 3; while (oy > y - 4 && !w.getBlock(ox, oy - 1, oz)) oy--;
-          if (w.getBlock(ox, oy - 1, oz) !== B.GRASS || w.getBlock(ox, oy, oz)) continue;
-          this.spawnMob(type, ox + 0.5, oy, oz + 0.5);
+      }
+      return;
+    }
+  }
+
+  // ------------------------------------------------------------------ animals
+  // the top of a column for land animals (heightmap MOTION_BLOCKING_NO_LEAVES: above the highest
+  // block that has collision or fluid, leaves left out)
+  surfaceY(x, z) {
+    const w = this.game.world;
+    for (let y = WORLD_MAX_Y - 1; y > WORLD_MIN_Y; y--) {
+      const id = w.getBlock(x, y, z);
+      if (id && (COLLIDE[id] || isWaterId(id) || id === B.LAVA) && !(FLAGS[id] & BF_LEAVES)) return y + 1;
+    }
+    return null;
+  }
+  // Animal.checkAnimalSpawnRules: on a grass block, bright enough (block or sky light above 8, the
+  // sky not darkened), room for the body
+  animalSpot(type, x, y, z) {
+    const w = this.game.world, f = w.getBlock(x, y - 1, z), lt = w.getLight(x, y, z), d = MOB_DEFS[type];
+    if ((f !== B.GRASS && f !== B.SNOWY_GRASS) || Math.max(lt >> 4, lt & 15) <= 8) return false;
+    if (!this.emptySpawn(w.getBlock(x, y, z)) || !this.emptySpawn(w.getBlock(x, y + 1, z))) return false;
+    return !entCollides(w, x + 0.5, y, z + 0.5, d.w, d.h);
+  }
+  pickAnimal(S) {
+    let r = Math.random() * S.total;
+    for (const e of S.list) if ((r -= e[1]) < 0) return e;
+    return S.list[S.list.length - 1];
+  }
+  // NaturalSpawner.spawnMobsForChunkGeneration: a newly generated chunk gets groups of its biome's
+  // animals while a random number stays under 0.1 (snowy biomes 0.07): the kind by weight, the group
+  // size, each member tried up to 4 times on the surface, random steps of up to 4 blocks within the
+  // chunk apart; after the first, one in 20 is young (AgeableMob.AgeableMobGroupData)
+  populate(c) {
+    const w = this.game.world, x0 = c.cx * 16, z0 = c.cz * 16, S = ANIMAL_SPAWNS[w.biomeAt(x0 + 8, z0 + 8)];
+    if (!S) return;
+    const r5 = () => ((Math.random() * 5) | 0) - ((Math.random() * 5) | 0);
+    while (Math.random() < S.prob) {
+      const sd = this.pickAnimal(S);
+      if (!sd[0]) continue;
+      const n = sd[2] + ((Math.random() * (1 + sd[3] - sd[2])) | 0);
+      let l = x0 + ((Math.random() * 16) | 0), m = z0 + ((Math.random() * 16) | 0), made = 0;
+      const l0 = l, m0 = m;
+      for (let k = 0; k < n; k++) {
+        let ok = false;
+        for (let q = 0; !ok && q < 4; q++) {
+          const y = this.surfaceY(l, m);
+          if (y !== null && this.animalSpot(sd[0], l, y, m)) { this.spawnMob(sd[0], l + 0.5, y, m + 0.5, { baby: made > 0 && Math.random() < 0.05 }); made++; ok = true; }
+          l += r5(); m += r5();
+          while (l < x0 || l >= x0 + 16 || m < z0 || m >= z0 + 16) { l = l0 + r5(); m = m0 + r5(); }
         }
-        return;
       }
     }
   }
+  // NaturalSpawner, the creature category: every 400 ticks, while fewer than 10 animals are about,
+  // one try in each lit column within 128 blocks: a random spot at a random height up to the surface,
+  // then packs as for monsters at that height (so it seldom finds a grass top: in Minecraft animals
+  // come mostly with new chunks)
+  spawnAnimals() {
+    const g = this.game, w = g.world, p = g.player;
+    let n = 0;
+    for (const m of this.mobs) { const md = MOB_DEFS[m.type]; if (!md.hostile && !md.aquatic) n++; }
+    if (n >= 10) return;
+    for (const c of w.cols.values()) {
+      if (c.state !== 2) continue;
+      const x = c.cx * 16 + ((Math.random() * 16) | 0), z = c.cz * 16 + ((Math.random() * 16) | 0);
+      if (Math.hypot(x - p.pos[0], z - p.pos[2]) > 128) continue;
+      const S = ANIMAL_SPAWNS[w.biomeAt(x, z)], top = S && this.surfaceY(x, z);
+      if (!top) continue;
+      const y = WORLD_MIN_Y + ((Math.random() * (top - WORLD_MIN_Y + 1)) | 0), id0 = w.getBlock(x, y, z);
+      if (SOLID[id0] && OPAQUE[id0]) continue;
+      let cx = x, cz = z, sd = null, made = 0;
+      for (let pk = 0; pk < 3; pk++) {
+        const steps = 1 + (Math.random() * 4 | 0);
+        for (let st = 0; st < steps; st++) {
+          cx += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0); cz += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0);
+          if (!w.isLoaded(cx, cz) || !this.farEnough(cx, y, cz)) continue;
+          if (!sd) { sd = this.pickAnimal(S); if (!sd[0]) break; }
+          if (!this.animalSpot(sd[0], cx, y, cz)) continue;
+          this.spawnMob(sd[0], cx + 0.5, y, cz + 0.5, { baby: made > 0 && Math.random() < 0.05 });
+          if (++made >= sd[3] || ++n >= 10) return;
+        }
+        if (sd && !sd[0]) break;
+      }
+    }
+  }
+  // the columns that had their animals at generation (kept with the world)
+  savePopulated() { return Uint32Array.from(this.populated); }
+  loadPopulated(a) { this.populated = new Set(a && a.length ? Array.from(a) : []); }
 
   // BaseSpawner.serverTick: while a player is within 16 blocks the delay counts down (first spawn
   // after 20 ticks, then 200..799); each round tries 4 spawns within 4 blocks (y -1..+1) where the
@@ -1581,9 +1747,13 @@ class Entities {
   // LivingEntity.hurt: after a hit the mob is invulnerable for 10 ticks, the next 10 a stronger
   // hit only deals the difference (without knockback or the red flash). from: the attacker's
   // position (knockback 0.4 away); extra: [strength, dirX, dirZ] of a sprint attack's knockback.
-  damageMob(e, dmg, from, extra) {
+  // hitsArmor: damage armor works against besides attacks (explosions, lava, a fire block)
+  damageMob(e, dmg, from, extra, hitsArmor) {
     if (e.deathT > 0 || dmg <= 0) return;
     const d = MOB_DEFS[e.type];
+    // CombatRules.getDamageAfterAbsorb: armor (a zombie's 2 points) takes off clamp(armor - damage / 2,
+    // armor / 5, 20) / 25 of the damage (burning, falls, drowning and the like go past it)
+    if (d.armor && (from || hitsArmor)) dmg *= 1 - Math.min(20, Math.max(d.armor / 5, d.armor - dmg / 2)) / 25;
     if (e.invT > 0.5) {
       if (dmg <= e.lastHurt) return;
       const add = dmg - e.lastHurt;
@@ -1605,8 +1775,10 @@ class Entities {
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     e.idleT = 0;                                   // LivingEntity.hurt: noActionTime = 0
     if (from) e.playerHitAge = e.age;              // lastHurtByPlayerTime (loot "killed by player" for 100 ticks)
-    // NeutralMob: angry 20..39 s at the player who hit it, never at one in creative
-    if (e.hp > 0 && from && (d.neutral || d.neutralLight) && this.game.mode === 'survival') e.angryT = 20 + Math.random() * 19;
+    // NeutralMob (the enderman): angry 20..39 s at the player who hit it, never at one in creative. A
+    // spider is no neutral mob: it hits back by HurtByTargetGoal and, in bright light, lets go again
+    // one tick in 100 (SpiderAttackGoal)
+    if (e.hp > 0 && from && d.neutral && this.game.mode === 'survival') e.angryT = 20 + Math.random() * 19;
     // HurtByTargetGoal: a hostile hit by the player turns on it at once and remembers it 15 s unseen
     if (e.hp > 0 && from && d.hostile && this.game.mode === 'survival') { e.hunting = true; e.provoked = true; e.unseenT = 0; e.chase = [from[0], from[2]]; }
     // Enderman.hurt: hurt by anything but a living attacker (fire, cactus, a fall) it teleports away
@@ -1736,7 +1908,9 @@ class Entities {
     if (e.size) { const f = (e.squish || 0) / (e.size * 0.5 + 1), f1 = 1 / (f + 1); sxz = f1; syy = 1 / f1; }
     const sp = (e.rpitch !== undefined ? e.rpitch : e.swimPitch) || 0, cpt = Math.cos(sp), spt = Math.sin(sp), pY = (m.pitchY || 0) / 16 * S;
     const tail = Math.sin(performance.now() / 1000 * (e.type === 'shark' ? 7 : 12)) * (e.type === 'shark' ? 0.3 : 0.25) * (e.inWater === false ? 1.5 : 1);
-    const death = e.deathT > 0 ? Math.min(1, e.deathT * 2.5) * Math.PI / 2 : 0;
+    // dying: the body tips over sideways (LivingEntityRenderer); a fish out of the water lies on its
+    // side (SalmonRenderer: 90 degrees about z)
+    const death = e.deathT > 0 ? Math.min(1, e.deathT * 2.5) * Math.PI / 2 : e.inWater === false && m.pitchY ? Math.PI / 2 : 0;
     const t = performance.now() / 1000;
     const pitch = e.pitch !== undefined ? e.pitch : 0;
     const sw = e.swing ? Math.sin((1 - e.swing) * Math.PI) : 0;
