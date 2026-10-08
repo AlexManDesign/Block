@@ -142,11 +142,14 @@ function humanoid(armW, wide, hat) {
 }
 
 const MOB_DEFS = {
-  pig: { w: 0.9, h: 0.9, hp: 10, attr: 0.25, tempt: 1.2, food: [IT.CARROT, IT.POTATO], panic: 1.25, drops: () => [[IT.PORKCHOP, 1 + (Math.random() * 3 | 0)]], passive: true },
-  cow: { w: 0.9, h: 1.4, hp: 10, attr: 0.2, tempt: 1.25, food: [IT.WHEAT], panic: 2.0, drops: () => [[IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
-  sheep: { w: 0.9, h: 1.3, hp: 8, attr: 0.23, tempt: 1.1, food: [IT.WHEAT], panic: 1.25, drops: (e) => [[IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
-  chicken: { w: 0.5, h: 0.7, hp: 4, attr: 0.25, tempt: 1.0, food: [IT.WHEAT_SEEDS, IT.PUMPKIN_SEEDS, IT.MELON_SEEDS], panic: 1.4, drops: () => [[IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
-  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, follow: 35, drops: () => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0]], hostile: true, burns: true, sinks: true },
+  // meat comes cooked from an animal that died burning (the loot tables' furnace_smelt when on fire)
+  pig: { w: 0.9, h: 0.9, hp: 10, attr: 0.25, tempt: 1.2, food: [IT.CARROT, IT.POTATO, IT.BEETROOT], panic: 1.25, drops: (e) => [[e.fire > 0 ? IT.COOKED_PORKCHOP : IT.PORKCHOP, 1 + (Math.random() * 3 | 0)]], passive: true },
+  cow: { w: 0.9, h: 1.4, hp: 10, attr: 0.2, tempt: 1.25, food: [IT.WHEAT], panic: 2.0, drops: (e) => [[e.fire > 0 ? IT.COOKED_BEEF : IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
+  sheep: { w: 0.9, h: 1.3, hp: 8, attr: 0.23, tempt: 1.1, food: [IT.WHEAT], panic: 1.25, drops: (e) => [[e.fire > 0 ? IT.COOKED_MUTTON : IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
+  chicken: { w: 0.4, h: 0.7, hp: 4, attr: 0.25, tempt: 1.0, food: [IT.WHEAT_SEEDS, IT.PUMPKIN_SEEDS, IT.MELON_SEEDS, IT.BEETROOT_SEEDS], panic: 1.4, drops: (e) => [[e.fire > 0 ? IT.COOKED_CHICKEN : IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
+  // zombie loot: 0-2 rotten flesh, and when the player killed it one in 40 an iron ingot, a carrot
+  // or a potato (killed_by_player, random_chance 0.025)
+  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true },
   skeleton: { w: 0.6, h: 1.95, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
   creeper: { w: 0.6, h: 1.6, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
   spider: { w: 1.4, h: 0.9, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
@@ -571,7 +574,14 @@ class Entities {
       // enderman: provoked by a stare, hates water
       if (e.type === 'enderman') {
         if (e.angryT <= 0 && hunt) {
-          if (this.stared(e, h)) { e.stareT += dt; if (e.stareT > 0.25) { e.angryT = 30; e.stareT = 0; } } else e.stareT = 0;
+          if (this.stared(e, h)) { e.stareT += dt; if (e.stareT > 0.25) { e.angryT = 20 + Math.random() * 19; e.stareT = 0; e.angryAge = e.age; } } else e.stareT = 0;
+        }
+        // Enderman.customServerAiStep: in daylight under the open sky, 30 s after it last took a
+        // target, now and then it lets go and teleports away (same odds as the undead catching fire)
+        if (sunUp && e.age - (e.angryAge || 0) > 30 && (w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h * 0.88), Math.floor(e.pos[2])) >> 4) >= 15 &&
+          Math.random() < 1 - Math.pow(1 - ignite, dt * 20)) {
+          e.angryT = 0; e.hunting = false; e.provoked = false;
+          if (this.teleportNear(e, e.pos[0], e.pos[2], 32)) e.tpT = 1;
         }
         const body = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h * 0.5), Math.floor(e.pos[2]));
         if (isWaterId(body) || inW) {
@@ -678,14 +688,19 @@ class Entities {
       if (e.fleeT <= 0) e.panicTgt = null;
       return;
     }
+    // SwellGoal / Creeper.tick: it swells (30 ticks to the blast) standing still while the player is
+    // within 7 blocks and in sight; otherwise it shrinks back at the same rate and walks on
     if (d.creeper && e.fuse >= 0) {
-      e.fuse += dt; this.stop(e); face();
-      if (h > 7) e.fuse = -1;
-      else if (e.fuse > 1.5) {
-        this.mobs.splice(this.mobs.indexOf(e), 1);
-        g.explode(Math.round(e.pos[0]), Math.round(e.pos[1] + 0.5), Math.round(e.pos[2]), 3);
+      if (hunting && h <= 7 && e.sees) {
+        e.fuse += dt; this.stop(e); face();
+        if (e.fuse >= 1.5) {
+          this.mobs.splice(this.mobs.indexOf(e), 1);
+          g.explode(Math.round(e.pos[0]), Math.round(e.pos[1] + 0.5), Math.round(e.pos[2]), 3);
+        }
+        return;
       }
-      return;
+      e.fuse -= dt;
+      if (e.fuse <= 0) e.fuse = -1;
     }
     const dy = p.pos[1] - e.pos[1];
     if (hunting) {
@@ -693,7 +708,8 @@ class Entities {
       if (d.slime) {
         if (e.onGround) {
           e.hopT -= dt;
-          if (e.hopT <= 0) { e.hopT = 0.6 + Math.random() * 0.6; this.hop(e, dx, dz, speed); }
+          // SlimeMoveControl: jump delay 10..29 ticks, a third of it when attacking
+          if (e.hopT <= 0) { e.hopT = (10 + (Math.random() * 20 | 0)) / 20 / 3; this.hop(e, dx, dz, speed); }
           else this.stop(e);
         }
         if (S[1] > 0 && h < e.w * 0.5 + 1.1 && Math.abs(dy) < e.h + 0.6 && e.atkT > 0.5) { e.atkT = 0; this.hitPlayer(e, S[1], dx, dz); }
@@ -714,10 +730,14 @@ class Entities {
         // close in to striking range (the original stopped at 3 but struck only within 2.2)
         // an angry enderman gets Minecraft's attacking speed bonus: attribute 0.3 + 0.15
         if (h > 2) { const c = this.chasePoint(e, d, dt); this.goTo(e, c[0], c[1], goalSpeed(speed, 0.45 / 0.3), dt); } else this.stop(e);
-        if (e.tpT <= 0 && h > 6 && h < 32) {
-          e.tpT = 2 + Math.random() * 2;
-          const a = Math.random() * 6.2832;
-          this.teleportNear(e, p.pos[0] + Math.cos(a) * 3, p.pos[2] + Math.sin(a) * 3, 2);
+        // EndermanLookForPlayerGoal.tick: looked at from within 4 blocks it teleports away (anywhere
+        // within 32); with the player more than 16 blocks off it teleports 16 blocks toward it,
+        // at most every 30 ticks
+        if (h < 4 && this.stared(e, h)) { if (this.teleportNear(e, e.pos[0], e.pos[2], 32)) e.tpT = 1.5; }
+        else if (h > 16 && e.tpT <= 0) {
+          const hd = Math.hypot(dx, dz) || 1;
+          const tx = e.pos[0] + (Math.random() - 0.5) * 8 + dx / hd * 16, tz = e.pos[2] + (Math.random() - 0.5) * 8 + dz / hd * 16;
+          e.tpT = this.teleportNear(e, tx, tz, 1) ? 1.5 : 0.5;
         }
         if (h < 2.2 && Math.abs(dy) < 3 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
         return;
@@ -744,7 +764,8 @@ class Entities {
       if (d.creeper) {
         const c = this.chasePoint(e, d, dt);
         this.goTo(e, c[0], c[1], speed, dt);
-        if (h < 3) { e.fuse = 0; Sfx.fuse(); }
+        // starts swelling (again, from where it shrank to) within 3 blocks
+        if (h < 3 && e.sees) { if (e.fuse < 0) { e.fuse = 0; Sfx.fuse(); } }
         return;
       }
       const c = this.chasePoint(e, d, dt);
@@ -770,7 +791,7 @@ class Entities {
       if (e.onGround) {
         e.hopT -= dt;
         if (e.hopT <= 0 && e.tgt) {
-          e.hopT = 0.8 + Math.random() * 1.2;
+          e.hopT = (10 + (Math.random() * 20 | 0)) / 20;
           const tx = e.tgt[0] - e.pos[0], tz = e.tgt[1] - e.pos[2];
           if (Math.hypot(tx, tz) > 0.5) this.hop(e, tx, tz, speed * 0.8);
         } else this.stop(e);
@@ -794,7 +815,7 @@ class Entities {
     if (e.hunting) {
       if (e.sees) e.unseenT = 0; else e.unseenT += dt;
       if (h > R || e.unseenT > (e.provoked ? 15 : 3)) { e.hunting = false; e.provoked = false; e.chase = null; }
-    } else if (e.sees && h <= Math.max(2, R * (p.sneaking ? 0.8 : 1))) { e.hunting = true; e.unseenT = 0; }
+    } else if (e.sees && h <= Math.max(2, R * (p.sneaking ? 0.8 : 1)) && (!d.slime || Math.abs(p.pos[1] - e.pos[1]) <= 4)) { e.hunting = true; e.unseenT = 0; }
     return e.hunting || (e.angryT > 0 && h <= R);
   }
   // where a melee mob walks (MeleeAttackGoal): the player while seen; out of sight it keeps to the
@@ -1445,10 +1466,28 @@ class Entities {
           }
         }
         if ((lt & 15) > 0 || sky > 7) continue;   // Minecraft 1.18: monsters need block light 0
-        const type = ['zombie', 'zombie', 'skeleton', 'creeper', 'spider', 'spider', 'enderman'][Math.random() * 7 | 0];
-        if (type === 'enderman' && w.getBlock(x, y + 2, z)) continue;
-        const e = this.spawnMob(type, x + 0.5, y, z + 0.5);
-        if (entCollides(w, e.pos[0], e.pos[1], e.pos[2], e.w, e.h)) this.mobs.pop();
+        // the overworld's monster weights (spider, zombie, skeleton, creeper 100 each, enderman 10)
+        const r = Math.random() * 410, type = r < 100 ? 'spider' : r < 200 ? 'zombie' : r < 300 ? 'skeleton' : r < 400 ? 'creeper' : 'enderman';
+        // NaturalSpawner: a group of up to 4 of the kind, each a random step of up to 5 blocks from
+        // the last, where the spawn rules hold again
+        const want = 1 + (Math.random() * 4 | 0);
+        let cx = x, cy = y, cz = z, made = 0;
+        for (let k = 0; k < 8 && made < want; k++) {
+          if (k > 0) {
+            cx += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0); cz += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0);
+            if (!w.isLoaded(cx, cz)) continue;
+            let fy = cy + 2, ok2 = false;
+            for (let s = 0; s < 5; s++, fy--) if (SOLID[w.getBlock(cx, fy - 1, cz)] && OPAQUE[w.getBlock(cx, fy - 1, cz)] && !w.getBlock(cx, fy, cz) && !w.getBlock(cx, fy + 1, cz)) { ok2 = true; break; }
+            if (!ok2) continue;
+            const l2 = w.getLight(cx, fy, cz);
+            if ((l2 & 15) > 0 || (l2 >> 4) * (night ? 0.2 : 1) > 7) continue;
+            cy = fy;
+          }
+          if (type === 'enderman' && w.getBlock(cx, cy + 2, cz)) continue;
+          if (Math.hypot(cx + 0.5 - p.pos[0], cz + 0.5 - p.pos[2]) < 24) continue;
+          const e = this.spawnMob(type, cx + 0.5, cy, cz + 0.5);
+          if (entCollides(w, e.pos[0], e.pos[1], e.pos[2], e.w, e.h)) this.mobs.pop(); else made++;
+        }
         return;
       } else {
         y = WORLD_MAX_Y - 2;
@@ -1545,15 +1584,20 @@ class Entities {
     if (!d.hostile) { e.fleeT = 5; e.panicFrom = from ? [from[0], from[2]] : null; e.panicTgt = null; }   // lastHurtByMob is kept for 100 ticks
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     e.idleT = 0;                                   // LivingEntity.hurt: noActionTime = 0
-    if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 30;
+    if (from) e.playerHitAge = e.age;              // lastHurtByPlayerTime (loot "killed by player" for 100 ticks)
+    if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 20 + Math.random() * 19;   // NeutralMob: 20..39 s
     // HurtByTargetGoal: a hostile hit by the player turns on it at once and remembers it 15 s unseen
     if (e.hp > 0 && from && d.hostile && this.game.mode === 'survival') { e.hunting = true; e.provoked = true; e.unseenT = 0; e.chase = [from[0], from[2]]; }
-    if (e.hp > 0 && e.type === 'enderman' && Math.random() < 0.5 && this.teleportNear(e, e.pos[0], e.pos[2], 24)) e.tpT = 1;
+    // Enderman.hurt: hurt by anything but a living attacker (fire, cactus, a fall) it teleports away
+    // nine times in ten; a hit by the player does not make it teleport
+    if (e.hp > 0 && e.type === 'enderman' && !from && Math.random() < 0.9 && this.teleportNear(e, e.pos[0], e.pos[2], 32)) e.tpT = 1;
+    if (e.hp > 0 && e.type === 'enderman' && from) e.angryAge = e.age;
     Sfx.hurt();
     if (e.hp <= 0) this.mobDied(e, d);
   }
   mobDied(e, d) {
       e.deathT = 0.001;
+      e.byPlayer = e.playerHitAge !== undefined && e.age - e.playerHitAge < 5;
       for (const [id, n] of d.drops(e)) if (id && n > 0) this.dropItem(id, n, e.pos[0], e.pos[1] + 0.5, e.pos[2]);
       if (e.type === 'slime' && e.size > 1) {
         const n = 2 + (Math.random() * 3 | 0), r = e.w * 0.4;
