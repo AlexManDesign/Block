@@ -839,10 +839,17 @@ class Game {
     if (!this.ents) return false;
     const p = this.player, eye = p.eye(), l = p.look();
     const hit = this.ents.raycastMob(eye, l, 3.5);
-    // a boat in front of the mob and the block takes the hit
-    const bh = this.boats && this.boats.raycast(eye, l, 3.5);
+    // a boat in front of the mob and the block takes the hit (Player.attack, scaled by the attack
+    // strength like any hit); the boat being ridden only when nothing else is under the crosshair
+    const R = this.boats ? this.boats.riding : null;
+    let bh = this.boats && this.boats.raycast(eye, l, 3.5, R);
+    if (!bh && R && !hit && !this.target) bh = { b: R, t: 0 };
     if (bh && (!hit || bh.t < hit.t) && (!this.target || bh.t < this.target.t)) {
-      this.boats.hit(bh.b, attackStats(this.inv[this.sel]).dmg); this.swing(); return true;
+      const a = attackStats(this.inv[this.sel]), f = this.attackStrength(a.speed);
+      this.boats.hit(bh.b, a.dmg * (0.2 + f * f * 0.8));
+      this.atkT = 0; this.swing();
+      if (this.mode === 'survival') this.surv.exh += 0.1;
+      return true;
     }
     if (!hit || (this.target && this.target.t < hit.t)) return false;
     // Player.attack: base damage scaled by the attack strength (cooldown) of the held item
@@ -1171,8 +1178,10 @@ class Game {
   }
   pickBlock() {
     const tg = this.target;
-    if (!tg) return;
-    let id = dryId(tg.id);
+    // a boat under the crosshair (nearer than the block) gives its item (Entity.getPickResult)
+    const bh = this.boats && this.boats.raycast(this.player.eye(), this.player.look(), 4.5, this.boats.riding);
+    if (!tg && !bh) return;
+    let id = bh && (!tg || bh.t < tg.t) ? IT.BOAT : dryId(tg.id);
     if (id === B.FARMLAND_MOIST) id = B.FARMLAND;
     if (id === B.MANGROVE_ROOTS_WET) id = B.MANGROVE_ROOTS;
     if (id === B.SNOWY_GRASS) id = B.GRASS;

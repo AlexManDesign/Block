@@ -20,10 +20,11 @@ class Boats {
     this.list.push(b);
     return b;
   }
-  // nearest boat on the ray (eye, unit dir) within range: {b, t}
-  raycast(eye, dir, range) {
+  // nearest boat on the ray (eye, unit dir) within range: {b, t}; skip: a boat to leave out
+  raycast(eye, dir, range, skip) {
     let best = null;
     for (const b of this.list) {
+      if (b === skip) continue;
       const hw = BOAT_W / 2, lo = [b.pos[0] - hw, b.pos[1], b.pos[2] - hw], hi = [b.pos[0] + hw, b.pos[1] + BOAT_H, b.pos[2] + hw];
       let t0 = 0, t1 = range, ok = true;
       for (let a = 0; a < 3 && ok; a++) {
@@ -37,10 +38,14 @@ class Boats {
     }
     return best;
   }
+  // Boat.hurt: the damage builds up (10 a point of the hit) and wears off 1 a tick; over 40 the
+  // boat breaks and drops itself (in creative the first hit takes it, without a drop). A hit rocks
+  // the boat for 10 ticks, the other way each time.
   hit(b, dmg) {
     const g = this.game;
     if (!this.list.includes(b)) return;
     b.damage += dmg * 10;
+    b.hurtT = 10; b.hurtDir = -(b.hurtDir || -1);
     if (g.mode !== 'survival' || b.damage > 40) {
       if (this.riding === b) this.leave();
       this.list.splice(this.list.indexOf(b), 1);
@@ -163,6 +168,7 @@ class Boats {
       }
     }
     if (b.damage > 0) b.damage = Math.max(0, b.damage - 1);
+    if (b.hurtT > 0) b.hurtT--;
   }
 
   // ---------------------------------------------------------------- drawing
@@ -178,13 +184,18 @@ class Boats {
     for (const b of this.list) {
       const x = b.prev[0] + (b.pos[0] - b.prev[0]) * al, y = b.prev[1] + (b.pos[1] - b.prev[1]) * al, z = b.prev[2] + (b.pos[2] - b.prev[2]) * al;
       const yaw = b.pyaw + (b.yaw - b.pyaw) * al, c = Math.cos(yaw), s = Math.sin(yaw);
+      // BoatRenderer: after a hit the boat rocks about its cross axis, 0.375 up:
+      // sin(t) t damage / 10 degrees, t = ticks of the shake left
+      const ht = (b.hurtT || 0) - al, hd = Math.max(0, b.damage - al);
+      const rock = ht > 0 ? Math.sin(ht) * ht * hd / 10 * (b.hurtDir || 1) * Math.PI / 180 : 0, rc = Math.cos(rock), rs = Math.sin(rock);
       C[0] = C[1] = C[2] = g.lightAt(x, y + 0.5, z, env);
       tmp.n = 0;
       for (const q of parts) g.pushBox(tmp, q[0], q[1], q[2], q[3], q[4], q[5], L, C, 0, null, ITEM_SHADE);
       const T = tmp.a, n = tmp.n, o = v.n, a = v.reserve(n);
       for (let i = 0; i < n; i += 10) {
-        const lx = T[i], lz = T[i + 2];
-        a[o + i] = lx * c - lz * s + x - cam[0]; a[o + i + 1] = T[i + 1] + y - cam[1]; a[o + i + 2] = lx * s + lz * c + z - cam[2];
+        const lx = T[i], ly = T[i + 1] - 0.375, lz0 = T[i + 2];
+        const ry = ly * rc - lz0 * rs + 0.375, lz = ly * rs + lz0 * rc;
+        a[o + i] = lx * c - lz * s + x - cam[0]; a[o + i + 1] = ry + y - cam[1]; a[o + i + 2] = lx * s + lz * c + z - cam[2];
         for (let j = 3; j < 10; j++) a[o + i + j] = T[i + j];
       }
       v.n = o + n;
