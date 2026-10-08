@@ -693,7 +693,7 @@ class Game {
     // boats drift; the one being ridden takes the movement keys and carries the player
     if (this.boats && this.boats.riding) {
       this.boats.update(dt, inp.keys);
-      p.interp(1);
+      p.interp(this.boats.acc / 0.05);
       if (this.mode === 'survival') this.survivalTick(dt);
       this.updateCamera();
       this.interact(dt);

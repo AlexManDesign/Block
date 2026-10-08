@@ -16,7 +16,7 @@ class Boats {
     this.acc = 0;
   }
   place(x, y, z, yaw) {
-    const b = { pos: [x, y, z], prev: [x, y, z], vel: [0, 0, 0], yaw, pyaw: yaw, drot: 0, damage: 0, onGround: false, status: 'air' };
+    const b = { pos: [x, y, z], prev: [x, y, z], vel: [0, 0, 0], yaw, pyaw: yaw, drot: 0, damage: 0, onGround: false, status: 'air', turned: 0, lastTurn: 0 };
     this.list.push(b);
     return b;
   }
@@ -52,6 +52,7 @@ class Boats {
     this.riding = b;
     const p = this.game.player;
     p.flying = false; p.vel = [0, 0, 0]; p.fallDist = 0;
+    b.turned = 0; this.turnShown = 0;
     this.seat();
   }
   leave() {
@@ -67,12 +68,25 @@ class Boats {
     }
     p.pos = [b.pos[0], b.pos[1] + BOAT_H + 0.1, b.pos[2]]; p.prev = p.pos.slice(); p.vel = [0, 0, 0];
   }
-  // the rider sits in the middle, a little down into the hull
+  // the rider sits in the middle, a little down into the hull. Like the boat, the rider is drawn
+  // between the last two ticks (Minecraft moves the passenger with its vehicle every tick and the
+  // camera interpolates both), so p.prev follows the boat's previous tick.
   seat() {
     const b = this.riding, p = this.game.player;
     p.pos[0] = b.pos[0]; p.pos[1] = b.pos[1] - 0.25; p.pos[2] = b.pos[2];
-    p.prev = p.pos.slice(); p.prevOf = p.pos;
+    p.prev = [b.prev[0], b.prev[1] - 0.25, b.prev[2]]; p.prevOf = p.pos;
+    p.eyePrev = p.eyeOffset;
     p.vel[0] = p.vel[1] = p.vel[2] = 0; p.onGround = true; p.inWater = false; p.fallDist = 0;
+  }
+  // the boat's turn carried over to the rider's view, spread over the frames between ticks
+  // (LocalPlayer.getViewYRot interpolates a passenger's yaw): the rider's yaw takes the part of the
+  // turn that is due at this point between ticks
+  turnView(alpha) {
+    const b = this.riding;
+    if (!b) return;
+    const due = b.turned - b.lastTurn * (1 - alpha);
+    this.game.player.yaw += due - this.turnShown;
+    this.turnShown = due;
   }
 
   // ---------------------------------------------------------------- physics
@@ -82,10 +96,10 @@ class Boats {
     let n = 0;
     while (this.acc >= 0.05 && n < 10) {
       this.acc -= 0.05; n++;
-      for (const b of this.list) { b.prev = b.pos.slice(); b.pyaw = b.yaw; this.tick(b, b === this.riding ? keys : null); }
+      for (const b of this.list) { b.prev = b.pos.slice(); b.pyaw = b.yaw; b.lastTurn = 0; this.tick(b, b === this.riding ? keys : null); }
     }
     if (n >= 10) this.acc = 0;
-    if (this.riding) this.seat();
+    if (this.riding) { this.seat(); this.turnView(this.acc / 0.05); }
   }
   tick(b, keys) {
     const w = this.game.world, P = b.pos, V = b.vel, hw = BOAT_W / 2;
@@ -132,7 +146,7 @@ class Boats {
       if (keys.back) f -= 0.005;
       const r = b.drot * Math.PI / 180;
       b.yaw += r;
-      this.game.player.yaw += r;
+      b.turned += r; b.lastTurn = r;
       V[0] += Math.sin(b.yaw) * f; V[2] -= Math.cos(b.yaw) * f;
     } else b.yaw += b.drot * Math.PI / 180;
     // move, axis by axis
