@@ -469,7 +469,11 @@ class Entities {
 
   tickMobs(dt) {
     const g = this.game, w = g.world, p = g.player;
-    const hunt = g.mode === 'survival' && !g.surv.dead, day = g.envObj.day > 0.55;
+    const hunt = g.mode === 'survival' && !g.surv.dead;
+    // Level.isDay (sky darkening under 4) and the light of the open sky now (raw brightness 15 -
+    // darkening), for the undead burning in it
+    const sd = g.skyDarken(), sunUp = sd < 4, sunL = (15 - sd) / 15, sunF = sunL / (4 - 3 * sunL);
+    const ignite = Math.max(0, (sunF - 0.4) * 2 / 30);
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const e = this.mobs[i], d = MOB_DEFS[e.type];
       e.age += dt;
@@ -509,12 +513,16 @@ class Entities {
         }
       }
       e.aggro = e.angryT > 0;
-      // undead burn in daylight
-      if (d.burns && day && !inW && (w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h), Math.floor(e.pos[2])) >> 4) >= 14) {
-        e.fire = Math.max(e.fire, 0.5);
+      // undead in daylight (Mob.isSunBurnTick): with the open sky over the eyes (sky light 15: a
+      // leaf or any block above shades it) they catch fire now and then (random x 30 < (light - 0.4)
+      // x 2 a tick: 4% in full sun) and burn 8 s, also on into the shade; water puts it out
+      e.sunlit = sunUp && (w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h * 0.88), Math.floor(e.pos[2])) >> 4) >= 15;
+      if (d.burns && e.sunlit && !inW && Math.random() < 1 - Math.pow(1 - ignite, dt * 20)) e.fire = Math.max(e.fire, 8);
+      // burning: 1 a second (Entity.baseTick, onFire)
+      if (e.fire > 0 && !inW) {
         e.burnT += dt;
-        if (e.burnT >= 1.2) { e.burnT = 0; this.damageMob(e, 2, null); if (e.hp <= 0) continue; }
-      }
+        if (e.burnT >= 1) { e.burnT -= 1; this.damageMob(e, 1, null); if (e.hp <= 0) continue; }
+      } else e.burnT = 0;
       this.ai(e, d, dt, dx, dz, h, hunt);
       if (e.deathT > 0 || this.mobs[i] !== e) continue;
       // don't walk off cliffs (drops over 3 blocks) and keep animals out of water
@@ -676,6 +684,12 @@ class Entities {
       if (h < 1.4 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
       return;
     }
+    // FleeSunGoal (skeletons): burning in the sun with no target, off to a spot within 10 blocks
+    // (3 up or down) out of the open sky
+    if (d.ranged && d.burns && e.fire > 0 && e.sunlit) {
+      if (!e.shade || e.stuckT > 1) e.shade = this.findShade(e);
+      if (e.shade) { if (this.goTo(e, e.shade[0], e.shade[1], speed, dt)) e.shade = null; e.headYaw = e.bodyYaw; return; }
+    } else e.shade = null;
     this.look(e, dt, dx, dz, h);
     if (!d.hostile && this.animalGoals(e, d, dt, dx, dz, h, speed)) return;
     // wander: every 3-8 s either pick a spot within 10 blocks (Minecraft's random stroll) or rest
@@ -724,6 +738,18 @@ class Entities {
     if (e.sees || d.spiderAI || !e.chase) { e.chase = e.chase || [0, 0]; e.chase[0] = p.pos[0]; e.chase[1] = p.pos[2]; return e.chase; }
     if (Math.hypot(e.chase[0] - e.pos[0], e.chase[1] - e.pos[2]) < 1.2 && e.chaseT <= 0) { e.chaseT = 1; e.chase[0] = p.pos[0]; e.chase[1] = p.pos[2]; e.path = null; }
     return e.chase;
+  }
+  // FleeSunGoal.getHidePos: ten random cells around where the sky is not seen and there is room
+  // to stand
+  findShade(e) {
+    const w = this.game.world;
+    for (let k = 0; k < 10; k++) {
+      const x = Math.floor(e.pos[0]) + ((Math.random() * 20) | 0) - 10, y = Math.floor(e.pos[1]) + ((Math.random() * 6) | 0) - 3, z = Math.floor(e.pos[2]) + ((Math.random() * 20) | 0) - 10;
+      if (!SOLID[w.getBlock(x, y - 1, z)] || SOLID[w.getBlock(x, y, z)] || SOLID[w.getBlock(x, y + 1, z)] || isWaterId(w.getBlock(x, y, z))) continue;
+      if ((w.getLight(x, y + 1, z) >> 4) >= 15) continue;
+      return [x + 0.5, z + 0.5];
+    }
+    return null;
   }
   canSee(e) {
     const eye = this.game.player.eye();
