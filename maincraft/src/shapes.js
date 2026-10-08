@@ -124,15 +124,17 @@ function raycast(world, ox, oy, oz, dx, dy, dz, maxDist, opts) {
   let tmx = dx !== 0 ? ((sx > 0 ? x + 1 - ox : ox - x) * tdx) : Infinity;
   let tmy = dy !== 0 ? ((sy > 0 ? y + 1 - oy : oy - y) * tdy) : Infinity;
   let tmz = dz !== 0 ? ((sz > 0 ? z + 1 - oz : oz - z) * tdz) : Infinity;
-  const fluids = opts && opts.fluids;
+  const fluids = opts && opts.fluids, coll = opts && opts.collider;
   for (let i = 0; i < 256; i++) {
     const id = world.getBlock(x, y, z);
-    if (id) {
+    // collider: against the collision shapes only, fluids passed (ClipContext.Block.COLLIDER,
+    // Fluid.NONE: mobs' line of sight, arrows)
+    if (id && (!coll || COLLIDE[id])) {
       const sh = SHAPE[id];
       const isFluid = sh === SH.WATER || sh === SH.LAVA;
       if (!isFluid || (fluids && (world.getMeta(x, y, z) & 15) === 0)) {
         const m = world.getMeta(x, y, z);
-        const boxes = isFluid ? FULL_BOX : blockBoxes(world, id, m, x, y, z);
+        const boxes = isFluid ? FULL_BOX : coll ? collisionBoxes(world, id, m, x, y, z) || [] : blockBoxes(world, id, m, x, y, z);
         let best = null;
         for (const b of boxes) {
           const h = rayBox(ox, oy, oz, dx, dy, dz, x + b[0], y + b[1], z + b[2], x + b[3], y + b[4], z + b[5]);

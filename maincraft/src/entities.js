@@ -440,16 +440,18 @@ class Entities {
       const n = Math.max(1, Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) * dt / 0.3)), s = dt / n;
       for (let k = 0; k < n; k++) {
         const ox = a.pos[0], oy = a.pos[1], oz = a.pos[2], mx = a.vel[0] * s, my = a.vel[1] * s, mz = a.vel[2] * s;
+        // AbstractArrow.tick: the move clipped against the blocks' collision shapes (a thin pane
+        // or a door stops it), then the entity on the clipped path
+        const ml = Math.hypot(mx, my, mz), bh = ml > 0 ? raycast(w, ox, oy, oz, mx / ml, my / ml, mz / ml, ml, { collider: true }) : null;
+        const bt = bh ? bh.t / ml : 2;
         if (a.hostile && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
-          if (hb && hb.t <= 1) { if (g.hurt(a.dmg)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } this.arrows.splice(i, 1); break; }
+          if (hb && hb.t <= 1 && hb.t < bt) { if (g.hurt(a.dmg)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } this.arrows.splice(i, 1); break; }
         }
-        if (this.pointSolid(ox + mx, oy + my, oz + mz)) {
-          let lo = 0, hi = 1;
-          for (let q = 0; q < 6; q++) { const m = (lo + hi) / 2; if (this.pointSolid(ox + mx * m, oy + my * m, oz + mz * m)) hi = m; else lo = m; }
+        if (bh) {
           const l = Math.hypot(a.vel[0], a.vel[1], a.vel[2]) || 1;
           a.dir = [a.vel[0] / l, a.vel[1] / l, a.vel[2] / l];
-          a.pos = [ox + mx * hi + a.dir[0] * 0.1, oy + my * hi + a.dir[1] * 0.1, oz + mz * hi + a.dir[2] * 0.1];
+          a.pos = [bh.px + a.dir[0] * 0.05, bh.py + a.dir[1] * 0.05, bh.pz + a.dir[2] * 0.05];
           a.vel = [0, 0, 0]; a.stuck = true; a.age = 0;
           break;
         }
@@ -1235,13 +1237,12 @@ class Entities {
     e.walkAmt = 0;
   }
 
+  // LivingEntity.hasLineOfSight: a ray from eye to eye against the blocks' collision shapes, so
+  // glass, panes, closed doors, fences and leaves hide the player; water and plants do not
   rayBlocked(a, b) {
-    const w = this.game.world, n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) * 2);
-    for (let i = 1; i < n; i++) {
-      const t = i / n, id = w.getBlock(Math.floor(a[0] + (b[0] - a[0]) * t), Math.floor(a[1] + (b[1] - a[1]) * t), Math.floor(a[2] + (b[2] - a[2]) * t));
-      if (id && OPAQUE[id]) return true;
-    }
-    return false;
+    const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], l = Math.hypot(dx, dy, dz);
+    if (l < 1e-6) return false;
+    return raycast(this.game.world, a[0], a[1], a[2], dx / l, dy / l, dz / l, l, { collider: true }) !== null;
   }
   // enderman teleport (original): up to 32 random spots within r of (cx, cz), scanning 8 up to 16
   // down for dry ground with room for the body
