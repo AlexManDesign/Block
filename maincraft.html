@@ -15123,8 +15123,62 @@ class Entities {
     this.arrows = [];
     this.falling = [];
     this.spawnT = 0;
+    // animals of the columns not simulated now (left behind or not yet loaded): column key -> records.
+    // As in Minecraft, animals never despawn: they wait with their chunk and come back with it
+    this.dormant = new Map();
   }
-  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; }
+  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; this.dormant.clear(); }
+
+  // ------------------------------------------------------------------ keeping animals
+  keeps(e) { const d = MOB_DEFS[e.type]; return e.deathT <= 0 && ((!d.hostile && !d.aquatic) || e.persist); }
+  record(e) {
+    return { t: e.type, p: [+e.pos[0].toFixed(2), +e.pos[1].toFixed(2), +e.pos[2].toFixed(2)], y: +e.bodyYaw.toFixed(2), hp: e.hp,
+      baby: e.baby ? +e.growT.toFixed(1) : 0, c: e.color, sh: e.sheared ? 1 : 0, bc: +(e.breedCd || 0).toFixed(1), egg: e.eggT ? +e.eggT.toFixed(1) : undefined, ps: e.persist ? 1 : 0, sz: e.size };
+  }
+  revive(r) {
+    if (!MOB_DEFS[r.t]) return null;
+    const e = this.spawnMob(r.t, r.p[0], r.p[1], r.p[2], { baby: r.baby > 0, size: r.sz });
+    e.bodyYaw = e.headYaw = e.tgtYaw = r.y || 0; e.hp = r.hp || e.hp;
+    if (r.baby > 0) e.growT = r.baby;
+    if (r.c) e.color = r.c;
+    e.sheared = !!r.sh; e.breedCd = r.bc || 0; if (r.egg) e.eggT = r.egg; if (r.ps) e.persist = true;
+    this.snapshot(e);
+    return e;
+  }
+  stash(e) {
+    const k = colKey(Math.floor(e.pos[0]) >> 4, Math.floor(e.pos[2]) >> 4);
+    let L = this.dormant.get(k);
+    if (!L) this.dormant.set(k, L = []);
+    L.push(this.record(e));
+  }
+  // dormant animals whose column is loaded again within reach come back (checked once a second)
+  wake() {
+    const g = this.game, w = g.world, p = g.player;
+    for (const [k, L] of this.dormant) {
+      const cx = Math.floor(k / 65536) - 32768, cz = (k % 65536) - 32768;
+      if (Math.hypot(cx * 16 + 8 - p.pos[0], cz * 16 + 8 - p.pos[2]) > 120 || !w.isLoaded(cx * 16 + 8, cz * 16 + 8)) continue;
+      this.dormant.delete(k);
+      for (const r of L) this.revive(r);
+    }
+  }
+  // all kept animals (simulated and waiting) for the save, and back from it
+  saveMobs() {
+    const out = [];
+    for (const e of this.mobs) if (this.keeps(e)) out.push(this.record(e));
+    for (const L of this.dormant.values()) for (const r of L) out.push(r);
+    return out;
+  }
+  loadMobs(list) {
+    this.dormant.clear();
+    if (!Array.isArray(list)) return;
+    for (const r of list) {
+      if (!r || !Array.isArray(r.p)) continue;
+      const k = colKey(Math.floor(r.p[0]) >> 4, Math.floor(r.p[2]) >> 4);
+      let L = this.dormant.get(k);
+      if (!L) this.dormant.set(k, L = []);
+      L.push(r);
+    }
+  }
 
   // ------------------------------------------------------------------ falling blocks
   // Minecraft's FallingBlockEntity: per tick motion.y -= 0.04, move, motion *= 0.98. It passes
@@ -15217,6 +15271,7 @@ class Entities {
     this.spawnT -= dt;
     if (this.spawnT <= 0) {
       this.spawnT = 1.0;
+      this.wake();
       let passive = 0, hostile = 0, fish = 0, sharks = 0;
       for (const m of this.mobs) { const md = MOB_DEFS[m.type]; if (md.aquatic) { fish++; if (m.type === 'shark') sharks++; } else if (md.hostile) hostile++; else passive++; }
       if (passive < 14) this.trySpawn(false);
@@ -15322,9 +15377,22 @@ class Entities {
       e.age += dt;
       const dx = p.pos[0] - e.pos[0], dz = p.pos[2] - e.pos[2], dist = Math.hypot(dx, dz);
       const h = Math.hypot(dx, p.pos[1] + 0.9 - (e.pos[1] + e.h * 0.5), dz);
-      if (dist > (d.hostile ? 96 : 140) || !w.isLoaded(Math.floor(e.pos[0]), Math.floor(e.pos[2])) || e.pos[1] < WORLD_MIN_Y - 8) { this.mobs.splice(i, 1); continue; }
-      // far hostiles despawn now and then (original: beyond 32 blocks, ~1/25 per second)
-      if (d.hostile && h > 32 && !e.persist && Math.random() < dt / 25) { this.mobs.splice(i, 1); continue; }
+      if (e.pos[1] < WORLD_MIN_Y - 8) { this.mobs.splice(i, 1); continue; }
+      // animals out of reach wait with their column (and come back with it)
+      if (this.keeps(e)) {
+        if (dist > 140 || !w.isLoaded(Math.floor(e.pos[0]), Math.floor(e.pos[2]))) { this.stash(e); this.mobs.splice(i, 1); continue; }
+      } else {
+        // Mob.checkDespawn: gone beyond 128 blocks (fish 64), and beyond 32 now and then (1 in 800 a
+        // tick) once idle for 600 ticks; within 32 blocks the idle time starts over. Monsters idle
+        // three times as fast in light brighter than half (Monster.updateNoActionTime)
+        const far = d.aquatic && !d.hostile ? 64 : 128;
+        if (h > far || !w.isLoaded(Math.floor(e.pos[0]), Math.floor(e.pos[2]))) { this.mobs.splice(i, 1); continue; }
+        if (h < 32) e.idleT = 0;
+        else {
+          e.idleT = (e.idleT || 0) + dt * (d.hostile && !d.aquatic && this.lightAt(e) > 12 ? 3 : 1);
+          if (e.idleT > 30 && Math.random() < 1 - Math.pow(1 - 1 / 800, dt * 20)) { this.mobs.splice(i, 1); continue; }
+        }
+      }
       if (e.deathT > 0) { e.deathT += dt; if (e.deathT > 1.0) this.mobs.splice(i, 1); continue; }
       if (e.hurtT > 0) e.hurtT -= dt;
       if (e.invT > 0) e.invT -= dt;
@@ -16319,6 +16387,7 @@ class Entities {
     if (extra) kb(extra[0], extra[1], extra[2]);
     if (!d.hostile) { e.fleeT = 5; e.panicFrom = from ? [from[0], from[2]] : null; e.panicTgt = null; }   // lastHurtByMob is kept for 100 ticks
     if (d.aquatic) { e.esc = null; e.escT = 0; }
+    e.idleT = 0;                                   // LivingEntity.hurt: noActionTime = 0
     if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 30;
     // HurtByTargetGoal: a hostile hit by the player turns on it at once and remembers it 15 s unseen
     if (e.hp > 0 && from && d.hostile && this.game.mode === 'survival') { e.hunting = true; e.provoked = true; e.unseenT = 0; e.chase = [from[0], from[2]]; }
@@ -17536,7 +17605,7 @@ function leafLod(d2, cur) {
   if (cur === 1 && t === 3 && d2 <= 49) return 1;
   return t;
 }
-const BUILD_ID = 'b552c0d';   // filled in by build.py
+const BUILD_ID = 'b338478';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -17661,6 +17730,7 @@ class Game {
     this.pendingSave = new Map();
     this.particles.length = 0;
     this.ents = new Entities(this);
+    this.ents.loadMobs(meta.mobs);
     this.ships = this.ships || new Ships(this);
     this.ships.ship = null;
     this.boats = new Boats(this);
@@ -17740,6 +17810,7 @@ class Game {
       // their saved state
       ship: this.pendingShip || (this.ships ? this.ships.serialize() : null),
       boats: this.pendingBoats || (this.boats ? this.boats.serialize() : null),
+      mobs: this.ents ? this.ents.saveMobs() : null,
     });
     await DB.putWorld(this.meta);
     if (await DB.saveCols(this.meta.id, entries)) {

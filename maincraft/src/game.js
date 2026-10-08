@@ -168,6 +168,7 @@ class Game {
     this.pendingSave = new Map();
     this.particles.length = 0;
     this.ents = new Entities(this);
+    this.ents.loadMobs(meta.mobs);
     this.ships = this.ships || new Ships(this);
     this.ships.ship = null;
     this.boats = new Boats(this);
@@ -247,6 +248,7 @@ class Game {
       // their saved state
       ship: this.pendingShip || (this.ships ? this.ships.serialize() : null),
       boats: this.pendingBoats || (this.boats ? this.boats.serialize() : null),
+      mobs: this.ents ? this.ents.saveMobs() : null,
     });
     await DB.putWorld(this.meta);
     if (await DB.saveCols(this.meta.id, entries)) {
