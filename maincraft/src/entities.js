@@ -426,7 +426,6 @@ class Entities {
   update(dt) {
     const g = this.game, w = g.world, p = g.player;
     if (!w) return;
-    const night = g.envObj.day < 0.35;
     // ---- spawning
     this.spawnT -= dt;
     if (this.spawnT <= 0) {
@@ -436,7 +435,7 @@ class Entities {
       for (const m of this.mobs) { const md = MOB_DEFS[m.type]; if (md.aquatic) { fish++; if (m.type === 'shark') sharks++; } else if (md.hostile) hostile++; else passive++; }
       if (passive < 14) this.trySpawn(false);
       // hostile mobs spawn in creative too (as in Minecraft); they just never target a creative player
-      if (hostile < (night ? 22 : 8)) this.trySpawn(true);
+      if (hostile < 22) this.trySpawn(true);          // one monster cap day and night, as in Minecraft
       this.fishT = (this.fishT || 0) - 1;
       if (this.fishT <= 0) { this.fishT = 5; if (fish < 10) this.trySpawnFish(); }
       this.sharkT = (this.sharkT || 0) - 1;
@@ -970,9 +969,17 @@ class Entities {
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
     return true;
   }
-  lightAt(e) {
-    const lt = this.game.world.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.5), Math.floor(e.pos[2]));
-    return Math.max(lt & 15, this.game.envObj.day > 0.55 ? lt >> 4 : 0);
+  // Level.getMaxLocalRawBrightness: block light, or sky light less the sky's darkening (0 at noon,
+  // 11 at midnight), whichever is more; at the mob's eyes
+  lightAt(e) { return this.rawLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h * 0.85), Math.floor(e.pos[2])); }
+  rawLight(x, y, z) { const lt = this.game.world.getLight(x, y, z); return Math.max(lt & 15, (lt >> 4) - this.game.skyDarken()); }
+  // Monster.isDarkEnoughToSpawn: sky light not above a random 0..31, no block light, and the raw
+  // brightness not above a random 0..7 (at midnight in the open about a quarter of the tries pass,
+  // in a dark cave all)
+  darkEnough(x, y, z) {
+    const lt = this.game.world.getLight(x, y, z);
+    if ((lt >> 4) > ((Math.random() * 32) | 0) || (lt & 15) > 0) return false;
+    return this.rawLight(x, y, z) <= ((Math.random() * 8) | 0);
   }
   // the player looks the enderman in the face (original's cone test + line of sight)
   stared(e, h) {
@@ -1465,19 +1472,19 @@ class Entities {
         let ok = false;
         for (let k = 0; k < 20; k++, y--) if (SOLID[w.getBlock(x, y - 1, z)] && OPAQUE[w.getBlock(x, y - 1, z)] && !w.getBlock(x, y, z) && !w.getBlock(x, y + 1, z)) { ok = true; break; }
         if (!ok) continue;
-        const lt = w.getLight(x, y, z);
-        const night = g.envObj.day < 0.5;
-        const sky = (lt >> 4) * (night ? 0.2 : 1);
         if (Math.random() < 0.15) {
-          // slimes: slime chunks below y 40, or swamps at night (y 50..70)
+          // Slime.checkSlimeSpawnRules: slime chunks below y 40; swamps at y 51..69, half the tries,
+          // as often as the moon is bright (full 1 .. new 0) and where it is dark (raw light <= 0..7)
           const b = BPROP[w.biomeAt(x, z)], swamp = b && (b.base === BI.SWAMP || b.base === BI.MANGROVE_SWAMP);
-          if ((slimeChunk(x >> 4, z >> 4, w.seed) && y < 40) || (swamp && night && y >= 50 && y <= 70)) {
+          const moon = [1, 0.75, 0.5, 0.25, 0, 0.25, 0.5, 0.75][((g.days || 0) % 8 + 8) % 8];
+          if ((slimeChunk(x >> 4, z >> 4, w.seed) && y < 40) ||
+            (swamp && y > 50 && y < 70 && Math.random() < 0.5 && Math.random() < moon && this.rawLight(x, y, z) <= ((Math.random() * 8) | 0))) {
             const e = this.spawnMob('slime', x + 0.5, y, z + 0.5, { size: [1, 2, 4][Math.random() * 3 | 0] });
             if (entCollides(w, e.pos[0], e.pos[1], e.pos[2], e.w, e.h)) this.mobs.pop();
             return;
           }
         }
-        if ((lt & 15) > 0 || sky > 7) continue;   // Minecraft 1.18: monsters need block light 0
+        if (!this.darkEnough(x, y, z)) continue;
         // the overworld's monster weights (spider, zombie, skeleton, creeper 100 each, enderman 10)
         const r = Math.random() * 410, type = r < 100 ? 'spider' : r < 200 ? 'zombie' : r < 300 ? 'skeleton' : r < 400 ? 'creeper' : 'enderman';
         // NaturalSpawner: a group of up to 4 of the kind, each a random step of up to 5 blocks from
@@ -1491,8 +1498,7 @@ class Entities {
             let fy = cy + 2, ok2 = false;
             for (let s = 0; s < 5; s++, fy--) if (SOLID[w.getBlock(cx, fy - 1, cz)] && OPAQUE[w.getBlock(cx, fy - 1, cz)] && !w.getBlock(cx, fy, cz) && !w.getBlock(cx, fy + 1, cz)) { ok2 = true; break; }
             if (!ok2) continue;
-            const l2 = w.getLight(cx, fy, cz);
-            if ((l2 & 15) > 0 || (l2 >> 4) * (night ? 0.2 : 1) > 7) continue;
+            if (!this.darkEnough(cx, fy, cz)) continue;
             cy = fy;
           }
           if (type === 'enderman' && w.getBlock(cx, cy + 2, cz)) continue;
@@ -1547,8 +1553,7 @@ class Entities {
           const sx = x + (Math.random() - Math.random()) * 4 + 0.5, sy = y + (Math.random() * 3 | 0) - 1, sz = z + (Math.random() - Math.random()) * 4 + 0.5;
           if (entCollides(w, sx, sy, sz, d.w, d.h)) continue;
           if (d.hostile) {
-            const lt = w.getLight(Math.floor(sx), sy, Math.floor(sz));
-            if ((lt & 15) > 0 || (lt >> 4) * (g.envObj.day < 0.5 ? 0.2 : 1) > Math.random() * 32) continue;
+            if (!this.darkEnough(Math.floor(sx), sy, Math.floor(sz))) continue;
           }
           this.spawnMob(type, sx, sy, sz);
           this.game.spawnParticles(sx - 0.5, sy + 0.2, sz - 0.5, B.WOOL_LIGHT_GRAY, 6);
