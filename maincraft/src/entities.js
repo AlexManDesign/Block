@@ -146,7 +146,7 @@ const MOB_DEFS = {
   cow: { w: 0.9, h: 1.4, hp: 10, attr: 0.2, tempt: 1.25, food: [IT.WHEAT], panic: 2.0, drops: () => [[IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
   sheep: { w: 0.9, h: 1.3, hp: 8, attr: 0.23, tempt: 1.1, food: [IT.WHEAT], panic: 1.25, drops: (e) => [[IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
   chicken: { w: 0.5, h: 0.7, hp: 4, attr: 0.25, tempt: 1.0, food: [IT.WHEAT_SEEDS, IT.PUMPKIN_SEEDS, IT.MELON_SEEDS], panic: 1.4, drops: () => [[IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
-  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, drops: () => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0]], hostile: true, burns: true, sinks: true },
+  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, follow: 35, drops: () => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0]], hostile: true, burns: true, sinks: true },
   skeleton: { w: 0.6, h: 1.95, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
   creeper: { w: 0.6, h: 1.6, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
   spider: { w: 1.4, h: 0.9, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: () => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, Math.random() < 0.33 ? 1 : 0]], hostile: true },
@@ -344,7 +344,9 @@ class Entities {
       leapT: 1.5 + Math.random() * 1.5, hopT: Math.random() * 0.8, stuckT: 0, detourT: 0, detX: 0, detZ: 0,
       path: null, pathI: 0, pathT: Math.random() * 0.6, pathTx: 0, pathTz: 0, tpT: 0, stareT: 0, burnT: 0, wetT: 0, lavaT: 0,
       dryT: 0, swimT: 0, huntT: 0, prey: null, esc: null, escT: 0, escD: null, fleeing: false, aggro: false,
-      seeT: Math.random() * 0.5, sees: false, unseenT: 0, hunting: false, seenT: 0, strafeT: 0, strafeCw: Math.random() < 0.5, strafeBack: false,
+      seeT: Math.random() * 0.5, sees: false, unseenT: 0, hunting: false, provoked: false, chase: null, chaseT: 0, seenT: 0, strafeT: 0,
+      // Mob.finalizeSpawn: follow range x (1 + triangle(0, 0.11485)), the "random spawn bonus"
+      followMul: 1 + (Math.random() - Math.random()) * 0.11485, strafeCw: Math.random() < 0.5, strafeBack: false,
       lookT: 0, lookP: false, lookYaw: 0, loveT: 0, breedCd: 0, baby: false, growT: 0, eatT: 0 };
     if (opts && opts.baby && d.food) { e.baby = true; e.growT = 1200; e.w = d.w * 0.5; e.h = d.h * 0.5; e.persist = true; }
     if (d.slime) {
@@ -566,7 +568,14 @@ class Entities {
     const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? S[2] : d.speed;
     e.aiming = false;
     const face = () => { e.headYaw = Math.atan2(dx, -dz); };
-    const aggressive = e.angryT > 0 || (d.neutralLight ? this.lightAt(e) < d.neutralLight : !d.neutral);
+    // spiders hunt in the dark; in bright light one that has the player drops it now and then
+    // (SpiderAttackGoal: 1 in 100 a tick)
+    let aggressive = e.angryT > 0 || (d.neutralLight ? this.lightAt(e) < d.neutralLight : !d.neutral);
+    if (!aggressive && d.neutralLight && e.hunting) {
+      if (Math.random() < 1 - Math.pow(0.99, dt * 20)) { e.hunting = false; e.provoked = false; } else aggressive = true;
+    }
+    // the target goals run every tick, whatever the mob is doing (detour, panic)
+    const hunting = d.hostile && hunt && aggressive && this.targeting(e, dt, d, h);
     if (e.detourT > 0 && !(d.creeper && e.fuse >= 0)) {
       e.detourT -= dt; if (e.fleeT > 0) e.fleeT -= dt;
       this.steer(e, e.detX, e.detZ, goalSpeed(speed, e.fleeT > 0 ? d.panic || 2 : 1));
@@ -603,7 +612,7 @@ class Entities {
       return;
     }
     const dy = p.pos[1] - e.pos[1];
-    if (d.hostile && hunt && h < (d.detect || 16) && aggressive && this.targeting(e, dt)) {
+    if (hunting) {
       face();
       if (d.slime) {
         if (e.onGround) {
@@ -628,7 +637,7 @@ class Entities {
       if (e.type === 'enderman') {
         // close in to striking range (the original stopped at 3 but struck only within 2.2)
         // an angry enderman gets Minecraft's attacking speed bonus: attribute 0.3 + 0.15
-        if (h > 2) this.goTo(e, p.pos[0], p.pos[2], goalSpeed(speed, 0.45 / 0.3), dt); else this.stop(e);
+        if (h > 2) { const c = this.chasePoint(e, d, dt); this.goTo(e, c[0], c[1], goalSpeed(speed, 0.45 / 0.3), dt); } else this.stop(e);
         if (e.tpT <= 0 && h > 6 && h < 32) {
           e.tpT = 2 + Math.random() * 2;
           const a = Math.random() * 6.2832;
@@ -657,11 +666,13 @@ class Entities {
         return;
       }
       if (d.creeper) {
-        this.goTo(e, p.pos[0], p.pos[2], speed, dt);
+        const c = this.chasePoint(e, d, dt);
+        this.goTo(e, c[0], c[1], speed, dt);
         if (h < 3) { e.fuse = 0; Sfx.fuse(); }
         return;
       }
-      this.goTo(e, p.pos[0], p.pos[2], speed, dt);
+      const c = this.chasePoint(e, d, dt);
+      this.goTo(e, c[0], c[1], speed, dt);
       if (h < 1.4 && Math.abs(dy) < 2 && e.atkT > 1) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
       return;
     }
@@ -687,14 +698,32 @@ class Entities {
     if (e.tgt) { if (this.goTo(e, e.tgt[0], e.tgt[1], goalSpeed(speed, d.wander || 1), dt)) e.tgt = null; }
     else this.stop(e);
   }
-  // Minecraft sensing: a hostile notices the player only in line of sight (checked twice a second)
-  // and gives up after 3 s without seeing it; a provoked mob keeps its target
-  targeting(e, dt) {
+  // Minecraft's target goals. NearestAttackableTargetGoal: the player is noticed in line of sight
+  // within the follow range (35 for zombies, 64 endermen, else 16; x0.8 when sneaking). TargetGoal.
+  // canContinueToUse: kept while within the follow range and seen at least every 3 s (60 ticks); a
+  // mob the player hit (HurtByTargetGoal) takes the player at once, unseen or not, and keeps it
+  // through 15 s (300 ticks) out of sight. Line of sight is checked twice a second.
+  followRange(e, d) { return (d.follow || d.detect || 16) * (e.followMul || 1); }
+  targeting(e, dt, d, h) {
+    const R = this.followRange(e, d), p = this.game.player;
     e.seeT -= dt;
-    if (e.seeT <= 0) { e.seeT = 0.5; e.sees = this.canSee(e); }
-    if (e.sees) { e.unseenT = 0; e.hunting = true; } else e.unseenT += dt;
-    if (e.hunting && e.unseenT > 3 && e.angryT <= 0) e.hunting = false;
-    return e.hunting || e.angryT > 0;
+    if (e.seeT <= 0) { e.seeT = e.hunting ? 0.25 : 0.5; e.sees = h <= R && this.canSee(e); }
+    if (e.sees) { e.lastSeen = e.lastSeen || [0, 0]; e.lastSeen[0] = p.pos[0]; e.lastSeen[1] = p.pos[2]; }
+    if (e.hunting) {
+      if (e.sees) e.unseenT = 0; else e.unseenT += dt;
+      if (h > R || e.unseenT > (e.provoked ? 15 : 3)) { e.hunting = false; e.provoked = false; e.chase = null; }
+    } else if (e.sees && h <= Math.max(2, R * (p.sneaking ? 0.8 : 1))) { e.hunting = true; e.unseenT = 0; }
+    return e.hunting || (e.angryT > 0 && h <= R);
+  }
+  // where a melee mob walks (MeleeAttackGoal): the player while seen; out of sight it keeps to the
+  // path it had (toward where it last saw the player) and, that walked, paths to the player again
+  // at most once a second (canUse is retried every 20 ticks); spiders follow even unseen
+  chasePoint(e, d, dt) {
+    const p = this.game.player;
+    e.chaseT -= dt;
+    if (e.sees || d.spiderAI || !e.chase) { e.chase = e.chase || [0, 0]; e.chase[0] = p.pos[0]; e.chase[1] = p.pos[2]; return e.chase; }
+    if (Math.hypot(e.chase[0] - e.pos[0], e.chase[1] - e.pos[2]) < 1.2 && e.chaseT <= 0) { e.chaseT = 1; e.chase[0] = p.pos[0]; e.chase[1] = p.pos[2]; e.path = null; }
+    return e.chase;
   }
   canSee(e) {
     const eye = this.game.player.eye();
@@ -1422,6 +1451,8 @@ class Entities {
     if (!d.hostile) { e.fleeT = 5; e.panicFrom = from ? [from[0], from[2]] : null; e.panicTgt = null; }   // lastHurtByMob is kept for 100 ticks
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 30;
+    // HurtByTargetGoal: a hostile hit by the player turns on it at once and remembers it 15 s unseen
+    if (e.hp > 0 && from && d.hostile && this.game.mode === 'survival') { e.hunting = true; e.provoked = true; e.unseenT = 0; e.chase = [from[0], from[2]]; }
     if (e.hp > 0 && e.type === 'enderman' && Math.random() < 0.5 && this.teleportNear(e, e.pos[0], e.pos[2], 24)) e.tpT = 1;
     Sfx.hurt();
     if (e.hp <= 0) this.mobDied(e, d);
