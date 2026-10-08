@@ -38,7 +38,7 @@ const UI = {
     list.innerHTML = '';
     const ws = await DB.listWorlds();
     this.selectedWorld = null;
-    $('btnPlay').disabled = true; $('btnDelete').disabled = true;
+    $('btnPlay').disabled = true; $('btnDelete').disabled = true; $('btnExport').disabled = true;
     if (!ws.length) list.append(el('div', { class: 'empty' }, T('noWorlds')));
     for (const w of ws) {
       const d = new Date(w.lastPlayed || w.created || Date.now());
@@ -47,7 +47,7 @@ const UI = {
         el('small', null, 'seed ' + w.seed));
       item.onclick = () => {
         list.querySelectorAll('.world').forEach(x => x.classList.remove('sel'));
-        item.classList.add('sel'); this.selectedWorld = w; $('btnPlay').disabled = false; $('btnDelete').disabled = false;
+        item.classList.add('sel'); this.selectedWorld = w; $('btnPlay').disabled = false; $('btnDelete').disabled = false; $('btnExport').disabled = false;
       };
       item.ondblclick = () => this.play(w);
       list.append(item);
@@ -67,6 +67,24 @@ const UI = {
     $('btnDelete').onclick = async () => {
       if (!this.selectedWorld || !confirm(T('confirmDel'))) return;
       await DB.deleteWorld(this.selectedWorld.id); this.showWorlds();
+    };
+    // world files: the selected world saved to disk, a saved one brought back as a new world
+    $('btnExport').onclick = async () => {
+      const w = this.selectedWorld;
+      if (!w) return;
+      try { if (!(await WorldFile.export(w.id, w.name))) alert(T('exportFail')); } catch (e) { alert(T('exportFail')); }
+    };
+    $('btnImport').onclick = () => { const f = $('importFile'); f.value = ''; f.click(); };
+    $('importFile').onchange = async () => {
+      const file = $('importFile').files[0];
+      if (!file) return;
+      try { const w = await WorldFile.import(file); await this.showWorlds(); alert(T('importDone').replace('%s', w.name)); }
+      catch (e) { alert(T('importBad')); }
+    };
+    $('btnExportPause').onclick = async () => {
+      const g = this.game;
+      if (!g.meta) return;
+      try { if (!(await WorldFile.export(g.meta.id, g.meta.name, () => g.saveWorld(false)))) alert(T('exportFail')); } catch (e) { alert(T('exportFail')); }
     };
     $('btnCreate').onclick = () => {
       show('worlds', false); show('createWorld', true);

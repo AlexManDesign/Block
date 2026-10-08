@@ -120,7 +120,9 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
     <h2 data-t="singleplayer"></h2>
     <div id="worldList"></div>
     <div class="row"><button id="btnPlay" data-t="play"></button><button id="btnCreate" data-t="create"></button></div>
+    <div class="row"><button id="btnExport" data-t="exportW"></button><button id="btnImport" data-t="importW"></button></div>
     <div class="row"><button id="btnDelete" data-t="del"></button><button id="btnBackWorlds" data-t="back"></button></div>
+    <input id="importFile" type="file" accept=".mcworld,.json,application/json,application/gzip" class="hidden">
   </div>
   <div id="createWorld" class="panel hidden">
     <h2 data-t="create"></h2>
@@ -151,6 +153,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
   <button id="btnResume" data-t="resume"></button>
   <button id="btnSettingsPause" data-t="settings"></button>
   <button id="btnBench" data-t="bench"></button>
+  <button id="btnExportPause" data-t="exportFile"></button>
   <button id="btnQuit" data-t="saveQuit"></button>
 </div>
 <div id="benchStatus" class="hidden"><span id="benchStatusText"></span><button id="btnBenchCancel" data-t="cancel"></button></div>

@@ -243,8 +243,10 @@ class Game {
     Object.assign(this.meta, {
       lastPlayed: Date.now(), time: this.time, mode: this.mode, inv: this.inv, sel: this.sel,
       player: { pos: (this.sleeping ? this.sleeping.back : p.pos).slice(), yaw: p.yaw, pitch: p.pitch, flying: p.flying }, spawn: this.spawn, bedSpawn: this.bedSpawn || null, surv: { ...this.surv },
-      ship: this.ships ? this.ships.serialize() : null,
-      boats: this.boats ? this.boats.serialize() : null,
+      // a vessel and boats still waiting to come back (the world loaded but not yet played) keep
+      // their saved state
+      ship: this.pendingShip || (this.ships ? this.ships.serialize() : null),
+      boats: this.pendingBoats || (this.boats ? this.boats.serialize() : null),
     });
     await DB.putWorld(this.meta);
     if (await DB.saveCols(this.meta.id, entries)) {

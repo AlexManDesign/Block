@@ -6,6 +6,8 @@ function loadImage(b64) {
 }
 async function boot() {
   Settings.load();
+  // ask the browser to keep the saved worlds (persistent storage is not evicted under storage pressure)
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(p => p || navigator.storage.persist()).catch(() => {}); } catch (e) { }
   if (Settings.renderDist > 24) Settings.renderDist = 24;
   const A = ASSETS;
   const [atlas, sun, moon] = await Promise.all([loadImage(A.atlas), loadImage(A.sun), loadImage(A.moon)]);

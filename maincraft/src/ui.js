@@ -5,6 +5,8 @@ const LANG = (navigator.language || 'en').toLowerCase().startsWith('ru') || (nav
 const STR = {
   en: {
     singleplayer: 'Singleplayer', settings: 'Settings', play: 'Play Selected World', create: 'Create New World',
+    exportW: 'Export', importW: 'Import', exportFile: 'Save World to File', exportFail: 'The world could not be saved to a file',
+    importDone: 'World "%s" imported', importBad: 'This is not a Maincraft world file',
     del: 'Delete', cancel: 'Cancel', back: 'Back', worldName: 'World Name', seed: 'Seed (optional)',
     mode: 'Game Mode', creative: 'Creative', survival: 'Survival', createBtn: 'Create', noWorlds: 'No worlds yet - create your first one!',
     loading: 'Generating world...', resume: 'Back to Game', saveQuit: 'Save & Quit to Title', paused: 'Game Menu',
@@ -26,6 +28,8 @@ const STR = {
   },
   ru: {
     singleplayer: 'Одиночная игра', settings: 'Настройки', play: 'Играть в выбранном мире', create: 'Создать новый мир',
+    exportW: 'Экспорт', importW: 'Импорт', exportFile: 'Сохранить мир в файл', exportFail: 'Не удалось сохранить мир в файл',
+    importDone: 'Мир «%s» загружен', importBad: 'Это не файл мира Maincraft',
     del: 'Удалить', cancel: 'Отмена', back: 'Назад', worldName: 'Название мира', seed: 'Сид (необязательно)',
     mode: 'Режим игры', creative: 'Творческий', survival: 'Выживание', createBtn: 'Создать', noWorlds: 'Миров пока нет — создай первый!',
     loading: 'Генерация мира...', resume: 'Вернуться к игре', saveQuit: 'Сохранить и выйти в меню', paused: 'Меню игры',

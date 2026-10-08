@@ -120,7 +120,9 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
     <h2 data-t="singleplayer"></h2>
     <div id="worldList"></div>
     <div class="row"><button id="btnPlay" data-t="play"></button><button id="btnCreate" data-t="create"></button></div>
+    <div class="row"><button id="btnExport" data-t="exportW"></button><button id="btnImport" data-t="importW"></button></div>
     <div class="row"><button id="btnDelete" data-t="del"></button><button id="btnBackWorlds" data-t="back"></button></div>
+    <input id="importFile" type="file" accept=".mcworld,.json,application/json,application/gzip" class="hidden">
   </div>
   <div id="createWorld" class="panel hidden">
     <h2 data-t="create"></h2>
@@ -151,6 +153,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
   <button id="btnResume" data-t="resume"></button>
   <button id="btnSettingsPause" data-t="settings"></button>
   <button id="btnBench" data-t="bench"></button>
+  <button id="btnExportPause" data-t="exportFile"></button>
   <button id="btnQuit" data-t="saveQuit"></button>
 </div>
 <div id="benchStatus" class="hidden"><span id="benchStatusText"></span><button id="btnBenchCancel" data-t="cancel"></button></div>
@@ -17097,6 +17100,91 @@ const DB = {
   },
 };
 
+// World file: a world's record and all its stored column edits in one gzip-compressed JSON file,
+// to keep a world outside the browser and to bring it into any build or browser. Typed arrays are
+// written as base64 ({"$ta": type, "b": data}).
+const WorldFile = {
+  b64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); },
+  unb64(s) { const r = atob(s), u = new Uint8Array(r.length); for (let i = 0; i < r.length; i++) u[i] = r.charCodeAt(i); return u; },
+  TYPES: { Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array },
+  replacer(k, v) {
+    if (ArrayBuffer.isView(v) && !(v instanceof DataView)) return { $ta: v.constructor.name, b: WorldFile.b64(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)) };
+    return v;
+  },
+  reviver(k, v) {
+    if (v && typeof v === 'object' && typeof v.$ta === 'string' && typeof v.b === 'string') {
+      const T = WorldFile.TYPES[v.$ta], u = WorldFile.unb64(v.b);
+      return T ? new T(u.buffer, 0, u.byteLength / T.BYTES_PER_ELEMENT) : u;
+    }
+    return v;
+  },
+  async gzip(blob, on) {
+    if (typeof CompressionStream === 'undefined') return blob;      // plain JSON where the browser has no gzip
+    return new Response(blob.stream().pipeThrough(on ? new CompressionStream('gzip') : new DecompressionStream('gzip'))).blob();
+  },
+  // the world (by id) written to a file: a save dialog with the world's name where the browser has
+  // one (showSaveFilePicker; asked first, while the click still counts), else a download.
+  // before: run after the dialog (saving the open world). Returns false when there is no such
+  // world, 'cancel' when the dialog was closed.
+  async export(id, name, before) {
+    let handle = null;
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        handle = await window.showSaveFilePicker({ suggestedName: WorldFile.fileName(name), types: [{ description: 'Maincraft world', accept: { 'application/octet-stream': ['.mcworld'] } }] });
+      } catch (e) {
+        if (e && e.name === 'AbortError') return 'cancel';
+        handle = null;
+      }
+    }
+    if (before) await before();
+    const meta = (await DB.listWorlds()).find(w => w.id === id);
+    if (!meta) return false;
+    // keys and values read in one transaction (both come in key order)
+    const db = await DB.open(), range = IDBKeyRange.bound(id + ':', id + ':\uffff');
+    const [keys, vals] = await new Promise((res) => {
+      const t = db.transaction('cols', 'readonly'), s = t.objectStore('cols'), k = s.getAllKeys(range), v = s.getAll(range);
+      t.oncomplete = () => res([k.result || [], v.result || []]); t.onerror = t.onabort = () => res([[], []]);
+    });
+    const cols = keys.map((k, i) => [String(k).slice(id.length + 1), vals[i]]);
+    const json = JSON.stringify({ format: 'maincraft-world', version: 1, exported: Date.now(), meta, cols }, WorldFile.replacer);
+    const blob = await WorldFile.gzip(new Blob([json], { type: 'application/json' }), true);
+    if (handle) {
+      const out = await handle.createWritable();
+      await out.write(blob); await out.close();
+      return true;
+    }
+    const a = document.createElement('a'), url = URL.createObjectURL(blob);
+    a.href = url; a.download = WorldFile.fileName(meta.name);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return true;
+  },
+  fileName(name) { return String(name || 'world').replace(/[\\/:*?"<>|]+/g, '_') + '.mcworld'; },
+  // a world file read back as a new world (never over an existing one); returns its record
+  async import(file) {
+    let blob = file;
+    const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+    if (head[0] === 0x1f && head[1] === 0x8b) {
+      if (typeof DecompressionStream === 'undefined') throw new Error('gzip');
+      blob = await WorldFile.gzip(file, false);
+    }
+    const o = JSON.parse(await blob.text(), WorldFile.reviver);
+    if (!o || o.format !== 'maincraft-world' || !o.meta || typeof o.meta.seed !== 'number' || !Array.isArray(o.cols)) throw new Error('format');
+    const id = 'w' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+    const meta = Object.assign({}, o.meta, { id, lastPlayed: Date.now() });
+    const db = await DB.open();
+    if (!db) throw new Error('db');
+    await new Promise((res, rej) => {
+      const t = db.transaction(['cols', 'worlds'], 'readwrite');
+      const cs = t.objectStore('cols');
+      for (const [k, v] of o.cols) cs.put(v instanceof Int32Array ? v : new Int32Array(v), id + ':' + k);
+      t.objectStore('worlds').put(meta);
+      t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    });
+    return meta;
+  },
+};
+
 // ---- ui.js ----
 'use strict';
 // DOM user interface: i18n, block icons, hotbar, inventory, menus.
@@ -17105,6 +17193,8 @@ const LANG = (navigator.language || 'en').toLowerCase().startsWith('ru') || (nav
 const STR = {
   en: {
     singleplayer: 'Singleplayer', settings: 'Settings', play: 'Play Selected World', create: 'Create New World',
+    exportW: 'Export', importW: 'Import', exportFile: 'Save World to File', exportFail: 'The world could not be saved to a file',
+    importDone: 'World "%s" imported', importBad: 'This is not a Maincraft world file',
     del: 'Delete', cancel: 'Cancel', back: 'Back', worldName: 'World Name', seed: 'Seed (optional)',
     mode: 'Game Mode', creative: 'Creative', survival: 'Survival', createBtn: 'Create', noWorlds: 'No worlds yet - create your first one!',
     loading: 'Generating world...', resume: 'Back to Game', saveQuit: 'Save & Quit to Title', paused: 'Game Menu',
@@ -17126,6 +17216,8 @@ const STR = {
   },
   ru: {
     singleplayer: 'Одиночная игра', settings: 'Настройки', play: 'Играть в выбранном мире', create: 'Создать новый мир',
+    exportW: 'Экспорт', importW: 'Импорт', exportFile: 'Сохранить мир в файл', exportFail: 'Не удалось сохранить мир в файл',
+    importDone: 'Мир «%s» загружен', importBad: 'Это не файл мира Maincraft',
     del: 'Удалить', cancel: 'Отмена', back: 'Назад', worldName: 'Название мира', seed: 'Сид (необязательно)',
     mode: 'Режим игры', creative: 'Творческий', survival: 'Выживание', createBtn: 'Создать', noWorlds: 'Миров пока нет — создай первый!',
     loading: 'Генерация мира...', resume: 'Вернуться к игре', saveQuit: 'Сохранить и выйти в меню', paused: 'Меню игры',
@@ -17340,7 +17432,7 @@ function leafLod(d2, cur) {
   if (cur === 1 && t === 3 && d2 <= 49) return 1;
   return t;
 }
-const BUILD_ID = '52686e6';   // filled in by build.py
+const BUILD_ID = 'e3e6430';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -17540,8 +17632,10 @@ class Game {
     Object.assign(this.meta, {
       lastPlayed: Date.now(), time: this.time, mode: this.mode, inv: this.inv, sel: this.sel,
       player: { pos: (this.sleeping ? this.sleeping.back : p.pos).slice(), yaw: p.yaw, pitch: p.pitch, flying: p.flying }, spawn: this.spawn, bedSpawn: this.bedSpawn || null, surv: { ...this.surv },
-      ship: this.ships ? this.ships.serialize() : null,
-      boats: this.boats ? this.boats.serialize() : null,
+      // a vessel and boats still waiting to come back (the world loaded but not yet played) keep
+      // their saved state
+      ship: this.pendingShip || (this.ships ? this.ships.serialize() : null),
+      boats: this.pendingBoats || (this.boats ? this.boats.serialize() : null),
     });
     await DB.putWorld(this.meta);
     if (await DB.saveCols(this.meta.id, entries)) {
@@ -19308,7 +19402,7 @@ const UI = {
     list.innerHTML = '';
     const ws = await DB.listWorlds();
     this.selectedWorld = null;
-    $('btnPlay').disabled = true; $('btnDelete').disabled = true;
+    $('btnPlay').disabled = true; $('btnDelete').disabled = true; $('btnExport').disabled = true;
     if (!ws.length) list.append(el('div', { class: 'empty' }, T('noWorlds')));
     for (const w of ws) {
       const d = new Date(w.lastPlayed || w.created || Date.now());
@@ -19317,7 +19411,7 @@ const UI = {
         el('small', null, 'seed ' + w.seed));
       item.onclick = () => {
         list.querySelectorAll('.world').forEach(x => x.classList.remove('sel'));
-        item.classList.add('sel'); this.selectedWorld = w; $('btnPlay').disabled = false; $('btnDelete').disabled = false;
+        item.classList.add('sel'); this.selectedWorld = w; $('btnPlay').disabled = false; $('btnDelete').disabled = false; $('btnExport').disabled = false;
       };
       item.ondblclick = () => this.play(w);
       list.append(item);
@@ -19337,6 +19431,24 @@ const UI = {
     $('btnDelete').onclick = async () => {
       if (!this.selectedWorld || !confirm(T('confirmDel'))) return;
       await DB.deleteWorld(this.selectedWorld.id); this.showWorlds();
+    };
+    // world files: the selected world saved to disk, a saved one brought back as a new world
+    $('btnExport').onclick = async () => {
+      const w = this.selectedWorld;
+      if (!w) return;
+      try { if (!(await WorldFile.export(w.id, w.name))) alert(T('exportFail')); } catch (e) { alert(T('exportFail')); }
+    };
+    $('btnImport').onclick = () => { const f = $('importFile'); f.value = ''; f.click(); };
+    $('importFile').onchange = async () => {
+      const file = $('importFile').files[0];
+      if (!file) return;
+      try { const w = await WorldFile.import(file); await this.showWorlds(); alert(T('importDone').replace('%s', w.name)); }
+      catch (e) { alert(T('importBad')); }
+    };
+    $('btnExportPause').onclick = async () => {
+      const g = this.game;
+      if (!g.meta) return;
+      try { if (!(await WorldFile.export(g.meta.id, g.meta.name, () => g.saveWorld(false)))) alert(T('exportFail')); } catch (e) { alert(T('exportFail')); }
     };
     $('btnCreate').onclick = () => {
       show('worlds', false); show('createWorld', true);
@@ -19772,6 +19884,8 @@ function loadImage(b64) {
 }
 async function boot() {
   Settings.load();
+  // ask the browser to keep the saved worlds (persistent storage is not evicted under storage pressure)
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(p => p || navigator.storage.persist()).catch(() => {}); } catch (e) { }
   if (Settings.renderDist > 24) Settings.renderDist = 24;
   const A = ASSETS;
   const [atlas, sun, moon] = await Promise.all([loadImage(A.atlas), loadImage(A.sun), loadImage(A.moon)]);
