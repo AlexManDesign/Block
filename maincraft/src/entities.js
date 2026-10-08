@@ -506,7 +506,13 @@ class Entities {
         const bt = bh ? bh.t / ml : 2;
         if (a.hostile && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
-          if (hb && hb.t <= 1 && hb.t < bt) { if (g.hurt(a.dmg)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } this.arrows.splice(i, 1); break; }
+          if (hb && hb.t <= 1 && hb.t < bt && !a.bounced) {
+            if (g.hurt(a.dmg)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+            // AbstractArrow.onHitEntity: a hit that does no harm (creative, or just hurt) turns the
+            // arrow back at a tenth of its speed
+            a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
+            break;
+          }
         }
         if (bh) {
           const l = Math.hypot(a.vel[0], a.vel[1], a.vel[2]) || 1;
@@ -660,8 +666,14 @@ class Entities {
     if (!aggressive && d.neutralLight && e.hunting) {
       if (Math.random() < 1 - Math.pow(0.99, dt * 20)) { e.hunting = false; e.provoked = false; } else aggressive = true;
     }
-    // the target goals run every tick, whatever the mob is doing (detour, panic)
-    const hunting = d.hostile && hunt && aggressive && this.targeting(e, dt, d, h);
+    // a player in creative (or dead) is no target (EntitySelector.NO_CREATIVE_OR_SPECTATOR): a target
+    // held is dropped and has to be found again later
+    if (!hunt && e.hunting) { e.hunting = false; e.provoked = false; e.chase = null; e.unseenT = 0; }
+    // the target goals run every tick, whatever the mob is doing (detour, panic); while they do not
+    // (no player to take, spider in the light) the last sight goes stale: looked at afresh next time
+    const looks = d.hostile && hunt && aggressive;
+    if (!looks) { e.sees = false; e.seeT = 0; }
+    const hunting = looks && this.targeting(e, dt, d, h);
     if (e.detourT > 0 && !(d.creeper && e.fuse >= 0)) {
       e.detourT -= dt; if (e.fleeT > 0) e.fleeT -= dt;
       this.steer(e, e.detX, e.detZ, goalSpeed(speed, e.fleeT > 0 ? d.panic || 2 : 1));
@@ -1585,7 +1597,8 @@ class Entities {
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     e.idleT = 0;                                   // LivingEntity.hurt: noActionTime = 0
     if (from) e.playerHitAge = e.age;              // lastHurtByPlayerTime (loot "killed by player" for 100 ticks)
-    if (e.hp > 0 && from && (d.neutral || d.neutralLight)) e.angryT = 20 + Math.random() * 19;   // NeutralMob: 20..39 s
+    // NeutralMob: angry 20..39 s at the player who hit it, never at one in creative
+    if (e.hp > 0 && from && (d.neutral || d.neutralLight) && this.game.mode === 'survival') e.angryT = 20 + Math.random() * 19;
     // HurtByTargetGoal: a hostile hit by the player turns on it at once and remembers it 15 s unseen
     if (e.hp > 0 && from && d.hostile && this.game.mode === 'survival') { e.hunting = true; e.provoked = true; e.unseenT = 0; e.chase = [from[0], from[2]]; }
     // Enderman.hurt: hurt by anything but a living attacker (fire, cactus, a fall) it teleports away
