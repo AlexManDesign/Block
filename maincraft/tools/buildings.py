@@ -329,10 +329,13 @@ def house(st, w, d, h, job, seed, style):
                 edge = x in (0, w - 1) or z in (zz, zz + d - 1)
                 corner = x in (0, w - 1) and z in (zz, zz + d - 1)
                 t.set(x, y, z, (st['log'] if corner else st['wall']) if edge else 'AIR')
-    # windows
+    # windows; on the front wall never right beside the door (a pane joins full blocks, not a door,
+    # so it would show only its half toward the wall, and the lamp over the door hangs there)
+    dx = w // 2
     for y in (2,):
-        for x in range(2, w - 2, 2):
-            if x != w // 2: t.set(x, y, zz, st['glass']); t.set(x, y, zz + d - 1, st['glass'])
+        for x in range(1, w - 1, 2):
+            if abs(x - dx) > 1: t.set(x, y, zz, st['glass'])
+        for x in range(2, w - 2, 2): t.set(x, y, zz + d - 1, st['glass'])
         for z in range(zz + 2, zz + d - 2, 2): t.set(0, y, z, st['glass']); t.set(w - 1, y, z, st['glass'])
     # door
     dx = w // 2
