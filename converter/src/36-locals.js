@@ -103,4 +103,34 @@ function compactLocals(fn){
  return {...fn,code,locals};
 }
 
+// Stack guard: V8 does not let WASM catch its own stack overflow, so compiled
+// functions count their frames in global 0 (in 8-byte units: a Liftoff frame
+// is about 7 units plus one per parameter and local) and throw a catchable
+// RangeError at the limit in global 1, which the runtime calibrates at boot.
+// Returns become branches to one exit that subtracts the frame again; catch
+// handlers restore the count of their own frame. Functions that call nothing
+// but pure helpers (no way back into compiled code) are not counted.
+function guardStack(fn,importCount,pure,overflow){
+ if(fn.code.length<=1)return fn;
+ let decoded;try{decoded=decode(fn.code);}catch(e){return fn;}
+ const {instructions,frames}=decoded;
+ const callsOut=instructions.some(x=>x.op===0x11||x.op===0x13||x.op===0x12||x.op===0x10&&!pure.has(calleeOf(fn.code,x.start)));
+ if(!callsOut)return fn;
+ const weight=7+fn.params.length+fn.locals.length,catches=instructions.some(x=>x.op===0x07||x.op===0x19);
+ const saved=fn.params.length+fn.locals.length,locals=catches?[...fn.locals,0x7f]:fn.locals;
+ const leb=n=>{const a=[];do{let b=n&127;n>>>=7;if(n)b|=128;a.push(b);}while(n);return a;},sleb=n=>{const a=[];for(;;){const b=n&127;n>>=7;if(n===0&&!(b&64)||n===-1&&(b&64)){a.push(b);return a;}a.push(b|128);}};
+ const code=[0x23,0,0x41,...sleb(weight),0x6a,0x24,0,0x23,0,0x23,1,0x4b,0x04,0x40,0x10,...leb(overflow),0x00,0x0b];
+ if(catches)code.push(0x23,0,0x21,...leb(saved));
+ code.push(0x02,fn.results[0]);
+ for(const x of instructions){
+  if(x.op===0x0f){code.push(0x0c,...leb(frames[x.frame].depth));continue;}
+  for(let i=x.start;i<x.end;i++)code.push(fn.code[i]);
+  if(x.op===0x07||x.op===0x19)code.push(0x20,...leb(saved),0x24,0);
+ }
+ code.push(0x0b,0x23,0,0x41,...sleb(weight),0x6b,0x24,0);
+ return {...fn,code,locals};
+}
+function calleeOf(code,start){let i=start+1,v=0,s=0,b;do{b=code[i++];v+=(b&127)*2**s;s+=7;}while(b&128);return v;}
+
 exports["compactLocals"]=compactLocals;
+exports["guardStack"]=guardStack;

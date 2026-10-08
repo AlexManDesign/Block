@@ -9075,11 +9075,16 @@ const environmentWasm=require("./environment-wasm.mjs")["environmentWasm"];
 const stringTypes=require("./string-wasm.mjs")["stringTypes"];
 const base64=require("./encoding.mjs")["base64"];
 const ScopeAnalysis=require("./scope.mjs")["ScopeAnalysis"];
+const createsCode=require("./scope.mjs")["createsCode"];
 const bindings=require("./bindings.mjs")["bindings"];
 const reprOf=require("./bindings.mjs")["reprOf"];
 const VALUE_TYPE=require("./bindings.mjs")["VALUE_TYPE"];
 const TypeInference=require("./types.mjs")["TypeInference"];
 const compactLocals=require("./locals.mjs")["compactLocals"];
+const guardStack=require("./locals.mjs")["guardStack"];
+// Helpers that never run compiled code (no callbacks, getters or valueOf):
+// a function calling only these needs no stack guard.
+const PURE=['lit','number','boolean','isNumber','toNumber','int32','truth','nullish','isUndefined','fromInt32','isString','stringLength','stringConcat','stringCompare','stringCharCodeAt','stringCharAt','stringSlice','stringSubstring','stringIndexOf','stringLastIndexOf','stringIncludes','stringStartsWith','stringEndsWith','stringRepeat','intToString','numberToString','stringFromCharCode','scopeNew','scopeClone','moduleScope','fmod','pow','taGetF','taGetI','taSetF','taSetI','taLength','typeofCode','equal','tdz','constAssign','isInt','isBool','isNumberOrUndefined','prototypeFlags','stackOverflow'];
 
 const signatures={
  ...featureSignatures,
@@ -9096,7 +9101,7 @@ const signatures={
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
  setFunctionName:['rri','r'],fromInt32:['i','r'],
- pushIntrinsic:['rr','i'],typeofCode:['r','i'],prototypeFlags:['','i'],boxForeign:['r','r'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ pushIntrinsic:['rr','i'],typeofCode:['r','i'],stackOverflow:['',''],prototypeFlags:['','i'],boxForeign:['r','r'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -9132,6 +9137,7 @@ class Compiler {
  build(){
   // Resolve every name of the program before emitting any function.
   const analysis=this.analysis=new ScopeAnalysis();
+  analysis.dynamicCode=this.plans.some(p=>!p.prelude&&createsCode(p.node));
   for(const plan of this.plans)if(plan.kind==='script')analysis.declareScript(plan);
   for(const plan of [...this.plans])analysis.program(plan);
   analysis.finish();
@@ -9169,16 +9175,21 @@ class Compiler {
   }
   // Temporaries share local slots (engine compile time grows with locals).
   for(let i=0;i<functions.length;i++)functions[i]=compactLocals(functions[i]);
+  const pure=new Set([...PURE.filter(n=>signatures[n]).map(n=>this.import(n)),...Object.keys(signatures).filter(n=>n.startsWith('math_')).map(n=>this.import(n))]);
+  for(let i=0;i<functions.length;i++)functions[i]=guardStack(functions[i],this.imports.length,pure,this.import('stackOverflow'));
+  // Boot probe: recurses until the engine's stack overflow, counting 7 units a frame.
+  const probeIndex=this.imports.length+functions.length;
+  functions.push(guardStack({params:[I32],results:[I32],locals:[],code:[0x20,0,0x41,1,0x6a,0x10,...u32(probeIndex)]},this.imports.length,new Set(),this.import('stackOverflow')));
   const metadata=this.plans.map(p=>({prelude:!!p.prelude,arity:p.arity,name:p.name,frameTypes:p.frameTypes,numeric:!!p.numeric,stringSpecialization:!!p.stringSpecialization,usesArguments:!!p.usesArguments}));
   if(metadata.length)metadata[0].rootSlots=analysis.root.slots;
   const environmentBinary=this.environments?environmentWasm():null;
   if(environmentBinary&&metadata.length)metadata[0].environmentWasm=base64(environmentBinary);
   // Types 0..2: strings (numeric.mjs relies on these indices), 3: scope record.
   this.functions=functions;
-  const exported=this.plans.map((_,id)=>({name:'f'+id,index:this.genericIndex(id)}));
+  const exported=[...this.plans.map((_,id)=>({name:'f'+id,index:this.genericIndex(id)})),{name:'probe',index:probeIndex}];
   // Readable names in profiles: f<id>/t<id> plus the source name.
   const names=this.plans.flatMap((p,id)=>{const label=(p.name||p.kind).replace(/[^\w$.-]/g,'_').slice(0,40);return [[this.genericIndex(id),'f'+id+'_'+label],[this.genericIndex(id)+1,'t'+id+'_'+label]];});
-  return {binary:makeModule(this.imports,functions,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]],exported,names),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
+  return {binary:makeModule(this.imports,functions,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]],exported,names,['depth','limit']),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
  }
  guardedEntry(id,fn){
   const body=new FunctionEmitter(this,id,{dynamicOnly:true}).compile();
@@ -15650,13 +15661,15 @@ function section(id,b){return [id,...u32(b.length),...b];}
 function nameSection(names){const entries=names.flatMap(([index,name])=>[...u32(index),...utf8(name)]),sub=[...u32(names.length),...entries];return section(0,[...utf8('name'),1,...u32(sub.length),...sub]);}
 // functions: [{params, results, code, locals}]; exports: [{name, index}]
 // (index counts imports first). Locals are single-byte value types.
-function makeModule(imports,functions,gcTypes=[],exported=[],names=null){
+// globals: imported mutable i32 globals by name (indices 0..n-1).
+function makeModule(imports,functions,gcTypes=[],exported=[],names=null,globals=[]){
  const types=[...gcTypes],keys=new Map();
  const type=(params,results)=>{const k=JSON.stringify([params,results]);if(!keys.has(k)){keys.set(k,types.length);types.push([0x60,...u32(params.length),...params,...u32(results.length),...results]);}return keys.get(k);};
  const entries=imports.map(x=>[...utf8('r'),...utf8(x.name),0,...u32(type(x.params,x.results))]);
  entries.push([...utf8('r'),...utf8('error'),4,0,...u32(type([REF],[]))]);
  // Tag 1: WebAssembly.JSTag, exceptions raised by the engine (stack overflow).
  entries.push([...utf8('r'),...utf8('jstag'),4,0,...u32(type([REF],[]))]);
+ for(const g of globals)entries.push([...utf8('r'),...utf8(g),3,I32,1]);
  const signatures=functions.map(f=>u32(type(f.params,f.results)));
  const exports=exported.map(e=>[...utf8(e.name),0,...u32(e.index)]);
  const bodies=functions.map(f=>{const groups=[];for(const t of f.locals){if(groups.at(-1)?.[1]===t)groups.at(-1)[0]++;else groups.push([1,t]);}const b=[...u32(groups.length),...groups.flatMap(([n,t])=>[...u32(n),t]),...f.code,0x0b];return [...u32(b.length),...b];});
@@ -17211,7 +17224,11 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function setProperty(object,key,value,strict){if(object==null)throw new TypeError('Cannot set property of null or undefined');if(typeof object!=='object'&&typeof object!=='function'){if(strict)throw new TypeError('Cannot assign property of primitive');return value;}if(!Reflect.set(object,key,value,object)&&strict)throw new TypeError('Cannot assign property '+String(key));return value;}
  function writeProperty(r,v){if(r.private){const d=r.private;privateCheck(d,r.object);if(d.kind===0)d.values.set(r.object,v);else if(d.kind===2&&d.set)Reflect.apply(d.set,r.object,[v]);else throw new TypeError('Private member is not writable');return v;}if(r.unresolved&&r.strict)throw new ReferenceError(r.key+' is not defined');if(r.super){if(!Reflect.set(r.object,r.key,v,r.receiver))throw new TypeError('Cannot assign super property');return v;}return setProperty(r.object,r.key,v,r.strict);}
  function unwrap(e){if(e instanceof WebAssembly.Exception&&e.is(errorTag))return unbox(e.getArg(errorTag,0));return e;}
- function callCompiled(id,env,self,args,newTarget){try{return unbox(instance.exports['f'+id](env,box(self),args,box(newTarget)));}catch(e){throw unwrap(e);}}
+ // Frame count of the stack guard (see guardStack): reset when JS enters
+ // compiled code with no compiled frames below.
+ const depth=new WebAssembly.Global({value:'i32',mutable:true},0),limit=new WebAssembly.Global({value:'i32',mutable:true},0x7fffffff);
+ let entries=0;
+ function callCompiled(id,env,self,args,newTarget){if(entries===0)depth.value=0;entries++;try{return unbox(instance.exports['f'+id](env,box(self),args,box(newTarget)));}catch(e){throw unwrap(e);}finally{entries--;}}
  function makeFunction(env,id,name,flags,self,newTarget){
   const strict=!!(flags&1),arrow=!!(flags&2),info={home:null,method:!!(flags&8)};let closure=env,f;
   const call=(receiver,a,target)=>flags&48?startResumable(id,closure,receiver,a,target,flags,f):callCompiled(id,closure,receiver,a,target);
@@ -17419,7 +17436,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   putRef:(f,i,v)=>{f.slots[i]=v;},putInt:(f,i,v)=>{f.slots[i]=v;},putFloat:(f,i,v)=>{f.slots[i]=v;},
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
- const imports={error:errorTag,jstag:WebAssembly.JSTag||new WebAssembly.Tag({parameters:['externref']}),boxForeign:v=>box(v)};
+ const imports={depth,limit,stackOverflow:()=>{throw failure(new RangeError('Maximum call stack size exceeded'));},error:errorTag,jstag:WebAssembly.JSTag||new WebAssembly.Tag({parameters:['externref']}),boxForeign:v=>box(v)};
  const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','prototypeFlags','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
@@ -17452,6 +17469,10 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const bytes=typeof binary==='string'?Uint8Array.from(atob(binary),c=>c.charCodeAt(0)):binary;
  instance=new WebAssembly.Instance(new WebAssembly.Module(bytes),{r:imports});
  for(let id=0;id<metadata.length;id++)table.set(id,instance.exports['f'+id]);
+ // Calibrate the guard: frames of 8 units (one parameter) until the engine's
+ // own overflow; a 1-parameter Liftoff frame is about 7 units, keep 20% spare.
+ try{instance.exports.probe(0);}catch(e){}
+ limit.value=Math.max(20000,Math.floor(depth.value*7/8*0.8));depth.value=0;
  metadata.forEach((m,id)=>{if(m.prelude)callCompiled(id,root,globalObject,[],undefined);});
  initializeModules();
  const handlers=new Map();
@@ -17659,7 +17680,11 @@ class ScopeAnalysis {
   if(scope.kind==='script'){
    const existing=this.root.bindings.get(name);
    if(existing){this.scriptError(scope.node,name);return existing;}
-   const b=new Binding(name,kind,this.root,node);b.ready=Infinity;b.order=scope.order;this.root.bindings.set(name,b);b.script=scope.node;return b;
+   const b=new Binding(name,kind,this.root,node);b.ready=Infinity;b.order=scope.order;this.root.bindings.set(name,b);b.script=scope.node;
+   // Code made from strings at run time (see createsCode) must see top-level
+   // let/const/class: they live on the global object then.
+   if(this.dynamicCode)b.storage='global';
+   return b;
   }
   const b=this.declare(scope,name,kind,node);b.ready=ready;return b;
  }
@@ -17974,7 +17999,35 @@ function hops(from,target){
  throw new Error('Внутренняя ошибка: область '+target.kind+' недостижима');
 }
 
+// Does the program create code from strings at run time (inline handlers in
+// HTML strings, setAttribute('on...'), setTimeout('...'), new Function, eval,
+// script elements)? Such code is not compiled, so globals must stay visible
+// and replaceable.
+function createsCode(ast){
+ const HTML=/<[^>]*\son[a-z]+\s*=|<script/i,texts=x=>{const out=[];const walk=y=>{if(!y||typeof y!=='object')return;if(Array.isArray(y)){y.forEach(walk);return;}if(y.type==='Literal'&&typeof y.value==='string')out.push(y.value);if(y.type==='TemplateElement')out.push(y.value.cooked??'');for(const k in y)if(k!=='loc'&&k[0]!=='_')walk(y[k]);};walk(x);return out.join('\n');};
+ const name=c=>c.type==='Identifier'?c.name:c.type==='MemberExpression'&&!c.computed?c.property.name:c.type==='MemberExpression'&&c.property.type==='Literal'?String(c.property.value):'';
+ const stringy=a=>a&&(a.type==='Literal'&&typeof a.value==='string'||a.type==='TemplateLiteral'||a.type==='BinaryExpression');
+ let found=false;
+ const walk=x=>{
+  if(found||!x||typeof x!=='object')return;if(Array.isArray(x)){x.forEach(walk);return;}
+  if(x.type==='Identifier'&&x.name==='eval')found=true;
+  if(x.type==='MemberExpression'&&!x.computed&&x.property.name==='eval')found=true;
+  if(x.type==='CallExpression'||x.type==='NewExpression'){
+   const f=name(x.callee),a=x.arguments;
+   if(f==='Function'||f==='GeneratorFunction'||f==='AsyncFunction')found=true;
+   if((f==='setTimeout'||f==='setInterval')&&stringy(a[0]))found=true;
+   if((f==='setAttribute'||f==='setAttributeNS')){const k=a[f==='setAttribute'?0:1];if(!(k?.type==='Literal'&&typeof k.value==='string'&&!/^on/i.test(k.value)))found=true;}
+   if(['insertAdjacentHTML','write','writeln','createContextualFragment','parseFromString','setHTMLUnsafe'].includes(f)&&HTML.test(texts(a)))found=true;
+   if(f==='createElement'&&a[0]?.type==='Literal'&&String(a[0].value).toLowerCase()==='script')found=true;
+  }
+  if(x.type==='AssignmentExpression'&&x.left.type==='MemberExpression'&&['innerHTML','outerHTML','srcdoc'].includes(name(x.left))&&HTML.test(texts(x.right)))found=true;
+  for(const k in x)if(k!=='loc'&&k[0]!=='_')walk(x[k]);
+ };
+ walk(ast);return found;
+}
+
 exports["ScopeAnalysis"]=ScopeAnalysis;
+exports["createsCode"]=createsCode;
 exports["hops"]=hops;
 exports["patternNames"]=patternNames;
 },
@@ -18826,7 +18879,7 @@ class TypeInference {
  // ---- structure: known callees, escapes, parameter flow ----
  knownFunction(b){
   if(!b||b.assigns||b.inits!==1)return null;
-  if(b.storage==='global'&&(this.a.globalEscapes||this.a.dynamicGlobalWrites||this.a.globalWrites.has(b.name)||this.a.globalReads?.has(b.name)))return null;
+  if(b.storage==='global'&&(this.a.dynamicCode||this.a.globalEscapes||this.a.dynamicGlobalWrites||this.a.globalWrites.has(b.name)||this.a.globalReads?.has(b.name)))return null;
   const node=b.fnNode;if(!node)return null;
   return this.a.functions.get(node)||null;
  }
@@ -19313,7 +19366,37 @@ function compactLocals(fn){
  return {...fn,code,locals};
 }
 
+// Stack guard: V8 does not let WASM catch its own stack overflow, so compiled
+// functions count their frames in global 0 (in 8-byte units: a Liftoff frame
+// is about 7 units plus one per parameter and local) and throw a catchable
+// RangeError at the limit in global 1, which the runtime calibrates at boot.
+// Returns become branches to one exit that subtracts the frame again; catch
+// handlers restore the count of their own frame. Functions that call nothing
+// but pure helpers (no way back into compiled code) are not counted.
+function guardStack(fn,importCount,pure,overflow){
+ if(fn.code.length<=1)return fn;
+ let decoded;try{decoded=decode(fn.code);}catch(e){return fn;}
+ const {instructions,frames}=decoded;
+ const callsOut=instructions.some(x=>x.op===0x11||x.op===0x13||x.op===0x12||x.op===0x10&&!pure.has(calleeOf(fn.code,x.start)));
+ if(!callsOut)return fn;
+ const weight=7+fn.params.length+fn.locals.length,catches=instructions.some(x=>x.op===0x07||x.op===0x19);
+ const saved=fn.params.length+fn.locals.length,locals=catches?[...fn.locals,0x7f]:fn.locals;
+ const leb=n=>{const a=[];do{let b=n&127;n>>>=7;if(n)b|=128;a.push(b);}while(n);return a;},sleb=n=>{const a=[];for(;;){const b=n&127;n>>=7;if(n===0&&!(b&64)||n===-1&&(b&64)){a.push(b);return a;}a.push(b|128);}};
+ const code=[0x23,0,0x41,...sleb(weight),0x6a,0x24,0,0x23,0,0x23,1,0x4b,0x04,0x40,0x10,...leb(overflow),0x00,0x0b];
+ if(catches)code.push(0x23,0,0x21,...leb(saved));
+ code.push(0x02,fn.results[0]);
+ for(const x of instructions){
+  if(x.op===0x0f){code.push(0x0c,...leb(frames[x.frame].depth));continue;}
+  for(let i=x.start;i<x.end;i++)code.push(fn.code[i]);
+  if(x.op===0x07||x.op===0x19)code.push(0x20,...leb(saved),0x24,0);
+ }
+ code.push(0x0b,0x23,0,0x41,...sleb(weight),0x6b,0x24,0);
+ return {...fn,code,locals};
+}
+function calleeOf(code,start){let i=start+1,v=0,s=0,b;do{b=code[i++];v+=(b&127)*2**s;s+=7;}while(b&128);return v;}
+
 exports["compactLocals"]=compactLocals;
+exports["guardStack"]=guardStack;
 },
 37:function(module,exports,require){
 // Self-hosted built-ins: library functions written in JS and compiled to WASM

@@ -330,7 +330,11 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function setProperty(object,key,value,strict){if(object==null)throw new TypeError('Cannot set property of null or undefined');if(typeof object!=='object'&&typeof object!=='function'){if(strict)throw new TypeError('Cannot assign property of primitive');return value;}if(!Reflect.set(object,key,value,object)&&strict)throw new TypeError('Cannot assign property '+String(key));return value;}
  function writeProperty(r,v){if(r.private){const d=r.private;privateCheck(d,r.object);if(d.kind===0)d.values.set(r.object,v);else if(d.kind===2&&d.set)Reflect.apply(d.set,r.object,[v]);else throw new TypeError('Private member is not writable');return v;}if(r.unresolved&&r.strict)throw new ReferenceError(r.key+' is not defined');if(r.super){if(!Reflect.set(r.object,r.key,v,r.receiver))throw new TypeError('Cannot assign super property');return v;}return setProperty(r.object,r.key,v,r.strict);}
  function unwrap(e){if(e instanceof WebAssembly.Exception&&e.is(errorTag))return unbox(e.getArg(errorTag,0));return e;}
- function callCompiled(id,env,self,args,newTarget){try{return unbox(instance.exports['f'+id](env,box(self),args,box(newTarget)));}catch(e){throw unwrap(e);}}
+ // Frame count of the stack guard (see guardStack): reset when JS enters
+ // compiled code with no compiled frames below.
+ const depth=new WebAssembly.Global({value:'i32',mutable:true},0),limit=new WebAssembly.Global({value:'i32',mutable:true},0x7fffffff);
+ let entries=0;
+ function callCompiled(id,env,self,args,newTarget){if(entries===0)depth.value=0;entries++;try{return unbox(instance.exports['f'+id](env,box(self),args,box(newTarget)));}catch(e){throw unwrap(e);}finally{entries--;}}
  function makeFunction(env,id,name,flags,self,newTarget){
   const strict=!!(flags&1),arrow=!!(flags&2),info={home:null,method:!!(flags&8)};let closure=env,f;
   const call=(receiver,a,target)=>flags&48?startResumable(id,closure,receiver,a,target,flags,f):callCompiled(id,closure,receiver,a,target);
@@ -538,7 +542,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   putRef:(f,i,v)=>{f.slots[i]=v;},putInt:(f,i,v)=>{f.slots[i]=v;},putFloat:(f,i,v)=>{f.slots[i]=v;},
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
- const imports={error:errorTag,jstag:WebAssembly.JSTag||new WebAssembly.Tag({parameters:['externref']}),boxForeign:v=>box(v)};
+ const imports={depth,limit,stackOverflow:()=>{throw failure(new RangeError('Maximum call stack size exceeded'));},error:errorTag,jstag:WebAssembly.JSTag||new WebAssembly.Tag({parameters:['externref']}),boxForeign:v=>box(v)};
  const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','prototypeFlags','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
@@ -571,6 +575,10 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const bytes=typeof binary==='string'?Uint8Array.from(atob(binary),c=>c.charCodeAt(0)):binary;
  instance=new WebAssembly.Instance(new WebAssembly.Module(bytes),{r:imports});
  for(let id=0;id<metadata.length;id++)table.set(id,instance.exports['f'+id]);
+ // Calibrate the guard: frames of 8 units (one parameter) until the engine's
+ // own overflow; a 1-parameter Liftoff frame is about 7 units, keep 20% spare.
+ try{instance.exports.probe(0);}catch(e){}
+ limit.value=Math.max(20000,Math.floor(depth.value*7/8*0.8));depth.value=0;
  metadata.forEach((m,id)=>{if(m.prelude)callCompiled(id,root,globalObject,[],undefined);});
  initializeModules();
  const handlers=new Map();

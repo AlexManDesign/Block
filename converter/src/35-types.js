@@ -54,7 +54,7 @@ class TypeInference {
  // ---- structure: known callees, escapes, parameter flow ----
  knownFunction(b){
   if(!b||b.assigns||b.inits!==1)return null;
-  if(b.storage==='global'&&(this.a.globalEscapes||this.a.dynamicGlobalWrites||this.a.globalWrites.has(b.name)||this.a.globalReads?.has(b.name)))return null;
+  if(b.storage==='global'&&(this.a.dynamicCode||this.a.globalEscapes||this.a.dynamicGlobalWrites||this.a.globalWrites.has(b.name)||this.a.globalReads?.has(b.name)))return null;
   const node=b.fnNode;if(!node)return null;
   return this.a.functions.get(node)||null;
  }

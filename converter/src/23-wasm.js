@@ -8,13 +8,15 @@ function section(id,b){return [id,...u32(b.length),...b];}
 function nameSection(names){const entries=names.flatMap(([index,name])=>[...u32(index),...utf8(name)]),sub=[...u32(names.length),...entries];return section(0,[...utf8('name'),1,...u32(sub.length),...sub]);}
 // functions: [{params, results, code, locals}]; exports: [{name, index}]
 // (index counts imports first). Locals are single-byte value types.
-function makeModule(imports,functions,gcTypes=[],exported=[],names=null){
+// globals: imported mutable i32 globals by name (indices 0..n-1).
+function makeModule(imports,functions,gcTypes=[],exported=[],names=null,globals=[]){
  const types=[...gcTypes],keys=new Map();
  const type=(params,results)=>{const k=JSON.stringify([params,results]);if(!keys.has(k)){keys.set(k,types.length);types.push([0x60,...u32(params.length),...params,...u32(results.length),...results]);}return keys.get(k);};
  const entries=imports.map(x=>[...utf8('r'),...utf8(x.name),0,...u32(type(x.params,x.results))]);
  entries.push([...utf8('r'),...utf8('error'),4,0,...u32(type([REF],[]))]);
  // Tag 1: WebAssembly.JSTag, exceptions raised by the engine (stack overflow).
  entries.push([...utf8('r'),...utf8('jstag'),4,0,...u32(type([REF],[]))]);
+ for(const g of globals)entries.push([...utf8('r'),...utf8(g),3,I32,1]);
  const signatures=functions.map(f=>u32(type(f.params,f.results)));
  const exports=exported.map(e=>[...utf8(e.name),0,...u32(e.index)]);
  const bodies=functions.map(f=>{const groups=[];for(const t of f.locals){if(groups.at(-1)?.[1]===t)groups.at(-1)[0]++;else groups.push([1,t]);}const b=[...u32(groups.length),...groups.flatMap(([n,t])=>[...u32(n),t]),...f.code,0x0b];return [...u32(b.length),...b];});

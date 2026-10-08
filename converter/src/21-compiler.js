@@ -13,11 +13,16 @@ const environmentWasm=require("./environment-wasm.mjs")["environmentWasm"];
 const stringTypes=require("./string-wasm.mjs")["stringTypes"];
 const base64=require("./encoding.mjs")["base64"];
 const ScopeAnalysis=require("./scope.mjs")["ScopeAnalysis"];
+const createsCode=require("./scope.mjs")["createsCode"];
 const bindings=require("./bindings.mjs")["bindings"];
 const reprOf=require("./bindings.mjs")["reprOf"];
 const VALUE_TYPE=require("./bindings.mjs")["VALUE_TYPE"];
 const TypeInference=require("./types.mjs")["TypeInference"];
 const compactLocals=require("./locals.mjs")["compactLocals"];
+const guardStack=require("./locals.mjs")["guardStack"];
+// Helpers that never run compiled code (no callbacks, getters or valueOf):
+// a function calling only these needs no stack guard.
+const PURE=['lit','number','boolean','isNumber','toNumber','int32','truth','nullish','isUndefined','fromInt32','isString','stringLength','stringConcat','stringCompare','stringCharCodeAt','stringCharAt','stringSlice','stringSubstring','stringIndexOf','stringLastIndexOf','stringIncludes','stringStartsWith','stringEndsWith','stringRepeat','intToString','numberToString','stringFromCharCode','scopeNew','scopeClone','moduleScope','fmod','pow','taGetF','taGetI','taSetF','taSetI','taLength','typeofCode','equal','tdz','constAssign','isInt','isBool','isNumberOrUndefined','prototypeFlags','stackOverflow'];
 
 const signatures={
  ...featureSignatures,
@@ -34,7 +39,7 @@ const signatures={
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
  setFunctionName:['rri','r'],fromInt32:['i','r'],
- pushIntrinsic:['rr','i'],typeofCode:['r','i'],prototypeFlags:['','i'],boxForeign:['r','r'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ pushIntrinsic:['rr','i'],typeofCode:['r','i'],stackOverflow:['',''],prototypeFlags:['','i'],boxForeign:['r','r'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -70,6 +75,7 @@ class Compiler {
  build(){
   // Resolve every name of the program before emitting any function.
   const analysis=this.analysis=new ScopeAnalysis();
+  analysis.dynamicCode=this.plans.some(p=>!p.prelude&&createsCode(p.node));
   for(const plan of this.plans)if(plan.kind==='script')analysis.declareScript(plan);
   for(const plan of [...this.plans])analysis.program(plan);
   analysis.finish();
@@ -107,16 +113,21 @@ class Compiler {
   }
   // Temporaries share local slots (engine compile time grows with locals).
   for(let i=0;i<functions.length;i++)functions[i]=compactLocals(functions[i]);
+  const pure=new Set([...PURE.filter(n=>signatures[n]).map(n=>this.import(n)),...Object.keys(signatures).filter(n=>n.startsWith('math_')).map(n=>this.import(n))]);
+  for(let i=0;i<functions.length;i++)functions[i]=guardStack(functions[i],this.imports.length,pure,this.import('stackOverflow'));
+  // Boot probe: recurses until the engine's stack overflow, counting 7 units a frame.
+  const probeIndex=this.imports.length+functions.length;
+  functions.push(guardStack({params:[I32],results:[I32],locals:[],code:[0x20,0,0x41,1,0x6a,0x10,...u32(probeIndex)]},this.imports.length,new Set(),this.import('stackOverflow')));
   const metadata=this.plans.map(p=>({prelude:!!p.prelude,arity:p.arity,name:p.name,frameTypes:p.frameTypes,numeric:!!p.numeric,stringSpecialization:!!p.stringSpecialization,usesArguments:!!p.usesArguments}));
   if(metadata.length)metadata[0].rootSlots=analysis.root.slots;
   const environmentBinary=this.environments?environmentWasm():null;
   if(environmentBinary&&metadata.length)metadata[0].environmentWasm=base64(environmentBinary);
   // Types 0..2: strings (numeric.mjs relies on these indices), 3: scope record.
   this.functions=functions;
-  const exported=this.plans.map((_,id)=>({name:'f'+id,index:this.genericIndex(id)}));
+  const exported=[...this.plans.map((_,id)=>({name:'f'+id,index:this.genericIndex(id)})),{name:'probe',index:probeIndex}];
   // Readable names in profiles: f<id>/t<id> plus the source name.
   const names=this.plans.flatMap((p,id)=>{const label=(p.name||p.kind).replace(/[^\w$.-]/g,'_').slice(0,40);return [[this.genericIndex(id),'f'+id+'_'+label],[this.genericIndex(id)+1,'t'+id+'_'+label]];});
-  return {binary:makeModule(this.imports,functions,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]],exported,names),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
+  return {binary:makeModule(this.imports,functions,[stringTypes[0],stringTypes[1],stringTypes[3],[0x5e,REF,1]],exported,names,['depth','limit']),constants:this.constants,metadata,environmentBytes:environmentBinary?.length||0};
  }
  guardedEntry(id,fn){
   const body=new FunctionEmitter(this,id,{dynamicOnly:true}).compile();

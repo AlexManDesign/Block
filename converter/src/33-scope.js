@@ -119,7 +119,11 @@ class ScopeAnalysis {
   if(scope.kind==='script'){
    const existing=this.root.bindings.get(name);
    if(existing){this.scriptError(scope.node,name);return existing;}
-   const b=new Binding(name,kind,this.root,node);b.ready=Infinity;b.order=scope.order;this.root.bindings.set(name,b);b.script=scope.node;return b;
+   const b=new Binding(name,kind,this.root,node);b.ready=Infinity;b.order=scope.order;this.root.bindings.set(name,b);b.script=scope.node;
+   // Code made from strings at run time (see createsCode) must see top-level
+   // let/const/class: they live on the global object then.
+   if(this.dynamicCode)b.storage='global';
+   return b;
   }
   const b=this.declare(scope,name,kind,node);b.ready=ready;return b;
  }
@@ -434,6 +438,34 @@ function hops(from,target){
  throw new Error('Внутренняя ошибка: область '+target.kind+' недостижима');
 }
 
+// Does the program create code from strings at run time (inline handlers in
+// HTML strings, setAttribute('on...'), setTimeout('...'), new Function, eval,
+// script elements)? Such code is not compiled, so globals must stay visible
+// and replaceable.
+function createsCode(ast){
+ const HTML=/<[^>]*\son[a-z]+\s*=|<script/i,texts=x=>{const out=[];const walk=y=>{if(!y||typeof y!=='object')return;if(Array.isArray(y)){y.forEach(walk);return;}if(y.type==='Literal'&&typeof y.value==='string')out.push(y.value);if(y.type==='TemplateElement')out.push(y.value.cooked??'');for(const k in y)if(k!=='loc'&&k[0]!=='_')walk(y[k]);};walk(x);return out.join('\n');};
+ const name=c=>c.type==='Identifier'?c.name:c.type==='MemberExpression'&&!c.computed?c.property.name:c.type==='MemberExpression'&&c.property.type==='Literal'?String(c.property.value):'';
+ const stringy=a=>a&&(a.type==='Literal'&&typeof a.value==='string'||a.type==='TemplateLiteral'||a.type==='BinaryExpression');
+ let found=false;
+ const walk=x=>{
+  if(found||!x||typeof x!=='object')return;if(Array.isArray(x)){x.forEach(walk);return;}
+  if(x.type==='Identifier'&&x.name==='eval')found=true;
+  if(x.type==='MemberExpression'&&!x.computed&&x.property.name==='eval')found=true;
+  if(x.type==='CallExpression'||x.type==='NewExpression'){
+   const f=name(x.callee),a=x.arguments;
+   if(f==='Function'||f==='GeneratorFunction'||f==='AsyncFunction')found=true;
+   if((f==='setTimeout'||f==='setInterval')&&stringy(a[0]))found=true;
+   if((f==='setAttribute'||f==='setAttributeNS')){const k=a[f==='setAttribute'?0:1];if(!(k?.type==='Literal'&&typeof k.value==='string'&&!/^on/i.test(k.value)))found=true;}
+   if(['insertAdjacentHTML','write','writeln','createContextualFragment','parseFromString','setHTMLUnsafe'].includes(f)&&HTML.test(texts(a)))found=true;
+   if(f==='createElement'&&a[0]?.type==='Literal'&&String(a[0].value).toLowerCase()==='script')found=true;
+  }
+  if(x.type==='AssignmentExpression'&&x.left.type==='MemberExpression'&&['innerHTML','outerHTML','srcdoc'].includes(name(x.left))&&HTML.test(texts(x.right)))found=true;
+  for(const k in x)if(k!=='loc'&&k[0]!=='_')walk(x[k]);
+ };
+ walk(ast);return found;
+}
+
 exports["ScopeAnalysis"]=ScopeAnalysis;
+exports["createsCode"]=createsCode;
 exports["hops"]=hops;
 exports["patternNames"]=patternNames;
