@@ -173,11 +173,10 @@ class Boats {
       b.status = status;
       if (status === 'water') { inv = 0.9; lift = (level - P[1]) / BOAT_H; }
       else if (status === 'under') { inv = 0.45; lift = 0.01; }
-      else if (status === 'land') {
-        const id = w.getBlock(Math.floor(P[0]), Math.floor(P[1] - 0.001), Math.floor(P[2]));
-        inv = id === B.ICE || id === B.PACKED_ICE ? 0.98 : id === B.BLUE_ICE ? 0.989 : 0.6;
-        if (keys) inv /= 2;
-      } else inv = 0.9;
+      // on land the block friction under the hull (Boat.getGroundFriction; its halving for a
+      // rider changes only the value read again next tick, so it has no effect)
+      else if (status === 'land') inv = this.groundFriction(b);
+      else inv = 0.9;
       V[0] *= inv; V[2] *= inv; V[1] += grav;
       b.drot *= inv;
       if (lift > 0) V[1] = (V[1] + lift * 0.06153846) * 0.75;
@@ -194,22 +193,39 @@ class Boats {
       b.yaw += r;
       b.turned += r; b.lastTurn = r;
       V[0] += Math.sin(b.yaw) * f; V[2] -= Math.cos(b.yaw) * f;
-    } else b.yaw += b.drot * Math.PI / 180;
-    // move, axis by axis
+    }
+    // Entity.move: Y first, then the larger of X and Z; a blocked axis moves up to the contact and
+    // its velocity is cleared (no stepping up: a boat's step height is 0)
     b.onGround = false;
-    for (let a = 0; a < 3; a++) {
+    for (const a of Math.abs(V[2]) > Math.abs(V[0]) ? [1, 2, 0] : [1, 0, 2]) {
       const d = V[a];
       if (!d) continue;
       const o = P[a];
       P[a] = o + d;
-      if (entCollides(w, P[0], P[1], P[2], BOAT_W, BOAT_H)) {
-        P[a] = o;
-        if (a === 1 && d < 0) b.onGround = true;
-        V[a] = 0;
-      }
+      if (!entCollides(w, P[0], P[1], P[2], BOAT_W, BOAT_H)) continue;
+      let lo = 0, hi = 1;
+      for (let k = 0; k < 8; k++) { const m = (lo + hi) / 2; P[a] = o + d * m; if (entCollides(w, P[0], P[1], P[2], BOAT_W, BOAT_H)) hi = m; else lo = m; }
+      P[a] = o + d * lo;
+      if (a === 1 && d < 0) b.onGround = true;
+      V[a] = 0;
     }
     if (b.damage > 0) b.damage = Math.max(0, b.damage - 1);
     if (b.hurtT > 0) b.hurtT--;
+  }
+
+  // Boat.getGroundFriction: the mean friction of the blocks whose collision shape touches the thin
+  // slab just under the hull (ice and packed ice 0.98, blue ice 0.989, slime 0.8, others 0.6)
+  groundFriction(b) {
+    const w = this.game.world, P = b.pos, hw = BOAT_W / 2, y = Math.floor(P[1] - 0.001);
+    let f = 0, n = 0;
+    for (let bx = Math.floor(P[0] - hw); bx <= Math.floor(P[0] + hw - 1e-7); bx++) for (let bz = Math.floor(P[2] - hw); bz <= Math.floor(P[2] + hw - 1e-7); bz++) {
+      const id = w.getBlock(bx, y, bz);
+      if (!id || !COLLIDE[id] || id === B.LILY_PAD) continue;
+      const boxes = collisionBoxes(w, id, w.getMeta(bx, y, bz), bx, y, bz);
+      if (!boxes || !boxes.some(q => bx + q[0] < P[0] + hw && bx + q[3] > P[0] - hw && bz + q[2] < P[2] + hw && bz + q[5] > P[2] - hw && y + q[4] >= P[1] - 0.001 && y + q[1] < P[1])) continue;
+      f += id === B.ICE || id === B.PACKED_ICE ? 0.98 : id === B.BLUE_ICE ? 0.989 : id === B.SLIME_BLOCK ? 0.8 : 0.6; n++;
+    }
+    return n ? f / n : 0.6;
   }
 
   // ---------------------------------------------------------------- drawing
