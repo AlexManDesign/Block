@@ -875,6 +875,28 @@ class WorldGen {
         ids[i] = y <= -55 ? B.LAVA : 0;
         this.meta[i] = 0;
       }
+      // floors near the surface (under a thin roof or an overhang): in Minecraft the noise caves are
+      // part of the terrain and the surface rules run after them, so a floor counts as surface while
+      // it lies above the preliminary surface + surface depth - 8 (SurfaceRules.abovePreliminary-
+      // Surface, surface depth = noise x 2.75 + 3): it gets the biome's top block and filler under it
+      {
+        const bio = this.BIO[z * 16 + x], ob = ORIG_BIOME[bio];
+        const sd = Math.floor(this.nSurf.n2(wx / 64 + 311.5, wz / 64 - 207.25) * 2.75 + 3 + hash2(this.seed + 61, wx, wz) * 0.25);
+        const lo = Math.max(SEA, top + sd - 8);
+        for (let y = top - 1; y >= lo; y--) {
+          const f = ids[CI(x, y, z)];
+          if (ids[CI(x, y + 1, z)] !== 0 || !(this.isStoneLike(f) || f === B.DIRT || f === B.SAND || f === B.RED_SAND || f === B.SANDSTONE || f === B.MUD || f === B.GRAVEL)) continue;
+          const h = this.colInfo(wx, wz).h;
+          const t2 = this.bareSlope(bio, wx, wz, y) ? B.STONE : this.surfTop(ob, wx, wz, y, h);
+          ids[CI(x, y, z)] = t2;
+          for (let d = 1; d <= 3; d++) {
+            const i = CI(x, y - d, z);
+            if (!this.isStoneLike(ids[i])) break;
+            const fb = this.fillBlock(ob, t2, wx, y - d, wz);
+            if (fb) ids[i] = fb;
+          }
+        }
+      }
       // a cave that opened the surface exposes filler (dirt, sand...): the new top gets the biome's
       // surface block, as if the surface rules had run after carving (Minecraft's order)
       let ny = WORLD_MAX_Y - 1;
