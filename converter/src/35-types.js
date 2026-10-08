@@ -65,7 +65,7 @@ class TypeInference {
    fn.escapes=false;fn.calls=[];fn.usesThis=false;fn.binding=null;
    if(n.type==='FunctionDeclaration'&&n.id?._ref?.binding){n.id._ref.binding.fnNode=n;fn.binding=n.id._ref.binding;}
   }
-  const visitDeclarator=d=>{if(d.id.type==='Identifier'&&d.init&&(d.init.type==='FunctionExpression'||d.init.type==='ArrowFunctionExpression')&&d.id._ref?.binding){const b=d.id._ref.binding;if(b.kind==='const'||b.kind==='let'){b.fnNode=d.init;this.a.functions.get(d.init).binding=b;}}};
+  const visitDeclarator=d=>{if(d.id.type==='Identifier'&&d.init&&(d.init.type==='FunctionExpression'||d.init.type==='ArrowFunctionExpression')&&d.id._ref?.binding){const b=d.id._ref.binding;if((b.kind==='const'||b.kind==='let')&&b.scope.kind!=='for'){b.fnNode=d.init;this.a.functions.get(d.init).binding=b;}}};
   for(const fn of this.fns){
    const n=fn.node;if(!n)continue;
    const walk=(x,parent)=>{
@@ -134,6 +134,7 @@ class TypeInference {
     else if(b.captured&&owner?.binding?.storage==='global')t=ANY;
     else if(['arguments','catch','callee','class','class-inner','import','namespace','function','function-block'].includes(b.kind))t=ANY;
     else if(b.storage==='local'&&b.tdzChecks)t=ANY;
+    else if(b.kind==='param'&&b.fnNode)t=ANY; // a parameter redeclared by a function declaration
     else if(b.kind==='param'){
      const fn=b.scope.fn;
      if(fn.escapes||fn.mapped||fn.usesArguments)t=ANY;
@@ -199,6 +200,7 @@ class TypeInference {
   freeze(this.a.root);
   this.annotate=true;for(const fn of this.fns)this.visitFunction(fn);
  }
+ scriptOrder(fn){let s=fn?.scope;while(s&&s.kind!=='script')s=s.parent;return s?s.order:Infinity;}
  visitFunction(fn){
   const n=fn.node;if(!n)return;
   this.fn=fn;
@@ -374,7 +376,9 @@ class TypeInference {
   if(callee.type==='Identifier'){
    const b=callee._ref?.binding,fn=b?.fnNode?this.a.functions.get(b.fnNode):null;
    const args=n.arguments.map(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
-   if(fn&&fn.direct&&!fn.escapes&&!n.arguments.some(x=>x.type==='SpreadElement')){
+   // A call that may run before the binding is initialized keeps its TDZ check;
+   // a global declared by a later script may not exist yet when this one runs.
+   if(fn&&fn.direct&&!fn.escapes&&!callee._ref?.check&&!(b.order>this.scriptOrder(this.fn))&&!n.arguments.some(x=>x.type==='SpreadElement')){
     n._direct=fn;
     fn.node.params.forEach((p,i)=>{
      const id=p.type==='AssignmentPattern'?p.left:p,param=id._ref.binding;

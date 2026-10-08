@@ -34,7 +34,7 @@ const signatures={
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
  setFunctionName:['rri','r'],fromInt32:['i','r'],
- pushIntrinsic:['rr','i'],typeofCode:['r','i'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ pushIntrinsic:['rr','i'],typeofCode:['r','i'],boxForeign:['r','r'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -70,6 +70,7 @@ class Compiler {
  build(){
   // Resolve every name of the program before emitting any function.
   const analysis=this.analysis=new ScopeAnalysis();
+  for(const plan of this.plans)if(plan.kind==='script')analysis.declareScript(plan);
   for(const plan of [...this.plans])analysis.program(plan);
   analysis.finish();
   new TypeInference(analysis).run();
@@ -154,6 +155,12 @@ class FunctionEmitter {
  rt(name){this.out(0x10,...u32(this.c.import(name)));}
  label(kind,body,result=0x40,tag=null){this.out(kind==='loop'?0x03:0x02,result);const label={kind,tag};this.labels.push(label);body(label);this.labels.pop();this.out(0x0b);}
  branch(label){const depth=this.labels.length-1-this.labels.lastIndexOf(label);if(depth<0)throw new Error('Invalid compiler branch');this.out(0x0c,...u32(depth));}
+ // JS exceptions raised inside WASM frames (stack overflow) carry JSTag, which
+ // compiled catch clauses do not see: rethrow them with the runtime's tag.
+ foreignGuard(body){
+  if(this.dynamicOnly){body();return;}
+  this.out(0x06,0x40);this.labels.push({kind:'try'});body();this.out(0x07,1);this.rt('boxForeign');this.out(0x08,0);this.labels.pop();this.out(0x0b);
+ }
  ifElse(yes,no,result=0x40){this.out(0x04,result);this.labels.push({kind:'if'});yes();if(no){this.out(0x05);no();}this.labels.pop();this.out(0x0b);}
  args(nodes){this.rt('array');for(const a of nodes){if(a?.type==='SpreadElement'){this.expression(a.argument);this.rt('spread');}else if(a){this.expression(a);this.rt('push');}else this.rt('hole');}}
  binary(op,left,right){

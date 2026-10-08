@@ -44,12 +44,17 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function privateKey(e,index){const name=pool[index];for(let p=e;p;p=environment.scopeParent(p)){const privates=environmentInfo.get(p)?.privates;if(privates?.has(name))return privates.get(name);}throw new SyntaxError('Unknown private name: '+name);}
  function privateCheck(d,o){if(!d.values.has(o))throw new TypeError('Object does not have private member #'+d.name);}
  const names=new Map();pool.forEach((name,i)=>{if(typeof name==='string')names.set(name,i);});
- function nameIndex(name){if(!names.has(name)){names.set(name,pool.length);pool.push(name);}return names.get(name);}
+ function nameIndex(name){if(!names.has(name)){names.set(name,pool.length);append(pool,name);}return names.get(name);}
  const objectPrototype=Object.prototype,arrayPrototype=Array.prototype,getPrototype=Object.getPrototypeOf,getNames=Object.getOwnPropertyNames,defineProperty=Object.defineProperty;
+ // Arrays the runtime builds never use [[Set]] or Array.prototype methods: a
+ // program may put index accessors on Array.prototype or replace its methods.
+ const append=(a,v)=>{defineProperty(a,a.length,{value:v,writable:true,enumerable:true,configurable:true});return a;};
+ const listOf=(n,f)=>{switch(n){case 0:return [];case 1:return [f(0)];case 2:return [f(0),f(1)];case 3:return [f(0),f(1),f(2)];case 4:return [f(0),f(1),f(2),f(3)];}const a=[];for(let i=0;i<n;i++)append(a,f(i));return a;};
+ const generatorNext=getPrototype(getPrototype((function*(){})())).next;
  const baseKeys=Object.getOwnPropertyNames(Object.prototype);
  const intrinsic=(name)=>{const f=getDescriptor(arrayPrototype,name)?.value;return typeof f==='function'&&Reflect.apply(globalThis.Function.prototype.toString,f,[])===`function ${name}() { [native code] }`?f:null;};
  const stringCache=new Map(),hostStrings=new WeakMap(),characterCode=String.prototype.charCodeAt,fromCharCode=String.fromCharCode,getDescriptor=Object.getOwnPropertyDescriptor;
- const arrayPush=intrinsic('push'),arrayPop=intrinsic('pop');
+ const arrayPush=intrinsic('push'),arrayPop=intrinsic('pop'),arrayIncludes=arrayPrototype.includes;
  const speciesGetter=getDescriptor(Array,Symbol.species)?.get;
  // Natives that self-hosted built-ins replace inside WASM, resolved at boot.
  const nativeAt=path=>{let v=globalObject;for(const k of path.split('.')){v=v==null?undefined:v[k];}return typeof v==='function'?v:null;};
@@ -146,7 +151,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
    case 3:return boxedBridge((a,b,c)=>out(fn(unbox(a),unbox(b),unbox(c))),invalidate);
    case 4:return boxedBridge((a,b,c,d)=>out(fn(unbox(a),unbox(b),unbox(c),unbox(d))),invalidate);
   }
-  return boxedBridge((...a)=>out(fn(...a.map(unbox))),invalidate,-1);
+  return boxedBridge((...a)=>out(Reflect.apply(fn,undefined,listOf(a.length,i=>unbox(a[i])))),invalidate,-1);
  }
  function materialize(v){
   const existing=environment.objectHost(v);if(existing!==null)return existing;
@@ -289,13 +294,12 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function callValue(fn,self,args){
   if(isClosure(fn))return environment.closureInvoke(fn,self,args);
   const f=functions.get(fn);if(f?.invokeBoxed)return f.invokeBoxed(self,args,environment.undefinedValue());
-  if(stringMethodIds.has(fn)&&environment.isString(self))return box(nativeStringCall(fn,self,args.map(unbox)));
+  if(stringMethodIds.has(fn)&&environment.isString(self))return box(nativeStringCall(fn,self,listOf(args.length,i=>unbox(args[i]))));
   if((fn===arrayPush||fn===arrayPop)&&denseArray(self)&&(environment.arrayLength(self)>>>0)+args.length<1048576){
    if(fn===arrayPop)return environment.arrayPopValue(self,box('length'));
-   for(const v of args)environment.push(self,v);return environment.getProp(self,box('length'));
+   for(let i=0;i<args.length;i++)environment.push(self,args[i]);return environment.getProp(self,box('length'));
   }
-  const values=new Array(args.length);for(let i=0;i<args.length;i++)values[i]=unbox(args[i]);
-  return applyNative(fn,unbox(self),values);
+  return applyNative(fn,unbox(self),listOf(args.length,i=>unbox(args[i])));
  }
  function applyNative(fn,self,values){
   const result=Reflect.apply(checkCallable(typeof fn==='function'?fn:unbox(fn)),self,values);
@@ -307,10 +311,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   const f=functions.get(fn);if(f?.invokeBoxed)return f.invokeBoxed(self,args,environment.undefinedValue());
   const selfKind=kinds&7;
   if(selfKind===6&&stringMethodIds.has(fn)||selfKind===7&&(fn===arrayPush||fn===arrayPop))return callValue(fn,self,args);
-  const values=new Array(args.length);for(let i=0;i<args.length;i++)values[i]=fromKind(args[i],(kinds>>>3*(i+1))&7);
-  return applyNative(fn,fromKind(self,selfKind),values);
+  return applyNative(fn,fromKind(self,selfKind),listOf(args.length,i=>fromKind(args[i],(kinds>>>3*(i+1))&7)));
  }
- function boxedArguments(a){if(Array.isArray(a))return a;const n=environment.argCount(a)>>>0,values=new Array(n);for(let i=0;i<n;i++)values[i]=environment.arg(a,i);return values;}
+ function boxedArguments(a){if(Array.isArray(a))return a;return listOf(environment.argCount(a)>>>0,i=>environment.arg(a,i));}
  function invoke(r,a){
   if(isClosure(r.fn))return environment.closureInvoke(r.fn,r.self,a);
   const f=functions.get(r.fn);if(f?.invokeBoxed)return f.invokeBoxed(r.self,a,environment.undefinedValue());
@@ -349,7 +352,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  function initializeField(field,self){const value=Reflect.apply(field.fn,self,[field.key]);if(field.isBlock)return;
   // An anonymous function in a computed-key field is named after the key.
   if(field.named&&typeof value==='function')Object.defineProperty(value,'name',{value:keyName(field.key),configurable:true});if(privateKeys.has(field.key))addPrivate(field.key,self,value);else Object.defineProperty(self,field.key,{value,writable:true,enumerable:true,configurable:true});}
- function initializeFields(c,self){const info=classes.get(c);for(const d of info.privateMethods)if(!d.isStatic)addPrivate(d,self,undefined);for(const field of info.fields)initializeField(field,self);}
+ function initializeFields(c,self){const info=classes.get(c),m=info.privateMethods,f=info.fields;for(let i=0;i<m.length;i++)if(!m[i].isStatic)addPrivate(m[i],self,undefined);for(let i=0;i<f.length;i++)initializeField(f[i],self);}
  function makeClass(env,base,ctorId,nameIndex,derived){
   let prototype=Object.prototype;if(derived){if(base!==null){if(typeof base!=='function')throw new TypeError('Class extends a non-constructor');Reflect.construct(Object,[],base);}prototype=base===null?null:base.prototype;if(prototype!==null&&typeof prototype!=='object'&&typeof prototype!=='function')throw new TypeError('Invalid superclass prototype');}
   const e=environment.scopeNew(env,1);
@@ -360,9 +363,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   c.prototype=Object.create(prototype,{constructor:{value:c,writable:true,configurable:true}});Object.defineProperty(c,'prototype',{writable:false});Object.defineProperty(c,'name',{value:pool[nameIndex],configurable:true});Object.defineProperty(c,'length',{value:ctorId<0?0:metadata[ctorId].arity,configurable:true});if(derived&&base!==null)Object.setPrototypeOf(c,base);classes.set(c,{fields:[],statics:[],privateMethods:[]});
   environment.scopeSet(e,1,c);environmentInfo.set(e,{home:c.prototype,classOwner:c});compiledKinds.set(c,'class');return c;
  }
- function classMethod(c,key,fn,kind,isStatic){const home=isStatic?c:c.prototype;setHome(fn,home);const name=privateKeys.has(key)?'#'+key.name:keyName(key);Object.defineProperty(fn,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});if(privateKeys.has(key)){key[kind===1?'get':kind===2?'set':'fn']=fn;const methods=classes.get(c).privateMethods;if(!methods.includes(key))methods.push(key);return;}Object.defineProperty(home,key,{...(kind===1?{get:fn}:kind===2?{set:fn}:{value:fn,writable:true}),enumerable:false,configurable:true});}
- function classField(c,key,fn,isStatic,flags){setHome(fn,isStatic?c:c.prototype);classes.get(c)[isStatic?'statics':'fields'].push({key,fn,isBlock:flags&1,named:flags&2});}
- function finishClass(c){const info=classes.get(c);for(const d of info.privateMethods)if(d.isStatic)addPrivate(d,c,undefined);for(const field of info.statics)initializeField(field,c);return c;}
+ function classMethod(c,key,fn,kind,isStatic){const home=isStatic?c:c.prototype;setHome(fn,home);const name=privateKeys.has(key)?'#'+key.name:keyName(key);Object.defineProperty(fn,'name',{value:(kind===1?'get ':kind===2?'set ':'')+name,configurable:true});if(privateKeys.has(key)){key[kind===1?'get':kind===2?'set':'fn']=fn;const methods=classes.get(c).privateMethods;if(!Reflect.apply(arrayIncludes,methods,[key]))append(methods,key);return;}Object.defineProperty(home,key,{...(kind===1?{get:fn}:kind===2?{set:fn}:{value:fn,writable:true}),enumerable:false,configurable:true});}
+ function classField(c,key,fn,isStatic,flags){setHome(fn,isStatic?c:c.prototype);append(classes.get(c)[isStatic?'statics':'fields'],{key,fn,isBlock:flags&1,named:flags&2});}
+ function finishClass(c){const info=classes.get(c),m=info.privateMethods,s=info.statics;for(let i=0;i<m.length;i++)if(m[i].isStatic)addPrivate(m[i],c,undefined);for(let i=0;i<s.length;i++)initializeField(s[i],c);return c;}
  function superCall(env,cell,args,newTarget){const c=context(env,'classOwner'),value=Reflect.construct(Object.getPrototypeOf(c),args,newTarget);if(thisCells.get(cell)!==UNINIT)throw new ReferenceError('Super constructor may only be called once');thisCells.set(cell,value);initializeFields(c,value);return value;}
  function checkCallable(f){if(f===globalThis.eval||f===globalThis.Function)throw new TypeError('Runtime JS generation is not supported by this AOT compiler');return f;}
  function argumentsObject(args,env,paramIndex,mapped){
@@ -427,7 +430,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  });}
  function enqueueGenerator(object,kind,value){return new Promise((resolve,reject)=>{
   const f=generatorFrames.get(object);if(!f||!f.queue){reject(new TypeError('Invalid async generator receiver'));return;}
-  f.queue.push({kind,value,resolve,reject});drainGenerator(f);
+  append(f.queue,{kind,value,resolve,reject});drainGenerator(f);
  });}
  function drainGenerator(f){
   if(f.processing||!f.queue.length)return;f.processing=true;const request=f.queue[0];
@@ -469,7 +472,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   if(record.state===4)throw record.error;if(record.state===3||record.state===1)return null;if(record.state===2)return record.promise;
   record.state=1;
   try{
-   const waits=[];for(const id of record.spec.deps){const p=evaluateModule(modules[id]);if(p){upon(p,undefined,()=>{});waits.push(p);}}
+   const waits=[];for(const id of record.spec.deps){const p=evaluateModule(modules[id]);if(p){upon(p,undefined,()=>{});append(waits,p);}}
    const run=()=>record.spec.async?driveAsync(frame(record.spec.execute,record.env,undefined,[],undefined)):callCompiled(record.spec.execute,record.env,undefined,[],undefined);
    if(waits.length||record.spec.async){record.state=2;const p=waits.length?upon(Promise.all(waits),run):run();record.promise=upon(resolved(p),()=>{record.state=3;},e=>failModule(record,e));return record.promise;}
    run();record.state=3;return null;
@@ -512,7 +515,9 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   arg:(a,i)=>a[i],rest:(a,i)=>a.slice(i),
   arguments:argumentsObject,iterator,next:r=>step(r),done:r=>+r.done,value:r=>r.value,
   // for-in: keys deleted before they are reached are skipped (as V8 does).
-  keys:v=>{const a=[];for(const k in v)a.push(k);const o=Object(v);let i=0;const it={next(){while(i<a.length){const k=a[i++];if(k in o)return {value:k,done:false};}return {value:undefined,done:true};}};return {iterator:it,next:it.next,done:false};},
+  // for-in runs as the engine's own for-in inside a generator: keys deleted
+  // during the loop, proxies and prototype shadowing behave exactly as in JS.
+  keys:v=>{const it=(function*(){for(const k in v)yield k;})();return {iterator:it,next:generatorNext,done:false};},
   throw:v=>{throw v;},
  };
  Object.assign(raw,{
@@ -523,7 +528,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   superProperty:(e,self,key)=>({object:Object.getPrototypeOf(context(e,'home')),key,receiver:thisValue(self),super:true,strict:true}),
   coercible:v=>{if(v==null)throw new TypeError('Cannot destructure null or undefined');return v;},
   objectRest:(v,excluded)=>{const o={};excluded=excluded.map(k=>typeof k==='symbol'?k:String(k));for(const k of Reflect.ownKeys(Object(v)))if(!excluded.includes(k)&&Object.getOwnPropertyDescriptor(Object(v),k)?.enumerable)Object.defineProperty(o,k,{value:v[k],enumerable:true,configurable:true,writable:true});return o;},
-  take:r=>step(r).value,skip:r=>{step(r,false);},iteratorRest:r=>{const a=[];for(let item=step(r);!item.done;item=step(r))a.push(item.value);return a;},closeIterator,
+  take:r=>step(r).value,skip:r=>{step(r,false);},iteratorRest:r=>{const a=[];for(let item=step(r);!item.done;item=step(r))append(a,item.value);return a;},closeIterator,
   template:(site,index)=>{if(!templateCache.has(site)){const spec=pool[index],cooked=spec.cooked.map(s=>s===null?undefined:s),r=Object.freeze([...spec.raw]);Object.defineProperty(cooked,'raw',{value:r});templateCache.set(site,Object.freeze(cooked));}return templateCache.get(site);},
   pause:()=>{throw new Error('Unlowered suspension');},resumeKind:r=>r.kind,resumeValue:r=>r.value,
   request:(kind,value)=>({kind,value}),delegate,delegateStep,asyncIterator,asyncNext,asyncClose,
@@ -531,7 +536,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   putRef:(f,i,v)=>{f.slots[i]=v;},putInt:(f,i,v)=>{f.slots[i]=v;},putFloat:(f,i,v)=>{f.slots[i]=v;},
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
- const imports={error:errorTag};
+ const imports={error:errorTag,jstag:WebAssembly.JSTag||new WebAssembly.Tag({parameters:['externref']}),boxForeign:v=>box(v)};
  const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
@@ -541,6 +546,8 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  imports.isWasmObject=environment.isObject;
  imports.registerIntrinsic=boxedBridge((name,c)=>{const native=nativeAt(unbox(name));if(native&&!hostObjects.has(native)){environment.closureSetHost(c,native);hostObjects.set(native,c);}});
  imports.callNative=boxedBridge((c,self,a)=>applyNative(environment.closureHost(c),unbox(self),argumentList(a)));
+ // The argument list may hold boxed values (calls from WASM): unbox each.
+ imports.arguments=boxedBridge((a,e,k,m)=>box(argumentsObject(argumentList(a),e,k,m)));
  imports.thisValue=boxedBridge(v=>thisCells.has(v)?box(thisValue(v)):v);
  imports.coercible=boxedBridge(v=>{if(environment.nullish(v))throw new TypeError('Cannot destructure null or undefined');return v;});
  imports.prepare=boxedBridge(prepare);

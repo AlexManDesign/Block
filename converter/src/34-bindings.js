@@ -120,9 +120,17 @@ const bindings={
   const {name}=n._strMethod,args=n.arguments,search=['indexOf','lastIndexOf','includes','startsWith','endsWith'].includes(name);
   if(!['charCodeAt','charAt','slice','substring','repeat','concat'].includes(name)&&!search)return null;
   if(search&&(!args.length||args[0]._t!==STR)||name==='concat'&&args.some(a=>a._t!==STR))return null;
+  // An end/position of undefined means "absent" there; a typed-array element
+  // (NU) has already lost undefined to NaN, so it takes the generic path.
+  if(['slice','substring','endsWith'].includes(name)&&args[1]?._t===NU)return null;
   const s=this.local();this.natural(n.callee.object);this.set(s);
   const values=args.map(a=>{const r=this.natural(a),x=this.local(VALUE_TYPE[r]);this.set(x);return {x,r,t:a._t};});
-  const number=(i,missing)=>{if(i>=values.length){this.f64(missing);return;}const v=values[i];this.get(v.x);this.convert(v.r,'f',v.t);};
+  const number=(i,missing)=>{
+   if(i>=values.length){this.f64(missing);return;}
+   const v=values[i];this.get(v.x);
+   if(missing===Infinity&&v.r==='r'&&!numeric(v.t)){const x=this.local();this.tee(x);this.rt('isUndefined');this.ifElse(()=>this.f64(Infinity),()=>{this.get(x);this.convert('r','f',v.t);},F64);return;}
+   this.convert(v.r,'f',v.t);
+  };
   this.get(s);
   switch(name){
    case'charCodeAt':number(0,NaN);this.rt('stringCharCodeAt');return 'f';
@@ -753,7 +761,7 @@ const bindings={
    case'TryStatement':{
     if(n.finalizer){this.withFinally(()=>this.statement({...n,finalizer:null}),()=>this.statement(n.finalizer));return;}
     if(!n.handler){this.statement(n.block);return;}
-    this.out(0x06,0x40);this.labels.push({kind:'try'});this.statement(n.block);this.out(0x07,0);const caught=this.local();this.set(caught);
+    this.out(0x06,0x40);this.labels.push({kind:'try'});this.foreignGuard(()=>this.statement(n.block));this.out(0x07,0);const caught=this.local();this.set(caught);
     this.enterScope(n.handler._scope,()=>{if(n.handler.param)this.pattern(n.handler.param,()=>this.get(caught),'let');this.statement(n.handler.body);});
     this.labels.pop();this.out(0x0b);return;
    }

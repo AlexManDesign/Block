@@ -23,7 +23,7 @@ const features={
  },
  withFinally(body,cleanup){
   const c={state:this.local(I32),value:this.local(),routes:[]};this.integer(0);this.set(c.state);
-  this.label('cleanup',exit=>{c.exit=exit;this.finalizers.push(c);this.out(0x06,0x40);this.labels.push({kind:'try'});body();this.out(0x07,0);this.set(c.value);this.integer(1);this.set(c.state);this.labels.pop();this.out(0x0b);this.finalizers.pop();});
+  this.label('cleanup',exit=>{c.exit=exit;this.finalizers.push(c);this.out(0x06,0x40);this.labels.push({kind:'try'});this.foreignGuard(body);this.out(0x07,0);this.set(c.value);this.integer(1);this.set(c.state);this.labels.pop();this.out(0x0b);this.finalizers.pop();});
   cleanup(c);this.get(c.state);this.integer(1);this.out(0x46);this.ifElse(()=>{this.get(c.value);this.rt('throw');this.out(0x00);});
   for(const r of c.routes){this.get(c.state);this.integer(r.id);this.out(0x46);this.ifElse(()=>this.abrupt(r.kind,r.target,c.value));}
  },

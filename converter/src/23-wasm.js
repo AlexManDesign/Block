@@ -13,6 +13,8 @@ function makeModule(imports,functions,gcTypes=[],exported=[],names=null){
  const type=(params,results)=>{const k=JSON.stringify([params,results]);if(!keys.has(k)){keys.set(k,types.length);types.push([0x60,...u32(params.length),...params,...u32(results.length),...results]);}return keys.get(k);};
  const entries=imports.map(x=>[...utf8('r'),...utf8(x.name),0,...u32(type(x.params,x.results))]);
  entries.push([...utf8('r'),...utf8('error'),4,0,...u32(type([REF],[]))]);
+ // Tag 1: WebAssembly.JSTag, exceptions raised by the engine (stack overflow).
+ entries.push([...utf8('r'),...utf8('jstag'),4,0,...u32(type([REF],[]))]);
  const signatures=functions.map(f=>u32(type(f.params,f.results)));
  const exports=exported.map(e=>[...utf8(e.name),0,...u32(e.index)]);
  const bodies=functions.map(f=>{const groups=[];for(const t of f.locals){if(groups.at(-1)?.[1]===t)groups.at(-1)[0]++;else groups.push([1,t]);}const b=[...u32(groups.length),...groups.flatMap(([n,t])=>[...u32(n),t]),...f.code,0x0b];return [...u32(b.length),...b];});

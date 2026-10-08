@@ -86,7 +86,7 @@ class ScopeAnalysis {
  declareGlobal(scope,name,kind,node){
   const script=scope.node,existing=this.root.bindings.get(name);
   if(existing&&existing.lexical){this.scriptError(script,name);return;}
-  let b=existing;if(!b){b=new Binding(name,kind,this.root,node);b.storage='global';b.ready=-Infinity;this.root.bindings.set(name,b);}
+  let b=existing;if(!b){b=new Binding(name,kind,this.root,node);b.storage='global';b.ready=-Infinity;b.order=scope.order;this.root.bindings.set(name,b);}
   else if(kind==='function')b.kind='function';
   (script._globalDecls??=[]).push({name,kind,node});
  }
@@ -115,17 +115,25 @@ class ScopeAnalysis {
   if(scope.kind==='script'){
    const existing=this.root.bindings.get(name);
    if(existing){this.scriptError(scope.node,name);return existing;}
-   const b=new Binding(name,kind,this.root,node);b.ready=Infinity;this.root.bindings.set(name,b);b.script=scope.node;return b;
+   const b=new Binding(name,kind,this.root,node);b.ready=Infinity;b.order=scope.order;this.root.bindings.set(name,b);b.script=scope.node;return b;
   }
   const b=this.declare(scope,name,kind,node);b.ready=ready;return b;
+ }
+ // Declares a classic script's top-level names. All scripts are declared
+ // before any body is resolved, so a function can refer to names that a later
+ // script declares (they share the global scope).
+ declareScript(plan){
+  const node=plan.node;if(node._scope)return;
+  const fn=new FunctionInfo(node,this.root,'script');fn.strict=plan.strict;this.functions.set(node,fn);
+  const scope=new Scope('script',this.root,fn,node);scope.strict=fn.strict;scope.order=this.scriptOrder=(this.scriptOrder??-1)+1;fn.scope=scope;node._scope=scope;
+  this.hoistVars(node.body,scope,fn);this.lexicalDeclarations(node.body,scope,fn,true);
  }
  // Creates the scope tree of a top-level plan (script, handler, module).
  program(plan){
   const node=plan.node;
   if(plan.kind==='script'){
-   const fn=new FunctionInfo(node,this.root,'script');fn.strict=plan.strict;this.functions.set(node,fn);
-   const scope=new Scope('script',this.root,fn,node);scope.strict=fn.strict;fn.scope=scope;node._scope=scope;
-   this.hoistVars(node.body,scope,fn);this.lexicalDeclarations(node.body,scope,fn,true);
+   this.declareScript(plan);
+   const fn=this.functions.get(node),scope=node._scope;
    node.body.forEach(s=>this.statement(s,scope,fn));
    return fn;
   }
@@ -310,16 +318,17 @@ class ScopeAnalysis {
     if(n.operator==='typeof'&&n.argument.type==='Identifier'){this.reference(n.argument,scope,fn,'typeof');return;}
     if(n.operator==='delete'&&n.argument.type==='Identifier'){this.reference(n.argument,scope,fn,'delete');return;}
     this.expression(n.argument,scope,fn);return;
-   case'UpdateExpression':if(n.argument.type==='Identifier')this.reference(n.argument,scope,fn,'update');else{this.globalTarget(n.argument);this.expression(n.argument,scope,fn);}return;
+   case'UpdateExpression':if(n.argument.type==='Identifier')this.reference(n.argument,scope,fn,'update');else{this.globalTarget(n.argument,fn);this.expression(n.argument,scope,fn);}return;
    case'AssignmentExpression':
     if(n.left.type==='Identifier')this.reference(n.left,scope,fn,n.operator==='='?'write':'update');
     else if(n.left.type==='ArrayPattern'||n.left.type==='ObjectPattern')this.pattern(n.left,scope,fn,true);
-    else{this.globalTarget(n.left);this.expression(n.left,scope,fn);}
+    else{this.globalTarget(n.left,fn);this.expression(n.left,scope,fn);}
     this.expression(n.right,scope,fn);return;
    case'BinaryExpression':case'LogicalExpression':this.expression(n.left,scope,fn);this.expression(n.right,scope,fn);return;
    case'MemberExpression':
     if(n.object.type==='Identifier')n.object._memberObject=true;
     if(!n.computed&&n.property.name==='species')this.speciesKeys=true;
+    if(!n.computed&&n.property.name==='defaultView')this.globalEscapes=true;
     // Code that touches String.prototype may replace the methods compiled inline.
     if(n.object.type==='Identifier'&&n.object.name==='String'&&!n.computed&&n.property.name==='prototype')this.stringPrototype=true;
     this.expression(n.object,scope,fn);if(n.computed)this.expression(n.property,scope,fn);
@@ -341,10 +350,16 @@ class ScopeAnalysis {
   fail(n,'Конструкция ещё не реализована: '+n.type);
  }
  // Writes to properties of the global object through window/globalThis/self.
- globalTarget(n){
+ globalTarget(n,fn){
   // A write to .constructor/.slice/.subarray (or such a key in a string) can
   // change what slice/subarray return, so their results are not typed.
   if(n.type==='MemberExpression'&&!n.computed&&SPECIES_KEYS.has(n.property.name))this.speciesKeys=true;
+  // `this` at the top level of a classic script (and in its arrows) is the global object.
+  if(n.type==='MemberExpression'&&n.object.type==='ThisExpression'){
+   let f=fn;while(f&&f.arrow)f=f.outer?.fn;
+   if(f?.kind==='script'){if(n.computed)this.dynamicGlobalWrites=true;else this.globalWrites.add(n.property.name);}
+   return;
+  }
   if(n.type!=='MemberExpression'||n.object.type!=='Identifier')return;
   if(n.object.name==='Math')this.mathWrites=true;
   if(!['window','globalThis','self'].includes(n.object.name))return;
