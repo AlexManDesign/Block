@@ -60,18 +60,59 @@ class Boats {
     b.turned = 0; this.turnShown = 0;
     this.seat();
   }
+  // Boat.getDismountLocationForPassenger: a spot just past the boat's side in the direction the
+  // rider looks; when the ground there is not water, onto that floor (the cell at the boat's top or
+  // the one below it) if the player fits; otherwise (open water) on top of the boat
   leave() {
     const b = this.riding, p = this.game.player, w = this.game.world;
     this.riding = null;
     if (!b) return;
-    // step off beside the boat where there is room, else on top of it
-    for (const [dx, dz] of [[1.2, 0], [-1.2, 0], [0, 1.2], [0, -1.2]]) {
-      const x = b.pos[0] + dx, z = b.pos[2] + dz;
-      for (const y of [b.pos[1] + 0.5, b.pos[1] + 1.5]) {
-        if (!entCollides(w, x, y, z, PLAYER_W, 1.8)) { p.pos = [x, y, z]; p.prev = p.pos.slice(); p.vel = [0, 0, 0]; return; }
+    const top = b.pos[1] + BOAT_H;
+    const fx = Math.sin(p.yaw), fz = -Math.cos(p.yaw), f2 = Math.max(Math.abs(fx), Math.abs(fz)) || 1;
+    const d0 = (BOAT_W * Math.SQRT2 + PLAYER_W + 1e-5) / 2;
+    const x = b.pos[0] + fx * d0 / f2, z = b.pos[2] + fz * d0 / f2;
+    const bx = Math.floor(x), by = Math.floor(top), bz = Math.floor(z);
+    let at = null;
+    if (!isWaterId(w.getBlock(bx, by - 1, bz))) {
+      for (const cy of [by, by - 1]) {
+        const y = this.floorAt(bx, cy, bz);
+        if (y !== null && !p.collides(w, x, y, z, PLAYER_H)) { at = [x, y, z]; break; }
       }
     }
-    p.pos = [b.pos[0], b.pos[1] + BOAT_H + 0.1, b.pos[2]]; p.prev = p.pos.slice(); p.vel = [0, 0, 0];
+    p.pos = at || [b.pos[0], top, b.pos[2]];
+    p.prev = p.pos.slice(); p.prevOf = p.pos; p.vel = [0, 0, 0]; p.fallDist = 0;
+    p.eyeOffset = EYE; p.eyePrev = EYE;
+    p.interp(1);
+  }
+  // Level.getBlockFloorHeight + DismountHelper.isBlockFloorValid: standing height in cell y (world
+  // y), null when there is no floor there: a shape lower than a full block in the cell gives its
+  // top, an empty cell over a full-height block gives the cell's bottom
+  floorAt(x, y, z) {
+    const w = this.game.world;
+    const top = (cy) => { const id = w.getBlock(x, cy, z), bx = COLLIDE[id] ? collisionBoxes(w, id, w.getMeta(x, cy, z), x, cy, z) : null; if (!bx || !bx.length) return -1; let t = 0; for (const q of bx) t = Math.max(t, q[4]); return t; };
+    const t = top(y);
+    if (t >= 0) return t < 1 ? y + t : null;
+    return top(y - 1) >= 1 ? y : null;
+  }
+  // the boats the player stands on or walks into (all but the one ridden), as boxes for the
+  // player's collisions; one bobbing up a little into a player standing on it lifts the player
+  // onto its top, one the player is deep inside (just placed over them) does not hold them
+  colliders(p) {
+    const out = this.cboxes || (this.cboxes = []);
+    out.length = 0;
+    const hw = PLAYER_W / 2;
+    for (const b of this.list) {
+      if (b === this.riding) continue;
+      const h = BOAT_W / 2, top = b.pos[1] + BOAT_H;
+      const box = [b.pos[0] - h, b.pos[1], b.pos[2] - h, b.pos[0] + h, top, b.pos[2] + h];
+      const over = p.pos[0] + hw > box[0] && p.pos[0] - hw < box[3] && p.pos[2] + hw > box[2] && p.pos[2] - hw < box[5] && p.pos[1] < top && p.pos[1] + p.h > b.pos[1];
+      if (over) {
+        if (p.pos[1] < top - 0.35 || p.flying) continue;
+        p.pos[1] = top; if (p.vel[1] < 0) p.vel[1] = 0; p.onGround = true; p.fallDist = 0;
+      }
+      out.push(box);
+    }
+    return out;
   }
   // the rider sits in the middle, a little down into the hull. Like the boat, the rider is drawn
   // between the last two ticks (Minecraft moves the passenger with its vehicle every tick and the

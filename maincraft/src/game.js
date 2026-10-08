@@ -735,7 +735,7 @@ class Game {
     this.pAcc = (this.pAcc || 0) + dt;
     let n = 0;
     p.fallDamage = 0;
-    while (this.pAcc >= 0.05 && n < 10) { this.pAcc -= 0.05; p.tick(w, inp, this.mode); n++; }
+    while (this.pAcc >= 0.05 && n < 10) { this.pAcc -= 0.05; p.extraBoxes = this.boats ? this.boats.colliders(p) : null; p.tick(w, inp, this.mode); n++; }
     if (n >= 10) this.pAcc = 0;
     p.interp(this.pAcc / 0.05);
     if (!wasWater && p.inWater && p.vel[1] < -4) Sfx.splash();

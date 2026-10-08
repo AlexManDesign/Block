@@ -45,6 +45,12 @@ class Player {
         if (x + b[0] < x1 && x + b[3] > x0 && y + b[1] < y1 && y + b[4] > y0 && z + b[2] < z1 && z + b[5] > z0) return true;
       }
     }
+    // solid entities (boats: Boat.canBeCollidedWith), as world boxes
+    const E = this.extraBoxes;
+    if (E) for (let i = 0; i < E.length; i++) {
+      const b = E[i];
+      if (b[0] < x1 && b[3] > x0 && b[1] < y1 && b[4] > y0 && b[2] < z1 && b[5] > z0) return true;
+    }
     return false;
   }
 
