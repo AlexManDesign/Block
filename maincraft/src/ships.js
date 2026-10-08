@@ -285,16 +285,5 @@ class Ships {
   }
 
   // ------------------------------------------------------------------ messages
-  say(text) {
-    let el = this.msgEl;
-    if (!el) {
-      el = this.msgEl = document.createElement('div');
-      el.style.cssText = 'position:fixed;left:50%;bottom:96px;transform:translateX(-50%);padding:6px 12px;background:rgba(0,0,0,.55);color:#fff;' +
-        'font:14px monospace;border-radius:4px;pointer-events:none;transition:opacity .4s;z-index:20;text-align:center;max-width:90vw';
-      document.body.appendChild(el);
-    }
-    el.textContent = text; el.style.opacity = '1';
-    clearTimeout(this.msgT);
-    this.msgT = setTimeout(() => { el.style.opacity = '0'; }, 4000);
-  }
+  say(text) { this.game.say(text); }
 }

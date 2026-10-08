@@ -359,7 +359,9 @@ def house(st, w, d, h, job, seed, style):
             for z in range(zz - 1, zz + d + 1):
                 if 0 <= z <= zz + d: t.set(w // 2, top + roof_h - (1 if (w + 1) // 2 > roof_h else 0), z, st['slab'])
     # inside: bed, light, job block, chest
-    t.set(1, 1, zz + d - 2, st['bed'], W | 4); t.set(2, 1, zz + d - 2, st['bed'], W) if w > 5 else None
+    # a whole bed (both halves) against the back wall; in a narrow house along the side wall instead
+    if w > 5: t.set(1, 1, zz + d - 2, st['bed'], W | 4); t.set(2, 1, zz + d - 2, st['bed'], W)
+    else: t.set(1, 1, zz + d - 2, st['bed'], S | 4); t.set(1, 1, zz + d - 3, st['bed'], S)
     if job:
         t.set(w - 2, 1, zz + d - 2, job[0], E if job[0] in ('LECTERN', 'STONECUTTER', 'GRINDSTONE', 'SMOKER', 'BLAST_FURNACE', 'LOOM', 'BARREL') else 0)
         table = job[1]

@@ -177,12 +177,13 @@ class Game {
     if (meta.player) {
       p.pos = meta.player.pos.slice(); p.yaw = meta.player.yaw; p.pitch = meta.player.pitch; p.flying = !!meta.player.flying;
       this.spawn = meta.spawn || p.pos.slice();
+      this.bedSpawn = meta.bedSpawn || null;
       this.needSpawnDrop = false;
     } else {
       $('loadText').textContent = T('loading');
       const sp = await this.findSpawn();
       p.pos = [sp[0] + 0.5, 200, sp[1] + 0.5]; p.yaw = 0; p.pitch = 0;
-      this.spawn = null;
+      this.spawn = null; this.bedSpawn = null;
       this.needSpawnDrop = true;
     }
     this.pendingShip = meta.ship || null;
@@ -241,7 +242,7 @@ class Game {
     const p = this.player;
     Object.assign(this.meta, {
       lastPlayed: Date.now(), time: this.time, mode: this.mode, inv: this.inv, sel: this.sel,
-      player: { pos: p.pos.slice(), yaw: p.yaw, pitch: p.pitch, flying: p.flying }, spawn: this.spawn, surv: { ...this.surv },
+      player: { pos: (this.sleeping ? this.sleeping.back : p.pos).slice(), yaw: p.yaw, pitch: p.pitch, flying: p.flying }, spawn: this.spawn, bedSpawn: this.bedSpawn || null, surv: { ...this.surv },
       ship: this.ships ? this.ships.serialize() : null,
       boats: this.boats ? this.boats.serialize() : null,
     });
@@ -690,6 +691,18 @@ class Game {
     // a vessel saved under way comes back once the world around it is there
     if (this.pendingShip && !this.loadingWorld) { this.ships.restore(this.pendingShip); this.pendingShip = null; }
     if (this.pendingBoats && !this.loadingWorld) { this.boats.restore(this.pendingBoats); this.pendingBoats = null; }
+    // in bed: the player lies still, the night passes after 100 ticks
+    if (this.sleeping || this.sleepFade) {
+      this.sleepTick(dt, inp.keys);
+      if (this.sleeping) {
+        if (this.mode === 'survival') this.survivalTick(dt);
+        this.updateCamera();
+        this.ents.update(dt);
+        this.tickFurnaces(dt);
+        this.updateParticles(dt);
+        return;
+      }
+    }
     // boats drift; the one being ridden takes the movement keys and carries the player
     if (this.boats && this.boats.riding) {
       this.boats.update(dt, inp.keys);
@@ -949,6 +962,7 @@ class Game {
         if (nm & 4) { const fd = p.facingDir(); if (((m & 3) + 2 & 3) === fd) nm = (nm & ~3) | fd; }
         w.setBlock(tg.x, tg.y, tg.z, id, nm); Sfx.door(!!(nm & 4)); this.swing(); return;
       }
+      if (sh === SH.BED) { this.useBed(tg.x, tg.y, tg.z); this.swing(); return; }
       if (id === B.CRAFTING_TABLE && this.mode === 'survival') { UI.openInventory('craft3'); return; }
       if (id === B.SHIP_WHEEL && this.ships) { if (this.ships.assemble(tg.x, tg.y, tg.z)) this.swing(); return; }
       if (dryId(id) === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
@@ -1230,6 +1244,7 @@ class Game {
       return false;
     }
     s.lastHurt = n; s.invT = 1;
+    if (this.sleeping) this.wake();                // LivingEntity.hurt: a hit wakes the sleeper
     s.hp = Math.max(0, s.hp - n);
     s.hurtT = 0.4;
     Sfx.hurt();
@@ -1239,6 +1254,116 @@ class Game {
     return true;
   }
   poison(sec) { if (this.mode === 'survival') { if (this.surv.poisonT <= 0) this.surv.poisonAcc = 0; this.surv.poisonT = Math.max(this.surv.poisonT, sec); this.updateSurvivalHud(); } }
+  // ---------------------------------------------------------------- beds
+  // a line of text above the hotbar (Minecraft's action bar / chat line)
+  say(text) {
+    let el = this.msgEl;
+    if (!el) {
+      el = this.msgEl = document.createElement('div');
+      el.style.cssText = 'position:fixed;left:50%;bottom:96px;transform:translateX(-50%);padding:6px 12px;background:rgba(0,0,0,.55);color:#fff;' +
+        'font:14px monospace;border-radius:4px;pointer-events:none;transition:opacity .4s;z-index:20;text-align:center;max-width:90vw';
+      document.body.appendChild(el);
+    }
+    el.textContent = text; el.style.opacity = '1';
+    clearTimeout(this.msgT);
+    this.msgT = setTimeout(() => { el.style.opacity = '0'; }, 4000);
+  }
+  // Level.skyDarken (clear weather): 0 at noon .. 11 at midnight; Level.isDay() is skyDarken < 4,
+  // so a bed works from about 18:32 (tick 12542) to 5:27 (tick 23459)
+  skyDarken() {
+    const d0 = ((this.time - 0.25) % 1 + 1) % 1, d1 = 0.5 - Math.cos(d0 * Math.PI) / 2;
+    const tod = (d0 * 2 + d1) / 3;
+    const d2 = 0.5 + 2 * Math.max(-0.25, Math.min(0.25, Math.cos(tod * Math.PI * 2)));
+    return Math.floor((1 - d2) * 11);
+  }
+  // the cell beside a bed the player stands up on (BedBlock.findStandUpPosition: the sides of the
+  // bed first, then its ends, then on top)
+  standUpSpot(hx, hy, hz, f) {
+    const w = this.world, p = this.player, fx = hx - DIRX_W[f], fz = hz - DIRZ_W[f];
+    const sx = DIRZ_W[f], sz = -DIRX_W[f];                 // sideways from the bed
+    const cand = [[hx + sx, hz + sz], [hx - sx, hz - sz], [fx + sx, fz + sz], [fx - sx, fz - sz],
+      [hx + DIRX_W[f], hz + DIRZ_W[f]], [fx - DIRX_W[f], fz - DIRZ_W[f]],
+      [hx + sx + DIRX_W[f], hz + sz + DIRZ_W[f]], [hx - sx + DIRX_W[f], hz - sz + DIRZ_W[f]],
+      [fx + sx - DIRX_W[f], fz + sz - DIRZ_W[f]], [fx - sx - DIRX_W[f], fz - sz - DIRZ_W[f]]];
+    for (const dy of [0, -1, 1]) for (const [x, z] of cand) {
+      const y = hy + dy;
+      if (!SOLID[w.getBlock(x, y - 1, z)] || isWaterId(w.getBlock(x, y, z)) || SHAPE[w.getBlock(x, y - 1, z)] === SH.BED) continue;
+      if (!p.collides(w, x + 0.5, y, z + 0.5, PLAYER_H)) return [x + 0.5, y, z + 0.5];
+    }
+    if (!p.collides(w, hx + 0.5, hy + 0.5625, hz + 0.5, PLAYER_H)) return [hx + 0.5, hy + 0.5625, hz + 0.5];
+    return null;
+  }
+  // BedBlock.use -> ServerPlayer.startSleepInBed, with its checks in Minecraft's order
+  useBed(x, y, z) {
+    const w = this.world, p = this.player, id = w.getBlock(x, y, z), m = w.getMeta(x, y, z), f = m & 3;
+    if (this.sleeping || this.surv.dead) return;
+    // the head half
+    if (!((m >> 2) & 1)) { x += DIRX_W[f]; z += DIRZ_W[f]; if (w.getBlock(x, y, z) !== id) return; }
+    const fx = x - DIRX_W[f], fz = z - DIRZ_W[f], P = p.pos;
+    const near = (bx, bz) => Math.abs(P[0] - (bx + 0.5)) <= 3 && Math.abs(P[1] - y) <= 2 && Math.abs(P[2] - (bz + 0.5)) <= 3;
+    if (!near(x, z) && !near(fx, fz)) { this.say(T('bedTooFar')); return; }
+    // obstructed: a suffocating block over either half
+    const sufo = (bx, bz) => { const a = w.getBlock(bx, y + 1, bz); return SOLID[a] && SHAPE[a] === SH.CUBE; };
+    if (sufo(x, z) || sufo(fx, fz)) { this.say(T('bedObstructed')); return; }
+    const k = this.bedSpawn;
+    if (!k || k[0] !== x || k[1] !== y || k[2] !== z) { this.bedSpawn = [x, y, z]; this.say(T('spawnSet')); }
+    if (this.skyDarken() < 4) { this.say(T('bedNight')); return; }
+    if (this.mode !== 'creative') {
+      // any monster within 8 blocks across and 5 up or down of the bed
+      const lo = [x + 0.5 - 8, y - 5, z + 0.5 - 8], hi = [x + 0.5 + 8, y + 5, z + 0.5 + 8];
+      for (const e of this.ents.mobs) {
+        const d = MOB_DEFS[e.type];
+        if (!d.hostile || d.slime || e.deathT > 0) continue;
+        const hw = d.w / 2;
+        if (e.pos[0] + hw > lo[0] && e.pos[0] - hw < hi[0] && e.pos[1] + d.h > lo[1] && e.pos[1] < hi[1] && e.pos[2] + hw > lo[2] && e.pos[2] - hw < hi[2]) { this.say(T('bedMonsters')); return; }
+      }
+    }
+    // lie down: on the head half, 11/16 up, eye 0.2 above, looking along the bed toward its foot
+    this.sleeping = { head: [x, y, z], f, t: 0, acc: 0, back: P.slice(), yaw: p.yaw, pitch: p.pitch };
+    if (this.boats && this.boats.riding) this.boats.leave();
+    p.pos = [x + 0.5, y + 0.6875, z + 0.5]; p.prev = p.pos.slice(); p.prevOf = p.pos;
+    p.vel = [0, 0, 0]; p.flying = false; p.fallDist = 0; p.eyeOffset = 0.2; p.eyePrev = 0.2;
+    p.yaw = Math.atan2(-DIRX_W[f], DIRZ_W[f]); p.pitch = 0;
+    p.interp(1);
+    this.sleepFade = 0;
+    this.say(T('leaveBed'));
+  }
+  // 20 ticks a second in bed; at 100 ticks (all players asleep) the day comes: time to the next
+  // morning, everyone wakes (ServerLevel.tick). The dark overlay fades in over the 100 ticks and
+  // out over 10 after waking (Gui.renderSleepOverlay)
+  sleepTick(dt, keys) {
+    const S = this.sleeping, ov = this.sleepEl || (this.sleepEl = $('sleep'));
+    if (!S) {
+      this.sleepFade += dt * 20;
+      const a = this.sleepFade >= 10 ? 0 : (1 - this.sleepFade / 10) * 220 / 255;
+      if (ov) ov.style.opacity = a.toFixed(3);
+      if (this.sleepFade >= 10) this.sleepFade = 0;
+      return;
+    }
+    if (keys && keys.sneak) { this.wake(); return; }
+    const w = this.world, [x, y, z] = S.head;
+    if (SHAPE[w.getBlock(x, y, z)] !== SH.BED) { this.wake(); return; }
+    S.acc += dt;
+    while (S.acc >= 0.05) { S.acc -= 0.05; S.t++; }
+    if (ov) ov.style.opacity = (Math.min(1, S.t / 100) * 220 / 255).toFixed(3);
+    const p = this.player;
+    p.yaw = Math.atan2(-DIRX_W[S.f], DIRZ_W[S.f]); p.pitch = 0;
+    p.vel[0] = p.vel[1] = p.vel[2] = 0; p.fallDist = 0;
+    if (S.t >= 100) {
+      this.time = 0;                                   // dayTime + 24000 - dayTime % 24000: 6:00
+      this.wake();
+    }
+  }
+  wake() {
+    const S = this.sleeping, p = this.player;
+    if (!S) return;
+    this.sleeping = null;
+    const [x, y, z] = S.head, at = this.standUpSpot(x, y, z, S.f) || S.back;
+    p.pos = at.slice(); p.prev = p.pos.slice(); p.prevOf = p.pos; p.vel = [0, 0, 0];
+    p.eyeOffset = EYE; p.eyePrev = EYE; p.pitch = S.pitch;
+    p.interp(1);
+    this.sleepFade = S.t >= 100 ? 0.001 : 9.999;
+  }
   die() {
     this.surv.dead = true;
     if (document.pointerLockElement) document.exitPointerLock();
@@ -1248,7 +1373,16 @@ class Game {
     const p = this.player;
     Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false, poisonT: 0 });
     this.inv = this.inv.map(() => null);
-    p.pos = (this.spawn || [0.5, 100, 0.5]).slice(); p.vel = [0, 0, 0]; p.fallDist = 0;
+    if (this.sleeping) { this.sleeping = null; p.eyeOffset = EYE; }
+    // ServerPlayer respawn: at the bed when it is still there and has room beside it, else at the
+    // world spawn with a message
+    let at = null;
+    if (this.bedSpawn) {
+      const [x, y, z] = this.bedSpawn, id = this.world.getBlock(x, y, z);
+      if (SHAPE[id] === SH.BED) at = this.standUpSpot(x, y, z, this.world.getMeta(x, y, z) & 3);
+      if (!at) { this.bedSpawn = null; this.say(T('noBed')); }
+    }
+    p.pos = (at || this.spawn || [0.5, 100, 0.5]).slice(); p.vel = [0, 0, 0]; p.fallDist = 0;
     this.updateHotbar(); this.updateSurvivalHud();
     UI.hideDeath();
   }
@@ -1464,7 +1598,7 @@ class Game {
     t = performance.now(); r.gpuBegin('hand');
     if (this.target && !this.hideHud) this.drawSelection(env);
     // hand
-    if (!this.camMode && !this.hideHud) this.drawHand(env, dt);
+    if (!this.camMode && !this.hideHud && !this.sleeping) this.drawHand(env, dt);   // no hand in bed (GameRenderer.renderItemInHand)
     this.drawInWall();
     r.gpuEnd();
     this.perfT('rHand', performance.now() - t);
@@ -1780,7 +1914,7 @@ class Game {
       else if (this.playing && !UI.invOpen && !this.surv.dead && !this.loadingWorld) { this.paused = true; this.mouse.l = this.mouse.r = false; this.keys = {}; UI.showPause(); }
     });
     document.addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement !== cv || this.paused) return;
+      if (document.pointerLockElement !== cv || this.paused || this.sleeping) return;
       const s = 0.0022 * Settings.sens;
       this.player.yaw += e.movementX * s;
       this.player.pitch = Math.max(-1.5707, Math.min(1.5707, this.player.pitch - e.movementY * s));
