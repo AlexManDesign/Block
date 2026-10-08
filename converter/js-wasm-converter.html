@@ -9096,7 +9096,7 @@ const signatures={
  prepare:['r','r'],invoke:['rr','r'],call:['rrr','r'],construct:['rr','r'],arg:['ri','r'],rest:['ri','r'],arguments:['rrii','r'],
  iterator:['r','r'],keys:['r','r'],next:['r','r'],done:['r','i'],value:['r','r'],throw:['r',''],
  setFunctionName:['rri','r'],fromInt32:['i','r'],
- pushIntrinsic:['rr','i'],typeofCode:['r','i'],boxForeign:['r','r'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
+ pushIntrinsic:['rr','i'],typeofCode:['r','i'],prototypeFlags:['','i'],boxForeign:['r','r'],isInt:['r','i'],isBool:['r','i'],isNumberOrUndefined:['r','i'],typedArrayClass:['r','i'],registerIntrinsic:['rr',''],callNative:['rrr','r'],plainArray:['rr','i'],isWasmArray:['r','i'],isWasmObject:['r','i'],defineIndex:['rfr','r'],pushStill:['r','i'],arrayPushFunction:['','r'],intToString:['i','r'],numberToString:['f','r'],stringFromCharCode:['i','r'],taGetF:['rf','f'],taGetI:['rf','i'],taSetF:['rff',''],taSetI:['rfi',''],taLength:['r','f'],getProp:['rr','r'],setProp:['rrri','r'],getIndex:['rf','r'],setIndex:['rfri','r'],callArray:['rrr','r'],
  ...Object.fromEntries(Array.from({length:9},(_,n)=>['call'+n,['rr'+'r'.repeat(n),'r']])),
  toNumberValue:['r','f'],fmod:['ff','f'],pow:['ff','f'],math_random:['','f'],math_atan2:['ff','f'],math_pow:['ff','f'],
  ...Object.fromEntries(['acos','acosh','asin','asinh','atan','atanh','cbrt','cos','cosh','exp','expm1','log','log10','log1p','log2','sin','sinh','tan','tanh'].map(n=>['math_'+n,['f','f']])),
@@ -16482,7 +16482,7 @@ function environmentWasm(){
  const packed=(f,k)=>{f.call('valueKind');f.tee(k);f.int(7);f.get(k);f.int(7);f.out(0x49,0x1b);};
  for(let n=0;n<=8;n++)def('call'+n,[REF,REF,...Array(n).fill(REF)],[REF],f=>{
   const k=f.local(I32);
-  f.get(0);f.call('isClosure');f.if(()=>{f.get(0);f.get(1);for(let i=0;i<n;i++)f.get(2+i);f.out(0xfb,8,...u32(SCOPE),...u32(n),0xfb,0x1b);f.call('closureInvoke');f.ret();});
+  f.get(0);f.call('isClosure');f.if(()=>{const a=f.local();for(let i=0;i<n;i++)f.get(2+i);f.out(0xfb,8,...u32(SCOPE),...u32(n),0xfb,0x1b);f.set(a);invokeClosure(f,a);});
   f.get(0);f.get(1);f.get(1);packed(f,k);
   for(let i=0;i<n;i++){f.get(2+i);packed(f,k);f.int(3*(i+1));f.out(0x74,0x72);}
   for(let i=0;i<n;i++)f.get(2+i);
@@ -16531,15 +16531,18 @@ function environmentWasm(){
   f.get(k);f.int(8);f.out(0x46);f.if(()=>{f.int(4);f.ret();});
   f.int(3);
  });
- // Calls f<id> through the shared table with the generic ABI (env, this, args, new.target).
- def('closureInvoke',[REF,REF,REF],[REF],f=>{
+ // Calls f<id> through the shared table with the generic ABI (env, this, args,
+ // new.target): closure in local 0, receiver in local 1. A tail call, so a
+ // recursion through closures costs one frame per level, as in JS.
+ const invokeClosure=(f,args)=>{
   const flags=f.local(I32);f.field(0,CLOSURE,C_FLAGS);f.set(flags);
   f.field(0,CLOSURE,C_ENV);
   f.get(flags);f.int(2);f.out(0x71);f.if(()=>f.field(0,CLOSURE,C_SELF),()=>{f.get(flags);f.int(1);f.out(0x71);f.if(()=>f.get(1),()=>{f.get(1);f.call('sloppyThis');},REF);},REF);
-  f.get(2);
+  f.get(args);
   f.get(flags);f.int(2);f.out(0x71);f.if(()=>f.field(0,CLOSURE,C_TARGET),()=>f.undef(),REF);
-  f.field(0,CLOSURE,C_ID);f.out(0x11,...u32(type([REF,REF,REF,REF],[REF])),0);
- });
+  f.field(0,CLOSURE,C_ID);f.out(0x13,...u32(type([REF,REF,REF,REF],[REF])),0);
+ };
+ def('closureInvoke',[REF,REF,REF],[REF],f=>invokeClosure(f,2));
  // Argument lists: fixed arrays from WASM calls, WASM arrays, or host arrays.
  def('argCount',[REF],[I32],f=>{
   f.test(0,SCOPE);f.if(()=>{f.get(0);f.internal(SCOPE);f.out(0xfb,0x0f);f.ret();});
@@ -16999,7 +17002,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  // runtime relies on when it is handed one of them.
  // Short argument arrays are searched too (Reflect.apply, Function.prototype.apply);
  // a long or sparse array is data, not an argument list.
- const isPrototype=v=>v===objectPrototype||v===arrayPrototype||v===Array;
+ const isPrototype=v=>v===objectPrototype||v===arrayPrototype||v===Array||v===String.prototype;
  const touchesPrototypes=(...values)=>values.some(v=>isPrototype(v)||Array.isArray(v)&&v.length<=64&&v.some(isPrototype));
  // ToNumeric: one ToPrimitive (hint number), then BigInt or Number.
  const toNumeric=v=>typeof v==='number'||typeof v==='bigint'?v:-(-v);
@@ -17052,6 +17055,8 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   if(objectChain&&arrayChain&&!keys.some(index)&&!getNames(arrayPrototype).some(index))flags|=2;
   if(objectChain&&keys.length===baseKeys.length&&keys.every((k,i)=>k===baseKeys[i]))flags|=8;
   if(arrayChain&&getDescriptor(arrayPrototype,'push')?.value===arrayPush&&(flags&2))flags|=16;
+  // The String.prototype methods compiled inline are the originals.
+  if(stringMethods.every((name,i)=>stringIntrinsics[i]!==null&&getDescriptor(String.prototype,name)?.value===stringIntrinsics[i]))flags|=64;
   // ArraySpeciesCreate of a plain array is a plain array.
   if(arrayChain&&getDescriptor(arrayPrototype,'constructor')?.value===Array&&speciesGetter&&getDescriptor(Array,Symbol.species)?.get===speciesGetter)flags|=32;
   return flags;
@@ -17366,7 +17371,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,isInt:null,isBool:null,isNumberOrUndefined:null,typedArrayClass:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
+  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,prototypeFlags:null,isInt:null,isBool:null,isNumberOrUndefined:null,typedArrayClass:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
   globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
   globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
   globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
@@ -17415,7 +17420,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag,jstag:WebAssembly.JSTag||new WebAssembly.Tag({parameters:['externref']}),boxForeign:v=>box(v)};
- const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','prototypeFlags','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;
@@ -17632,7 +17637,11 @@ class ScopeAnalysis {
    if(!s)continue;
    if(s.type==='VariableDeclaration'&&s.kind!=='var'){
     if(!['let','const'].includes(s.kind))fail(s,'Декларация '+s.kind+' ещё не реализована');
-    for(const d of s.declarations)for(const id of patternNames(d.id))this.declareLexical(scope,id.name,s.kind,id,d.end);
+    for(const d of s.declarations)for(const id of patternNames(d.id)){
+     const b=this.declareLexical(scope,id.name,s.kind,id,d.end);
+     // const f = (...) => ... f(...): the initializer function only runs once f is set.
+     if(b&&d.id===id&&(d.init?.type==='ArrowFunctionExpression'||d.init?.type==='FunctionExpression'))b.initFn=d.init;
+    }
    }
    else if(s.type==='ClassDeclaration')this.declareLexical(scope,s.id.name,'class',s.id,s.end);
    else if(s.type==='FunctionDeclaration'){
@@ -17926,6 +17935,7 @@ class ScopeAnalysis {
  }
  needsCheck(n,binding,fn){
   if(binding.storage==='global'||binding.ready===-Infinity)return false;
+  if(binding.initFn&&binding.kind!=='import')for(let f=fn;f&&f!==binding.scope.fn;f=f.outer?.fn)if(f.node===binding.initFn)return false;
   if(binding.kind==='import')return true;
   if(binding.scope===this.root)return !(fn.kind==='script'&&fn.node===binding.script&&n.start>=binding.ready);
   if(binding.scope.fn===fn)return !(n.start>=binding.ready);
@@ -17986,6 +17996,7 @@ const NU=require("./types.mjs")["NU"];
 const STR=require("./types.mjs")["STR"];
 const TAI=require("./types.mjs")["TAI"];
 const BOOL=require("./types.mjs")["BOOL"];
+const ANY=require("./types.mjs")["ANY"];
 
 const SCOPE=3; // scope record type index in the program module
 const GLOBAL_CONSTANTS=new Map([['undefined',undefined],['NaN',NaN],['Infinity',Infinity]]);
@@ -18102,17 +18113,29 @@ const bindings={
    if(missing===Infinity&&v.r==='r'&&!numeric(v.t)){const x=this.local();this.tee(x);this.rt('isUndefined');this.ifElse(()=>this.f64(Infinity),()=>{this.get(x);this.convert('r','f',v.t);},F64);return;}
    this.convert(v.r,'f',v.t);
   };
-  this.get(s);
-  switch(name){
-   case'charCodeAt':number(0,NaN);this.rt('stringCharCodeAt');return 'f';
-   case'charAt':number(0,NaN);this.rt('stringCharAt');return 'r';
-   case'slice':case'substring':number(0,NaN);number(1,Infinity);this.rt(name==='slice'?'stringSlice':'stringSubstring');return 'r';
-   case'repeat':number(0,NaN);this.rt('stringRepeat');return 'r';
-   case'concat':for(const v of values){this.get(v.x);this.rt('stringConcat');}return 'r';
-  }
-  this.get(values[0].x);number(1,name==='endsWith'?Infinity:NaN);
-  this.rt('string'+name[0].toUpperCase()+name.slice(1));
-  return name==='indexOf'||name==='lastIndexOf'?'n':'i';
+  const repr=name==='charCodeAt'?'f':['charAt','slice','substring','repeat','concat'].includes(name)?'r':name==='indexOf'||name==='lastIndexOf'?'n':'i';
+  const fast=()=>{
+   this.get(s);
+   switch(name){
+    case'charCodeAt':number(0,NaN);this.rt('stringCharCodeAt');return;
+    case'charAt':number(0,NaN);this.rt('stringCharAt');return;
+    case'slice':case'substring':number(0,NaN);number(1,Infinity);this.rt(name==='slice'?'stringSlice':'stringSubstring');return;
+    case'repeat':number(0,NaN);this.rt('stringRepeat');return;
+    case'concat':for(const v of values){this.get(v.x);this.rt('stringConcat');}return;
+   }
+   this.get(values[0].x);number(1,name==='endsWith'?Infinity:NaN);
+   this.rt('string'+name[0].toUpperCase()+name.slice(1));
+  };
+  // String.prototype methods can be replaced even where the compiler cannot
+  // see it (an alias of the prototype, uncompiled code): flag 64 says the
+  // inlined ones are still the originals, otherwise the method is called.
+  this.rt('prototypeFlags');this.integer(64);this.out(0x71);
+  this.ifElse(fast,()=>{
+   this.get(s);this.lit(name);this.rt('getProp');this.get(s);
+   for(const v of values){this.get(v.x);this.convert(v.r,'r',v.t);}
+   this.rt('call'+values.length);this.convert('r',repr,ANY);
+  },VALUE_TYPE[repr]);
+  return repr;
  },
  // A typed array element in a numeric context: one host call, no boxing.
  // Out of bounds it is NaN (or 0 after ToInt32), exactly what undefined
@@ -19127,16 +19150,20 @@ class TypeInference {
    const args=n.arguments.map(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
    // A call that may run before the binding is initialized keeps its TDZ check;
    // a global declared by a later script may not exist yet when this one runs.
-   if(fn&&fn.direct&&!fn.escapes&&!callee._ref?.check&&!(b.order>this.scriptOrder(this.fn))&&!n.arguments.some(x=>x.type==='SpreadElement')){
-    n._direct=fn;
+   const spread=n.arguments.some(x=>x.type==='SpreadElement'),late=!!callee._ref?.check||b?.order>this.scriptOrder(this.fn);
+   if(fn&&fn.direct&&!fn.escapes&&!spread){
+    // The arguments always reach the parameters (directly or through the
+    // generic entry); the call is direct unless it may run before the
+    // binding exists (TDZ, or a global declared by a later script).
+    if(!late)n._direct=fn;
     fn.node.params.forEach((p,i)=>{
      const id=p.type==='AssignmentPattern'?p.left:p,param=id._ref.binding;
      if(i<args.length)this.widen(param,n.arguments[i]&&n.arguments[i].type!=='SpreadElement'?args[i]:ANY);
      else if(p.type!=='AssignmentPattern')this.widen(param,ANY);
     });
-    return fn.ret??null;
+    return late?ANY:fn.ret??null;
    }
-   if(fn&&fn.direct&&!n.arguments.some(x=>x.type==='SpreadElement')){n._direct=fn;return fn.ret??null;}
+   if(fn&&fn.direct&&!spread&&!late){n._direct=fn;return fn.ret??null;}
    if(!b&&(NUMBER_GLOBALS.has(callee.name)||BOOL_GLOBALS.has(callee.name))&&this.builtin(callee,callee.name))return NUMBER_GLOBALS.has(callee.name)?NUM:BOOL;
    if(!b&&callee.name==='String'&&this.builtin(callee,'String'))return STR;
    return ANY;

@@ -15,6 +15,7 @@ const NU=require("./types.mjs")["NU"];
 const STR=require("./types.mjs")["STR"];
 const TAI=require("./types.mjs")["TAI"];
 const BOOL=require("./types.mjs")["BOOL"];
+const ANY=require("./types.mjs")["ANY"];
 
 const SCOPE=3; // scope record type index in the program module
 const GLOBAL_CONSTANTS=new Map([['undefined',undefined],['NaN',NaN],['Infinity',Infinity]]);
@@ -131,17 +132,29 @@ const bindings={
    if(missing===Infinity&&v.r==='r'&&!numeric(v.t)){const x=this.local();this.tee(x);this.rt('isUndefined');this.ifElse(()=>this.f64(Infinity),()=>{this.get(x);this.convert('r','f',v.t);},F64);return;}
    this.convert(v.r,'f',v.t);
   };
-  this.get(s);
-  switch(name){
-   case'charCodeAt':number(0,NaN);this.rt('stringCharCodeAt');return 'f';
-   case'charAt':number(0,NaN);this.rt('stringCharAt');return 'r';
-   case'slice':case'substring':number(0,NaN);number(1,Infinity);this.rt(name==='slice'?'stringSlice':'stringSubstring');return 'r';
-   case'repeat':number(0,NaN);this.rt('stringRepeat');return 'r';
-   case'concat':for(const v of values){this.get(v.x);this.rt('stringConcat');}return 'r';
-  }
-  this.get(values[0].x);number(1,name==='endsWith'?Infinity:NaN);
-  this.rt('string'+name[0].toUpperCase()+name.slice(1));
-  return name==='indexOf'||name==='lastIndexOf'?'n':'i';
+  const repr=name==='charCodeAt'?'f':['charAt','slice','substring','repeat','concat'].includes(name)?'r':name==='indexOf'||name==='lastIndexOf'?'n':'i';
+  const fast=()=>{
+   this.get(s);
+   switch(name){
+    case'charCodeAt':number(0,NaN);this.rt('stringCharCodeAt');return;
+    case'charAt':number(0,NaN);this.rt('stringCharAt');return;
+    case'slice':case'substring':number(0,NaN);number(1,Infinity);this.rt(name==='slice'?'stringSlice':'stringSubstring');return;
+    case'repeat':number(0,NaN);this.rt('stringRepeat');return;
+    case'concat':for(const v of values){this.get(v.x);this.rt('stringConcat');}return;
+   }
+   this.get(values[0].x);number(1,name==='endsWith'?Infinity:NaN);
+   this.rt('string'+name[0].toUpperCase()+name.slice(1));
+  };
+  // String.prototype methods can be replaced even where the compiler cannot
+  // see it (an alias of the prototype, uncompiled code): flag 64 says the
+  // inlined ones are still the originals, otherwise the method is called.
+  this.rt('prototypeFlags');this.integer(64);this.out(0x71);
+  this.ifElse(fast,()=>{
+   this.get(s);this.lit(name);this.rt('getProp');this.get(s);
+   for(const v of values){this.get(v.x);this.convert(v.r,'r',v.t);}
+   this.rt('call'+values.length);this.convert('r',repr,ANY);
+  },VALUE_TYPE[repr]);
+  return repr;
  },
  // A typed array element in a numeric context: one host call, no boxing.
  // Out of bounds it is NaN (or 0 after ToInt32), exactly what undefined

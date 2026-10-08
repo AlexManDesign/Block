@@ -97,7 +97,11 @@ class ScopeAnalysis {
    if(!s)continue;
    if(s.type==='VariableDeclaration'&&s.kind!=='var'){
     if(!['let','const'].includes(s.kind))fail(s,'Декларация '+s.kind+' ещё не реализована');
-    for(const d of s.declarations)for(const id of patternNames(d.id))this.declareLexical(scope,id.name,s.kind,id,d.end);
+    for(const d of s.declarations)for(const id of patternNames(d.id)){
+     const b=this.declareLexical(scope,id.name,s.kind,id,d.end);
+     // const f = (...) => ... f(...): the initializer function only runs once f is set.
+     if(b&&d.id===id&&(d.init?.type==='ArrowFunctionExpression'||d.init?.type==='FunctionExpression'))b.initFn=d.init;
+    }
    }
    else if(s.type==='ClassDeclaration')this.declareLexical(scope,s.id.name,'class',s.id,s.end);
    else if(s.type==='FunctionDeclaration'){
@@ -391,6 +395,7 @@ class ScopeAnalysis {
  }
  needsCheck(n,binding,fn){
   if(binding.storage==='global'||binding.ready===-Infinity)return false;
+  if(binding.initFn&&binding.kind!=='import')for(let f=fn;f&&f!==binding.scope.fn;f=f.outer?.fn)if(f.node===binding.initFn)return false;
   if(binding.kind==='import')return true;
   if(binding.scope===this.root)return !(fn.kind==='script'&&fn.node===binding.script&&n.start>=binding.ready);
   if(binding.scope.fn===fn)return !(n.start>=binding.ready);

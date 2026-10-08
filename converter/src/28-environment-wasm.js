@@ -182,7 +182,7 @@ function environmentWasm(){
  const packed=(f,k)=>{f.call('valueKind');f.tee(k);f.int(7);f.get(k);f.int(7);f.out(0x49,0x1b);};
  for(let n=0;n<=8;n++)def('call'+n,[REF,REF,...Array(n).fill(REF)],[REF],f=>{
   const k=f.local(I32);
-  f.get(0);f.call('isClosure');f.if(()=>{f.get(0);f.get(1);for(let i=0;i<n;i++)f.get(2+i);f.out(0xfb,8,...u32(SCOPE),...u32(n),0xfb,0x1b);f.call('closureInvoke');f.ret();});
+  f.get(0);f.call('isClosure');f.if(()=>{const a=f.local();for(let i=0;i<n;i++)f.get(2+i);f.out(0xfb,8,...u32(SCOPE),...u32(n),0xfb,0x1b);f.set(a);invokeClosure(f,a);});
   f.get(0);f.get(1);f.get(1);packed(f,k);
   for(let i=0;i<n;i++){f.get(2+i);packed(f,k);f.int(3*(i+1));f.out(0x74,0x72);}
   for(let i=0;i<n;i++)f.get(2+i);
@@ -231,15 +231,18 @@ function environmentWasm(){
   f.get(k);f.int(8);f.out(0x46);f.if(()=>{f.int(4);f.ret();});
   f.int(3);
  });
- // Calls f<id> through the shared table with the generic ABI (env, this, args, new.target).
- def('closureInvoke',[REF,REF,REF],[REF],f=>{
+ // Calls f<id> through the shared table with the generic ABI (env, this, args,
+ // new.target): closure in local 0, receiver in local 1. A tail call, so a
+ // recursion through closures costs one frame per level, as in JS.
+ const invokeClosure=(f,args)=>{
   const flags=f.local(I32);f.field(0,CLOSURE,C_FLAGS);f.set(flags);
   f.field(0,CLOSURE,C_ENV);
   f.get(flags);f.int(2);f.out(0x71);f.if(()=>f.field(0,CLOSURE,C_SELF),()=>{f.get(flags);f.int(1);f.out(0x71);f.if(()=>f.get(1),()=>{f.get(1);f.call('sloppyThis');},REF);},REF);
-  f.get(2);
+  f.get(args);
   f.get(flags);f.int(2);f.out(0x71);f.if(()=>f.field(0,CLOSURE,C_TARGET),()=>f.undef(),REF);
-  f.field(0,CLOSURE,C_ID);f.out(0x11,...u32(type([REF,REF,REF,REF],[REF])),0);
- });
+  f.field(0,CLOSURE,C_ID);f.out(0x13,...u32(type([REF,REF,REF,REF],[REF])),0);
+ };
+ def('closureInvoke',[REF,REF,REF],[REF],f=>invokeClosure(f,2));
  // Argument lists: fixed arrays from WASM calls, WASM arrays, or host arrays.
  def('argCount',[REF],[I32],f=>{
   f.test(0,SCOPE);f.if(()=>{f.get(0);f.internal(SCOPE);f.out(0xfb,0x0f);f.ret();});

@@ -121,7 +121,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  // runtime relies on when it is handed one of them.
  // Short argument arrays are searched too (Reflect.apply, Function.prototype.apply);
  // a long or sparse array is data, not an argument list.
- const isPrototype=v=>v===objectPrototype||v===arrayPrototype||v===Array;
+ const isPrototype=v=>v===objectPrototype||v===arrayPrototype||v===Array||v===String.prototype;
  const touchesPrototypes=(...values)=>values.some(v=>isPrototype(v)||Array.isArray(v)&&v.length<=64&&v.some(isPrototype));
  // ToNumeric: one ToPrimitive (hint number), then BigInt or Number.
  const toNumeric=v=>typeof v==='number'||typeof v==='bigint'?v:-(-v);
@@ -174,6 +174,8 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   if(objectChain&&arrayChain&&!keys.some(index)&&!getNames(arrayPrototype).some(index))flags|=2;
   if(objectChain&&keys.length===baseKeys.length&&keys.every((k,i)=>k===baseKeys[i]))flags|=8;
   if(arrayChain&&getDescriptor(arrayPrototype,'push')?.value===arrayPush&&(flags&2))flags|=16;
+  // The String.prototype methods compiled inline are the originals.
+  if(stringMethods.every((name,i)=>stringIntrinsics[i]!==null&&getDescriptor(String.prototype,name)?.value===stringIntrinsics[i]))flags|=64;
   // ArraySpeciesCreate of a plain array is a plain array.
   if(arrayChain&&getDescriptor(arrayPrototype,'constructor')?.value===Array&&speciesGetter&&getDescriptor(Array,Symbol.species)?.get===speciesGetter)flags|=32;
   return flags;
@@ -488,7 +490,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
  const raw={
   lit:i=>pool[i],number:n=>n,boolean:b=>!!b,isNumber:x=>+(typeof x==='number'),toNumber:x=>x,
   truth:v=>+!!v,nullish:v=>+(v==null),isUndefined:v=>+(v===undefined),equal:(a,b)=>+(a===b),
-  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,isInt:null,isBool:null,isNumberOrUndefined:null,typedArrayClass:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
+  intToString:null,numberToString:null,stringFromCharCode:null,pushIntrinsic:null,pushStill:null,prototypeFlags:null,isInt:null,isBool:null,isNumberOrUndefined:null,typedArrayClass:null,plainArray:null,isWasmArray:null,defineIndex:null,typeofCode:null,arrayPushFunction:()=>arrayPush,fromInt32:null,scopeNew:null,scopeClone:null,moduleScope:null,toNumeric:null,increment:null,toNumberValue:null,read,write,
   globalRead:k=>{const name=pool[k];if(!(name in globalObject))throw new ReferenceError(name+' is not defined');return globalObject[name];},
   globalTypeof:k=>{const name=pool[k];return name in globalObject?typeof globalObject[name]:'undefined';},
   globalWrite:(k,v,s)=>{const name=pool[k];if(s&&!(name in globalObject))throw new ReferenceError(name+' is not defined');return setProperty(globalObject,name,v,!!s);},
@@ -537,7 +539,7 @@ function boot(binary, constants, metadata, globalObject, moduleSpecs) {
   framePC:f=>f.pc,frameInput:f=>f.input,framePause:(f,value,kind,pc)=>{f.pc=pc;return {kind,value};},frameDone:(f,value)=>({kind:3,value}),
  });
  const imports={error:errorTag,jstag:WebAssembly.JSTag||new WebAssembly.Tag({parameters:['externref']}),boxForeign:v=>box(v)};
- const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
+ const nativeNames=new Set(['func','rest','intToString','numberToString','stringFromCharCode','pushIntrinsic','pushStill','prototypeFlags','isInt','isBool','isNumberOrUndefined','typedArrayClass','plainArray','isWasmArray','defineIndex','typeofCode','fromInt32','scopeNew','scopeClone','moduleScope','toNumeric','increment','toNumberValue','read','write','lit','number','boolean','isNumber','toNumber','truth','nullish','isUndefined','update','int32','equal','templateString','property','key','object','array','push','hole','arg','remove']);
  const scalarResults=new Set(['truth','nullish','isUndefined','equal','isNumber','toNumber','done','resumeKind','frameInt','frameFloat','framePC','stringBuiltins']);
  for(const[name,fn]of Object.entries(raw))imports[name]=nativeNames.has(name)?environment[name]:bridge(fn,scalarResults.has(name));
  imports.define=environment.objectDefine;

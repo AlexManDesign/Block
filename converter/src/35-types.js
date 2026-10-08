@@ -378,16 +378,20 @@ class TypeInference {
    const args=n.arguments.map(a=>this.expr(a.type==='SpreadElement'?a.argument:a));
    // A call that may run before the binding is initialized keeps its TDZ check;
    // a global declared by a later script may not exist yet when this one runs.
-   if(fn&&fn.direct&&!fn.escapes&&!callee._ref?.check&&!(b.order>this.scriptOrder(this.fn))&&!n.arguments.some(x=>x.type==='SpreadElement')){
-    n._direct=fn;
+   const spread=n.arguments.some(x=>x.type==='SpreadElement'),late=!!callee._ref?.check||b?.order>this.scriptOrder(this.fn);
+   if(fn&&fn.direct&&!fn.escapes&&!spread){
+    // The arguments always reach the parameters (directly or through the
+    // generic entry); the call is direct unless it may run before the
+    // binding exists (TDZ, or a global declared by a later script).
+    if(!late)n._direct=fn;
     fn.node.params.forEach((p,i)=>{
      const id=p.type==='AssignmentPattern'?p.left:p,param=id._ref.binding;
      if(i<args.length)this.widen(param,n.arguments[i]&&n.arguments[i].type!=='SpreadElement'?args[i]:ANY);
      else if(p.type!=='AssignmentPattern')this.widen(param,ANY);
     });
-    return fn.ret??null;
+    return late?ANY:fn.ret??null;
    }
-   if(fn&&fn.direct&&!n.arguments.some(x=>x.type==='SpreadElement')){n._direct=fn;return fn.ret??null;}
+   if(fn&&fn.direct&&!spread&&!late){n._direct=fn;return fn.ret??null;}
    if(!b&&(NUMBER_GLOBALS.has(callee.name)||BOOL_GLOBALS.has(callee.name))&&this.builtin(callee,callee.name))return NUMBER_GLOBALS.has(callee.name)?NUM:BOOL;
    if(!b&&callee.name==='String'&&this.builtin(callee,'String'))return STR;
    return ANY;
