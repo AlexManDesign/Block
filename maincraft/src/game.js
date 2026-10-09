@@ -919,154 +919,152 @@ class Game {
     if (!byUpdate) this.surv.exh += 0.005;
   }
 
+  // Right click as in Minecraft (Minecraft.startUseItem, ServerPlayerGameMode.useItemOn / useItem):
+  // first the entity under the crosshair when it is nearer than the block; then the block's own
+  // use (doors, chests, beds...) with whatever is in hand, skipped only when sneaking with something
+  // in hand; then the held item on the block (Item.useOn: placing, spawn eggs, buckets, hoes...);
+  // last the item by itself (Item.use: eating, putting a boat on the water)
   use() {
-    const w = this.world, p = this.player, tg = this.target;
+    const p = this.player, tg = this.target;
     const held = this.inv[this.sel];
     const hid = held ? held.id : 0;
-    // boats: board one under the crosshair, or put one on the water (or ground) in front
-    if (this.boats) {
-      const eye = p.eye(), l = p.look(), bh = this.boats.raycast(eye, l, 3.5);
-      if (bh && (!tg || bh.t < tg.t) && !this.boats.riding) { this.boats.board(bh.b); this.swing(); return; }
-      if (hid === IT.BOAT) {
-        let at = null;
-        for (let t = 0.5; t <= 5 && !at; t += 0.1) {
-          const x = eye[0] + l[0] * t, y = eye[1] + l[1] * t, z = eye[2] + l[2] * t;
-          if (tg && t > tg.t) break;
-          if (isWaterId(w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)))) at = [x, Math.floor(y) + 0.6, z];
-        }
-        if (!at && tg && tg.face === 2) at = [tg.x + 0.5, tg.y + 1, tg.z + 0.5];
-        if (at && !entCollides(w, at[0], at[1], at[2], BOAT_W, BOAT_H)) {
-          this.boats.place(at[0], at[1], at[2], p.yaw);
-          this.consumeHeld(); this.swing();
-        }
-        return;
-      }
+    if (this.useEntity(hid, tg)) return;
+    if (tg) {
+      if (!((this.keys.ShiftLeft || this.keys.ShiftRight) && hid) && this.useBlock(tg, hid)) return;
+      if (hid && this.useOn(tg, held, hid)) return;
     }
+    if (hid) this.useItem(hid, tg);
+  }
+  useEntity(hid, tg) {
+    const p = this.player, eye = p.eye(), l = p.look();
+    // boarding a boat
+    if (this.boats && !this.boats.riding) {
+      const bh = this.boats.raycast(eye, l, 3.5);
+      if (bh && (!tg || bh.t < tg.t)) { this.boats.board(bh.b); this.swing(); return true; }
+    }
+    if (!hid || !this.ents) return false;
+    const h = this.ents.raycastMob(eye, l, 3.5);
+    if (!h || (tg && h.t >= tg.t)) return false;
     // feeding an animal its breeding food comes before eating it yourself
-    if (hid && this.ents) {
-      const h = this.ents.raycastMob(p.eye(), p.look(), 3.5);
-      const md = h && MOB_DEFS[h.e.type];
-      if (md && md.food && md.food.includes(hid) && (!tg || h.t < tg.t) && this.ents.feed(h.e)) {
-        if (this.mode === 'survival') this.consumeHeld();
-        this.swing(); return;
-      }
+    const md = MOB_DEFS[h.e.type];
+    if (md.food && md.food.includes(hid) && this.ents.feed(h.e)) {
+      if (this.mode === 'survival') this.consumeHeld();
+      this.swing(); return true;
     }
-    // food
-    if (hid && isItem(hid) && itemDef(hid)[5] && itemDef(hid)[5].food && this.mode === 'survival' && this.surv.food < 20) {
-      if (!this.eating) this.eating = { t: 0 };
-      return;
+    if (hid === IT.SHEARS && h.e.type === 'sheep' && !h.e.sheared && !h.e.baby) {
+      h.e.sheared = true; this.ents.dropItem(sheepWool(h.e), 1 + (Math.random() * 3 | 0), h.e.pos[0], h.e.pos[1] + 1, h.e.pos[2]);
+      this.swing(); this.damageTool(); return true;
     }
-    if (hid === IT.SHEARS && this.ents) {
-      const h = this.ents.raycastMob(p.eye(), p.look(), 3.5);
-      if (h && h.e.type === 'sheep' && !h.e.sheared && !h.e.baby) { h.e.sheared = true; this.ents.dropItem(sheepWool(h.e), 1 + (Math.random() * 3 | 0), h.e.pos[0], h.e.pos[1] + 1, h.e.pos[2]); this.swing(); this.damageTool(); return; }
+    return false;
+  }
+  // the block's own use (Block.useItemOn / useWithoutItem); true when it did something
+  useBlock(tg, hid) {
+    const w = this.world, p = this.player, id = tg.id, m = tg.meta, sh = SHAPE[id];
+    if (sh === SH.DOOR && id !== B.IRON_DOOR) {
+      const up = (m >> 2) & 1, oy = up ? tg.y - 1 : tg.y + 1;
+      w.setBlock(tg.x, tg.y, tg.z, id, m ^ 8);
+      if (w.getBlock(tg.x, oy, tg.z) === id) w.setBlock(tg.x, oy, tg.z, id, w.getMeta(tg.x, oy, tg.z) ^ 8);
+      Sfx.door(!(m & 8)); this.swing(); return true;
     }
-    if (!tg) return;
-    const id = tg.id, m = tg.meta;
-    const edef = hid && isItem(hid) ? itemDef(hid)[5] : null;
+    if (sh === SH.TRAPDOOR && id !== B.IRON_TRAPDOOR) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 8); Sfx.door(!(m & 8)); this.swing(); return true; }
+    if (sh === SH.GATE) {
+      let nm = m ^ 4;
+      if (nm & 4) { const fd = p.facingDir(); if (((m & 3) + 2 & 3) === fd) nm = (nm & ~3) | fd; }
+      w.setBlock(tg.x, tg.y, tg.z, id, nm); Sfx.door(!!(nm & 4)); this.swing(); return true;
+    }
+    if (sh === SH.BED) { this.useBed(tg.x, tg.y, tg.z); this.swing(); return true; }
+    if (id === B.CRAFTING_TABLE && this.mode === 'survival') { UI.openInventory('craft3'); return true; }
+    if (id === B.SHIP_WHEEL && this.ships) { if (this.ships.assemble(tg.x, tg.y, tg.z)) this.swing(); return true; }
+    if (dryId(id) === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return true; }
+    if (id === B.FURNACE || id === B.FURNACE_LIT) { UI.openFurnace(tg.x, tg.y, tg.z); return true; }
+    // redstone controls
+    if (id === B.LEVER) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 16); Sfx.click(); this.swing(); return true; }
+    if (sh === SH.BUTTON) { w.rs.press(tg.x, tg.y, tg.z); Sfx.click(); this.swing(); return true; }
+    if (id === B.REPEATER) { w.setBlock(tg.x, tg.y, tg.z, id, (m & ~12) | ((((m >> 2) & 3) + 1) & 3) << 2); Sfx.click(); this.swing(); return true; }
+    if (id === B.COMPARATOR) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 4); Sfx.click(); this.swing(); return true; }
+    // flint and steel primes TNT: it blows after its 80-tick fuse (PrimedTnt)
+    if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { w.rs.onTnt(tg.x, tg.y, tg.z); this.swing(); this.damageTool(); return true; }
+    // shears carve a pumpkin (face toward the player) and it drops 4 seeds, as in Minecraft
+    if (id === B.PUMPKIN && hid === IT.SHEARS) {
+      w.setBlock(tg.x, tg.y, tg.z, B.CARVED_PUMPKIN, (p.facingDir() + 2) & 3);
+      this.ents.dropItem(IT.PUMPKIN_SEEDS, 4, tg.x + 0.5, tg.y + 1.1, tg.z + 0.5);
+      this.swing(); this.damageTool(); return true;
+    }
+    return false;
+  }
+  // the held item on the block (Item.useOn); true when it did something
+  useOn(tg, held, hid) {
+    const w = this.world, p = this.player, id = tg.id, m = tg.meta;
+    const edef = isItem(hid) ? itemDef(hid)[5] : null;
     if (edef && edef.mob) {
       const n = FACE_N[tg.face];
       this.ents.spawnMob(edef.mob, tg.x + n[0] + 0.5, tg.y + n[1] + (n[1] < 0 ? -1 : 0), tg.z + n[2] + 0.5);
-      this.consumeHeld(); this.swing(); return;
+      this.consumeHeld(); this.swing(); return true;
     }
-    const sh = SHAPE[id];
-    // interactions
-    if (!this.keys.ShiftLeft && !this.keys.ShiftRight) {
-      if (sh === SH.DOOR && id !== B.IRON_DOOR) {
-        const up = (m >> 2) & 1, oy = up ? tg.y - 1 : tg.y + 1;
-        w.setBlock(tg.x, tg.y, tg.z, id, m ^ 8);
-        if (w.getBlock(tg.x, oy, tg.z) === id) w.setBlock(tg.x, oy, tg.z, id, w.getMeta(tg.x, oy, tg.z) ^ 8);
-        Sfx.door(!(m & 8)); this.swing(); return;
-      }
-      if (sh === SH.TRAPDOOR && id !== B.IRON_TRAPDOOR) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 8); Sfx.door(!(m & 8)); this.swing(); return; }
-      if (sh === SH.GATE) {
-        let nm = m ^ 4;
-        if (nm & 4) { const fd = p.facingDir(); if (((m & 3) + 2 & 3) === fd) nm = (nm & ~3) | fd; }
-        w.setBlock(tg.x, tg.y, tg.z, id, nm); Sfx.door(!!(nm & 4)); this.swing(); return;
-      }
-      if (sh === SH.BED) { this.useBed(tg.x, tg.y, tg.z); this.swing(); return; }
-      if (id === B.CRAFTING_TABLE && this.mode === 'survival') { UI.openInventory('craft3'); return; }
-      if (id === B.SHIP_WHEEL && this.ships) { if (this.ships.assemble(tg.x, tg.y, tg.z)) this.swing(); return; }
-      if (dryId(id) === B.CHEST) { UI.openChest(tg.x, tg.y, tg.z); return; }
-      if (id === B.FURNACE || id === B.FURNACE_LIT) { UI.openFurnace(tg.x, tg.y, tg.z); return; }
-      // redstone controls
-      if (id === B.LEVER) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 16); Sfx.click(); this.swing(); return; }
-      if (sh === SH.BUTTON) { w.rs.press(tg.x, tg.y, tg.z); Sfx.click(); this.swing(); return; }
-      if (id === B.REPEATER) { w.setBlock(tg.x, tg.y, tg.z, id, (m & ~12) | ((((m >> 2) & 3) + 1) & 3) << 2); Sfx.click(); this.swing(); return; }
-      if (id === B.COMPARATOR) { w.setBlock(tg.x, tg.y, tg.z, id, m ^ 4); Sfx.click(); this.swing(); return; }
-      // flint and steel primes TNT: it blows after its 80-tick fuse (PrimedTnt)
-      if (id === B.TNT && hid === IT.FLINT_AND_STEEL) { w.rs.onTnt(tg.x, tg.y, tg.z); this.swing(); this.damageTool(); return; }
-      // an axe strips a log or wood (the axis stays)
-      if (STRIPPED_OF[id] && hid && isItem(hid) && (itemDef(hid)[5] || {}).tool === 'axe') {
-        w.setBlock(tg.x, tg.y, tg.z, STRIPPED_OF[id], m);
-        this.swing(); this.damageTool(); return;
-      }
-      // shears carve a pumpkin (face toward the player) and it drops 4 seeds, as in Minecraft
-      if (id === B.PUMPKIN && hid === IT.SHEARS) {
-        w.setBlock(tg.x, tg.y, tg.z, B.CARVED_PUMPKIN, (p.facingDir() + 2) & 3);
-        this.ents.dropItem(IT.PUMPKIN_SEEDS, 4, tg.x + 0.5, tg.y + 1.1, tg.z + 0.5);
-        this.swing(); this.damageTool(); return;
-      }
-    }
-    if (!hid) return;
     // buckets
     if (hid === IT.BUCKET) {
       if ((id === B.WATER || id === B.LAVA) && (m & 15) === 0) {
         w.setBlock(tg.x, tg.y, tg.z, 0, 0);
         this.replaceHeld(id === B.WATER ? IT.WATER_BUCKET : IT.LAVA_BUCKET);
-        Sfx.splash(); this.swing();
+        Sfx.splash(); this.swing(); return true;
       }
-      return;
+      return false;
     }
     if (hid === IT.WATER_BUCKET || hid === IT.LAVA_BUCKET) {
       const n = FACE_N[tg.face];
       const x = tg.x + n[0], y = tg.y + n[1], z = tg.z + n[2];
       const cur = w.getBlock(x, y, z);
-      if (cur && !(FLAGS[cur] & BF_REPLACE)) return;
+      if (cur && !(FLAGS[cur] & BF_REPLACE)) return false;
       w.setBlock(x, y, z, hid === IT.WATER_BUCKET ? B.WATER : B.LAVA, 0);
       w.scheduleAround(x, y, z);
       if (this.mode === 'survival') this.replaceHeld(IT.BUCKET);
       Sfx.splash(); this.swing();
-      return;
+      return true;
     }
     if (hid === IT.FLINT_AND_STEEL) {
       const n = FACE_N[tg.face];
       const x = tg.x + n[0], y = tg.y + n[1], z = tg.z + n[2];
-      if (!w.getBlock(x, y, z) && SOLID[w.getBlock(x, y - 1, z)]) { w.setBlock(x, y, z, B.FIRE, 0); this.swing(); }
-      return;
+      if (!w.getBlock(x, y, z) && SOLID[w.getBlock(x, y - 1, z)]) { w.setBlock(x, y, z, B.FIRE, 0); this.swing(); return true; }
+      return false;
     }
-    if (hid === IT.BONE_MEAL) { this.boneMeal(tg); return; }
+    if (hid === IT.BONE_MEAL) { this.boneMeal(tg); return true; }
     if (isItem(hid)) {
       const td = toolInfo(held);
+      // an axe strips a log or wood (the axis stays)
+      if (td && td.tool === 'axe' && STRIPPED_OF[id]) {
+        w.setBlock(tg.x, tg.y, tg.z, STRIPPED_OF[id], m);
+        this.swing(); this.damageTool(); return true;
+      }
       if (td && td.tool === 'hoe' && (id === B.GRASS || id === B.DIRT || id === B.DIRT_PATH) && !w.getBlock(tg.x, tg.y + 1, tg.z)) {
-        w.setBlock(tg.x, tg.y, tg.z, B.FARMLAND, 0); Sfx.block(B.DIRT, 'place'); this.swing(); this.damageTool(); return;
+        w.setBlock(tg.x, tg.y, tg.z, B.FARMLAND, 0); Sfx.block(B.DIRT, 'place'); this.swing(); this.damageTool(); return true;
       }
       if (td && td.tool === 'shovel' && id === B.GRASS && !w.getBlock(tg.x, tg.y + 1, tg.z)) {
-        w.setBlock(tg.x, tg.y, tg.z, B.DIRT_PATH, 0); Sfx.block(B.DIRT, 'place'); this.swing(); this.damageTool(); return;
+        w.setBlock(tg.x, tg.y, tg.z, B.DIRT_PATH, 0); Sfx.block(B.DIRT, 'place'); this.swing(); this.damageTool(); return true;
       }
       // redstone dust goes on top of a full block
       if (hid === IT.REDSTONE) {
         const n = FACE_N[tg.face], px = tg.x + n[0], py = tg.y + n[1], pz = tg.z + n[2], cur = w.getBlock(px, py, pz);
         if ((!cur || (FLAGS[cur] & BF_REPLACE)) && OPAQUE[w.getBlock(px, py - 1, pz)]) {
-          w.setBlock(px, py, pz, B.REDSTONE_WIRE, 0); Sfx.block(B.STONE, 'place'); this.consumeHeld(); this.swing();
+          w.setBlock(px, py, pz, B.REDSTONE_WIRE, 0); Sfx.block(B.STONE, 'place'); this.consumeHeld(); this.swing(); return true;
         }
-        return;
+        return false;
       }
       // cocoa beans go on the side of a jungle log (the pod faces the log)
       if (hid === IT.COCOA_BEANS && isJungleLog(id) && tg.face !== 2 && tg.face !== 3) {
         const n = FACE_N[tg.face], px = tg.x + n[0], pz = tg.z + n[2];
-        if (!w.getBlock(px, tg.y, pz)) { w.setBlock(px, tg.y, pz, B.COCOA, [1, 3, 0, 0, 2, 0][tg.face]); this.consumeHeld(); this.swing(); }
-        return;
+        if (!w.getBlock(px, tg.y, pz)) { w.setBlock(px, tg.y, pz, B.COCOA, [1, 3, 0, 0, 2, 0][tg.face]); this.consumeHeld(); this.swing(); return true; }
+        return false;
       }
       const seeds = { [IT.WHEAT_SEEDS]: B.WHEAT_0, [IT.BEETROOT_SEEDS]: B.BEETROOTS_0, [IT.CARROT]: B.CARROTS_0, [IT.POTATO]: B.POTATOES_0, [IT.PUMPKIN_SEEDS]: B.PUMPKIN_STEM_0, [IT.MELON_SEEDS]: B.MELON_STEM_0 };
       if (seeds[hid] && (id === B.FARMLAND || id === B.FARMLAND_MOIST) && tg.face === 2 && !w.getBlock(tg.x, tg.y + 1, tg.z)) {
-        w.setBlock(tg.x, tg.y + 1, tg.z, seeds[hid], 0); this.consumeHeld(); this.swing(); return;
+        w.setBlock(tg.x, tg.y + 1, tg.z, seeds[hid], 0); this.consumeHeld(); this.swing(); return true;
       }
-      return;
+      return false;
     }
     // place block
     const pl = placementFor(w, hid, tg, p.facingDir(), p);
-    if (!pl) return;
-    for (const b of pl) if (this.obstructed(b.id, b.m, b.x, b.y, b.z)) return;
+    if (!pl) return false;
+    for (const b of pl) if (this.obstructed(b.id, b.m, b.x, b.y, b.z)) return false;
     for (const b of pl) {
       const cur = w.getBlock(b.x, b.y, b.z);
       if (cur && (FLAGS[cur] & BF_REPLACE) && SHAPE[cur] !== SH.WATER && SHAPE[cur] !== SH.LAVA && this.mode === 'survival') this.onBlockBroken(b.x, b.y, b.z, cur, 0, true);
@@ -1076,6 +1074,30 @@ class Game {
     Sfx.block(hid, 'place');
     this.swing();
     this.consumeHeld();
+    return true;
+  }
+  // the held item by itself (Item.use): eating, putting a boat on the water (or the ground)
+  useItem(hid, tg) {
+    const w = this.world, p = this.player;
+    const def = isItem(hid) ? itemDef(hid)[5] : null;
+    if (def && def.food && this.mode === 'survival' && this.surv.food < 20) {
+      if (!this.eating) this.eating = { t: 0 };
+      return;
+    }
+    if (hid === IT.BOAT && this.boats) {
+      const eye = p.eye(), l = p.look();
+      let at = null;
+      for (let t = 0.5; t <= 5 && !at; t += 0.1) {
+        const x = eye[0] + l[0] * t, y = eye[1] + l[1] * t, z = eye[2] + l[2] * t;
+        if (tg && t > tg.t) break;
+        if (isWaterId(w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)))) at = [x, Math.floor(y) + 0.6, z];
+      }
+      if (!at && tg && tg.face === 2) at = [tg.x + 0.5, tg.y + 1, tg.z + 0.5];
+      if (at && !entCollides(w, at[0], at[1], at[2], BOAT_W, BOAT_H)) {
+        this.boats.place(at[0], at[1], at[2], p.yaw);
+        this.consumeHeld(); this.swing();
+      }
+    }
   }
 
   // BlockItem.canPlace -> Level.isUnobstructed: no block goes where its collision boxes would cut
