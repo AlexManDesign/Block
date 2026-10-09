@@ -141,22 +141,24 @@ function humanoid(armW, wide, hat) {
   return parts;
 }
 
+// eye: the eye height (EntityType eyeHeight; 0.85 x the height when not given), where a mob sees
+// from, reads the light and is lit for drawing (getLightProbePosition), and suffocates (isInWall)
 const MOB_DEFS = {
   // meat comes cooked from an animal that died burning (the loot tables' furnace_smelt when on fire)
   pig: { w: 0.9, h: 0.9, hp: 10, attr: 0.25, tempt: 1.2, food: [IT.CARROT, IT.POTATO, IT.BEETROOT], panic: 1.25, drops: (e) => [[e.fire > 0 ? IT.COOKED_PORKCHOP : IT.PORKCHOP, 1 + (Math.random() * 3 | 0)]], passive: true },
-  cow: { w: 0.9, h: 1.4, hp: 10, attr: 0.2, tempt: 1.25, parent: 1.25, food: [IT.WHEAT], panic: 2.0, drops: (e) => [[e.fire > 0 ? IT.COOKED_BEEF : IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
-  sheep: { w: 0.9, h: 1.3, hp: 8, attr: 0.23, tempt: 1.1, food: [IT.WHEAT], panic: 1.25, drops: (e) => [[e.fire > 0 ? IT.COOKED_MUTTON : IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
-  chicken: { w: 0.4, h: 0.7, hp: 4, attr: 0.25, tempt: 1.0, food: [IT.WHEAT_SEEDS, IT.PUMPKIN_SEEDS, IT.MELON_SEEDS, IT.BEETROOT_SEEDS], panic: 1.4, drops: (e) => [[e.fire > 0 ? IT.COOKED_CHICKEN : IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
+  cow: { w: 0.9, h: 1.4, eye: 1.3, hp: 10, attr: 0.2, tempt: 1.25, parent: 1.25, food: [IT.WHEAT], panic: 2.0, drops: (e) => [[e.fire > 0 ? IT.COOKED_BEEF : IT.BEEF, 1 + (Math.random() * 3 | 0)], [IT.LEATHER, Math.random() * 3 | 0]], passive: true },
+  sheep: { w: 0.9, h: 1.3, eye: 1.235, hp: 8, attr: 0.23, tempt: 1.1, food: [IT.WHEAT], panic: 1.25, drops: (e) => [[e.fire > 0 ? IT.COOKED_MUTTON : IT.MUTTON, 1 + (Math.random() * 2 | 0)], [e.sheared ? 0 : sheepWool(e), 1]], passive: true },
+  chicken: { w: 0.4, h: 0.7, eye: 0.644, hp: 4, attr: 0.25, tempt: 1.0, food: [IT.WHEAT_SEEDS, IT.PUMPKIN_SEEDS, IT.MELON_SEEDS, IT.BEETROOT_SEEDS], panic: 1.4, drops: (e) => [[e.fire > 0 ? IT.COOKED_CHICKEN : IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
   // zombie loot: 0-2 rotten flesh, and when the player killed it one in 40 an iron ingot, a carrot
   // or a potato (killed_by_player, random_chance 0.025)
-  zombie: { w: 0.6, h: 1.95, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true },
-  skeleton: { w: 0.6, h: 1.99, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
+  zombie: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true },
+  skeleton: { w: 0.6, h: 1.99, eye: 1.74, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
   creeper: { w: 0.6, h: 1.7, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
-  spider: { w: 1.4, h: 0.9, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
-  cave_spider: { w: 0.7, h: 0.5, hp: 12, attr: 0.3, wander: 0.8, dmg: 2, poison: 7, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
-  enderman: { w: 0.6, h: 2.9, hp: 40, attr: 0.3, dmg: 7, detect: 64, drops: () => [[IT.ENDER_PEARL, Math.random() * 2 | 0]], hostile: true, neutral: true },
-  slime: { w: 1.02, h: 1.02, hp: 4, speed: 2.7, dmg: 2, drops: (e) => [[IT.SLIME_BALL, e.size === 1 ? Math.random() * 3 | 0 : 0]], hostile: true, slime: true },
-  salmon: { w: 0.7, h: 0.4, hp: 3, speed: 1.6, drops: (e) => [[e.fire > 0 ? IT.COOKED_SALMON : IT.RAW_SALMON, 1], [Math.random() < 0.05 ? IT.BONE_MEAL : 0, 1]], passive: true, aquatic: true },
+  spider: { w: 1.4, h: 0.9, eye: 0.65, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
+  cave_spider: { w: 0.7, h: 0.5, eye: 0.45, hp: 12, attr: 0.3, wander: 0.8, dmg: 2, poison: 7, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
+  enderman: { w: 0.6, h: 2.9, eye: 2.55, hp: 40, attr: 0.3, dmg: 7, detect: 64, drops: () => [[IT.ENDER_PEARL, Math.random() * 2 | 0]], hostile: true, neutral: true },
+  slime: { w: 1.02, h: 1.02, eye: 0.6375, hp: 4, speed: 2.7, dmg: 2, drops: (e) => [[IT.SLIME_BALL, e.size === 1 ? Math.random() * 3 | 0 : 0]], hostile: true, slime: true },
+  salmon: { w: 0.7, h: 0.4, eye: 0.26, hp: 3, speed: 1.6, drops: (e) => [[e.fire > 0 ? IT.COOKED_SALMON : IT.RAW_SALMON, 1], [Math.random() < 0.05 ? IT.BONE_MEAL : 0, 1]], passive: true, aquatic: true },
   shark: { w: 0.9, h: 0.8, hp: 24, speed: 4.2, dmg: 6, drops: (e) => [[e.fire > 0 ? IT.COOKED_COD : IT.RAW_COD, 1 + (Math.random() * 2 | 0)], [IT.BONE, Math.random() < 0.35 ? 1 : 0]], hostile: true, aquatic: true },
 };
 // Ground mobs move like Minecraft's: MoveControl sets both the speed and the forward input to
@@ -220,6 +222,43 @@ function entCollides(world, x, y, z, w, h) {
         for (const b of boxes) if (bx + b[0] < x1 && bx + b[3] > x0 && by + b[1] < y1 && by + b[4] > y0 && bz + b[2] < z1 && bz + b[5] > z0) return true;
       }
   return false;
+}
+// LivingEntity.isInWall: a suffocating block (a full solid cube one cannot see through) at the eyes,
+// over a square 0.8 x the body's width
+function eyeInWall(world, x, ey, z, w) {
+  const r = w * 0.4, y = Math.floor(ey);
+  for (let i = 0; i < 4; i++) {
+    const id = world.getBlock(Math.floor(i & 1 ? x + r - 1e-7 : x - r), y, Math.floor(i & 2 ? z + r - 1e-7 : z - r));
+    if (SOLID[id] && OPAQUE[id]) return true;
+  }
+  return false;
+}
+// VoxelShape.collide along one axis: how far (up to d) the body can go before the collision box of
+// a block ahead of it. A box it already overlaps is no obstacle, so a body caught inside a block can
+// walk out of it, as in Minecraft
+const SW_LO = new Float64Array(3), SW_HI = new Float64Array(3), SW_A0 = new Float64Array(3), SW_A1 = new Float64Array(3), SW_O = new Float64Array(3);
+function entSweep(world, x, y, z, w, h, ax, d) {
+  const hw = w / 2, lo = SW_LO, hi = SW_HI, a0 = SW_A0, a1 = SW_A1, o = SW_O, E = 1e-7;
+  lo[0] = a0[0] = x - hw; lo[1] = a0[1] = y; lo[2] = a0[2] = z - hw;
+  hi[0] = a1[0] = x + hw; hi[1] = a1[1] = y + h; hi[2] = a1[2] = z + hw;
+  if (d > 0) a1[ax] += d; else a0[ax] += d;
+  for (let by = Math.floor(a0[1] - 0.5); by <= Math.floor(a1[1] - E); by++)
+    for (let bz = Math.floor(a0[2]); bz <= Math.floor(a1[2] - E); bz++)
+      for (let bx = Math.floor(a0[0]); bx <= Math.floor(a1[0] - E); bx++) {
+        const id = world.getBlock(bx, by, bz);
+        if (!id || !COLLIDE[id]) continue;
+        const boxes = collisionBoxes(world, id, world.getMeta(bx, by, bz), bx, by, bz);
+        if (!boxes) continue;
+        o[0] = bx; o[1] = by; o[2] = bz;
+        for (const b of boxes) {
+          let k = 0;
+          for (; k < 3; k++) if (k !== ax && !(o[k] + b[k] < hi[k] - E && o[k] + b[k + 3] > lo[k] + E)) break;
+          if (k < 3) continue;
+          if (d > 0) { const t = o[ax] + b[ax] - hi[ax]; if (t >= -E && t < d) d = t; }
+          else { const t = o[ax] + b[ax + 3] - lo[ax]; if (t <= E && t > d) d = t; }
+        }
+      }
+  return Math.abs(d) < E ? 0 : d;
 }
 function entMove(world, e, dt) {
   const moveAx = (ax, d) => {
@@ -633,6 +672,8 @@ class Entities {
         if (fb === B.LAVA || fb === B.FIRE) { e.lavaT = 0.5; e.fire = Math.max(e.fire, fb === B.LAVA ? 15 : 8); this.damageMob(e, fb === B.LAVA ? 4 : 1, null, null, true); if (e.hp <= 0) continue; }
       }
       if (e.fire > 0) e.fire -= dt;
+      // LivingEntity.baseTick: 1 damage while the eyes are inside a suffocating block (isInWall)
+      if (eyeInWall(w, e.pos[0], e.pos[1] + this.eyeH(e), e.pos[2], e.w)) { this.damageMob(e, 1, null, null, false, true); if (e.hp <= 0) continue; }
       if (d.aquatic) { this.aiFish(e, d, dt, dx, dz, h); continue; }
       const feet = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2]));
       const inW = isWaterId(feet);
@@ -644,7 +685,7 @@ class Entities {
         }
         // Enderman.customServerAiStep: in daylight under the open sky, 30 s after it last took a
         // target, now and then it lets go and teleports away (same odds as the undead catching fire)
-        if (sunUp && e.age - (e.angryAge || 0) > 30 && (w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h * 0.88), Math.floor(e.pos[2])) >> 4) >= 15 &&
+        if (sunUp && e.age - (e.angryAge || 0) > 30 && (w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])) >> 4) >= 15 &&
           Math.random() < 1 - Math.pow(1 - ignite, dt * 20)) {
           e.angryT = 0; e.hunting = false; e.provoked = false;
           if (this.teleportNear(e, e.pos[0], e.pos[2], 32)) e.tpT = 1;
@@ -660,7 +701,7 @@ class Entities {
       // undead in daylight (Mob.isSunBurnTick): with the open sky over the eyes (sky light 15: a
       // leaf or any block above shades it) they catch fire now and then (random x 30 < (light - 0.4)
       // x 2 a tick: 4% in full sun) and burn 8 s, also on into the shade; water puts it out
-      e.sunlit = sunUp && (w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h * 0.88), Math.floor(e.pos[2])) >> 4) >= 15;
+      e.sunlit = sunUp && (w.getLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])) >> 4) >= 15;
       if (d.burns && e.sunlit && !inW && Math.random() < 1 - Math.pow(1 - ignite, dt * 20)) e.fire = Math.max(e.fire, 8);
       // burning: 1 a second (Entity.baseTick, onFire)
       if (e.fire > 0 && !inW) {
@@ -953,7 +994,7 @@ class Entities {
   }
   canSee(e) {
     const eye = this.game.player.eye();
-    return !this.rayBlocked([e.pos[0], e.pos[1] + e.h * 0.85, e.pos[2]], eye);
+    return !this.rayBlocked([e.pos[0], e.pos[1] + this.eyeH(e), e.pos[2]], eye);
   }
   shootArrow(e) {
     // Minecraft: aim at a third of the target's height, lead upwards by 0.2 per block of distance,
@@ -1089,9 +1130,11 @@ class Entities {
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
     return true;
   }
+  // the eye height (babies and small slimes scale it with the body)
+  eyeH(e) { const d = MOB_DEFS[e.type]; return (d.eye || d.h * 0.85) * e.h / d.h; }
   // Level.getMaxLocalRawBrightness: block light, or sky light less the sky's darkening (0 at noon,
   // 11 at midnight), whichever is more; at the mob's eyes
-  lightAt(e) { return this.rawLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + e.h * 0.85), Math.floor(e.pos[2])); }
+  lightAt(e) { return this.rawLight(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])); }
   rawLight(x, y, z) { const lt = this.game.world.getLight(x, y, z); return Math.max(lt & 15, (lt >> 4) - this.game.skyDarken()); }
   // Monster.isDarkEnoughToSpawn: sky light not above a random 0..31, no block light, and the raw
   // brightness not above a random 0..7 (at midnight in the open about a quarter of the tries pass,
@@ -1106,7 +1149,7 @@ class Entities {
   stared(e, h) {
     if (h > 64) return false;
     const p = this.game.player, eye = p.eye(), look = p.look();
-    const hy = e.pos[1] + 2.55;
+    const hy = e.pos[1] + this.eyeH(e);
     const vx = e.pos[0] - eye[0], vy = hy - eye[1], vz = e.pos[2] - eye[2], u = Math.hypot(vx, vy, vz);
     if (u < 1e-6) return false;
     if ((vx * look[0] + vy * look[1] + vz * look[2]) / u <= 1 - 0.025 / u) return false;
@@ -1250,20 +1293,13 @@ class Entities {
     const wet = id => isWaterId(id) || id === B.LAVA, a = w.getBlock(x, y, z);
     return wet(a) || (!a && (wet(w.getBlock(x, y - 1, z)) || wet(w.getBlock(x, y - 2, z))));
   }
-  // move along one axis; on contact the position is refined to touch the obstacle. true = blocked
+  // move along one axis up to the first obstacle (entSweep). true = blocked (Entity.move: the
+  // collided move differs by more than 1e-5, Mth.equal)
   moveAxis(e, ax, d) {
     if (!d) return false;
-    const w = this.game.world, n = Math.max(1, Math.ceil(Math.abs(d) / 0.4)), s = d / n, p = e.pos;
-    for (let i = 0; i < n; i++) {
-      const o = p[ax];
-      p[ax] = o + s;
-      if (!entCollides(w, p[0], p[1], p[2], e.w, e.h)) continue;
-      let lo = 0, hi = 1;
-      for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; p[ax] = o + s * m; if (entCollides(w, p[0], p[1], p[2], e.w, e.h)) hi = m; else lo = m; }
-      p[ax] = o + s * lo;
-      return true;
-    }
-    return false;
+    const p = e.pos, a = entSweep(this.game.world, p[0], p[1], p[2], e.w, e.h, ax, d);
+    p[ax] += a;
+    return Math.abs(a - d) > 1e-5;
   }
   // Walking physics, one game tick, as Minecraft's Mob: MoveControl turns the body toward the wanted
   // direction by at most 90 degrees a tick and walks along it with speed = modifier x movement
@@ -1291,7 +1327,7 @@ class Entities {
     // jumping (JumpControl acts on the tick after it was asked; FloatGoal in water). Zombies and
     // skeletons have no FloatGoal: they sink and walk the bottom, rising only while they want to
     // jump (LivingEntity.jumpInLiquid)
-    const depth = inW ? this.waterDepth(e) : 0, deep = depth > (e.h * 0.85 < 0.4 ? 0 : 0.4);
+    const depth = inW ? this.waterDepth(e) : 0, deep = depth > (this.eyeH(e) < 0.4 ? 0 : 0.4);
     if (deep && (d.sinks ? e.wantJump : Math.random() < 0.8)) v[1] += 0.04;
     else if (e.wantJump && e.onGround && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
     e.wantJump = false;
@@ -1333,8 +1369,7 @@ class Entities {
       if (wasGround || e.onGround) {
         const t = [p[0], p[1], p[2]]; t[ax] = o + dd;
         if (!entCollides(w, p[0], p[1] + 0.6, p[2], e.w, e.h) && !entCollides(w, t[0], t[1] + 0.6, t[2], e.w, e.h)) {
-          let y = t[1] + 0.6;
-          while (y - 0.01 > p[1] && !entCollides(w, t[0], y - 0.01, t[2], e.w, e.h)) y -= 0.01;
+          const y = t[1] + 0.6 + entSweep(w, t[0], t[1] + 0.6, t[2], e.w, e.h, 1, -0.6);
           if (y - p[1] > 1e-3) { p[ax] = t[ax]; p[1] = y; e.onGround = true; continue; }
         }
       }
@@ -1790,7 +1825,8 @@ class Entities {
   // hit only deals the difference (without knockback or the red flash). from: the attacker's
   // position (knockback 0.4 away); extra: [strength, dirX, dirZ] of a sprint attack's knockback.
   // hitsArmor: damage armor works against besides attacks (explosions, lava, a fire block)
-  damageMob(e, dmg, from, extra, hitsArmor) {
+  // calm: damage that is no cause for panic (suffocating in a wall is not in panic_causes)
+  damageMob(e, dmg, from, extra, hitsArmor, calm) {
     if (e.deathT > 0 || dmg <= 0) return;
     const d = MOB_DEFS[e.type];
     // CombatRules.getDamageAfterAbsorb: armor (a zombie's 2 points) takes off clamp(armor - damage / 2,
@@ -1814,7 +1850,7 @@ class Entities {
     };
     if (from) kb(0.4, e.pos[0] - from[0], e.pos[2] - from[2]);
     if (extra) kb(extra[0], extra[1], extra[2]);
-    if (!d.hostile) { e.fleeT = 5; e.panicFrom = from ? [from[0], from[2]] : null; e.panicTgt = null; }   // lastHurtByMob is kept for 100 ticks
+    if (!d.hostile && !calm) { e.fleeT = 5; e.panicFrom = from ? [from[0], from[2]] : null; e.panicTgt = null; }   // lastHurtByMob is kept for 100 ticks
     if (d.aquatic) { e.esc = null; e.escT = 0; }
     e.idleT = 0;                                   // LivingEntity.hurt: noActionTime = 0
     if (from) e.playerHitAge = e.age;              // lastHurtByPlayerTime (loot "killed by player" for 100 ticks)
@@ -1927,7 +1963,8 @@ class Entities {
       const dx = P[0] - cam[0], dz = P[2] - cam[2], rr = Math.max(2, e.w * 0.5 + 1);
       if (dx * dx + dz * dz > R2) continue;
       if (!r.boxVisible(dx - rr, P[1] - cam[1] - 0.5, dz - rr, dx + rr, P[1] - cam[1] + e.h + 0.5, dz + rr)) continue;
-      const li = g.lightAt(P[0], P[1] + e.h * 0.6, P[2], env);
+      // lit by the light at its eyes (EntityRenderer: getLightProbePosition), dark only with the eyes in a block
+      const li = g.lightAt(P[0], P[1] + this.eyeH(e), P[2], env);
       if (e.fire > 0 && !e.inWater) this.flame(fireV, P, e.w, e.h, cam);
       // creeper white flash (CreeperRenderer.getWhiteOverlayProgress): on every other tenth of the fuse
       const fz = e.fuse > 0 ? Math.min(1, e.fuse / 1.5) : 0, wf = fz && ((fz * 10) | 0) % 2 ? 1 + Math.max(0.5, fz) : 0;

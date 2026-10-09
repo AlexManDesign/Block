@@ -1066,16 +1066,7 @@ class Game {
     // place block
     const pl = placementFor(w, hid, tg, p.facingDir(), p);
     if (!pl) return;
-    // do not place inside the player
-    for (const b of pl) {
-      if (SOLID[b.id]) {
-        const boxes = collisionBoxes(w, b.id, b.m, b.x, b.y, b.z) || [];
-        const hw = PLAYER_W / 2, pp = p.pos;
-        for (const q of boxes) {
-          if (b.x + q[0] < pp[0] + hw && b.x + q[3] > pp[0] - hw && b.y + q[1] < pp[1] + p.h && b.y + q[4] > pp[1] && b.z + q[2] < pp[2] + hw && b.z + q[5] > pp[2] - hw) return;
-        }
-      }
-    }
+    for (const b of pl) if (this.obstructed(b.id, b.m, b.x, b.y, b.z)) return;
     for (const b of pl) {
       const cur = w.getBlock(b.x, b.y, b.z);
       if (cur && (FLAGS[cur] & BF_REPLACE) && SHAPE[cur] !== SH.WATER && SHAPE[cur] !== SH.LAVA && this.mode === 'survival') this.onBlockBroken(b.x, b.y, b.z, cur, 0, true);
@@ -1085,6 +1076,26 @@ class Game {
     Sfx.block(hid, 'place');
     this.swing();
     this.consumeHeld();
+  }
+
+  // BlockItem.canPlace -> Level.isUnobstructed: no block goes where its collision boxes would cut
+  // into the player, a mob (a dying one too), a boat or a falling block
+  obstructed(id, m, x, y, z) {
+    const q = collisionBoxes(this.world, id, m, x, y, z);
+    if (!q) return false;
+    const cuts = (cx, cy, cz, w, h) => {
+      const hw = w / 2;
+      for (const b of q) if (x + b[0] < cx + hw && x + b[3] > cx - hw && y + b[1] < cy + h && y + b[4] > cy && z + b[2] < cz + hw && z + b[5] > cz - hw) return true;
+      return false;
+    };
+    const p = this.player;
+    if (cuts(p.pos[0], p.pos[1], p.pos[2], PLAYER_W, p.h)) return true;
+    if (this.ents) {
+      for (const e of this.ents.mobs) if (cuts(e.pos[0], e.pos[1], e.pos[2], e.w, e.h)) return true;
+      for (const f of this.ents.falling) if (cuts(f.x, f.y, f.z, 0.98, 0.98)) return true;
+    }
+    if (this.boats) for (const b of this.boats.list) if (cuts(b.pos[0], b.pos[1], b.pos[2], BOAT_W, BOAT_H)) return true;
+    return false;
   }
 
   boneMeal(tg) {
@@ -1192,7 +1203,7 @@ class Game {
         const f = impact(e.pos, e.w, e.h);
         if (f < 0) continue;
         E.damageMob(e, Math.floor((f * f + f) / 2 * 7 * q + 1), null, null, true);
-        push(e.vel, e.pos, e.h * 0.85, f);
+        push(e.vel, e.pos, E.eyeH(e), f);
       }
       // dropped items have 5 health
       E.items = E.items.filter(it => { const f = impact(it.pos, 0.25, 0.25); return f < 0 || Math.floor((f * f + f) / 2 * 7 * q + 1) < 5; });
@@ -1299,6 +1310,8 @@ class Game {
     const fb = this.world.getBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1] + 0.2), Math.floor(p.pos[2]));
     if (fb === B.FIRE || fb === B.MAGMA_BLOCK || fb === B.CACTUS) { s.lavaT -= dt; if (s.lavaT <= 0) { s.lavaT = 0.5; this.hurt(1); } }
     if (p.pos[1] < WORLD_MIN_Y - 40) this.hurt(4);
+    // LivingEntity.baseTick: 1 damage while the eyes are inside a suffocating block (isInWall)
+    if (eyeInWall(this.world, p.pos[0], p.pos[1] + (this.sleeping ? 0.2 : p.poseEye()), p.pos[2], PLAYER_W)) this.hurt(1);
     // exhaustion: sprinting 0.1 and swimming 0.01 a block, a jump 0.05 (0.2 sprinting)
     const hs = Math.hypot(p.vel[0], p.vel[2]);
     s.exh += dt * (p.sprinting ? 0.1 * hs : p.swimming ? 0.01 * hs : 0);

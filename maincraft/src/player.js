@@ -18,6 +18,8 @@ class Player {
     this.fallDamage = 0; this.fallDist = 0; this.noJumpDelay = 0; this.crouching = false;
     this.eyeOffset = EYE;
   }
+  // the eye height of the pose (swimming / crawling, sneaking, standing); the camera eases toward it
+  poseEye() { return this.h === SWIM_H ? 0.4 : this.h === PLAYER_SNEAK_H ? 1.27 : EYE; }
   // eye at the drawn (interpolated) position, as Minecraft's camera and block picking use
   eye() { const r = this.rpos || this.pos; return [r[0], r[1] + (this.reye ?? this.eyeOffset), r[2]]; }
   look() {
@@ -207,8 +209,7 @@ class Player {
     else if (p[1] < this.prev[1]) this.fallDist += this.prev[1] - p[1];
     this.vel[0] = v[0] * 20; this.vel[1] = v[1] * 20; this.vel[2] = v[2] * 20;
     // ---- camera eye height eases toward the pose (Camera: 0.5 per tick); view bobbing
-    const eyeT = this.h === SWIM_H ? 0.4 : this.h === PLAYER_SNEAK_H ? 1.27 : EYE;
-    this.eyeOffset += (eyeT - this.eyeOffset) * 0.5;
+    this.eyeOffset += (this.poseEye() - this.eyeOffset) * 0.5;
     const moved = Math.hypot(p[0] - this.prev[0], p[2] - this.prev[2]);
     this.walkDist += moved * 0.6;
     this.bobA += ((this.onGround && !this.swimming ? Math.min(0.1, moved) : 0) - this.bobA) * 0.4;
