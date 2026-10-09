@@ -1154,6 +1154,9 @@ class WorldGen {
     return h;
   }
   surfH(x, z) { return Math.max(this.floorH(x, z), SEA); }
+  // ChunkGenerator.getFirstFreeHeight(WORLD_SURFACE_WG): over the sea the first free cell is the one
+  // above the water (the heightmap counts fluids), so jigsaw pieces join it at the water's surface
+  surfWG(x, z) { return Math.max(this.floorH(x, z), SEA + 1); }
 
   // IglooStructure / IglooPieces: the igloo on the surface; half of them with a ladder shaft of
   // 4..11 sections down to a basement laboratory
@@ -1335,7 +1338,7 @@ class WorldGen {
       const mx = (box[0] + box[3]) >> 1, mz = (box[2] + box[5]) >> 1;
       if (!type.biomes.includes(this.biomeAt(mx, mz))) continue;
       // projected to WORLD_SURFACE_WG at the centre, the floor (ground level delta 1) one below
-      const k = this.surfH(mx, mz);
+      const k = this.surfWG(mx, mz);
       const first = { e, x: X, y: k - 1, z: Z, rot, box: WorldGen.vilElBox(this, e, X, k - 1, Z, rot), gd: 1, junctions: [] };
       return this.vilAssemble(first, mx, k, mz, rnd, set.depth);
     }
@@ -1399,7 +1402,7 @@ class WorldGen {
               const rigid1 = e1[3] === 0, k1 = j1[1], l1 = j - k1 + (fd === 4 ? 1 : fd === 5 ? -1 : 0);
               let i2;
               if (rigid && rigid1) i2 = i0 + l1;
-              else { if (k === -1) k = this.surfH(jg[0], jg[2]); i2 = k - k1; }
+              else { if (k === -1) k = this.surfWG(jg[0], jg[2]); i2 = k - k1; }
               const y1 = i2;      // template minY is its origin: box minY = position y
               const b3 = WorldGen.vilElBox(this, e1, ox, y1, oz, r1);
               const bt = b3.slice();
@@ -1412,7 +1415,7 @@ class WorldGen {
               let i3;
               if (rigid) i3 = i0 + j;
               else if (rigid1) i3 = i2 + k1;
-              else { if (k === -1) k = this.surfH(jg[0], jg[2]); i3 = k + Math.trunc(l1 / 2); }
+              else { if (k === -1) k = this.surfWG(jg[0], jg[2]); i3 = k + Math.trunc(l1 / 2); }
               piece.junctions.push([tx, i3 - j + piece.gd, tz]);
               p1.junctions.push([jg[0], i3 - k1 + gd, jg[2]]);
               pieces.push(p1);

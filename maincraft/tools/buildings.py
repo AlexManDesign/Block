@@ -414,8 +414,12 @@ def tower(st, seed):
 
 
 def street(st, length, kind):
-    """a street 5 wide (path in the middle three) along z, built from z 0 (where it joins) to length - 1"""
-    t = Tpl(5, 1, length)
+    """a street 5 wide (path in the middle three) along z, built from z 0 (where it joins) to length - 1.
+    The jigsaws for buildings sit one above the street, at the height of a building's entrance
+    jigsaw (on its doorstep, one above its floor): joined level (offset 0), a building keeps the
+    ground level delta 1 and the Beardifier brings the ground to its floor, the floor taking the
+    place of the top ground block at the street's side, as Minecraft's houses stand"""
+    t = Tpl(5, 2, length)
     def path(x, z): t.set(x, 0, z, st['path'])
     if kind == 'straight':
         for z in range(length):
@@ -423,8 +427,9 @@ def street(st, length, kind):
         t.jig(2, 0, 0, N, UP, 'street', 'street', 'empty', (st['path'], 0, 0))
         t.jig(2, 0, length - 1, S, UP, 'street', 'street', 'streets', (st['path'], 0, 0))
         for z in range(3, length - 3, 6):
-            t.jig(0, 0, z, W, UP, 'street_side', 'building_entrance', 'houses', (st['path'], 0, 0))
-            t.jig(4, 0, z + 2, E, UP, 'street_side', 'building_entrance', 'houses', (st['path'], 0, 0))
+            path(0, z); path(4, z + 2)       # a step of path toward each doorstep
+            t.jig(0, 1, z, W, UP, 'street_side', 'building_entrance', 'houses', ('AIR', 0, 0))
+            t.jig(4, 1, z + 2, E, UP, 'street_side', 'building_entrance', 'houses', ('AIR', 0, 0))
             t.jig(0, 0, z + 2, UP, N, 'decor', 'bottom', 'decor', ('GRASS', 0, 0), roll=True)
     elif kind == 'cross':
         t = Tpl(9, 1, 9)
@@ -435,14 +440,14 @@ def street(st, length, kind):
         t.jig(0, 0, 4, W, UP, 'street', 'street', 'streets', (st['path'], 0, 0))
         t.jig(8, 0, 4, E, UP, 'street', 'street', 'streets', (st['path'], 0, 0))
     elif kind == 'corner':
-        t = Tpl(9, 1, 9)
+        t = Tpl(9, 2, 9)
         for i in range(6):
             for k in (3, 4, 5): t.set(k, 0, i, st['path'])
         for i in range(3, 9):
             for k in (3, 4, 5): t.set(i, 0, k, st['path'])
         t.jig(4, 0, 0, N, UP, 'street', 'street', 'empty', (st['path'], 0, 0))
         t.jig(8, 0, 4, E, UP, 'street', 'street', 'streets', (st['path'], 0, 0))
-        t.jig(2, 0, 7, S, UP, 'street_side', 'building_entrance', 'houses', ('GRASS', 0, 0))
+        t.jig(2, 1, 7, S, UP, 'street_side', 'building_entrance', 'houses', ('AIR', 0, 0))
     elif kind == 'end':
         t = Tpl(5, 1, 3)
         for z in range(3):
