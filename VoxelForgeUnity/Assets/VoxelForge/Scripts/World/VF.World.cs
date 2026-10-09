@@ -175,6 +175,15 @@ namespace VoxelForge
                     d.damage = stats[kind][0][mi]; d.hasDamage = true; d.attackSpeed = stats[kind][1][mi];
                 }
             ItemDef bow; if (ITEM_DEFS.TryGetValue("bow", out bow)) { bow.damage = 1; bow.hasDamage = true; bow.attackSpeed = 1; }
+            // Object.assign(ITEM_DEFS, {...}) block evaluated later in the reference source.
+            IDEF("apple", "Яблоко", food: 4); IDEF("brick", "Кирпич"); IDEF("bucket", "Ведро", 16); IDEF("water_bucket", "Ведро воды", 1);
+            IDEF("lava_bucket", "Ведро лавы", 1, fuel: 1000); IDEF("raw_copper", "Необработанная медь"); IDEF("copper_ingot", "Медный слиток");
+            IDEF("green_dye", "Зелёный краситель"); IDEF("flint_and_steel", "Огниво", 1, maxDur: 64);
+            Action<string, string, int, int, int> AR = (k, n, dur, slot, pts) => { IDEF(k, n, 1, maxDur: dur); ITEM_DEFS[k].armor = new ArmorInfo { slot = slot, pts = pts }; };
+            AR("leather_helmet", "Кожаный шлем", 55, 0, 1); AR("leather_chestplate", "Кожаная куртка", 80, 1, 3); AR("leather_leggings", "Кожаные штаны", 75, 2, 2); AR("leather_boots", "Кожаные ботинки", 65, 3, 1);
+            AR("iron_helmet", "Железный шлем", 165, 0, 2); AR("iron_chestplate", "Железный нагрудник", 240, 1, 6); AR("iron_leggings", "Железные поножи", 225, 2, 5); AR("iron_boots", "Железные ботинки", 195, 3, 2);
+            AR("golden_helmet", "Золотой шлем", 77, 0, 2); AR("golden_chestplate", "Золотой нагрудник", 112, 1, 5); AR("golden_leggings", "Золотые поножи", 105, 2, 3); AR("golden_boots", "Золотые ботинки", 91, 3, 1);
+            AR("diamond_helmet", "Алмазный шлем", 363, 0, 3); AR("diamond_chestplate", "Алмазный нагрудник", 528, 1, 8); AR("diamond_leggings", "Алмазные поножи", 495, 2, 6); AR("diamond_boots", "Алмазные ботинки", 429, 3, 3);
         }
         public static ItemDef itemDefOrNull(string k) { ItemDef d; return k != null && ITEM_DEFS.TryGetValue(k, out d) ? d : null; }
 

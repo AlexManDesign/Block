@@ -32,7 +32,7 @@ namespace VoxelForge
         public static float[] entityVertUpload = new float[8192];
         public static int entityVertCount = 0, entityIndexCount = 0, entityBoxCount = 0;
         public static double entityBuildSun = 1, avgMobBuildMs = 0, avgMobUploadMs = 0;
-        public static readonly List<float[]> mobHeldV = new List<float[]>();
+        public static readonly FloatList mobHeldV = new FloatList();
         public static readonly List<int> mobHeldI = new List<int>();
         static readonly double[] entityAngles = new double[3];
         static readonly float[] entityCornerWorld = new float[24];
