@@ -318,8 +318,9 @@ class Entities {
     this.dormant = new Map();
     this.populated = new Set();     // columns that had their animals at generation
     this.creatureT = 20;
+    this.cracks = new Map();        // blocks mobs are breaking: key -> {x, y, z, stage}
   }
-  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; this.dormant.clear(); this.populated.clear(); }
+  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; this.dormant.clear(); this.populated.clear(); this.cracks.clear(); }
 
   // ------------------------------------------------------------------ keeping animals
   keeps(e) { const d = MOB_DEFS[e.type]; return e.deathT <= 0 && ((!d.hostile && !d.aquatic) || e.persist); }
@@ -442,6 +443,22 @@ class Entities {
       const size = (opts && opts.size) || [1, 2, 4][Math.random() * 3 | 0], S = SLIME_SIZES[size];
       e.size = size; e.hp = S[0]; e.w = e.h = 0.52 * size; e.squish = 0; e.tsq = 0; e.hopT = 0;   // SlimeMoveControl: the first jump at once
     }
+    const g = this.game, ld = g.localDifficulty && (type === 'zombie' || type === 'spider') ? g.localDifficulty(Math.floor(x), Math.floor(z)) : null;
+    if (type === 'zombie' && ld) {
+      // Zombie.finalizeSpawn / handleAttributes, by the local difficulty's special part f: door
+      // breaking for f / 10 of them (on hard only it is used), a follow range bonus, knockback
+      // resistance 0..0.05, a reinforcement chance 0..0.1; a leader one time in 20 x f: 2..5 x the
+      // health, +0.5..0.75 reinforcement chance, breaks doors
+      const f = ld.special;
+      e.reinf = Math.random() * 0.1; e.kbRes = Math.random() * 0.05;
+      const fb = Math.random() * 1.5 * f; if (fb > 1) e.followMul *= 1 + fb;
+      e.breakDoors = Math.random() < f * 0.1;
+      if (Math.random() < f * 0.05) { e.reinf += Math.random() * 0.25 + 0.5; e.hp = d.hp * (2 + Math.random() * 3); e.breakDoors = true; e.leader = true; }
+    }
+    if (type === 'spider' && ld && g.difficulty === 'hard' && Math.random() < 0.1 * ld.special) {
+      // Spider.finalizeSpawn on hard: one of speed (2 in 5), strength, regeneration, invisibility
+      e.effect = ['speed', 'speed', 'strength', 'regeneration', 'invisibility'][Math.random() * 5 | 0];
+    }
     if (type === 'sheep') {
       const r = Math.random(); e.color = 'white';
       for (const c of SHEEP_COLORS) if (r < c[1]) { e.color = c[0]; break; }
@@ -463,17 +480,22 @@ class Entities {
     if (this.spawnT <= 0) {
       this.spawnT = 1.0;
       this.wake();
+      // LevelChunk.inhabitedTime: the columns within 8 chunks of the player count the time (ticks)
+      if (g.inhabited) {
+        const ih = g.inhabited, pcx = Math.floor(p.pos[0]) >> 4, pcz = Math.floor(p.pos[2]) >> 4;
+        for (let a = -8; a <= 8; a++) for (let b = -8; b <= 8; b++) { const k = colKey(pcx + a, pcz + b); ih.set(k, (ih.get(k) || 0) + 20); }
+      }
       // newly generated columns get their animals, once ever (lit, so the light rule can be read)
       for (const c of w.cols.values()) if (c.state === 2 && !this.populated.has(c.key)) { this.populated.add(c.key); this.populate(c); }
       if ((this.creatureT -= 1) <= 0) { this.creatureT = 20; this.spawnAnimals(); }
       let hostile = 0, fish = 0, sharks = 0;
       for (const m of this.mobs) { const md = MOB_DEFS[m.type]; if (md.aquatic) { fish++; if (m.type === 'shark') sharks++; } else if (md.hostile) hostile++; }
       // hostile mobs spawn in creative too (as in Minecraft); they just never target a creative player
-      if (hostile < 22) this.trySpawnMonsters();          // one monster cap day and night, as in Minecraft
+      if (hostile < 22 && g.difficulty !== 'peaceful') this.trySpawnMonsters();   // one monster cap day and night, as in Minecraft
       this.fishT = (this.fishT || 0) - 1;
       if (this.fishT <= 0) { this.fishT = 5; if (fish < 10) this.trySpawnFish(); }
       this.sharkT = (this.sharkT || 0) - 1;
-      if (this.sharkT <= 0) { this.sharkT = 12; if (sharks < 2) this.trySpawnShark(); }
+      if (this.sharkT <= 0) { this.sharkT = 12; if (sharks < 2 && g.difficulty !== 'peaceful') this.trySpawnShark(); }
     }
     // ---- mobs: fixed 20 Hz simulation (as in the original); rendering interpolates between ticks
     this.acc = Math.min((this.acc || 0) + dt, MOB_DT * 8);
@@ -540,7 +562,7 @@ class Entities {
         if (a.hostile && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
           if (hb && hb.t <= 1 && hb.t < bt && !a.bounced) {
-            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base))) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
             // AbstractArrow.onHitEntity: a hit that does no harm (creative, or just hurt) turns the
             // arrow back at a tenth of its speed
             a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
@@ -577,6 +599,8 @@ class Entities {
       const dx = p.pos[0] - e.pos[0], dz = p.pos[2] - e.pos[2], dist = Math.hypot(dx, dz);
       const h = Math.hypot(dx, p.pos[1] + 0.9 - (e.pos[1] + e.h * 0.5), dz);
       if (e.pos[1] < WORLD_MIN_Y - 8) { this.mobs.splice(i, 1); continue; }
+      // Mob.checkDespawn: on peaceful every monster is gone at once
+      if (d.hostile && g.difficulty === 'peaceful') { this.endDoor(e); this.mobs.splice(i, 1); continue; }
       // animals out of reach wait with their column (and come back with it)
       if (this.keeps(e)) {
         if (dist > 140 || !w.isLoaded(Math.floor(e.pos[0]), Math.floor(e.pos[2]))) { this.stash(e); this.mobs.splice(i, 1); continue; }
@@ -598,6 +622,8 @@ class Entities {
       if (e.angryT > 0) e.angryT -= dt;
       if (e.tpT > 0) e.tpT -= dt;
       e.atkT += dt;
+      // MobEffects.REGENERATION I (a spider's on hard): 1 health every 50 ticks
+      if (e.effect === 'regeneration' && (e.regT = (e.regT || 0) + dt) >= 2.5) { e.regT = 0; e.hp = Math.min(d.hp, e.hp + 1); }
       if (e.breedCd > 0) e.breedCd -= dt;
       // lava and fire
       if (e.lavaT > 0) e.lavaT -= dt;
@@ -670,11 +696,12 @@ class Entities {
       const fallStart = e.onGround ? e.pos[1] : e.fallY ?? e.pos[1];
       e.fallY = Math.max(fallStart, e.pos[1]);
       this.walkPhysics(e, d, dt, inW);
+      if (e.breakDoors || e.doorPos) this.breakDoor(e);
       if (d.slime && e.onGround && !wasGround) { e.tsq = -0.5; this.stop(e); }
       if (d.slime) { e.squish += (e.tsq - e.squish) * 0.5; e.tsq *= 0.6; }
       if (e.onGround) { const fh = e.fallY - e.pos[1]; if (fh > 3 && e.type !== 'chicken' && !d.slime && !inW) this.damageMob(e, Math.ceil(fh - 3), null); e.fallY = e.pos[1]; }
       // stuck against something: take a short detour sideways
-      if (wl > 0.5 && !d.slime) {
+      if (wl > 0.5 && !d.slime && !e.doorPos) {
         const moved = Math.hypot(e.pos[0] - ox, e.pos[2] - oz);
         // the pace it should make: walking, or in water a fraction of it (acceleration 0.02 x the
         // input a tick, drag 0.8: settles at 0.1 x the input a tick, 2 x the input blocks/s)
@@ -695,7 +722,8 @@ class Entities {
 
   // ------------------------------------------------------------------ land mob behaviour
   ai(e, d, dt, dx, dz, h, hunt) {
-    const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? MOB_SPEED_K * S[2] * S[2] : d.speed;
+    // (speed I, a spider's on hard: x1.2 the attribute)
+    const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? MOB_SPEED_K * S[2] * S[2] : d.speed * (e.effect === 'speed' ? 1.44 : 1);
     e.aiming = false; e.strafe = false;
     const face = () => { e.headYaw = Math.atan2(dx, -dz); };
     // spiders hunt in the dark; in bright light one that has the player drops it now and then
@@ -745,7 +773,7 @@ class Entities {
         e.fuse += dt; this.stop(e); face();
         if (e.fuse >= 1.5) {
           this.mobs.splice(this.mobs.indexOf(e), 1);
-          g.explode(e.pos[0], e.pos[1], e.pos[2], 3);     // Creeper.explodeCreeper: at its feet, power 3
+          g.explode(e.pos[0], e.pos[1], e.pos[2], 3, null, true);     // Creeper.explodeCreeper: at its feet, power 3
         }
         return;
       }
@@ -776,7 +804,13 @@ class Entities {
           // LeapAtTargetGoal(0.4): 0.4 toward the target plus 0.2 x velocity, 0.4 up (blocks/tick)
           e.vel[0] = dx / l * 8 + e.vel[0] * 0.2; e.vel[2] = dz / l * 8 + e.vel[2] * 0.2; e.vel[1] = 8;
         }
-        if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; if (this.hitPlayer(e, d.dmg, dx, dz) && d.poison) this.game.poison(d.poison); }
+        // CaveSpider.doHurtTarget: poison 7 s on normal, 15 s on hard, none on easy; a spider with
+        // strength (hard) hits 3 harder
+        if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) {
+          e.atkT = 0;
+          const pz = d.poison ? { normal: 7, hard: 15 }[g.difficulty] : 0;
+          if (this.hitPlayer(e, d.dmg + (e.effect === 'strength' ? 3 : 0), dx, dz) && pz) g.poison(pz);
+        }
         return;
       }
       if (e.type === 'enderman') {
@@ -806,7 +840,7 @@ class Entities {
         // stops and strafes (MoveControl.strafe at 0.25 of its speed, sideways and back or forth,
         // each way flipped 3 times in 10 every second; backing off under 7.5 blocks, coming on
         // beyond 13), facing the player; otherwise it walks up. The bow is drawn 20 ticks and loosed
-        // if the player is in sight, then 40 ticks (normal difficulty) pass before it draws again;
+        // if the player is in sight, then 40 ticks (20 on hard) pass before it draws again;
         // it lowers the bow once the player has been out of sight 3 s
         const sees = e.sees;
         if (sees !== (e.seenT > 0)) e.seenT = 0;
@@ -825,7 +859,7 @@ class Entities {
         if (e.drawT >= 0) {
           e.drawT += dt;
           if (!sees && e.seenT < -3) e.drawT = -1;
-          else if (sees && e.drawT >= 1) { e.drawT = -1; e.bowCd = 2; this.shootArrow(e); }
+          else if (sees && e.drawT >= 1) { e.drawT = -1; e.bowCd = g.difficulty === 'hard' ? 1 : 2; this.shootArrow(e); }
         } else if ((e.bowCd -= dt) <= 0 && e.seenT >= -3) e.drawT = 0;
         return;
       }
@@ -928,10 +962,12 @@ class Entities {
     const dx = p.pos[0] - src[0], dz = p.pos[2] - src[2], dy = p.pos[1] + p.h / 3 - src[1], hd = Math.hypot(dx, dz);
     const v = [dx, dy + hd * 0.2, dz], l = Math.hypot(v[0], v[1], v[2]) || 1;
     const gauss = () => { let u = 0; for (let k = 0; k < 6; k++) u += Math.random(); return (u - 3) / Math.sqrt(0.5); };
-    for (let k = 0; k < 3; k++) v[k] = v[k] / l + gauss() * 0.0075 * 6;
-    // base damage 2 x power (1 at full draw) + triangle(0.11 x difficulty 2, 0.57425); on a hit it
-    // deals ceil(speed in blocks a tick x base): about 3..5
-    this.arrows.push({ pos: src, vel: [v[0] * 32, v[1] * 32, v[2] * 32], age: 0, hostile: true, base: 2 + 0.22 + 0.57425 * (Math.random() - Math.random()) });
+    // inaccuracy 14 - 4 x difficulty (easy 10, normal 6, hard 2); base damage 2 x power (1 at full
+    // draw) + triangle(0.11 x difficulty, 0.57425); on a hit it deals ceil(speed in blocks a tick x
+    // base): about 3..5 on normal (then scaled by the difficulty like any mob's damage)
+    const id = Math.max(1, DIFFICULTIES.indexOf(this.game.difficulty));
+    for (let k = 0; k < 3; k++) v[k] = v[k] / l + gauss() * 0.0075 * (14 - id * 4);
+    this.arrows.push({ pos: src, vel: [v[0] * 32, v[1] * 32, v[2] * 32], age: 0, hostile: true, base: 2 + id * 0.11 + 0.57425 * (Math.random() - Math.random()) });
   }
   // head: now and then look at a nearby player or around (Minecraft LookAtPlayer / RandomLookAround)
   // (LookAtPlayerGoal range: 8 blocks for monsters, 6 for animals; both goals start with 2% at each
@@ -1047,7 +1083,7 @@ class Entities {
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
-    if (!g.hurt(dmg)) return false;
+    if (!g.hurt(dmg, true)) return false;
     // LivingEntity.knockback(0.4) on the player
     p.vel[0] = p.vel[0] / 2 + dx / l * 8; p.vel[2] = p.vel[2] / 2 + dz / l * 8;
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
@@ -1134,7 +1170,13 @@ class Entities {
     }
     return false;
   }
-  clear2(x, y, z) { return !this.solidIn(x, y, z, 0.4) && !this.solidIn(x, y + 1, z, 0.4); }
+  clear2(x, y, z) { return !this.solidIn(x, y, z, 0.4) && !this.solidIn(x, y + 1, z, 0.4) && !this.doorShut(x, y, z) && !this.doorShut(x, y + 1, z); }
+  // WalkNodeEvaluator: a closed door is in the way (its thin box leaves the middle free, but mobs
+  // do not walk into one), unless the mob may break wooden ones (a door-breaking zombie on hard)
+  doorShut(x, y, z) {
+    const w = this.game.world, id = w.getBlock(x, y, z);
+    return SHAPE[id] === SH.DOOR && !((w.getMeta(x, y, z) >> 3) & 1) && (id === B.IRON_DOOR || !this.pathBreaker);
+  }
   standable(x, y, z) {
     return this.solidIn(x, y - 1, z, 0.8) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
   }
@@ -1147,6 +1189,7 @@ class Entities {
   // PATH_RANGE blocks (the original: 320 / 22; wider here so mobs find the way around long walls).
   // Returns waypoints to the goal, or to the closest reachable node when the goal is out of reach.
   findPath(e, tx, tz) {
+    this.pathBreaker = !!e.breakDoors && this.game.difficulty === 'hard';
     const sx = Math.floor(e.pos[0]), sy = Math.floor(e.pos[1] + 0.1), sz = Math.floor(e.pos[2]);
     const gx = Math.floor(tx), gz = Math.floor(tz);
     if (sx === gx && sz === gz) return null;
@@ -1721,9 +1764,8 @@ class Entities {
         for (let i = 0; i < 4 && near < 6; i++) {
           const sx = x + (Math.random() - Math.random()) * 4 + 0.5, sy = y + (Math.random() * 3 | 0) - 1, sz = z + (Math.random() - Math.random()) * 4 + 0.5;
           if (entCollides(w, sx, sy, sz, d.w, d.h)) continue;
-          if (d.hostile) {
-            if (!this.darkEnough(Math.floor(sx), sy, Math.floor(sz))) continue;
-          }
+          // (Monster.checkMonsterSpawnRules: never on peaceful)
+          if (d.hostile && (g.difficulty === 'peaceful' || !this.darkEnough(Math.floor(sx), sy, Math.floor(sz)))) continue;
           this.spawnMob(type, sx, sy, sz);
           this.game.spawnParticles(sx - 0.5, sy + 0.2, sz - 0.5, B.WOOL_LIGHT_GRAY, 6);
           spawned = true; near++;
@@ -1766,6 +1808,7 @@ class Entities {
     const kb = (s, dx, dz) => {
       // LivingEntity.knockback: half the velocity plus s blocks/tick along the push, s up from the ground
       const l = Math.hypot(dx, dz) || 1;
+      s *= 1 - (e.kbRes || 0);                     // knockback resistance
       e.vel[0] = e.vel[0] / 2 + dx / l * s * 20; e.vel[2] = e.vel[2] / 2 + dz / l * s * 20;
       if (e.onGround) e.vel[1] = Math.min(8, e.vel[1] / 2 + s * 20);
     };
@@ -1785,11 +1828,70 @@ class Entities {
     // nine times in ten; a hit by the player does not make it teleport
     if (e.hp > 0 && e.type === 'enderman' && !from && Math.random() < 0.9 && this.teleportNear(e, e.pos[0], e.pos[2], 32)) e.tpT = 1;
     if (e.hp > 0 && e.type === 'enderman' && from) e.angryAge = e.age;
+    if (e.hp > 0 && e.type === 'zombie' && (from || e.hunting)) this.reinforce(e);
     Sfx.hurt();
     if (e.hp <= 0) this.mobDied(e, d);
   }
+  // Zombie.hurt on hard: with the player as its target or attacker, by its reinforcement chance a
+  // zombie calls another: 50 tries 7..40 blocks off along each axis (or level with it), where a
+  // monster may spawn (dark), no player within 7, room and no liquid; the newcomer goes for the
+  // player, and each call costs the caller and the newcomer 0.05 of the chance
+  reinforce(e) {
+    const g = this.game, w = g.world;
+    if (g.difficulty !== 'hard' || !(Math.random() < e.reinf)) return;
+    const r = () => (7 + (Math.random() * 34 | 0)) * ((Math.random() * 3 | 0) - 1);
+    const fx = Math.floor(e.pos[0]), fy = Math.floor(e.pos[1]), fz = Math.floor(e.pos[2]), P = g.player.pos;
+    for (let k = 0; k < 50; k++) {
+      const x = fx + r(), y = fy + r(), z = fz + r();
+      if (!w.isLoaded(x, z) || !this.floorAt(x, y, z) || !this.darkEnough(x, y, z)) continue;
+      if (Math.hypot(x + 0.5 - P[0], y - P[1], z + 0.5 - P[2]) < 7 || entCollides(w, x + 0.5, y, z + 0.5, 0.6, 1.95)) continue;
+      if (isWaterId(w.getBlock(x, y, z)) || isWaterId(w.getBlock(x, y + 1, z)) || w.getBlock(x, y, z) === B.LAVA) continue;
+      const z2 = this.spawnMob('zombie', x + 0.5, y, z + 0.5);
+      if (g.mode === 'survival') { z2.hunting = true; z2.provoked = true; z2.chase = [P[0], P[2]]; }
+      e.reinf -= 0.05; z2.reinf -= 0.05;
+      return z2;
+    }
+    return null;
+  }
+  // BreakDoorGoal (a zombie able to, on hard): walking into a closed wooden door on its way, it
+  // beats on the upper half for 240 ticks (the cracks grow, now and then a bang), then removes it;
+  // the lower half, left without it, falls off and drops the door as with any lost support. It
+  // gives up when the door opens or it is more than 2 blocks off
+  breakDoor(e) {
+    const g = this.game, w = g.world;
+    const isDoor = (x, y, z) => { const id = w.getBlock(x, y, z); return SHAPE[id] === SH.DOOR && id !== B.IRON_DOOR && !((w.getMeta(x, y, z) >> 3) & 1); };
+    if (g.difficulty !== 'hard' || e.deathT > 0) { this.endDoor(e); return; }
+    if (!e.doorPos) {
+      const l = Math.hypot(e.wish[0], e.wish[2]);
+      if (!e.hitWall || l < 0.05) return;
+      // (DoorInteractGoal: the door at head height in the next cells of the path, or over its feet)
+      const y = Math.floor(e.pos[1] + 0.1) + 1;
+      for (const a of [0, 0.7]) {
+        const x = Math.floor(e.pos[0] + e.wish[0] / l * a), z = Math.floor(e.pos[2] + e.wish[2] / l * a);
+        if (isDoor(x, y, z) && Math.hypot(x + 0.5 - e.pos[0], z + 0.5 - e.pos[2]) <= 1.5) { e.doorPos = [x, y, z]; e.doorT = 0; break; }
+      }
+      if (!e.doorPos) return;
+    }
+    const [x, y, z] = e.doorPos;
+    if (!isDoor(x, y, z) || Math.hypot(x + 0.5 - e.pos[0], y + 0.5 - e.pos[1], z + 0.5 - e.pos[2]) >= 2) { this.endDoor(e); return; }
+    e.doorT++;
+    if (Math.random() < 0.05) Sfx.door(false);
+    this.cracks.set(x + ',' + y + ',' + z, { x, y, z, stage: Math.floor(e.doorT / 240 * 10) });
+    if (e.doorT >= 240) {
+      const id = w.getBlock(x, y, z);
+      w.setBlock(x, y, z, 0, 0);
+      g.spawnParticles(x, y, z, id, 12); Sfx.block(id, 'break');
+      this.endDoor(e);
+    }
+  }
+  endDoor(e) {
+    if (!e.doorPos) return;
+    this.cracks.delete(e.doorPos.join(','));
+    e.doorPos = null; e.doorT = 0;
+  }
   mobDied(e, d) {
       e.deathT = 0.001;
+      this.endDoor(e);
       e.byPlayer = e.playerHitAge !== undefined && e.age - e.playerHitAge < 5;
       for (const [id, n] of d.drops(e)) if (id && n > 0) this.dropItem(id, n, e.pos[0], e.pos[1] + 0.5, e.pos[2]);
       if (e.type === 'slime' && e.size > 1) {
@@ -1831,6 +1933,8 @@ class Entities {
       const fz = e.fuse > 0 ? Math.min(1, e.fuse / 1.5) : 0, wf = fz && ((fz * 10) | 0) % 2 ? 1 + Math.max(0.5, fz) : 0;
       const tint = e.hurtT > 0 || e.deathT > 0 ? [1, 0.45, 0.45] : wf ? [wf, wf, wf] : null;
       const m = MODELS[e.type];
+      // an invisible spider (hard): only its eyes show, glowing (SpiderEyesLayer)
+      if (e.effect === 'invisibility') { this.buildModel(vb(m.tex + '_eyes', byTex), m, e, cam, 1, null); continue; }
       this.buildModel(vb(m.tex, byTex), m, e, cam, li, tint, vb(m.tex, transTex), fireV);
       if (e.type === 'sheep' && !e.sheared) {
         const c = sheepTint(e);

@@ -139,6 +139,7 @@ class Player {
         v[1] = 0.42;
         if (this.sprinting) { v[0] += Math.sin(this.yaw) * 0.2; v[2] -= Math.cos(this.yaw) * 0.2; }
         this.noJumpDelay = 10;
+        this.jumped = this.sprinting ? 2 : 1;      // for the food exhaustion (Player.jumpFromGround)
       }
     } else this.noJumpDelay = 0;
     // ---- travel

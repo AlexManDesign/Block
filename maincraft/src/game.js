@@ -16,6 +16,8 @@ const Settings = {
 };
 
 const DAY_LEN = 1200;
+// Minecraft's difficulties (Difficulty.getId: peaceful 0 .. hard 3); a world starts on normal
+const DIFFICULTIES = ['peaceful', 'easy', 'normal', 'hard'];
 // water fog colours of the biomes (Minecraft's water_fog_color); the rest use 0x050533
 // the empty hand's arm, local -> view: rotate around x by -60 deg minus the swing, around y by
 // 20 deg, translate (P: [swing, view bob x, view bob y])
@@ -125,6 +127,10 @@ class Game {
   async startWorld(meta) {
     this.meta = meta;
     this.mode = meta.mode || 'creative';
+    this.difficulty = DIFFICULTIES.includes(meta.difficulty) ? meta.difficulty : 'normal';
+    // ticks the player has spent near each column (LevelChunk.inhabitedTime), for the local difficulty
+    this.inhabited = new Map();
+    if (meta.inhab && meta.inhab.length) for (let i = 0; i + 1 < meta.inhab.length; i += 2) this.inhabited.set(meta.inhab[i], meta.inhab[i + 1]);
     this.time = typeof meta.time === 'number' ? meta.time : 0.25;
     this.inv = Array.isArray(meta.inv) && meta.inv.length === 36 ? meta.inv.map(s => s && s.id ? s : null) : this.defaultInv();
     this.sel = meta.sel | 0;
@@ -250,6 +256,8 @@ class Game {
       ship: this.pendingShip || (this.ships ? this.ships.serialize() : null),
       boats: this.pendingBoats || (this.boats ? this.boats.serialize() : null),
       mobs: this.ents ? this.ents.saveMobs() : null,
+      difficulty: this.difficulty,
+      inhab: this.inhabited ? Float64Array.from([].concat(...this.inhabited)) : null,
       popd: this.ents ? this.ents.savePopulated() : null,
     });
     await DB.putWorld(this.meta);
@@ -1125,7 +1133,8 @@ class Game {
   // destroyed, each dropping as an item one time in radius (explosion decay), a chest its contents.
   // Entities within 2 x radius: impact = (1 - distance / 2r) x the part of the body the centre sees,
   // damage (impact^2 + impact) / 2 x 7 x 2r + 1, pushed away (from the centre to the eyes) by impact.
-  explode(cx, cy, cz, r, tg) {
+  // byMob: set off by a creeper (its damage then scales with the difficulty)
+  explode(cx, cy, cz, r, tg, byMob) {
     const w = this.world, E = this.ents;
     if (tg) w.setBlock(tg.x, tg.y, tg.z, 0, 0);
     Sfx.noise && Sfx.ctx && Sfx.noise(Sfx.ctx.currentTime, 1.2, 0.9, 'lowpass', 600, 60, 0.7);
@@ -1173,7 +1182,7 @@ class Game {
     {
       const f = impact(p.pos, PLAYER_W, p.h);
       if (f >= 0) {
-        if (this.mode === 'survival') this.hurt(Math.floor((f * f + f) / 2 * 7 * q + 1));
+        if (this.mode === 'survival') this.hurt(Math.floor((f * f + f) / 2 * 7 * q + 1), byMob);
         if (!(this.mode !== 'survival' && p.flying)) push(p.vel, p.pos, p.h * 0.9, f);
       }
     }
@@ -1290,17 +1299,12 @@ class Game {
     const fb = this.world.getBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1] + 0.2), Math.floor(p.pos[2]));
     if (fb === B.FIRE || fb === B.MAGMA_BLOCK || fb === B.CACTUS) { s.lavaT -= dt; if (s.lavaT <= 0) { s.lavaT = 0.5; this.hurt(1); } }
     if (p.pos[1] < WORLD_MIN_Y - 40) this.hurt(4);
-    // exhaustion
+    // exhaustion: sprinting 0.1 and swimming 0.01 a block, a jump 0.05 (0.2 sprinting)
     const hs = Math.hypot(p.vel[0], p.vel[2]);
     s.exh += dt * (p.sprinting ? 0.1 * hs : p.swimming ? 0.01 * hs : 0);
-    if (this.keys.Space && p.onGround) s.exh += 0.01;
-    if (s.exh >= 4) { s.exh -= 4; if (s.sat > 0) s.sat = Math.max(0, s.sat - 1); else s.food = Math.max(0, s.food - 1); }
-    s.regenT += dt;
-    if (s.regenT >= 4) {
-      s.regenT = 0;
-      if (s.food >= 18 && s.hp < 20) { s.hp = Math.min(20, s.hp + 1); s.exh += 6; }
-      else if (s.food <= 0 && s.hp > 1) this.hurt(1);
-    }
+    if (p.jumped) { s.exh += p.jumped === 2 ? 0.2 : 0.05; p.jumped = 0; }
+    s.tickAcc = (s.tickAcc || 0) + dt;
+    while (s.tickAcc >= 0.05) { s.tickAcc -= 0.05; this.foodTick(); }
     if (s.hurtT > 0) s.hurtT -= dt;
     if (s.invT > 0) s.invT -= dt;
     // MobEffects.POISON (level I): 1 damage every 25 ticks while health is above 1
@@ -1310,9 +1314,58 @@ class Game {
     }
     this.updateSurvivalHud();
   }
-  // LivingEntity.hurt: 20 ticks of invulnerability; in the first 10 only a bigger hit lands, by the difference
-  hurt(n) {
+  // FoodData.tick and Player.aiStep's peaceful regeneration, one game tick
+  foodTick() {
+    const s = this.surv, d = this.difficulty;
+    s.ticks = ((s.ticks | 0) + 1) % 2000000;
+    // peaceful: health comes back 1 a second and food 1 every 10 ticks
+    if (d === 'peaceful') {
+      if (s.hp < 20 && s.ticks % 20 === 0) s.hp = Math.min(20, s.hp + 1);
+      if (s.food < 20 && s.ticks % 10 === 0) s.food++;
+    }
+    // every 4 of exhaustion takes 1 saturation, or with none left 1 food (never on peaceful)
+    if (s.exh > 4) { s.exh -= 4; if (s.sat > 0) s.sat = Math.max(0, s.sat - 1); else if (d !== 'peaceful') s.food = Math.max(0, s.food - 1); }
+    const hurt = s.hp < 20;
+    if (s.sat > 0 && hurt && s.food >= 20) {
+      // full and saturated: every 10 ticks heals a sixth of the saturation spent (up to 6)
+      if (++s.regenT >= 10) { const f = Math.min(s.sat, 6); s.hp = Math.min(20, s.hp + f / 6); s.exh += f; s.regenT = 0; }
+    } else if (s.food >= 18 && hurt) {
+      if (++s.regenT >= 80) { s.hp = Math.min(20, s.hp + 1); s.exh += 6; s.regenT = 0; }
+    } else if (s.food <= 0) {
+      // starving: 1 every 80 ticks, down to 10 health on easy (and peaceful), to 1 on normal, to death on hard
+      if (++s.regenT >= 80) { if (s.hp > 10 || d === 'hard' || (s.hp > 1 && d === 'normal')) this.hurt(1); s.regenT = 0; }
+    } else s.regenT = 0;
+  }
+  setDifficulty(d) {
+    if (!DIFFICULTIES.includes(d)) return;
+    this.difficulty = d;
+    if (this.meta) this.meta.difficulty = d;
+  }
+  // DifficultyInstance: the local difficulty at a column, base (0 .. 3) x (0.75 + the world's age
+  // (after the first hour, up to 0.25 at 21 hours) + the time spent near the column (up to 1, x0.75
+  // below hard, after 50 hours) + the moon (up to the age part)); halved locally on easy. special:
+  // its part between 2 and 4 (what spawns with extras goes by it)
+  localDifficulty(x, z) {
+    const id = DIFFICULTIES.indexOf(this.difficulty);
+    if (id <= 0) return { eff: 0, special: 0 };
+    const age = ((this.days || 0) + this.time) * 24000;
+    const g = Math.min(1, Math.max(0, (age - 72000) / 1440000)) * 0.25;
+    const moon = [1, 0.75, 0.5, 0.25, 0, 0.25, 0.5, 0.75][((this.days || 0) % 8 + 8) % 8];
+    let h = Math.min(1, (this.inhabited.get(colKey(x >> 4, z >> 4)) || 0) / 3600000) * (id === 3 ? 1 : 0.75);
+    h += Math.min(g, moon * 0.25);
+    if (id === 1) h *= 0.5;
+    const eff = id * (0.75 + g + h);
+    return { eff, special: eff < 2 ? 0 : eff > 4 ? 1 : (eff - 2) / 2 };
+  }
+  // LivingEntity.hurt: 20 ticks of invulnerability; in the first 10 only a bigger hit lands, by the
+  // difference. byMob: damage a mob (not the player) caused, which Player.hurt scales by the
+  // difficulty: none on peaceful, half + 1 on easy (at most the whole), x1.5 on hard
+  hurt(n, byMob) {
     const s = this.surv;
+    if (byMob) {
+      const d = this.difficulty;
+      if (d === 'peaceful') n = 0; else if (d === 'easy') n = Math.min(n / 2 + 1, n); else if (d === 'hard') n *= 1.5;
+    }
     if (this.mode !== 'survival' || s.dead || n <= 0) return false;
     if (s.invT > 0.5) {
       if (n <= s.lastHurt) return false;
@@ -1323,6 +1376,7 @@ class Game {
       return false;
     }
     s.lastHurt = n; s.invT = 1;
+    s.exh += 0.1;                                  // Player.actuallyHurt: the damage source's food exhaustion
     if (this.sleeping) this.wake();                // LivingEntity.hurt: a hit wakes the sleeper
     s.hp = Math.max(0, s.hp - n);
     s.hurtT = 0.4;
@@ -1676,6 +1730,7 @@ class Game {
     // selection outline + cracks
     t = performance.now(); r.gpuBegin('hand');
     if (this.target && !this.hideHud) this.drawSelection(env);
+    if (this.ents && this.ents.cracks.size) this.drawMobCracks();
     // hand
     if (!this.camMode && !this.hideHud && !this.sleeping) this.drawHand(env, dt);   // no hand in bed (GameRenderer.renderItemInHand)
     this.drawInWall();
@@ -1732,6 +1787,23 @@ class Game {
       r.drawArr(v.view(), v.n / 10, null, 0.01);
       gl.disable(gl.POLYGON_OFFSET_FILL);
     }
+    gl.depthMask(true); gl.disable(gl.BLEND);
+  }
+  // the cracks of blocks a mob is breaking (Level.destroyBlockProgress: a zombie at a door)
+  drawMobCracks() {
+    const r = this.r, gl = r.gl, cam = this.cam, w = this.world, v = this.mobCrackVB || (this.mobCrackVB = new VBuf());
+    v.n = 0;
+    for (const c of this.ents.cracks.values()) {
+      const id = w.getBlock(c.x, c.y, c.z);
+      if (!id) continue;
+      const layer = this.assets.layers['destroy_stage_' + Math.min(9, c.stage)];
+      for (const b of blockBoxes(w, id, w.getMeta(c.x, c.y, c.z), c.x, c.y, c.z) || []) this.pushBox(v, c.x + b[0] - cam[0], c.y + b[1] - cam[1], c.z + b[2] - cam[2], c.x + b[3] - cam[0], c.y + b[4] - cam[1], c.z + b[5] - cam[2], layer, WHITE4, 0.004);
+    }
+    if (!v.n) return;
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -1);
+    r.drawArr(v.view(), v.n / 10, null, 0.01);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
   // push a textured box (camera relative coords), 6 faces, into vertex list [x,y,z,u,v,layer,r,g,b,a]
@@ -1910,6 +1982,7 @@ class Game {
     t += `Columns: ${w.cols.size}  gen ${w.genInFlight}  mesh ${w.meshInFlight}  lit-wait ${w.pendingLit.size}\n`;
     t += `Sections: ${r.stats.sections}  draws ${r.stats.draws}  quads ${r.stats.quads}\n`;
     t += `Time: ${Math.floor((this.time * 24 + 6) % 24)}:${String(Math.floor((this.time * 1440) % 60)).padStart(2, '0')}  Day ${this.days || 0}\n`;
+    { const ld = this.localDifficulty(x, z); t += `Local Difficulty: ${ld.eff.toFixed(2)} // ${ld.special.toFixed(2)} (${this.difficulty}, Day ${this.days || 0})\n`; }
     if (this.target) t += `Target: ${B_KEY[this.target.id]} [${this.target.meta}] @ ${this.target.x} ${this.target.y} ${this.target.z}\n`;
     if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
     else if (this.benchText) t += '\n' + this.benchText + '\n';

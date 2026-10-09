@@ -20,7 +20,7 @@ input[type=text],input:not([type]){font:inherit;font-size:14px;background:#000;c
 #title h1{font-size:clamp(34px,8vw,78px);margin:0 0 6px;letter-spacing:4px;color:#dcdcdc;text-shadow:4px 4px 0 #3a3a3a,6px 6px 0 #1b1b1b;transform:perspective(400px) rotateX(12deg)}
 #title .splash{color:#ff0;font-size:14px;text-shadow:2px 2px #3f3f00;transform:rotate(-12deg);margin:-12px 0 24px 260px;animation:pulse .6s infinite alternate}
 @keyframes pulse{to{transform:rotate(-12deg) scale(1.08)}}
-.panel{background:rgba(0,0,0,.55);border:2px solid #000;padding:18px;display:flex;flex-direction:column;gap:10px;align-items:stretch;width:min(520px,94vw);max-height:90vh}
+.panel{background:rgba(0,0,0,.55);border:2px solid #000;padding:18px;display:flex;flex-direction:column;gap:10px;align-items:stretch;width:min(520px,94vw);max-height:90vh;overflow-y:auto}
 .panel h2{margin:0 0 6px;text-align:center;font-size:18px}
 #worldList{overflow:auto;min-height:160px;max-height:50vh;display:flex;flex-direction:column;gap:6px}
 .world{padding:8px 10px;border:2px solid transparent;cursor:pointer;display:flex;flex-direction:column;gap:2px;background:rgba(255,255,255,.04)}
@@ -128,7 +128,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
     <h2 data-t="create"></h2>
     <label style="font-size:12px" data-t="worldName"></label><input id="wName" maxlength="32">
     <label style="font-size:12px" data-t="seed"></label><input id="wSeed" maxlength="40">
-    <button id="btnMode"></button>
+    <div class="row"><button id="btnMode"></button><button id="btnDiff"></button></div>
     <div class="row"><button id="btnDoCreate" data-t="createBtn"></button><button id="btnCancelCreate" data-t="cancel"></button></div>
   </div>
 </div>
@@ -152,6 +152,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
   <h2 data-t="paused"></h2>
   <button id="btnResume" data-t="resume"></button>
   <button id="btnSettingsPause" data-t="settings"></button>
+  <button id="btnDiffPause"></button>
   <button id="btnBench" data-t="bench"></button>
   <button id="btnExportPause" data-t="exportFile"></button>
   <button id="btnQuit" data-t="saveQuit"></button>

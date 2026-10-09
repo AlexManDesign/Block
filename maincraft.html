@@ -20,7 +20,7 @@ input[type=text],input:not([type]){font:inherit;font-size:14px;background:#000;c
 #title h1{font-size:clamp(34px,8vw,78px);margin:0 0 6px;letter-spacing:4px;color:#dcdcdc;text-shadow:4px 4px 0 #3a3a3a,6px 6px 0 #1b1b1b;transform:perspective(400px) rotateX(12deg)}
 #title .splash{color:#ff0;font-size:14px;text-shadow:2px 2px #3f3f00;transform:rotate(-12deg);margin:-12px 0 24px 260px;animation:pulse .6s infinite alternate}
 @keyframes pulse{to{transform:rotate(-12deg) scale(1.08)}}
-.panel{background:rgba(0,0,0,.55);border:2px solid #000;padding:18px;display:flex;flex-direction:column;gap:10px;align-items:stretch;width:min(520px,94vw);max-height:90vh}
+.panel{background:rgba(0,0,0,.55);border:2px solid #000;padding:18px;display:flex;flex-direction:column;gap:10px;align-items:stretch;width:min(520px,94vw);max-height:90vh;overflow-y:auto}
 .panel h2{margin:0 0 6px;text-align:center;font-size:18px}
 #worldList{overflow:auto;min-height:160px;max-height:50vh;display:flex;flex-direction:column;gap:6px}
 .world{padding:8px 10px;border:2px solid transparent;cursor:pointer;display:flex;flex-direction:column;gap:2px;background:rgba(255,255,255,.04)}
@@ -128,7 +128,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
     <h2 data-t="create"></h2>
     <label style="font-size:12px" data-t="worldName"></label><input id="wName" maxlength="32">
     <label style="font-size:12px" data-t="seed"></label><input id="wSeed" maxlength="40">
-    <button id="btnMode"></button>
+    <div class="row"><button id="btnMode"></button><button id="btnDiff"></button></div>
     <div class="row"><button id="btnDoCreate" data-t="createBtn"></button><button id="btnCancelCreate" data-t="cancel"></button></div>
   </div>
 </div>
@@ -152,6 +152,7 @@ body.touch #hotbar{bottom:4px}body.touch #hotbar .slot{width:40px;height:40px}
   <h2 data-t="paused"></h2>
   <button id="btnResume" data-t="resume"></button>
   <button id="btnSettingsPause" data-t="settings"></button>
+  <button id="btnDiffPause"></button>
   <button id="btnBench" data-t="bench"></button>
   <button id="btnExportPause" data-t="exportFile"></button>
   <button id="btnQuit" data-t="saveQuit"></button>
@@ -14772,6 +14773,7 @@ class Player {
         v[1] = 0.42;
         if (this.sprinting) { v[0] += Math.sin(this.yaw) * 0.2; v[2] -= Math.cos(this.yaw) * 0.2; }
         this.noJumpDelay = 10;
+        this.jumped = this.sprinting ? 2 : 1;      // for the food exhaustion (Player.jumpFromGround)
       }
     } else this.noJumpDelay = 0;
     // ---- travel
@@ -15249,8 +15251,9 @@ class Entities {
     this.dormant = new Map();
     this.populated = new Set();     // columns that had their animals at generation
     this.creatureT = 20;
+    this.cracks = new Map();        // blocks mobs are breaking: key -> {x, y, z, stage}
   }
-  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; this.dormant.clear(); this.populated.clear(); }
+  clear() { this.mobs.length = 0; this.items.length = 0; this.arrows.length = 0; this.falling.length = 0; this.dormant.clear(); this.populated.clear(); this.cracks.clear(); }
 
   // ------------------------------------------------------------------ keeping animals
   keeps(e) { const d = MOB_DEFS[e.type]; return e.deathT <= 0 && ((!d.hostile && !d.aquatic) || e.persist); }
@@ -15373,6 +15376,22 @@ class Entities {
       const size = (opts && opts.size) || [1, 2, 4][Math.random() * 3 | 0], S = SLIME_SIZES[size];
       e.size = size; e.hp = S[0]; e.w = e.h = 0.52 * size; e.squish = 0; e.tsq = 0; e.hopT = 0;   // SlimeMoveControl: the first jump at once
     }
+    const g = this.game, ld = g.localDifficulty && (type === 'zombie' || type === 'spider') ? g.localDifficulty(Math.floor(x), Math.floor(z)) : null;
+    if (type === 'zombie' && ld) {
+      // Zombie.finalizeSpawn / handleAttributes, by the local difficulty's special part f: door
+      // breaking for f / 10 of them (on hard only it is used), a follow range bonus, knockback
+      // resistance 0..0.05, a reinforcement chance 0..0.1; a leader one time in 20 x f: 2..5 x the
+      // health, +0.5..0.75 reinforcement chance, breaks doors
+      const f = ld.special;
+      e.reinf = Math.random() * 0.1; e.kbRes = Math.random() * 0.05;
+      const fb = Math.random() * 1.5 * f; if (fb > 1) e.followMul *= 1 + fb;
+      e.breakDoors = Math.random() < f * 0.1;
+      if (Math.random() < f * 0.05) { e.reinf += Math.random() * 0.25 + 0.5; e.hp = d.hp * (2 + Math.random() * 3); e.breakDoors = true; e.leader = true; }
+    }
+    if (type === 'spider' && ld && g.difficulty === 'hard' && Math.random() < 0.1 * ld.special) {
+      // Spider.finalizeSpawn on hard: one of speed (2 in 5), strength, regeneration, invisibility
+      e.effect = ['speed', 'speed', 'strength', 'regeneration', 'invisibility'][Math.random() * 5 | 0];
+    }
     if (type === 'sheep') {
       const r = Math.random(); e.color = 'white';
       for (const c of SHEEP_COLORS) if (r < c[1]) { e.color = c[0]; break; }
@@ -15394,17 +15413,22 @@ class Entities {
     if (this.spawnT <= 0) {
       this.spawnT = 1.0;
       this.wake();
+      // LevelChunk.inhabitedTime: the columns within 8 chunks of the player count the time (ticks)
+      if (g.inhabited) {
+        const ih = g.inhabited, pcx = Math.floor(p.pos[0]) >> 4, pcz = Math.floor(p.pos[2]) >> 4;
+        for (let a = -8; a <= 8; a++) for (let b = -8; b <= 8; b++) { const k = colKey(pcx + a, pcz + b); ih.set(k, (ih.get(k) || 0) + 20); }
+      }
       // newly generated columns get their animals, once ever (lit, so the light rule can be read)
       for (const c of w.cols.values()) if (c.state === 2 && !this.populated.has(c.key)) { this.populated.add(c.key); this.populate(c); }
       if ((this.creatureT -= 1) <= 0) { this.creatureT = 20; this.spawnAnimals(); }
       let hostile = 0, fish = 0, sharks = 0;
       for (const m of this.mobs) { const md = MOB_DEFS[m.type]; if (md.aquatic) { fish++; if (m.type === 'shark') sharks++; } else if (md.hostile) hostile++; }
       // hostile mobs spawn in creative too (as in Minecraft); they just never target a creative player
-      if (hostile < 22) this.trySpawnMonsters();          // one monster cap day and night, as in Minecraft
+      if (hostile < 22 && g.difficulty !== 'peaceful') this.trySpawnMonsters();   // one monster cap day and night, as in Minecraft
       this.fishT = (this.fishT || 0) - 1;
       if (this.fishT <= 0) { this.fishT = 5; if (fish < 10) this.trySpawnFish(); }
       this.sharkT = (this.sharkT || 0) - 1;
-      if (this.sharkT <= 0) { this.sharkT = 12; if (sharks < 2) this.trySpawnShark(); }
+      if (this.sharkT <= 0) { this.sharkT = 12; if (sharks < 2 && g.difficulty !== 'peaceful') this.trySpawnShark(); }
     }
     // ---- mobs: fixed 20 Hz simulation (as in the original); rendering interpolates between ticks
     this.acc = Math.min((this.acc || 0) + dt, MOB_DT * 8);
@@ -15471,7 +15495,7 @@ class Entities {
         if (a.hostile && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
           if (hb && hb.t <= 1 && hb.t < bt && !a.bounced) {
-            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base))) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
             // AbstractArrow.onHitEntity: a hit that does no harm (creative, or just hurt) turns the
             // arrow back at a tenth of its speed
             a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
@@ -15508,6 +15532,8 @@ class Entities {
       const dx = p.pos[0] - e.pos[0], dz = p.pos[2] - e.pos[2], dist = Math.hypot(dx, dz);
       const h = Math.hypot(dx, p.pos[1] + 0.9 - (e.pos[1] + e.h * 0.5), dz);
       if (e.pos[1] < WORLD_MIN_Y - 8) { this.mobs.splice(i, 1); continue; }
+      // Mob.checkDespawn: on peaceful every monster is gone at once
+      if (d.hostile && g.difficulty === 'peaceful') { this.endDoor(e); this.mobs.splice(i, 1); continue; }
       // animals out of reach wait with their column (and come back with it)
       if (this.keeps(e)) {
         if (dist > 140 || !w.isLoaded(Math.floor(e.pos[0]), Math.floor(e.pos[2]))) { this.stash(e); this.mobs.splice(i, 1); continue; }
@@ -15529,6 +15555,8 @@ class Entities {
       if (e.angryT > 0) e.angryT -= dt;
       if (e.tpT > 0) e.tpT -= dt;
       e.atkT += dt;
+      // MobEffects.REGENERATION I (a spider's on hard): 1 health every 50 ticks
+      if (e.effect === 'regeneration' && (e.regT = (e.regT || 0) + dt) >= 2.5) { e.regT = 0; e.hp = Math.min(d.hp, e.hp + 1); }
       if (e.breedCd > 0) e.breedCd -= dt;
       // lava and fire
       if (e.lavaT > 0) e.lavaT -= dt;
@@ -15601,11 +15629,12 @@ class Entities {
       const fallStart = e.onGround ? e.pos[1] : e.fallY ?? e.pos[1];
       e.fallY = Math.max(fallStart, e.pos[1]);
       this.walkPhysics(e, d, dt, inW);
+      if (e.breakDoors || e.doorPos) this.breakDoor(e);
       if (d.slime && e.onGround && !wasGround) { e.tsq = -0.5; this.stop(e); }
       if (d.slime) { e.squish += (e.tsq - e.squish) * 0.5; e.tsq *= 0.6; }
       if (e.onGround) { const fh = e.fallY - e.pos[1]; if (fh > 3 && e.type !== 'chicken' && !d.slime && !inW) this.damageMob(e, Math.ceil(fh - 3), null); e.fallY = e.pos[1]; }
       // stuck against something: take a short detour sideways
-      if (wl > 0.5 && !d.slime) {
+      if (wl > 0.5 && !d.slime && !e.doorPos) {
         const moved = Math.hypot(e.pos[0] - ox, e.pos[2] - oz);
         // the pace it should make: walking, or in water a fraction of it (acceleration 0.02 x the
         // input a tick, drag 0.8: settles at 0.1 x the input a tick, 2 x the input blocks/s)
@@ -15626,7 +15655,8 @@ class Entities {
 
   // ------------------------------------------------------------------ land mob behaviour
   ai(e, d, dt, dx, dz, h, hunt) {
-    const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? MOB_SPEED_K * S[2] * S[2] : d.speed;
+    // (speed I, a spider's on hard: x1.2 the attribute)
+    const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? MOB_SPEED_K * S[2] * S[2] : d.speed * (e.effect === 'speed' ? 1.44 : 1);
     e.aiming = false; e.strafe = false;
     const face = () => { e.headYaw = Math.atan2(dx, -dz); };
     // spiders hunt in the dark; in bright light one that has the player drops it now and then
@@ -15676,7 +15706,7 @@ class Entities {
         e.fuse += dt; this.stop(e); face();
         if (e.fuse >= 1.5) {
           this.mobs.splice(this.mobs.indexOf(e), 1);
-          g.explode(e.pos[0], e.pos[1], e.pos[2], 3);     // Creeper.explodeCreeper: at its feet, power 3
+          g.explode(e.pos[0], e.pos[1], e.pos[2], 3, null, true);     // Creeper.explodeCreeper: at its feet, power 3
         }
         return;
       }
@@ -15707,7 +15737,13 @@ class Entities {
           // LeapAtTargetGoal(0.4): 0.4 toward the target plus 0.2 x velocity, 0.4 up (blocks/tick)
           e.vel[0] = dx / l * 8 + e.vel[0] * 0.2; e.vel[2] = dz / l * 8 + e.vel[2] * 0.2; e.vel[1] = 8;
         }
-        if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; if (this.hitPlayer(e, d.dmg, dx, dz) && d.poison) this.game.poison(d.poison); }
+        // CaveSpider.doHurtTarget: poison 7 s on normal, 15 s on hard, none on easy; a spider with
+        // strength (hard) hits 3 harder
+        if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) {
+          e.atkT = 0;
+          const pz = d.poison ? { normal: 7, hard: 15 }[g.difficulty] : 0;
+          if (this.hitPlayer(e, d.dmg + (e.effect === 'strength' ? 3 : 0), dx, dz) && pz) g.poison(pz);
+        }
         return;
       }
       if (e.type === 'enderman') {
@@ -15737,7 +15773,7 @@ class Entities {
         // stops and strafes (MoveControl.strafe at 0.25 of its speed, sideways and back or forth,
         // each way flipped 3 times in 10 every second; backing off under 7.5 blocks, coming on
         // beyond 13), facing the player; otherwise it walks up. The bow is drawn 20 ticks and loosed
-        // if the player is in sight, then 40 ticks (normal difficulty) pass before it draws again;
+        // if the player is in sight, then 40 ticks (20 on hard) pass before it draws again;
         // it lowers the bow once the player has been out of sight 3 s
         const sees = e.sees;
         if (sees !== (e.seenT > 0)) e.seenT = 0;
@@ -15756,7 +15792,7 @@ class Entities {
         if (e.drawT >= 0) {
           e.drawT += dt;
           if (!sees && e.seenT < -3) e.drawT = -1;
-          else if (sees && e.drawT >= 1) { e.drawT = -1; e.bowCd = 2; this.shootArrow(e); }
+          else if (sees && e.drawT >= 1) { e.drawT = -1; e.bowCd = g.difficulty === 'hard' ? 1 : 2; this.shootArrow(e); }
         } else if ((e.bowCd -= dt) <= 0 && e.seenT >= -3) e.drawT = 0;
         return;
       }
@@ -15859,10 +15895,12 @@ class Entities {
     const dx = p.pos[0] - src[0], dz = p.pos[2] - src[2], dy = p.pos[1] + p.h / 3 - src[1], hd = Math.hypot(dx, dz);
     const v = [dx, dy + hd * 0.2, dz], l = Math.hypot(v[0], v[1], v[2]) || 1;
     const gauss = () => { let u = 0; for (let k = 0; k < 6; k++) u += Math.random(); return (u - 3) / Math.sqrt(0.5); };
-    for (let k = 0; k < 3; k++) v[k] = v[k] / l + gauss() * 0.0075 * 6;
-    // base damage 2 x power (1 at full draw) + triangle(0.11 x difficulty 2, 0.57425); on a hit it
-    // deals ceil(speed in blocks a tick x base): about 3..5
-    this.arrows.push({ pos: src, vel: [v[0] * 32, v[1] * 32, v[2] * 32], age: 0, hostile: true, base: 2 + 0.22 + 0.57425 * (Math.random() - Math.random()) });
+    // inaccuracy 14 - 4 x difficulty (easy 10, normal 6, hard 2); base damage 2 x power (1 at full
+    // draw) + triangle(0.11 x difficulty, 0.57425); on a hit it deals ceil(speed in blocks a tick x
+    // base): about 3..5 on normal (then scaled by the difficulty like any mob's damage)
+    const id = Math.max(1, DIFFICULTIES.indexOf(this.game.difficulty));
+    for (let k = 0; k < 3; k++) v[k] = v[k] / l + gauss() * 0.0075 * (14 - id * 4);
+    this.arrows.push({ pos: src, vel: [v[0] * 32, v[1] * 32, v[2] * 32], age: 0, hostile: true, base: 2 + id * 0.11 + 0.57425 * (Math.random() - Math.random()) });
   }
   // head: now and then look at a nearby player or around (Minecraft LookAtPlayer / RandomLookAround)
   // (LookAtPlayerGoal range: 8 blocks for monsters, 6 for animals; both goals start with 2% at each
@@ -15978,7 +16016,7 @@ class Entities {
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
-    if (!g.hurt(dmg)) return false;
+    if (!g.hurt(dmg, true)) return false;
     // LivingEntity.knockback(0.4) on the player
     p.vel[0] = p.vel[0] / 2 + dx / l * 8; p.vel[2] = p.vel[2] / 2 + dz / l * 8;
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
@@ -16065,7 +16103,13 @@ class Entities {
     }
     return false;
   }
-  clear2(x, y, z) { return !this.solidIn(x, y, z, 0.4) && !this.solidIn(x, y + 1, z, 0.4); }
+  clear2(x, y, z) { return !this.solidIn(x, y, z, 0.4) && !this.solidIn(x, y + 1, z, 0.4) && !this.doorShut(x, y, z) && !this.doorShut(x, y + 1, z); }
+  // WalkNodeEvaluator: a closed door is in the way (its thin box leaves the middle free, but mobs
+  // do not walk into one), unless the mob may break wooden ones (a door-breaking zombie on hard)
+  doorShut(x, y, z) {
+    const w = this.game.world, id = w.getBlock(x, y, z);
+    return SHAPE[id] === SH.DOOR && !((w.getMeta(x, y, z) >> 3) & 1) && (id === B.IRON_DOOR || !this.pathBreaker);
+  }
   standable(x, y, z) {
     return this.solidIn(x, y - 1, z, 0.8) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
   }
@@ -16078,6 +16122,7 @@ class Entities {
   // PATH_RANGE blocks (the original: 320 / 22; wider here so mobs find the way around long walls).
   // Returns waypoints to the goal, or to the closest reachable node when the goal is out of reach.
   findPath(e, tx, tz) {
+    this.pathBreaker = !!e.breakDoors && this.game.difficulty === 'hard';
     const sx = Math.floor(e.pos[0]), sy = Math.floor(e.pos[1] + 0.1), sz = Math.floor(e.pos[2]);
     const gx = Math.floor(tx), gz = Math.floor(tz);
     if (sx === gx && sz === gz) return null;
@@ -16652,9 +16697,8 @@ class Entities {
         for (let i = 0; i < 4 && near < 6; i++) {
           const sx = x + (Math.random() - Math.random()) * 4 + 0.5, sy = y + (Math.random() * 3 | 0) - 1, sz = z + (Math.random() - Math.random()) * 4 + 0.5;
           if (entCollides(w, sx, sy, sz, d.w, d.h)) continue;
-          if (d.hostile) {
-            if (!this.darkEnough(Math.floor(sx), sy, Math.floor(sz))) continue;
-          }
+          // (Monster.checkMonsterSpawnRules: never on peaceful)
+          if (d.hostile && (g.difficulty === 'peaceful' || !this.darkEnough(Math.floor(sx), sy, Math.floor(sz)))) continue;
           this.spawnMob(type, sx, sy, sz);
           this.game.spawnParticles(sx - 0.5, sy + 0.2, sz - 0.5, B.WOOL_LIGHT_GRAY, 6);
           spawned = true; near++;
@@ -16697,6 +16741,7 @@ class Entities {
     const kb = (s, dx, dz) => {
       // LivingEntity.knockback: half the velocity plus s blocks/tick along the push, s up from the ground
       const l = Math.hypot(dx, dz) || 1;
+      s *= 1 - (e.kbRes || 0);                     // knockback resistance
       e.vel[0] = e.vel[0] / 2 + dx / l * s * 20; e.vel[2] = e.vel[2] / 2 + dz / l * s * 20;
       if (e.onGround) e.vel[1] = Math.min(8, e.vel[1] / 2 + s * 20);
     };
@@ -16716,11 +16761,70 @@ class Entities {
     // nine times in ten; a hit by the player does not make it teleport
     if (e.hp > 0 && e.type === 'enderman' && !from && Math.random() < 0.9 && this.teleportNear(e, e.pos[0], e.pos[2], 32)) e.tpT = 1;
     if (e.hp > 0 && e.type === 'enderman' && from) e.angryAge = e.age;
+    if (e.hp > 0 && e.type === 'zombie' && (from || e.hunting)) this.reinforce(e);
     Sfx.hurt();
     if (e.hp <= 0) this.mobDied(e, d);
   }
+  // Zombie.hurt on hard: with the player as its target or attacker, by its reinforcement chance a
+  // zombie calls another: 50 tries 7..40 blocks off along each axis (or level with it), where a
+  // monster may spawn (dark), no player within 7, room and no liquid; the newcomer goes for the
+  // player, and each call costs the caller and the newcomer 0.05 of the chance
+  reinforce(e) {
+    const g = this.game, w = g.world;
+    if (g.difficulty !== 'hard' || !(Math.random() < e.reinf)) return;
+    const r = () => (7 + (Math.random() * 34 | 0)) * ((Math.random() * 3 | 0) - 1);
+    const fx = Math.floor(e.pos[0]), fy = Math.floor(e.pos[1]), fz = Math.floor(e.pos[2]), P = g.player.pos;
+    for (let k = 0; k < 50; k++) {
+      const x = fx + r(), y = fy + r(), z = fz + r();
+      if (!w.isLoaded(x, z) || !this.floorAt(x, y, z) || !this.darkEnough(x, y, z)) continue;
+      if (Math.hypot(x + 0.5 - P[0], y - P[1], z + 0.5 - P[2]) < 7 || entCollides(w, x + 0.5, y, z + 0.5, 0.6, 1.95)) continue;
+      if (isWaterId(w.getBlock(x, y, z)) || isWaterId(w.getBlock(x, y + 1, z)) || w.getBlock(x, y, z) === B.LAVA) continue;
+      const z2 = this.spawnMob('zombie', x + 0.5, y, z + 0.5);
+      if (g.mode === 'survival') { z2.hunting = true; z2.provoked = true; z2.chase = [P[0], P[2]]; }
+      e.reinf -= 0.05; z2.reinf -= 0.05;
+      return z2;
+    }
+    return null;
+  }
+  // BreakDoorGoal (a zombie able to, on hard): walking into a closed wooden door on its way, it
+  // beats on the upper half for 240 ticks (the cracks grow, now and then a bang), then removes it;
+  // the lower half, left without it, falls off and drops the door as with any lost support. It
+  // gives up when the door opens or it is more than 2 blocks off
+  breakDoor(e) {
+    const g = this.game, w = g.world;
+    const isDoor = (x, y, z) => { const id = w.getBlock(x, y, z); return SHAPE[id] === SH.DOOR && id !== B.IRON_DOOR && !((w.getMeta(x, y, z) >> 3) & 1); };
+    if (g.difficulty !== 'hard' || e.deathT > 0) { this.endDoor(e); return; }
+    if (!e.doorPos) {
+      const l = Math.hypot(e.wish[0], e.wish[2]);
+      if (!e.hitWall || l < 0.05) return;
+      // (DoorInteractGoal: the door at head height in the next cells of the path, or over its feet)
+      const y = Math.floor(e.pos[1] + 0.1) + 1;
+      for (const a of [0, 0.7]) {
+        const x = Math.floor(e.pos[0] + e.wish[0] / l * a), z = Math.floor(e.pos[2] + e.wish[2] / l * a);
+        if (isDoor(x, y, z) && Math.hypot(x + 0.5 - e.pos[0], z + 0.5 - e.pos[2]) <= 1.5) { e.doorPos = [x, y, z]; e.doorT = 0; break; }
+      }
+      if (!e.doorPos) return;
+    }
+    const [x, y, z] = e.doorPos;
+    if (!isDoor(x, y, z) || Math.hypot(x + 0.5 - e.pos[0], y + 0.5 - e.pos[1], z + 0.5 - e.pos[2]) >= 2) { this.endDoor(e); return; }
+    e.doorT++;
+    if (Math.random() < 0.05) Sfx.door(false);
+    this.cracks.set(x + ',' + y + ',' + z, { x, y, z, stage: Math.floor(e.doorT / 240 * 10) });
+    if (e.doorT >= 240) {
+      const id = w.getBlock(x, y, z);
+      w.setBlock(x, y, z, 0, 0);
+      g.spawnParticles(x, y, z, id, 12); Sfx.block(id, 'break');
+      this.endDoor(e);
+    }
+  }
+  endDoor(e) {
+    if (!e.doorPos) return;
+    this.cracks.delete(e.doorPos.join(','));
+    e.doorPos = null; e.doorT = 0;
+  }
   mobDied(e, d) {
       e.deathT = 0.001;
+      this.endDoor(e);
       e.byPlayer = e.playerHitAge !== undefined && e.age - e.playerHitAge < 5;
       for (const [id, n] of d.drops(e)) if (id && n > 0) this.dropItem(id, n, e.pos[0], e.pos[1] + 0.5, e.pos[2]);
       if (e.type === 'slime' && e.size > 1) {
@@ -16762,6 +16866,8 @@ class Entities {
       const fz = e.fuse > 0 ? Math.min(1, e.fuse / 1.5) : 0, wf = fz && ((fz * 10) | 0) % 2 ? 1 + Math.max(0.5, fz) : 0;
       const tint = e.hurtT > 0 || e.deathT > 0 ? [1, 0.45, 0.45] : wf ? [wf, wf, wf] : null;
       const m = MODELS[e.type];
+      // an invisible spider (hard): only its eyes show, glowing (SpiderEyesLayer)
+      if (e.effect === 'invisibility') { this.buildModel(vb(m.tex + '_eyes', byTex), m, e, cam, 1, null); continue; }
       this.buildModel(vb(m.tex, byTex), m, e, cam, li, tint, vb(m.tex, transTex), fireV);
       if (e.type === 'sheep' && !e.sheared) {
         const c = sheepTint(e);
@@ -17697,7 +17803,8 @@ const STR = {
     exportW: 'Export', importW: 'Import', exportFile: 'Save World to File', exportFail: 'The world could not be saved to a file',
     importDone: 'World "%s" imported', importBad: 'This is not a Maincraft world file',
     del: 'Delete', cancel: 'Cancel', back: 'Back', worldName: 'World Name', seed: 'Seed (optional)',
-    mode: 'Game Mode', creative: 'Creative', survival: 'Survival', createBtn: 'Create', noWorlds: 'No worlds yet - create your first one!',
+    mode: 'Game Mode', creative: 'Creative', survival: 'Survival', createBtn: 'Create',
+    difficulty: 'Difficulty', peaceful: 'Peaceful', easy: 'Easy', normal: 'Normal', hard: 'Hard', noWorlds: 'No worlds yet - create your first one!',
     loading: 'Generating world...', resume: 'Back to Game', saveQuit: 'Save & Quit to Title', paused: 'Game Menu',
     renderDist: 'Render Distance', fov: 'FOV', sens: 'Sensitivity', bright: 'Brightness', clouds: 'Clouds',
     leaves: 'Leaves', leavesFancy: 'Fancy', leavesOpt: 'Optimized', leavesFast: 'Fast', leavesAdaptive: 'Adaptive', sway: 'Waving Plants', bobView: 'View Bobbing', on: 'ON', off: 'OFF', chunks: 'chunks', done: 'Done',
@@ -17720,7 +17827,8 @@ const STR = {
     exportW: 'Экспорт', importW: 'Импорт', exportFile: 'Сохранить мир в файл', exportFail: 'Не удалось сохранить мир в файл',
     importDone: 'Мир «%s» загружен', importBad: 'Это не файл мира Maincraft',
     del: 'Удалить', cancel: 'Отмена', back: 'Назад', worldName: 'Название мира', seed: 'Сид (необязательно)',
-    mode: 'Режим игры', creative: 'Творческий', survival: 'Выживание', createBtn: 'Создать', noWorlds: 'Миров пока нет — создай первый!',
+    mode: 'Режим игры', creative: 'Творческий', survival: 'Выживание', createBtn: 'Создать',
+    difficulty: 'Сложность', peaceful: 'Мирная', easy: 'Лёгкая', normal: 'Нормальная', hard: 'Сложная', noWorlds: 'Миров пока нет — создай первый!',
     loading: 'Генерация мира...', resume: 'Вернуться к игре', saveQuit: 'Сохранить и выйти в меню', paused: 'Меню игры',
     renderDist: 'Дальность прорисовки', fov: 'Поле зрения', sens: 'Чувствительность', bright: 'Яркость', clouds: 'Облака',
     leaves: 'Листва', leavesFancy: 'Красивая', leavesOpt: 'Оптимизированная', leavesFast: 'Быстрая', leavesAdaptive: 'Адаптивная', sway: 'Колыхание растений', bobView: 'Покачивание камеры', on: 'ВКЛ', off: 'ВЫКЛ', chunks: 'чанков', done: 'Готово',
@@ -17906,6 +18014,8 @@ const Settings = {
 };
 
 const DAY_LEN = 1200;
+// Minecraft's difficulties (Difficulty.getId: peaceful 0 .. hard 3); a world starts on normal
+const DIFFICULTIES = ['peaceful', 'easy', 'normal', 'hard'];
 // water fog colours of the biomes (Minecraft's water_fog_color); the rest use 0x050533
 // the empty hand's arm, local -> view: rotate around x by -60 deg minus the swing, around y by
 // 20 deg, translate (P: [swing, view bob x, view bob y])
@@ -17933,7 +18043,7 @@ function leafLod(d2, cur) {
   if (cur === 1 && t === 3 && d2 <= 49) return 1;
   return t;
 }
-const BUILD_ID = '0ff3c8b';   // filled in by build.py
+const BUILD_ID = '5a9fac4';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -18015,6 +18125,10 @@ class Game {
   async startWorld(meta) {
     this.meta = meta;
     this.mode = meta.mode || 'creative';
+    this.difficulty = DIFFICULTIES.includes(meta.difficulty) ? meta.difficulty : 'normal';
+    // ticks the player has spent near each column (LevelChunk.inhabitedTime), for the local difficulty
+    this.inhabited = new Map();
+    if (meta.inhab && meta.inhab.length) for (let i = 0; i + 1 < meta.inhab.length; i += 2) this.inhabited.set(meta.inhab[i], meta.inhab[i + 1]);
     this.time = typeof meta.time === 'number' ? meta.time : 0.25;
     this.inv = Array.isArray(meta.inv) && meta.inv.length === 36 ? meta.inv.map(s => s && s.id ? s : null) : this.defaultInv();
     this.sel = meta.sel | 0;
@@ -18140,6 +18254,8 @@ class Game {
       ship: this.pendingShip || (this.ships ? this.ships.serialize() : null),
       boats: this.pendingBoats || (this.boats ? this.boats.serialize() : null),
       mobs: this.ents ? this.ents.saveMobs() : null,
+      difficulty: this.difficulty,
+      inhab: this.inhabited ? Float64Array.from([].concat(...this.inhabited)) : null,
       popd: this.ents ? this.ents.savePopulated() : null,
     });
     await DB.putWorld(this.meta);
@@ -19015,7 +19131,8 @@ class Game {
   // destroyed, each dropping as an item one time in radius (explosion decay), a chest its contents.
   // Entities within 2 x radius: impact = (1 - distance / 2r) x the part of the body the centre sees,
   // damage (impact^2 + impact) / 2 x 7 x 2r + 1, pushed away (from the centre to the eyes) by impact.
-  explode(cx, cy, cz, r, tg) {
+  // byMob: set off by a creeper (its damage then scales with the difficulty)
+  explode(cx, cy, cz, r, tg, byMob) {
     const w = this.world, E = this.ents;
     if (tg) w.setBlock(tg.x, tg.y, tg.z, 0, 0);
     Sfx.noise && Sfx.ctx && Sfx.noise(Sfx.ctx.currentTime, 1.2, 0.9, 'lowpass', 600, 60, 0.7);
@@ -19063,7 +19180,7 @@ class Game {
     {
       const f = impact(p.pos, PLAYER_W, p.h);
       if (f >= 0) {
-        if (this.mode === 'survival') this.hurt(Math.floor((f * f + f) / 2 * 7 * q + 1));
+        if (this.mode === 'survival') this.hurt(Math.floor((f * f + f) / 2 * 7 * q + 1), byMob);
         if (!(this.mode !== 'survival' && p.flying)) push(p.vel, p.pos, p.h * 0.9, f);
       }
     }
@@ -19180,17 +19297,12 @@ class Game {
     const fb = this.world.getBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1] + 0.2), Math.floor(p.pos[2]));
     if (fb === B.FIRE || fb === B.MAGMA_BLOCK || fb === B.CACTUS) { s.lavaT -= dt; if (s.lavaT <= 0) { s.lavaT = 0.5; this.hurt(1); } }
     if (p.pos[1] < WORLD_MIN_Y - 40) this.hurt(4);
-    // exhaustion
+    // exhaustion: sprinting 0.1 and swimming 0.01 a block, a jump 0.05 (0.2 sprinting)
     const hs = Math.hypot(p.vel[0], p.vel[2]);
     s.exh += dt * (p.sprinting ? 0.1 * hs : p.swimming ? 0.01 * hs : 0);
-    if (this.keys.Space && p.onGround) s.exh += 0.01;
-    if (s.exh >= 4) { s.exh -= 4; if (s.sat > 0) s.sat = Math.max(0, s.sat - 1); else s.food = Math.max(0, s.food - 1); }
-    s.regenT += dt;
-    if (s.regenT >= 4) {
-      s.regenT = 0;
-      if (s.food >= 18 && s.hp < 20) { s.hp = Math.min(20, s.hp + 1); s.exh += 6; }
-      else if (s.food <= 0 && s.hp > 1) this.hurt(1);
-    }
+    if (p.jumped) { s.exh += p.jumped === 2 ? 0.2 : 0.05; p.jumped = 0; }
+    s.tickAcc = (s.tickAcc || 0) + dt;
+    while (s.tickAcc >= 0.05) { s.tickAcc -= 0.05; this.foodTick(); }
     if (s.hurtT > 0) s.hurtT -= dt;
     if (s.invT > 0) s.invT -= dt;
     // MobEffects.POISON (level I): 1 damage every 25 ticks while health is above 1
@@ -19200,9 +19312,58 @@ class Game {
     }
     this.updateSurvivalHud();
   }
-  // LivingEntity.hurt: 20 ticks of invulnerability; in the first 10 only a bigger hit lands, by the difference
-  hurt(n) {
+  // FoodData.tick and Player.aiStep's peaceful regeneration, one game tick
+  foodTick() {
+    const s = this.surv, d = this.difficulty;
+    s.ticks = ((s.ticks | 0) + 1) % 2000000;
+    // peaceful: health comes back 1 a second and food 1 every 10 ticks
+    if (d === 'peaceful') {
+      if (s.hp < 20 && s.ticks % 20 === 0) s.hp = Math.min(20, s.hp + 1);
+      if (s.food < 20 && s.ticks % 10 === 0) s.food++;
+    }
+    // every 4 of exhaustion takes 1 saturation, or with none left 1 food (never on peaceful)
+    if (s.exh > 4) { s.exh -= 4; if (s.sat > 0) s.sat = Math.max(0, s.sat - 1); else if (d !== 'peaceful') s.food = Math.max(0, s.food - 1); }
+    const hurt = s.hp < 20;
+    if (s.sat > 0 && hurt && s.food >= 20) {
+      // full and saturated: every 10 ticks heals a sixth of the saturation spent (up to 6)
+      if (++s.regenT >= 10) { const f = Math.min(s.sat, 6); s.hp = Math.min(20, s.hp + f / 6); s.exh += f; s.regenT = 0; }
+    } else if (s.food >= 18 && hurt) {
+      if (++s.regenT >= 80) { s.hp = Math.min(20, s.hp + 1); s.exh += 6; s.regenT = 0; }
+    } else if (s.food <= 0) {
+      // starving: 1 every 80 ticks, down to 10 health on easy (and peaceful), to 1 on normal, to death on hard
+      if (++s.regenT >= 80) { if (s.hp > 10 || d === 'hard' || (s.hp > 1 && d === 'normal')) this.hurt(1); s.regenT = 0; }
+    } else s.regenT = 0;
+  }
+  setDifficulty(d) {
+    if (!DIFFICULTIES.includes(d)) return;
+    this.difficulty = d;
+    if (this.meta) this.meta.difficulty = d;
+  }
+  // DifficultyInstance: the local difficulty at a column, base (0 .. 3) x (0.75 + the world's age
+  // (after the first hour, up to 0.25 at 21 hours) + the time spent near the column (up to 1, x0.75
+  // below hard, after 50 hours) + the moon (up to the age part)); halved locally on easy. special:
+  // its part between 2 and 4 (what spawns with extras goes by it)
+  localDifficulty(x, z) {
+    const id = DIFFICULTIES.indexOf(this.difficulty);
+    if (id <= 0) return { eff: 0, special: 0 };
+    const age = ((this.days || 0) + this.time) * 24000;
+    const g = Math.min(1, Math.max(0, (age - 72000) / 1440000)) * 0.25;
+    const moon = [1, 0.75, 0.5, 0.25, 0, 0.25, 0.5, 0.75][((this.days || 0) % 8 + 8) % 8];
+    let h = Math.min(1, (this.inhabited.get(colKey(x >> 4, z >> 4)) || 0) / 3600000) * (id === 3 ? 1 : 0.75);
+    h += Math.min(g, moon * 0.25);
+    if (id === 1) h *= 0.5;
+    const eff = id * (0.75 + g + h);
+    return { eff, special: eff < 2 ? 0 : eff > 4 ? 1 : (eff - 2) / 2 };
+  }
+  // LivingEntity.hurt: 20 ticks of invulnerability; in the first 10 only a bigger hit lands, by the
+  // difference. byMob: damage a mob (not the player) caused, which Player.hurt scales by the
+  // difficulty: none on peaceful, half + 1 on easy (at most the whole), x1.5 on hard
+  hurt(n, byMob) {
     const s = this.surv;
+    if (byMob) {
+      const d = this.difficulty;
+      if (d === 'peaceful') n = 0; else if (d === 'easy') n = Math.min(n / 2 + 1, n); else if (d === 'hard') n *= 1.5;
+    }
     if (this.mode !== 'survival' || s.dead || n <= 0) return false;
     if (s.invT > 0.5) {
       if (n <= s.lastHurt) return false;
@@ -19213,6 +19374,7 @@ class Game {
       return false;
     }
     s.lastHurt = n; s.invT = 1;
+    s.exh += 0.1;                                  // Player.actuallyHurt: the damage source's food exhaustion
     if (this.sleeping) this.wake();                // LivingEntity.hurt: a hit wakes the sleeper
     s.hp = Math.max(0, s.hp - n);
     s.hurtT = 0.4;
@@ -19566,6 +19728,7 @@ class Game {
     // selection outline + cracks
     t = performance.now(); r.gpuBegin('hand');
     if (this.target && !this.hideHud) this.drawSelection(env);
+    if (this.ents && this.ents.cracks.size) this.drawMobCracks();
     // hand
     if (!this.camMode && !this.hideHud && !this.sleeping) this.drawHand(env, dt);   // no hand in bed (GameRenderer.renderItemInHand)
     this.drawInWall();
@@ -19622,6 +19785,23 @@ class Game {
       r.drawArr(v.view(), v.n / 10, null, 0.01);
       gl.disable(gl.POLYGON_OFFSET_FILL);
     }
+    gl.depthMask(true); gl.disable(gl.BLEND);
+  }
+  // the cracks of blocks a mob is breaking (Level.destroyBlockProgress: a zombie at a door)
+  drawMobCracks() {
+    const r = this.r, gl = r.gl, cam = this.cam, w = this.world, v = this.mobCrackVB || (this.mobCrackVB = new VBuf());
+    v.n = 0;
+    for (const c of this.ents.cracks.values()) {
+      const id = w.getBlock(c.x, c.y, c.z);
+      if (!id) continue;
+      const layer = this.assets.layers['destroy_stage_' + Math.min(9, c.stage)];
+      for (const b of blockBoxes(w, id, w.getMeta(c.x, c.y, c.z), c.x, c.y, c.z) || []) this.pushBox(v, c.x + b[0] - cam[0], c.y + b[1] - cam[1], c.z + b[2] - cam[2], c.x + b[3] - cam[0], c.y + b[4] - cam[1], c.z + b[5] - cam[2], layer, WHITE4, 0.004);
+    }
+    if (!v.n) return;
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -1);
+    r.drawArr(v.view(), v.n / 10, null, 0.01);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.depthMask(true); gl.disable(gl.BLEND);
   }
   // push a textured box (camera relative coords), 6 faces, into vertex list [x,y,z,u,v,layer,r,g,b,a]
@@ -19800,6 +19980,7 @@ class Game {
     t += `Columns: ${w.cols.size}  gen ${w.genInFlight}  mesh ${w.meshInFlight}  lit-wait ${w.pendingLit.size}\n`;
     t += `Sections: ${r.stats.sections}  draws ${r.stats.draws}  quads ${r.stats.quads}\n`;
     t += `Time: ${Math.floor((this.time * 24 + 6) % 24)}:${String(Math.floor((this.time * 1440) % 60)).padStart(2, '0')}  Day ${this.days || 0}\n`;
+    { const ld = this.localDifficulty(x, z); t += `Local Difficulty: ${ld.eff.toFixed(2)} // ${ld.special.toFixed(2)} (${this.difficulty}, Day ${this.days || 0})\n`; }
     if (this.target) t += `Target: ${B_KEY[this.target.id]} [${this.target.meta}] @ ${this.target.x} ${this.target.y} ${this.target.z}\n`;
     if (this.bench) t += `\n>>> БЕНЧМАРК: ${this.bench.phase === 'wait' ? 'жду догрузки мира ' + this.bench.t.toFixed(0) + ' с' : 'идёт ' + this.bench.t.toFixed(1) + ' / 12 с'} (B — отменить)\n`;
     else if (this.benchText) t += '\n' + this.benchText + '\n';
@@ -19976,7 +20157,7 @@ const UI = {
     for (const w of ws) {
       const d = new Date(w.lastPlayed || w.created || Date.now());
       const item = el('div', { class: 'world' },
-        el('b', null, w.name), el('span', null, `${T(w.mode)} · ${T('lastPlayed')}: ${d.toLocaleDateString()} ${d.toLocaleTimeString().slice(0, 5)}`),
+        el('b', null, w.name), el('span', null, `${T(w.mode)} · ${T(w.difficulty || 'normal')} · ${T('lastPlayed')}: ${d.toLocaleDateString()} ${d.toLocaleTimeString().slice(0, 5)}`),
         el('small', null, 'seed ' + w.seed));
       item.onclick = () => {
         list.querySelectorAll('.world').forEach(x => x.classList.remove('sel'));
@@ -20024,8 +20205,12 @@ const UI = {
       $('wName').value = (CUR_LANG === 'ru' ? 'Новый мир' : 'New World');
       $('wSeed').value = '';
       this.newMode = 'creative'; this.updateModeBtn();
+      this.newDiff = 'normal'; this.updateDiffBtn();
     };
     $('btnMode').onclick = () => { this.newMode = this.newMode === 'creative' ? 'survival' : 'creative'; this.updateModeBtn(); };
+    // Minecraft's difficulty button: Peaceful, Easy, Normal (the default), Hard in turn
+    $('btnDiff').onclick = () => { this.newDiff = DIFFICULTIES[(DIFFICULTIES.indexOf(this.newDiff) + 1) % 4]; this.updateDiffBtn(); };
+    $('btnDiffPause').onclick = () => { const g = this.game; g.setDifficulty(DIFFICULTIES[(DIFFICULTIES.indexOf(g.difficulty) + 1) % 4]); this.updateDiffBtn(); };
     $('btnCancelCreate').onclick = () => { show('createWorld', false); this.showWorlds(); };
     $('btnDoCreate').onclick = async () => {
       let seedS = $('wSeed').value.trim(), seed;
@@ -20033,7 +20218,7 @@ const UI = {
       else if (/^-?\d+$/.test(seedS)) seed = parseInt(seedS, 10) | 0;
       else { seed = 0; for (const ch of seedS) seed = (Math.imul(seed, 31) + ch.charCodeAt(0)) | 0; }
       const w = { id: 'w' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36), name: $('wName').value.trim() || 'World',
-        seed, mode: this.newMode, created: Date.now(), lastPlayed: Date.now() };
+        seed, mode: this.newMode, difficulty: this.newDiff || 'normal', created: Date.now(), lastPlayed: Date.now() };
       await DB.putWorld(w);
       show('createWorld', false);
       this.play(w);
@@ -20056,6 +20241,10 @@ const UI = {
     $('clickToPlay').onclick = () => this.resume();
   },
   updateModeBtn() { $('btnMode').textContent = T('mode') + ': ' + T(this.newMode); },
+  updateDiffBtn() {
+    $('btnDiff').textContent = T('difficulty') + ': ' + T(this.newDiff || 'normal');
+    $('btnDiffPause').textContent = T('difficulty') + ': ' + T((this.game && this.game.difficulty) || 'normal');
+  },
   resume() {
     if (IS_TOUCH) { this.game.paused = false; this.hidePause(); return; }
     this.game.canvas.requestPointerLock();
@@ -20067,7 +20256,7 @@ const UI = {
     show('clickToPlay', true);
     $('clickToPlay').textContent = T('clickToPlay');
   },
-  showPause() { if (!this.game.loadingWorld) show('pause', true); show('clickToPlay', false); },
+  showPause() { if (!this.game.loadingWorld) show('pause', true); show('clickToPlay', false); this.updateDiffBtn(); },
   hidePause() { show('pause', false); show('clickToPlay', false); },
   // benchmark progress line and result window (the text stays selectable for manual copying)
   benchStatus(text) { show('benchStatus', !!text); if (text) $('benchStatusText').textContent = text; },
@@ -20155,7 +20344,9 @@ const UI = {
     const on = g.mode === 'survival';
     show('survBars', on);
     if (!on) return;
-    const key = `${s.hp}|${s.food}|${Math.ceil(s.air / 30)}|${s.poisonT > 0}`;
+    // health is drawn rounded up (Gui.renderPlayerHealth: Mth.ceil(health)); heals come in fractions
+    const hpN = Math.ceil(s.hp);
+    const key = `${hpN}|${s.food}|${Math.ceil(s.air / 30)}|${s.poisonT > 0}`;
     if (key === this.lastSurvKey) return;
     this.lastSurvKey = key;
     const hp = $('hearts'), fd = $('food'), air = $('air');
@@ -20169,7 +20360,7 @@ const UI = {
       }
       return h;
     };
-    hp.innerHTML = row(s.hp, this.icons.heart, this.icons.heartE);
+    hp.innerHTML = row(hpN, this.icons.heart, this.icons.heartE);
     hp.classList.toggle('poison', s.poisonT > 0);
     fd.innerHTML = row(s.food, this.icons.food, this.icons.foodE, true);
     const bubbles = Math.ceil(Math.max(0, s.air) / 30);

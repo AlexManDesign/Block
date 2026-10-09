@@ -43,7 +43,7 @@ const UI = {
     for (const w of ws) {
       const d = new Date(w.lastPlayed || w.created || Date.now());
       const item = el('div', { class: 'world' },
-        el('b', null, w.name), el('span', null, `${T(w.mode)} · ${T('lastPlayed')}: ${d.toLocaleDateString()} ${d.toLocaleTimeString().slice(0, 5)}`),
+        el('b', null, w.name), el('span', null, `${T(w.mode)} · ${T(w.difficulty || 'normal')} · ${T('lastPlayed')}: ${d.toLocaleDateString()} ${d.toLocaleTimeString().slice(0, 5)}`),
         el('small', null, 'seed ' + w.seed));
       item.onclick = () => {
         list.querySelectorAll('.world').forEach(x => x.classList.remove('sel'));
@@ -91,8 +91,12 @@ const UI = {
       $('wName').value = (CUR_LANG === 'ru' ? 'Новый мир' : 'New World');
       $('wSeed').value = '';
       this.newMode = 'creative'; this.updateModeBtn();
+      this.newDiff = 'normal'; this.updateDiffBtn();
     };
     $('btnMode').onclick = () => { this.newMode = this.newMode === 'creative' ? 'survival' : 'creative'; this.updateModeBtn(); };
+    // Minecraft's difficulty button: Peaceful, Easy, Normal (the default), Hard in turn
+    $('btnDiff').onclick = () => { this.newDiff = DIFFICULTIES[(DIFFICULTIES.indexOf(this.newDiff) + 1) % 4]; this.updateDiffBtn(); };
+    $('btnDiffPause').onclick = () => { const g = this.game; g.setDifficulty(DIFFICULTIES[(DIFFICULTIES.indexOf(g.difficulty) + 1) % 4]); this.updateDiffBtn(); };
     $('btnCancelCreate').onclick = () => { show('createWorld', false); this.showWorlds(); };
     $('btnDoCreate').onclick = async () => {
       let seedS = $('wSeed').value.trim(), seed;
@@ -100,7 +104,7 @@ const UI = {
       else if (/^-?\d+$/.test(seedS)) seed = parseInt(seedS, 10) | 0;
       else { seed = 0; for (const ch of seedS) seed = (Math.imul(seed, 31) + ch.charCodeAt(0)) | 0; }
       const w = { id: 'w' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36), name: $('wName').value.trim() || 'World',
-        seed, mode: this.newMode, created: Date.now(), lastPlayed: Date.now() };
+        seed, mode: this.newMode, difficulty: this.newDiff || 'normal', created: Date.now(), lastPlayed: Date.now() };
       await DB.putWorld(w);
       show('createWorld', false);
       this.play(w);
@@ -123,6 +127,10 @@ const UI = {
     $('clickToPlay').onclick = () => this.resume();
   },
   updateModeBtn() { $('btnMode').textContent = T('mode') + ': ' + T(this.newMode); },
+  updateDiffBtn() {
+    $('btnDiff').textContent = T('difficulty') + ': ' + T(this.newDiff || 'normal');
+    $('btnDiffPause').textContent = T('difficulty') + ': ' + T((this.game && this.game.difficulty) || 'normal');
+  },
   resume() {
     if (IS_TOUCH) { this.game.paused = false; this.hidePause(); return; }
     this.game.canvas.requestPointerLock();
@@ -134,7 +142,7 @@ const UI = {
     show('clickToPlay', true);
     $('clickToPlay').textContent = T('clickToPlay');
   },
-  showPause() { if (!this.game.loadingWorld) show('pause', true); show('clickToPlay', false); },
+  showPause() { if (!this.game.loadingWorld) show('pause', true); show('clickToPlay', false); this.updateDiffBtn(); },
   hidePause() { show('pause', false); show('clickToPlay', false); },
   // benchmark progress line and result window (the text stays selectable for manual copying)
   benchStatus(text) { show('benchStatus', !!text); if (text) $('benchStatusText').textContent = text; },
@@ -222,7 +230,9 @@ const UI = {
     const on = g.mode === 'survival';
     show('survBars', on);
     if (!on) return;
-    const key = `${s.hp}|${s.food}|${Math.ceil(s.air / 30)}|${s.poisonT > 0}`;
+    // health is drawn rounded up (Gui.renderPlayerHealth: Mth.ceil(health)); heals come in fractions
+    const hpN = Math.ceil(s.hp);
+    const key = `${hpN}|${s.food}|${Math.ceil(s.air / 30)}|${s.poisonT > 0}`;
     if (key === this.lastSurvKey) return;
     this.lastSurvKey = key;
     const hp = $('hearts'), fd = $('food'), air = $('air');
@@ -236,7 +246,7 @@ const UI = {
       }
       return h;
     };
-    hp.innerHTML = row(s.hp, this.icons.heart, this.icons.heartE);
+    hp.innerHTML = row(hpN, this.icons.heart, this.icons.heartE);
     hp.classList.toggle('poison', s.poisonT > 0);
     fd.innerHTML = row(s.food, this.icons.food, this.icons.foodE, true);
     const bubbles = Math.ceil(Math.max(0, s.air) / 30);
