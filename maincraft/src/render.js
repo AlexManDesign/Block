@@ -169,13 +169,16 @@ const SPRITE_VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos; layout(location=1) in vec2 aUV; layout(location=2) in vec4 aCol;
 uniform mat4 uVP;
-out vec2 vUV; out vec4 vCol;
-void main(){ vUV = aUV; vCol = aCol; gl_Position = uVP * vec4(aPos, 1.0); }`;
+out vec2 vUV; out vec4 vCol; out vec3 vPos;
+void main(){ vUV = aUV; vCol = aCol; vPos = aPos; gl_Position = uVP * vec4(aPos, 1.0); }`;
 const SPRITE_FS = `#version 300 es
-precision mediump float;
-uniform sampler2D uTex; uniform int uKeyBlack;
-in vec2 vUV; in vec4 vCol; out vec4 o;
+precision highp float;
+uniform sampler2D uTex; uniform int uKeyBlack; uniform vec2 uSeaClip;
+in vec2 vUV; in vec4 vCol; in vec3 vPos; out vec4 o;
 void main(){
+  // the sun or moon below the horizon is behind the sea: where the way to it meets the sea level
+  // within the drawn distance (uSeaClip: eye height over the water, that distance)
+  if (uSeaClip.x > 0.0) { vec3 d = normalize(vPos); if (d.y < 0.0 && -d.y * uSeaClip.y > uSeaClip.x * length(d.xz)) discard; }
   vec4 c = texture(uTex, vUV);
   if (uKeyBlack == 1) { float m = max(c.r, max(c.g, c.b)); c.a = min(c.a, m * 2.0); }
   o = c * vCol;
@@ -854,7 +857,7 @@ class Renderer {
     this.cpuTerrain = performance.now() - tc;
     // sky after the opaque terrain: it only shades pixels the terrain left empty
     this.gpuBegin('sky');
-    if (!env.underwater) this.drawSky(env);
+    if (!env.underwater) this.drawSky(env, cam);
   }
   // Re-sorts translucent quads of sections whose camera block changed, nearest sections first,
   // within a time budget; the rest keep their previous order until a later frame.
@@ -900,8 +903,12 @@ class Renderer {
   // ---------------------------------------------------------------- sky, sun, moon
   // Drawn after opaque terrain. depthRange(1,1) puts every sky, sun and moon fragment on the far
   // plane, so with LEQUAL they pass only where the depth buffer still holds the clear value.
-  drawSky(env) {
+  drawSky(env, cam) {
     const gl = this.gl, p = this.progSky;
+    // the sea surface (top water block at SEA, 8/9 full) out to the edge of the drawn world: what the
+    // sun and moon sink behind (rays meeting it there would show them through the water, with the
+    // sea floor further than the drawn sections)
+    this.seaClip = [cam[1] - (SEA + 8 / 9), (env.renderDist + 0.5) * 16];
     gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false); gl.disable(gl.CULL_FACE);
     gl.depthRange(1, 1);
     gl.useProgram(p);
@@ -947,6 +954,7 @@ class Renderer {
     gl.useProgram(p);
     gl.uniformMatrix4fv(p.u.uVP, false, this.vp);
     gl.uniform1i(p.u.uKeyBlack, 1);
+    gl.uniform2f(p.u.uSeaClip, Math.max(0, this.seaClip[0]), this.seaClip[1]);
     gl.uniform1i(p.u.uTex, 3);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tex); gl.activeTexture(gl.TEXTURE0);
     this.drawDynSprite(v, 6);
