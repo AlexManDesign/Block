@@ -164,6 +164,15 @@ namespace VoxelForge
             if (neg) sb.Insert(0, '-');
             return sb.ToString();
         }
+        /// <summary>JS String(v) for JSON-model values.</summary>
+        public static string ToStr(object v)
+        {
+            if (v == null) return "null";
+            if (v is string) return (string)v;
+            if (v is bool) return (bool)v ? "true" : "false";
+            if (v is double || v is int || v is float || v is long) return ToStr(Json.ToNum(v));
+            return v.ToString();
+        }
         public static string ToStr(double v)
         {
             if (v == Math.Floor(v) && Math.Abs(v) < 1e15) return ((long)v).ToString(System.Globalization.CultureInfo.InvariantCulture);

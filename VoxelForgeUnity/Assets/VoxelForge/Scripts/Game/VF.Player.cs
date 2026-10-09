@@ -4,9 +4,9 @@ using System.Collections.Generic;
 
 namespace VoxelForge
 {
-    public sealed class Player
+    public sealed class Player : Entity
     {
-        public double x, y, z, vx, vy, vz, yaw, pitch;
+        public double yaw, pitch;
         public bool onGround, flying;
         public double hp = 20, hunger = 20, air = 10;
         public bool dead, creative;
