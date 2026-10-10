@@ -7,7 +7,7 @@ Shader "VoxelForge/Cloud"
         Pass
         {
             Cull Off
-            ZTest LEqual
+            ZTest Less
             ZWrite Off
             Blend SrcAlpha OneMinusSrcAlpha
             CGPROGRAM

@@ -60,9 +60,9 @@ Shader "VoxelForge/TerrainXray"
                     float mn = min(ed.x, min(ed.y, ed.z)), mx = max(ed.x, max(ed.y, ed.z));
                     float mid = ed.x + ed.y + ed.z - mn - mx;
                     float w = fwidth(mid) + 0.012;
-                    float line = 1.0 - smoothstep(0.0, w, mid);
-                    if (line < 0.04) discard;
-                    return float4(t.rgb * (0.5 + 0.5 * i.sad.x), line * 0.42);
+                    float edgeLine = 1.0 - smoothstep(0.0, w, mid);
+                    if (edgeLine < 0.04) discard;
+                    return float4(t.rgb * (0.5 + 0.5 * i.sad.x), edgeLine * 0.42);
                 }
                 if (i.bc.y < 0.5) discard;
                 return float4(t.rgb, a);

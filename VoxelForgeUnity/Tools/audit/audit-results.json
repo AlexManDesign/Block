@@ -1,0 +1,635 @@
+{
+ "reviews": [
+  {
+   "findings": [
+    {
+     "id": "SHD-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Resources/VoxelForge/Shaders/VFTerrainXray.shader",
+     "line": 63,
+     "jsRef": "terrainXrayProg fragment (pretty.js ~2448-2452: float line=1.0-smoothstep(0.0,w,mid))",
+     "severity": "critical",
+     "category": "compile",
+     "description": "`float line = ...` uses `line` as a variable name. In HLSL `line` is a reserved keyword (a geometry-shader primitive type, like point/triangle/lineadj). fxc, which Unity uses for d3d11 and as the front end of the HLSLcc cross-compile, fails with \"syntax error: unexpected token 'line'\". GLSL allows the name, which is why the JS code works. The result is that the VoxelForge/TerrainXray shader does not compile. matXray1 and matXray2 then fall back to the error shader, so X-Ray mode draws all terrain magenta or not at all.",
+     "suggestedFix": "Rename the local, e.g. `float edgeLine = 1.0 - smoothstep(0.0, w, mid); if (edgeLine < 0.04) discard; return float4(t.rgb * (0.5 + 0.5 * i.sad.x), edgeLine * 0.42);`"
+    },
+    {
+     "id": "SHD-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Resources/VoxelForge/Shaders/VFEntity.shader",
+     "line": 16,
+     "jsRef": "drawEntities (pretty.js 3446-3452: if(xrayActive) gl.disable(gl.DEPTH_TEST) ... gl.depthMask(true))",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "In X-Ray mode JS draws entities with GL_DEPTH_TEST disabled. Disabling the depth test also turns off depth writes, so mobs leave no depth behind. The Unity port gets 'Always' by setting matEntityXray to ZTest Always, but the shader hard-codes `ZWrite On`, so X-Ray mobs still write depth. Everything drawn later with a depth test is then cut out behind mob silhouettes: mob-held items, drops, translucent terrain, water, clouds and the selection outline. In JS those draw over the X-Ray mobs, because after the X-Ray depth clear the depth buffer holds only ore/special blocks.",
+     "suggestedFix": "Add `_ZWrite (\"ZWrite\", Float) = 1` to Properties and use `ZWrite [_ZWrite]` in the pass. Then in VF.Renderer.cs set `m.SetFloat(\"_ZWrite\", 0)` for matEntityXray and keep 1 for matEntity."
+    },
+    {
+     "id": "SHD-3",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Resources/VoxelForge/Shaders/VFCloud.shader",
+     "line": 10,
+     "jsRef": "drawMainClouds (pretty.js 17370-17390; depthFunc is LESS, restored after the water colour pass at 27057)",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "The cloud pass uses `ZTest LEqual`. In JS the depth function is LESS when drawMainClouds runs (the water colour pass sets it back to LESS before clouds), so fragments at exactly equal depth are rejected in JS but accepted in the port.",
+     "suggestedFix": "Change to `ZTest Less`."
+    }
+   ],
+   "coverageNotes": "I read all 9 shaders and VFCommon.cginc, plus the context files VF.Renderer.cs (materials, render-state floats, globals, draw order), VF.ChunkRender.cs (TERRAIN_LAYOUT), VF.DynMesh.cs (SPRITE/PARTICLE layouts) and VF.Atlas.cs (texture array and mips). I compared each shader against its JS program: terrainProg, terrainOpaqueFastProg, terrainXrayProg, waterProg, waterDepthProg, lineProg, entityProg, dropProg, cloudProg and breakParticleProg.\n\nI also traced GL state at each draw in JS render(): sky bodies, X-Ray passes 1 and 2 with the depth clear, opaque fast and cutout, break particles, entities and mob-held items, active entities, fishing line, drops, cracks, translucent terrain, water above and below the surface (depth pre-pass plus LEQUAL colour pass), clouds, selection outline, primed-TNT outline, and held items.\n\nThese all match, apart from the three findings:\n- **Shader math:** shade/alpha/class decode, sky:block light decode with the hand-light term, the lightmap coordinates (block on x, sky on y), fog smoothstep, underwater tint (`_VF_FogFar > 30`), and the alpha-test thresholds (0.12 / 0.08 / 0.01).\n- **Atlas sampling:** the mip-LOD formula and the NEAREST_MIPMAP_LINEAR emulation (floor/frac blend, clamped to level 4). The C# array has 5 mips with point filtering and a single 768-layer page, so the JS 3-page split is correctly merged.\n- **Other math:** water flow-tile UV animation, the X-Ray edge-line maths, the entity 4x7 grid UVs and the sprite grid UVs with the 1-f.y flip.\n- **Interpolation:** flat (nointerpolation) qualifiers.\n- **Vertex inputs:** semantics match the C# layouts — terrain uses Float16 UV, Float32 packed shade/alpha and Float16 tile/light (all exact for the value ranges); sprite and entity use 7 floats; particles use 11 floats.\n- **Uniforms:** every property and global name C# sets (_VF_*, _Cull/_SrcBlend/_DstBlend/_ZTest/_ZWrite, _Grid, _NoFog, _XrayMode, _WaterPass, _Color, _MainTex, _VF_CloudOff) is declared.\n- **Render state:** each material's Cull/ZTest/ZWrite/Blend matches the JS GL state, except entity X-Ray (SHD-2) and clouds (SHD-3).\n\nPlatform checks: I checked HLSL reserved words in every shader (only `line` collides), the UnityObjectToClipPos float4 overload, the 2darray/target 3.5 requirements, ddx/ddy sign independence (only squared magnitudes are used), reversed-Z handling of property-driven ZTest, and gamma-space parity (no sRGB conversions involved).\n\nNot verifiable offline: I could not run a real Unity shader compile, because the stub compile check only covers C#. I also did not report one cross-subsystem doubt. JS uploads the lightmap with texSubImage2D while UNPACK_FLIP_Y_WEBGL is still left true after image loads, which in some browsers would flip the lightmap rows. Whether that happens depends on the browser, and since the rest of the game would only look right without the flip, I treated it as out of scope."
+  },
+  {
+   "findings": [
+    {
+     "id": "REND-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.Renderer.cs",
+     "line": 83,
+     "jsRef": "drawEntities (pretty.js 3455-3460): if (xrayActive) gl.disable(gl.DEPTH_TEST)",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "In X-ray mode the JS turns DEPTH_TEST off entirely for the entity draw. In GL that also stops depth writes, so the entities leave the depth buffer untouched. The port only sets _ZTest=Always on matEntityXray, and VFEntity.shader hardcodes 'ZWrite On', so X-ray entities still write depth. Everything drawn after them (mob held items, active entities, drops, cracks, translucent terrain, water, the selection outline) is then depth-tested against the entity silhouettes. Water or glass that sits behind a mob but in front of the terrain is hidden in Unity, while in JS it is drawn over the mob.",
+     "suggestedFix": "Turn depth writes off for the X-ray entity material. Add a `_ZWrite (\"ZWrite\", Float) = 1` property to VFEntity.shader and use `ZWrite [_ZWrite]` (the shader file is owned elsewhere). Then initialise matEntityXray with m.SetFloat(\"_ZWrite\", 0) next to _ZTest=Always."
+    },
+    {
+     "id": "REND-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.ChunkRender.cs",
+     "line": 507,
+     "jsRef": "buildOpaqueRenderList (pretty.js 15321-15335): renderRegions.get(chunkRenderRegionKey(c.cx, c.cz))",
+     "severity": "minor",
+     "category": "performance",
+     "description": "buildOpaqueRenderList calls chunkRenderRegionKey(c.cx, c.cz) once for every opaque-visible chunk on every frame. That is `rx + \",\" + rz`: two int boxings plus a string.Concat, then a string-hash Dictionary lookup. At render distance 10-16, that means hundreds to a thousand-plus visible chunks, i.e. roughly 3 heap allocations each, every frame. That is tens of KB of garbage per frame on the hottest render path, which causes periodic GC spikes and works against the fastest-rendering goal.",
+     "suggestedFix": "Avoid building strings per frame. Either cache the RenderRegion reference on the Chunk (look it up from renderRegions once, invalidated when cleanupRenderRegions or getRenderRegion replaces the entry), or keep a parallel Dictionary<long, RenderRegion> keyed by ((long)rx << 32) | (uint)rz for the hot lookup."
+    },
+    {
+     "id": "REND-3",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.Renderer.cs",
+     "line": 210,
+     "jsRef": "render (pretty.js 26958): visible.sort(renderDistCompare); renderDistCompare 26445",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "JS Array.prototype.sort is stable. List<T>.Sort(Comparison) is an unstable introsort, and it also allocates a comparer wrapper on every call. When two chunks have equal _renderDist2 (e.g. mirrored dx/dz offsets when the eye's fractional x and z positions match), their relative order differs from JS and can change from frame to frame. transRenderList (reverse visible order) and waterRenderList (front-to-back) take their draw order from this list, so overlapping translucent or water chunks with tied distances can blend in a different order or flicker. The port conventions require a stable sort wherever JS uses Array.sort.",
+     "suggestedFix": "Use a stable sort. The list is almost sorted from frame to frame, so a hand-written insertion sort on _renderDist2 is both stable and allocation-free. Alternatively, tie-break on the original index captured before sorting."
+    },
+    {
+     "id": "REND-4",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.DynMesh.cs",
+     "line": 44,
+     "jsRef": "uploadAndDrawDrops / ensureDropIndexQuads (pretty.js 16674-16860): grow-only bufferData + bufferSubData, index pattern uploaded only when capacity grows",
+     "severity": "minor",
+     "category": "performance",
+     "description": "Every frame, DynMesh.Upload calls SetVertexBufferParams(vn) and SetIndexBufferParams(ic) with the exact current counts for each of about 15 dynamic meshes. Those counts change almost every frame (sky, entities, drops, particles, lines, held items), so Unity reallocates the GPU vertex and index buffers each frame. The constant quad index pattern (0,1,2,2,1,3 per quad) is also re-uploaded every frame; for the entity batch that is 6 ints per quad. The JS keeps grow-only GPU capacity, uploads with bufferSubData, and uploads the quad index buffer only when its capacity grows. lastIndexCount is tracked but never used to skip any work.",
+     "suggestedFix": "Keep a vertex capacity and an index capacity, and call Set*BufferParams only when the needed size exceeds them (grow by doubling). Upload vertices with SetVertexBufferData(data, 0, 0, vn*floatsPerVert). For quad meshes, upload the static index pattern once per capacity change. Then call SetSubMesh(0, new SubMeshDescriptor(0, ic, topo){ firstVertex = 0, vertexCount = vn, bounds = ... }, MUF) so that only the used range is drawn."
+    },
+    {
+     "id": "REND-5",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.ChunkRender.cs",
+     "line": 76,
+     "jsRef": "freeMesh (pretty.js 3726-3736): gl.deleteVertexArray/deleteBuffer immediately",
+     "severity": "minor",
+     "category": "performance",
+     "description": "recycleMesh pushes freed chunk and region meshes into meshPool (up to 256) with their full vertex and index buffers still allocated, both the GPU buffers and Unity's CPU-side copy. The JS frees GL buffers at once. After the render distance drops, a teleport, or mass chunk unloads, up to 256 meshes stay resident. Some of these are 2x2 region meshes holding tens of thousands of vertices at 24 B each, plus indices. That can hold hundreds of MB that nothing uses. Reuse also gives no buffer benefit, because writeTerrainMesh always calls SetVertexBufferParams and SetIndexBufferParams with new sizes.",
+     "suggestedFix": "Call m.Clear() before pushing a mesh into the pool, so only the managed Mesh object is reused and its buffers are released. Also consider a much smaller cap (e.g. 32), or destroying meshes above a byte budget."
+    }
+   ],
+   "coverageNotes": "Read VF.Renderer.cs, VF.ChunkRender.cs and VF.DynMesh.cs in full, and compared them line by line with the JS:\n- render() at pretty.js 26825-27091: pass order and the GL state of every pass.\n- Sky bodies, xray two-pass with depth clear, opaque/cutout, break particles, entities and mob held items, active entities, fishing line, drops, cracks, trans (reverse order), water (underwater path vs depth pre-pass + LEQUAL), clouds, selection outline, primed outlines, held items (separate projection + depth clear).\n- Region and render-list code: rebuildRenderRegion, rebuildRegionCutout, detachRegionMembers/Cutout, ensureChunkOpaque/CutoutViewCurrent, pumpRenderRegionBuilds, cleanupRenderRegions, buildOpaqueRenderList, buildAlphaRenderLists, drawOpaqueOne, drawAlphaRenderList, drawWaterBucketFrontToBack.\n- Upload paths: updateMeshBuffers, uploadChunkSectionGeoSelective, uploadAggregateMesh, set/clearChunkWaterCPU, ensureChunkWaterQuadSort (the C# sortWaterBackToFront is dead code, as it is in JS), and the lightmap update.\n\nChecked Unity specifics:\n- TVert layout (24 B) against TERRAIN_LAYOUT order, formats and dimensions, plus the SPRITE and PARTICLE layouts against the shader inputs.\n- UInt16/UInt32 threshold, SubMeshDescriptor indexStart/firstVertex/vertexCount/bounds, overlapping submeshes, MeshUpdateFlags.\n- Bookkeeping: subScratch reuse ordering inside rebuildRenderRegion, generation-based invalidation, and mesh pool reuse against stale views.\n- CommandBuffer usage: DrawMesh submesh, ClearRenderTarget depth-only, SetViewProjectionMatrices restore. Also matrix conversion, cull/winding mapping and material render states against the shaders' ShaderLab state.\n\nRegion batching and shared-mesh bookkeeping look correct and faithful; no crash or broken-feature defects found in these files. The offline compile check prints \"compile check: OK\".\n\nNot verified at runtime (no Unity editor available):\n- Whether CommandBuffer.SetViewProjectionMatrices applies the render-texture Y flip under dynamic resolution.\n- Whether shrinking SetIndexBufferParams/SetVertexBufferParams on meshes whose old submeshes are larger logs warnings.\n\nShaders, VF.WorldFx.cs, VF.Stream.cs, the entity, particle and drop builders, and VoxelForgeGame.cs were read only for context. Small issues seen there (cloud ZTest LEqual vs JS LESS, missing triangle stats for clouds and held items, closure/array allocations in buildMainSkyBodies, appendSelectionBox and the held matrix helpers) are outside this subsystem and are not reported."
+  },
+  {
+   "findings": [
+    {
+     "id": "RFX-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.Atlas.cs",
+     "line": 75,
+     "jsRef": "buildRuntimeWaterFlowCanvas (pretty.js 3468-3516)",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "In JS, dp is ImageData.data, a Uint8ClampedArray. Assigning a fractional value like (r/tw)*0.8 + sp[base]*0.2 to it rounds to the nearest integer (ties to even). The C# port casts with (byte)Math.Max(0, Math.Min(255, v)) at lines 75-78, which truncates toward zero. Every RGB and alpha texel of the runtime flowing-water tile (WATER_FLOW_TILE, mip level 0 and the mips built from it) comes out about 0.5 LSB darker or more transparent than the reference, and up to 1 LSB off per channel.",
+     "suggestedFix": "Round the way Uint8ClampedArray does: (byte)Math.Max(0, Math.Min(255, Math.Round(v, MidpointRounding.ToEven))) for all four channels."
+    },
+    {
+     "id": "RFX-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.WorldFx.cs",
+     "line": 56,
+     "jsRef": "renderVehicleBox / renderVehiclePrismMain / renderBoatOarMain / addMainArrow (pretty.js 16974-17090)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "buildMainActiveEntities runs every frame and allocates on the heap on its hot path. renderVehicleBox creates a capturing Func closure plus 24 double[3] (renderVehiclePoint) and 6 double[][] (Q) per box. renderVehiclePrismMain allocates double[8][] plus 8 points and 6 Q arrays. renderBoatOarMain allocates c0/c1/c2 and 6 mul3 arrays plus a closure. addMainArrow allocates bases plus 2x(double[4][] + 4 points) per arrow. One boat costs about 250 allocations per frame and a minecart about 150, so the GC churns continuously while vehicles or arrows are loaded.",
+     "suggestedFix": "Transform the corners into stack locals (or a static reusable double[8][3] scratch) and push through P4/fxPts. Replace the Func/mul3 closures with inline math. Keep static scratch arrays for the prism corners and the arrow quad."
+    },
+    {
+     "id": "RFX-3",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.WorldFx.cs",
+     "line": 207,
+     "jsRef": "appendSelectionBox / drawMainPrimedOutlines (pretty.js 17253-17285, 26513-26516)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "appendSelectionBox allocates 9 arrays (an outer array plus 8 corner double[3]) per box, and buildSelectionOutline calls it every frame whenever a block is targeted. buildPrimedOutlines also allocates a new double[6] per primed TNT per frame (line 220). These are steady per-frame GC allocations on the overlay path.",
+     "suggestedFix": "Emit the 12 edges directly from x0..z1 locals with lineSeg (or use a static double[8][3] scratch). Hoist the primed box bounds into a static readonly double[] { -0.05, -0.05, -0.05, 1.05, 1.05, 1.05 }."
+    },
+    {
+     "id": "RFX-4",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.WorldFx.cs",
+     "line": 290,
+     "jsRef": "heldMatMul / heldTranslate / heldRot* / heldBoundsForKey / heldDrawOne (pretty.js 26546-26775)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "buildFirstPersonHeld runs every frame in first person and allocates for each held item. hId/hT/hS/hRX/hRY/hRZ/hMX each allocate a float[16], and every hMul allocates another one, so a block uses about 10 matrices and the bow about 12. heldBoundsForKey also allocates a HeldBounds plus 2 double[]. With the off-hand filled that is 25-30 allocations per frame (Array.Copy into g.matrix already makes the temporaries redundant).",
+     "suggestedFix": "Keep a few static float[16] scratch matrices and compose in place: an hMulInto(dst, a, b) helper and setters that fill preallocated buffers. Return the bounds through out-parameters or static readonly HeldBounds instances, since the bounds are constants."
+    },
+    {
+     "id": "RFX-5",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.WorldFx.cs",
+     "line": 173,
+     "jsRef": "drawMainSkyBodies (pretty.js 17178-17225), drawActiveWorldLines (24886-24901), mainSkyState (16884)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "buildMainSkyBodies creates a new capturing Action delegate and closure every frame (it captures ex/ey/ez). buildFishingLine allocates double[11][] plus 11 double[3] every frame while fishing (lines 241-242). mainSkyState allocates a SkyState and a double[3] on each call, and the renderer calls it every frame. All of this is avoidable per-frame garbage.",
+     "suggestedFix": "Make the sky 'add' a static method that takes ex/ey/ez parameters. Compute the fishing-line points into a static double[33] scratch, or emit segments from the previous point kept in locals. Reuse one static SkyState and its sky array, since callers use the result immediately."
+    },
+    {
+     "id": "RFX-6",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.Minimap.cs",
+     "line": 72,
+     "jsRef": "minimapColor / updateMinimap (pretty.js 25736-25750, 25808)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "minimapColor allocates a capturing Func<double,byte> closure (it captures shade) on every call, which is 256 allocations per rebuilt chunk. In updateMinimap, spawnKey is rebuilt every frame (line 146) with Array.ConvertAll, a lambda, JS.ToStr strings and string.Join, even when nothing changed. The rot lambda and P0..P3 arrays (lines 180-181) are allocated on every redraw.",
+     "suggestedFix": "Inline the clamp/round into a static helper byte mmClamp(double v, double shade). Build spawnKey only when player.spawn's rounded values differ from cached doubles. Compute the arrow corners into locals."
+    },
+    {
+     "id": "RFX-7",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.EntityModels.cs",
+     "line": 173,
+     "jsRef": "getWorldLight / entityLight / skeletonHandAt / addSkeletonBow (pretty.js 3135-3320)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "buildEntityBatch runs every frame and allocates on this path. getWorldLight allocates a double[2] for each rendered mob plus the third-person player. skeletonHandAt allocates a double[3], and addSkeletonBow allocates double[4][] plus 4 points per skeleton per frame. addThirdPersonHeld allocates 5 arrays per frame. The rest of the batch path was written to be allocation-free, and these calls undo that with steady GC churn.",
+     "suggestedFix": "Have entityLight decode the packed light inline (sky=(p>>4)&15, blk=p&15) instead of calling getWorldLight. Return the skeleton hand through out-parameters. Use a static double[4][3] scratch for the bow and held-item quads passed to dropPushQuad."
+    }
+   ],
+   "coverageNotes": "I read all five owned files in full and compared them line by line against pretty.js. Covered: mainSkyState, updateMainRenderFov, renderBox/renderPushQuad, the vehicle box/prism/oar builders, addMainArrow/Pearl/Bobber, drawMainActiveEntities (TNT, falling blocks incl. virtual meta.v, vehicles), drawMainSkyBodies, drawMainMiningCracks, appendSelectionBox/drawMainSelectionOutline, drawMainPrimedOutlines, the fishing line (drawActiveWorldLines), renderHash2/initMainClouds/drawMainClouds offsets, the heldMat* helpers, heldBoundsForKey/heldBuild/heldEyeShade/heldDrawOne/drawMainFirstPersonHeld (equip, swing, bow charge), mainCameraDistance and cycleMainCamera (the crosshair is hidden in the UI). Also covered: break particles (tile selection for native and virtual blocks, chest double-front logic, face shade, biome tint, spawn/update/compaction, 6-vertex/11-float build matching PARTICLE_LAYOUT and the shader attributes), all ENTITY_MODELS definitions (including spider legs, shark fin rotations, salmon/shark pivots, enderman scale), ePartUV/eRectPx, compileEntityModelParts, entityPartAngles, addEntityPart (pivot rotation order, aquatic pitch, player body pitch, fuse/baby/sqY scale), the skeleton bow, the third-person player and held item, buildEntityBatch vs drawEntities, the minimap (palette sampling with the bottom-up flip, top cell, colours, cache rev/sweep, nearest-neighbour chunk blit, spawn marker, heading-arrow rotation sign, 144px canvas size from the HTML) and the atlas (per-tile layer orientation (31-row)*16, the runtime water-flow canvas round trip, alpha-coverage mips, Texture2DArray mip count 5 for 16x16).\n\nTexture row order checks out: the Sprite and Entity shaders copy the JS 1-(row+...) mapping, Unity LoadImage gives bottom-up rows the same as UNPACK_FLIP_Y=true, and atlas layers match copyTexSubImage3D. Vertex strides match DynMesh layouts (sprite 7, particle 11, lines 3 in the renderer-local line layout). The quad index pattern matches ensureEntityIndexBoxes and ensureDropIndexQuads. drawProjectiles is never called in the JS render loop, so leaving buildProjectileLines unused is faithful. The offline compile check passed.\n\nI found no crash or major visual divergence in the owned files. The findings are one small numeric divergence in the water-flow tile and several per-frame GC allocations on hot paths.\n\nOutside my scope (Renderer, not owned), noted but not reported: in xray mode matEntityXray uses ZTest Always with ZWrite On, while JS disables DEPTH_TEST, which also suppresses depth writes. The cloud pass uses ZTest LEqual vs JS LESS, which makes no practical difference.\n\nNot verified: GPU-side behaviour in a real Unity player (CommandBuffer SetViewProjectionMatrices conversion for the held pass) and PNG colour-profile handling differences between browser decoding and Unity LoadImage."
+  },
+  {
+   "findings": [
+    {
+     "id": "ENG-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Workers.cs",
+     "line": 469,
+     "jsRef": "integrateGenResult (pretty.js 14677-14689)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "`new Section { blocks = q.blocks, light = light }` is an object initializer, so it first runs the parameterless Section() constructor (World/Types.cs:11). That constructor allocates two new 4096-byte arrays and fills light with 0xf0 in a 4096-step loop, and then both arrays are overwritten at once. Every generated chunk can have up to 24 sections, so each integrateGenResult throws away about 200 KB and runs about 100k extra loop steps on the main thread. This happens inside stream()'s time-budgeted gen-integration loop, up to 2 times per frame, and it inflates avgGenIntegrateMs.",
+     "suggestedFix": "Use the existing two-argument constructor: `sections[q.si] = new Section(q.blocks, light);`"
+    },
+    {
+     "id": "ENG-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Frame.cs",
+     "line": 213,
+     "jsRef": "titleMenu onclick -> location.reload() (pretty.js ~27170); `let day = 0.18` (25603); player literal (16253)",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "returnToTitle() stands in for location.reload() but does not reset session state that a reload re-initialises. `day` keeps its value. loadGame() only restores day when a save with a \"day\" field exists (Game/VF.Inventory.cs:316), so a brand-new world started after 'Выбор режима' begins at the previous session's time of day instead of 0.18. In the same way, player.yaw/pitch/camMode and xrayActive carry over into the next world, whereas JS starts from the player literal's defaults.",
+     "suggestedFix": "In returnToTitle reset `day = 0.18`, `player.yaw = player.pitch = 0`, `player.camMode = 0`, `xrayActive = false`, and the interactionPrev* NaN sentinels (and optionally streamCleanupIter = null, queue.Clear()), matching the JS initial values."
+    },
+    {
+     "id": "ENG-3",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Workers.cs",
+     "line": 100,
+     "jsRef": "failWorkerEngine (14256-14272: s.w.terminate()); spawnMeshWorker onerror (w.terminate())",
+     "severity": "minor",
+     "category": "threading",
+     "description": "JS terminates the worker on failure. In C#, failWorkerEngine only does genSlots.Clear() and never sets slot.stop or signals slot.ev. The mesh-error path in drainWorkerMessages (line 219) also only sets slot.alive=false. The affected threads stay blocked in ev.WaitOne() forever, each holding its WorldGenKernel or MeshCore (region and vertex scratch buffers). returnToTitle -> shutdownWorkerEngine never reaches them because they were already removed from genSlots, or are still in meshSlots but dead. Each failure and restart cycle leaks threads and memory, and the AutoResetEvents are never disposed.",
+     "suggestedFix": "In failWorkerEngine, before clearing, do `foreach (var s in genSlots) { s.stop = true; s.ev.Set(); }`. In the mesh error branch, set `slot.stop = true; slot.ev.Set();`. Optionally Dispose the events once the threads exit."
+    },
+    {
+     "id": "ENG-4",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Stream.cs",
+     "line": 155,
+     "jsRef": "prioritizeWorkerQueues (25383-25386), stream (25495+)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "prioritizeWorkerQueues re-sorts genJobs/meshJobs with LINQ `OrderBy(...).ToList()` and then Clear/AddRange. While streaming it runs 3 times per frame (stream line 236, fillGenJobsMain line 183, stream line 271), plus the extra meshJobs OrderBy at line 295. Every call allocates an OrderedEnumerable, key and index buffers and a new List, and calls streamPriority twice per element. This is steady per-frame GC pressure in the hottest scheduling path. JS sorts the arrays in place.",
+     "suggestedFix": "Sort in place with a stable insertion sort keyed on streamPriority. The lists are short (at most GEN_QUEUE_LIMIT) and mostly already sorted, so this is cheap and allocation-free. Alternatively, precompute keys into a reusable int[] and do a stable index sort."
+    }
+   ],
+   "coverageNotes": "I read all four engine files in full and compared them against pretty.js.\n\n**Workers:** I compared every function: worker onmessage/onerror handlers, init/fail/restore, pumpGenWorkers/pumpMeshWorkers, queueChunkGeneration, meshTargetSections/meshSectionPayload/meshMeta/meshNeighborContext(+Valid), runMeshJobSync, queueChunkMesh, runDirtyEditMeshSync/processDirtyEditMeshes, integrateGenResult, integrateMeshResult (full and partial, including sectionBucketEqual base handling), recomputeChunkMeshBounds, createChunkFromData and deleteChunk.\n\n**Stream:** primeInitialSpawnChunks, initialSpawnChunksReady, finishInitialSpawnIfReady, streamPriority, fillGenJobsMain, rebuildGenQueue, refreshQueue, cleanupStreamCache, stream, collectVisibleChunksHierarchical, perspective/lookAt/mul/updateFrustum/aabbVisible and toast.\n\n**Frame:** the simulation part of render(), frameInteractionHot, frameBackgroundBudget, frameFinish, setDynResIdx/updateDynamicResolution, initSpawn and startGame. The scheduling logic, constants, ordering and conditions all match the JS.\n\n**Threading:** I checked the mailbox/AutoResetEvent handoff, ConcurrentQueue visibility, payload cloning (blocks, light, delta, meta), MeshCore and GenWorker read-only use of shared defs and statics (wheelCache is locked; GenData is pre-built on the main thread before workers start), Stopwatch and ThreadStatic Random, and that slot-membership checks drop stale results after shutdown. I found no data races or Unity API calls off the main thread on the traced paths.\n\n**Bootstrap:** I checked init order, camera and command-buffer setup, RT upscale, focus/pause/quit and OnDestroy cleanup; no defects found.\n\n**Not reported, as low-impact or JS-identical behaviour:** OrderedMap missing entries appended after a deleted tail node (outside my files); Math.Round vs JS.round in the fps display; the stats text missing debug lines; stale light-dirty queue entries after returnToTitle (they are only harmlessly re-solved).\n\n**Not checked:** I did not run the compile check, because other agents are editing concurrently. Render-subsystem internals (uploadChunkBuckets, render regions, renderWorld) were read only for context."
+  },
+  {
+   "findings": [
+    {
+     "id": "MESH-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Mesh/MeshCore.cs",
+     "line": 1093,
+     "jsRef": "run() full branch, pretty.js 14110-14135; sectionGeoViewsFromAggregate 15009",
+     "severity": "minor",
+     "category": "performance",
+     "description": "In full mode JS appends every section straight into one chunk-level aggregate (`buildSection(si, metaMap, agg)` gives secLens) and the per-section geometry is only subarray views into that aggregate, so each vertex is copied once. C# copies each section's VBuf/IBuf into new per-section arrays in take() (and worldifies them there), then copies all of them again into aggO/C/W/T in concat() (lines 1099-1101). So every full mesh, which is the common case while streaming, allocates and copies its whole vertex and index data twice on the mesher thread. That doubles the transient garbage per chunk, and with Unity's stop-the-world GC this garbage also stalls the main thread.",
+     "suggestedFix": "In full mode, write all sections into chunk-level VBuf/IBuf (the way JS uses agg) and record per-section offsets and lengths. Build aggO..aggT once from those, worldifying a single time. Then either give GeoBucket an (array, offset, count) view so full24[si] points into the aggregate arrays, or make the per-section copies from the aggregate, so that only one of the two copies is a full allocation."
+    },
+    {
+     "id": "MESH-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Mesh/MeshCore.cs",
+     "line": 731,
+     "jsRef": "stairBoxesMain pretty.js 13530-13575; emitRail 13880; flushFlatWaterTops 13265",
+     "severity": "minor",
+     "category": "performance",
+     "description": "Several hot per-block paths allocate on the heap every time they run. stairBoxesMain allocates 3 Func delegates plus a closure, 2-3 Lists and the rotateBox clones for every stair block (lines 731-758). emitRail allocates a Func closure for every sloped rail (line 910). shapeBoxes and vShapeBoxes allocate a new List and new double[] for every slab, gate, trapdoor or plate. flushFlatWaterTops allocates a List, a Dictionary and one List per group for every section that contains water (lines 586-592). Villages, structures and oceans produce thousands of these objects per chunk on the mesher threads, and that garbage adds to Unity's stop-the-world GC pauses, which also stop the main thread.",
+     "suggestedFix": "Make the stair helpers (metaAt/isStair/guard) and the rail `up` lambda private methods that take their parameters directly. Return cached static box arrays for fixed shapes such as slab top/bottom, carpet, plate and pot, or write boxes into a reusable per-instance List<double[]>. For flat water, keep per-instance pooled group lists and a reusable Dictionary that is cleared at the start of each flush."
+    }
+   ],
+   "coverageNotes": "I compared every function in MeshCore.cs and MeshTypes.cs line by line against createSharedMeshCore (pretty.js 12188-14162).\n\nFunctions checked: at/def/isVirtual/vmeta/vdef/actualDefAt/virtualConnects, vTile/vQuadFace/vBox/vCross/vThin, workerMount/workerBit/workerFaceMask/workerButtonBox, emitAttachmentPlanes, torchSprite, vStairBoxes, vShapeBoxes, emitVirtualBlock, isWater/isFluidWater/isLava, packedLight/lightAt, faceTile, faceUV, quad/quadPoints (all 6 faceUV cases, index winding, the extra triangle pair for `two`, the a8/packedSA/cls 512 packing, round15 vs Math.round*15), faceLightSection, xrayClass, isGreedySolid, greedySection (mask key, light buckets, w/h growth, flip, cls), emitFace, rotateFaceUV, emitChest, crossPlant (crop heights), and the water code: WATER_VIS_H, mainFaceOpaque/mainFluidFaceVisible, aquaticWaterVolumeActive, minecraftWaterHeightAt/CornerAverage, flushFlatWaterTops (grouping order, greedy merge, uv d/w swap), waterTopQuad vertex order, waterSideQuad points, emitMinecraftWater. Also emitLavaQuad/emitFluidLava (block light forced to 15, inset), thinPlane, rotateBox, stairBoxesMain (outer/inner corners and the guard), the ship wheel mask, merge and parts, shapeBoxes (open gate rails, sea pickle count), boxPart, halfBox, the rail shape/UV tables and curve UV, pottedDef/emitPottedPlant, buildSection dispatch order and bucket choice, loadNeighborhood, worldify (`take`), concat, and run (empty sis, ascending aggregate order that matches sectionGeoViewsFromAggregate).\n\nIn MeshTypes.cs I checked that Half.FromFloat is bit-identical to JS f32ToHalf, that the 24-byte TVert layout matches TERRAIN_LAYOUT in ChunkRender, and that the tile and light values survive the half encoding exactly for values up to 2047.\n\nI also checked how the descriptors and inputs are built in VF.Workers.cs: mdefFromBlock/mdefFromVirtual against JS workerBlockCfg (virtual_blocks.json has no alpha, special or front fields, so the defaults are correct), meshMeta coordinates against mkey and the region bounds, and meshSectionPayload.\n\nThreading: no Unity APIs are used. Per-instance scratch buffers and region data are owned by one thread each, mainMeshCore is only used on the main thread, the static caches are read-only or locked (wheelCache), the SHIP_WHEEL_MASK init race is harmless, the shared EMPTY JObj is never mutated, and JS.now uses a Stopwatch.\n\nI found no correctness or faithfulness defects. Positions are computed in float32 rather than computed in double and then truncated, which gives at most 1-ulp differences; I left that out as not visible. Not checked in depth: shader-side decoding of sa/light (outside this subsystem), and how ChunkRender uploads the results beyond the field contract."
+  },
+  {
+   "findings": [
+    {
+     "id": "WORLD-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.World.cs",
+     "line": 199,
+     "jsRef": "clearRuntimeWorld / scheduleWorldSave / saveWorldNow (pretty.js 4406-4521)",
+     "severity": "major",
+     "category": "faithfulness",
+     "description": "In JS, leaving a world calls location.reload(), which also kills every pending setTimeout. The C# port uses returnToTitle() instead (VF.Frame.cs:197). That function calls saveGameNow(), which runs saveWorldNow() and saves correctly. It then calls clearRuntimeWorld(), which empties edits, editsByChunk and blockMeta, but nothing cancels the world-save timer that scheduleWorldSave() (line 287) set up. Timers.Tick() runs every Update even on the title screen, and SAVE_KEYS still points at the world just left. So 300 ms after the last edit, saveWorldNow() fires and writes {edits:[], meta:[]} to that world's save key, wiping every block edit and all block metadata (chest/furnace meta, signs, plate states, etc.). Repro: break or place a block (or let leaf decay, crops or fire make an edit, since each calls scheduleWorldSave), then within 300 ms open the pause menu and press 'return to title'. The world reloads with all edits gone. The light repair queue (lightDirtyQueue/lightDirtyKeys/lightDirtyHead in VF.Light.cs) also survives the reset, so the next world starts with stale repair work.",
+     "suggestedFix": "In clearRuntimeWorld() add `Timers.clearTimeout(saveTimer); saveTimer = 0;`. Also reset the light queue there, for example through a helper in VF.Light.cs: `lightDirtyQueue.Clear(); lightDirtyKeys.Clear(); lightDirtyHead = 0;`. The same leftover-timer problem applies to saveGameSoon's saveGameT (VF.Inventory.cs), which the inventory owner should cancel in returnToTitle."
+    },
+    {
+     "id": "WORLD-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.WorldTick.cs",
+     "line": 588,
+     "jsRef": "tickPressurePlates (pretty.js 20498-20519): for (const q of worldDrops) ...",
+     "severity": "major",
+     "category": "crash",
+     "description": "tickPressurePlates walks worldDrops with a C# foreach over a List<WorldDrop>. touchPressurePlate can add to that list during the walk. When a dropped item lands on a wooden plate, primePlateTNT calls setBlock(TNT -> AIR). That runs validateAttachmentsAround, then detachUnsupportedAt for the plate sitting on the TNT, which removes the plate and calls spawnWorldDrop, which does worldDrops.Add. The next MoveNext throws InvalidOperationException ('Collection was modified'). JS for-of over an array allows push during iteration and simply visits the new element. In C# the exception escapes tickWorldDynamics, so the plate-expiry loop and everything after it in the frame are skipped (tickFurnaces, day advance, stream, render-region builds), and the error is logged. Repro (survival): put a wooden pressure plate on top of TNT and throw an item onto it.",
+     "suggestedFix": "Use an index loop, as JS effectively does: `for (int i = 0; i < worldDrops.Count; i++) { var q = worldDrops[i]; scanPlateUnderEntity(q.x, q.y, q.z, 0.1, false, now); }`. For safety, write the liveMobs loop as an index loop too."
+    },
+    {
+     "id": "WORLD-3",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.WorldTick.cs",
+     "line": 407,
+     "jsRef": "tickFire / tickFurnaces (pretty.js 20311, 20533); JS snapshotSimMap reuses global scratch arrays",
+     "severity": "minor",
+     "category": "performance",
+     "description": "tickFire runs every frame and always calls snapshotSimMap(worldSim.fires), which allocates a new List plus an OrderedMap iterator even when there are no fires. tickFurnaces (line 617) likewise allocates `new List<KeyValuePair<string, Furnace>>(furnaces)` every frame. JS reuses the module-level simEntryKeys/simEntryVals scratch arrays, so it allocates nothing per frame. This is steady GC churn in the per-frame simulation path.",
+     "suggestedFix": "Return early when the map is empty (`if (worldSim.fires.Count == 0) return;`, `if (furnaces.Count == 0) { ...ui refresh...; return; }`). Have snapshotSimMap fill a reused static List per value type (or reused key/value scratch lists, as in JS) instead of allocating a new one each call."
+    }
+   ],
+   "coverageNotes": "I read all six owned files in full and compared each function line by line with its pretty.js counterpart.\n\n- **VF.World.cs:** hash2/noise2; the water/lava predicates (isWater, runtimeWater*, pointInWater, the waterSource/Replaceable/SolidSupport family, slope search, minecraftWaterSpreadMask, waterCanCreateSource, strongestHorizontalWater); ITEM_DEFS including the combat-stat override and the later Object.assign block; the edits/meta layers; loadWorldSave, saveWorldNow and serializeWorldEdits (JSON format: seed, edits as [x,y,z,id], meta as [[k,v]]); the chunk lookup cache; sections, chunkGet/chunkSet, buildInitialPackedLightDense, denseToSections; getBlock/getBlockMeta precedence; installGeneratedMeta; decodeSimKey; queueWater/queueLava caps; fluid mixing; flammability regexes; queueLeaf/queueAroundSimulation; leafConnectedToLog; sim seed install and boundary wake; setFluidBlock; the player-edit light/mesh flush; setBlock (dirty marking, light signature, sim wake order); markDirty*.\n- **VF.Light.cs:** everything, including propagate, the block/sky remove-and-increase passes, the processLightDirty budget and requeue, and stitchChunkLight. No divergences found.\n- **VF.LightRules.cs** and **VF.WorldGen.cs** (seed sync, floor semantics): no divergences found.\n- **VF.WorldTick.cs:** crops, the water and lava queues (batch sizes 128/400/+80 and 240/+40, work budgets 120/60, 200/500 ms rates), farmland, sapling tree builders, cactus growth, leaf decay, fire, falling blocks, pressure plates, furnaces. Apart from the findings above, all match JS.\n- **Types.cs:** checked.\n\nI also confirmed that OrderedMap/OrderedSet keep JS Map/Set insertion-order, set-existing and delete-during-iteration semantics. The offline compile check prints \"compile check: OK\". Worker threads don't touch the main-thread WORLDGEN or Unity APIs from these files.\n\nNot checked in depth: helpers owned by other subsystems that these files call (saplingSpeciesAt, topSupportAt, validateAttachmentsAround internals, hardenConcretePowderAt, waterVolumeAtCell, virtualDefFromMeta, processDirtyEditMeshes) and the WorldGenKernel internals."
+  },
+  {
+   "findings": [
+    {
+     "id": "WG-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Gen/WorldGenKernel.Structures.cs",
+     "line": 31,
+     "jsRef": "SHIP_ALL / SHIP_BEACHABLE / weightedPrefix / SHIP_ALL_WEIGHT (pretty.js ~10620-10632), which are module constants built once when the kernel is created",
+     "severity": "minor",
+     "category": "threading",
+     "description": "ensureShipTables() fills static fields lazily without a lock or memory barrier. Several VF-Gen threads start at the same moment and reach structureCandidate() for their first chunks almost together. A thread can see SHIP_ALL as non-null and return early, even though another thread's earlier stores to SHIP_ALL_WEIGHT, SHIP_BEACH_WEIGHT and SHIP_BEACHABLE are not yet visible to it. Stores are reordered like this on ARM64 under IL2CPP and Mono (Android, iOS, Apple Silicon). weightedShip() then dereferences a null prefix array, throws NullReferenceException in GenWorker.Run, and failWorkerEngine stops all chunk generation. On x86 the window is harmless. In JS these tables are built once, synchronously.",
+     "suggestedFix": "Build the four tables in GenData.Build(), which runs on the main thread before any worker starts, and store them as static fields there. Or guard ensureShipTables with a lock or Volatile.Write and publish SHIP_ALL last with a release store. Then remove the lazy call from structureCandidate."
+    },
+    {
+     "id": "WG-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Gen/WorldGenKernel.Core.cs",
+     "line": 812,
+     "jsRef": "ravinesForChunk / planRavine / structureCandidate / mineshaftsForChunk string keys (pretty.js ~9455-9475, ~10690, ~11143)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "Hot cache lookups build a fresh string key on every call: `seed + \":\" + cx + \",\" + cz` boxes three ints and allocates the concatenated string. This happens in ravinesForChunk (reached from ravineContains2D for every landPlantInfoAt and featureKindAt that produces a feature), planRavine (169 times per ravinesForChunk miss), structureCandidate, mineshaftsForChunk and planMineshaft (361 times per miss). nearbyStructures also allocates a List on each call, and surfaceStructureReservedAt calls it 4 times per feature column. In generateDense this runs for 256 surface columns plus the 26x26 feature ring, so each chunk produces thousands of short-lived objects. The output matches JS. The problem is cost in Unity: its Boehm GC stops every thread, so garbage from the generator threads causes main-thread frame hitches while streaming.",
+     "suggestedFix": "Key these Dictionaries on a long built from the two ints, for example ((long)cx << 32) | (uint)cz. The seed prefix is unneeded because setSeed already clears every cache. Have nearbyStructures fill a reusable per-kernel List, or let surfaceStructureReservedAt test candidates inline. Lookup order and results stay the same."
+    }
+   ],
+   "coverageNotes": "I read all four files under review in full: WorldGenKernel.Core.cs, WorldGenKernel.Features.cs, WorldGenKernel.Structures.cs and GenWorker.cs. I compared them line by line with JS createWorldGenKernel (pretty.js 8274-12038), the JS worker GEN_WORKER_SOURCE (12160-12187), applyChunkDeltaDense, and how the worker gets its block config (workerBlockCfg at 14362).\n\nChecked and matching JS:\n- **Hashing and RNG:** hotSlot/hotSlot3, mix32, rng32 (the `|| 1` seed fallback), mainRng32, makePerm, makeMainPerm (`|0` vs Math.floor), and the oreRngMain/structRand/ravineRng/mineshaftRng/mineshaftHash constants. ToInt32 wrapping is correct for doubles above 2^31 (the `salt * 17.0` case), unsigned shifts are correct, and `(uint) % 100000` matches.\n- **hash2Main/hash3Main:** the multiply-add stays in double before ToInt32, as in JS. JS.toInt32 truncates and reduces modulo 2^32 correctly.\n- **Noise and terrain:** mainPerlin2, mainFbm2, valueNoise2/3Main, valueFbm4/3Main, curveSample and every curve table. terrainShapeMain, including the valley offsets and Math.round = floor(x+0.5).\n- **Climate and biomes:** climatePoint and the order of calls into columnInfo. Climate-tree build (stable OrderBy matches V8 TimSort, groupSize, leaf ordering), flattening, zero4/zero6, the branch-and-bound search with climateLastLeaf, and the 53 biome names. selectMainBiome, nearestMainBiome, mushroomStrength.\n- **Surface and caves:** heightAt, generatedSurfaceAt, caveKind, caveBiomeAt, baseStoneAt, bedrockAt, surfaceBlockForBiome, subsurfaceBlockForBiome (JS null mapped to -1), terrainBlock, postCarverSurfaceInfoAt.\n- **Ores and ravines:** ore table, the order of RNG calls in placeMainOres, ravine planning and carving.\n- **Plants and features:** every tree config, featureKindAt, featureInfoFromKind, landPlantInfoAt (all biome branches), aquatic and frozen decorators, featureVoxelAt and placeFeature for every tree kind, baseBlock.\n- **Structures:** STRUCT_CFG, structureCandidate (order of RNG draws and early exits), nearbyStructures, rotation and meta transforms, resolveMainBlock (I confirmed with a script that B.NAMES covers every ship, pyramid and outpost palette key), the build functions for pyramid, outpost, portal, ship and well, structureMetaForChunk, structureChestKindAt.\n- **Mineshafts:** plan and build pieces.\n- **Dense output:** sea-pickle and cave-vine meta encoding. Every stage of generateDense in order: lattice with float32 grid, surface stage, features, carvers, ravines, ocean flood, ice, ores, cave decorator, structures, mineshafts.\n- **GenWorker:** mixDenseFluids, lightDense (sim and boundary classification, flood order), pack, delta overlay with its dirty flag.\n\nsetSeed resets every cache on each job, exactly as JS does: JS `perms` is never filled because fbm2/fbm3 are never called. That reset keeps the climateLastLeaf tie-break deterministic per chunk, so it is not reported.\n\nThreading: GenData.Ensure runs on the main thread in initWorkerEngine before workers start, so Resources.Load is never called from a worker thread. Mesh code does not call into the kernel. The offline compile check passes (`compile check: OK`).\n\nNot verified:\n- Whether the JSON and .bytes resources are byte-identical to the data the JS embeds (the embedded data is stripped from pretty.js).\n- Bit-exactness of Math.Pow/Cos/Sin between .NET and V8 at the last ulp. Divergence there is a platform-libm risk, not a port defect.\n\nUnused helpers (fbm2/fbm3/perlin with per-call closures, hash3i, cactusSideClearAt) are dead code in both JS and C#, so they were not reported."
+  },
+  {
+   "findings": [
+    {
+     "id": "WORLD-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.World.cs",
+     "line": 199,
+     "jsRef": "clearRuntimeWorld / scheduleWorldSave / saveWorldNow (pretty.js 4406-4434, 4507-4521); in JS the page reload kills any pending setTimeout",
+     "severity": "critical",
+     "category": "faithfulness",
+     "description": "In JS, leaving a world reloads the page, so a pending scheduleWorldSave timer can never fire afterwards. In the port, returnToTitle() (VF.Frame.cs) calls saveGameNow() and then clearRuntimeWorld(). clearRuntimeWorld() empties edits, editsByChunk and blockMeta, but it never cancels saveTimer (VF.World.cs:272/287), and Timers.Tick() keeps running on the title screen (VoxelForgeGame.Update). Many background ticks call scheduleWorldSave: fluidBreakCrossPlant -> addEditIndex(save=true), setBlock with persist from crops, farmland, fire, leaf decay, and obsidian/cobble/stone from setFluidBlock. So a 300 ms timer is often pending when the player quits. When it fires, saveWorldNow() runs with SAVE_KEYS still set to the old world (keys only change in configureSaveMode) and with empty edits/meta. It writes {seed, edits:[], meta:[]} over the world's save, and every block the player placed or broke is lost. The same pattern exists for saveGameT/saveStateNow in VF.Inventory.cs.",
+     "suggestedFix": "In clearRuntimeWorld(), call Timers.clearTimeout(saveTimer); saveTimer = 0; first. returnToTitle has already called saveGameNow, so nothing is lost. Ask the Inventory owner to cancel saveGameT the same way in returnToTitle/resetContainers."
+    },
+    {
+     "id": "WORLD-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.WorldTick.cs",
+     "line": 588,
+     "jsRef": "tickPressurePlates (pretty.js 20498-20520): for (const q of worldDrops) ... - a live JS array iteration that tolerates push",
+     "severity": "critical",
+     "category": "crash",
+     "description": "tickPressurePlates uses a C# foreach over worldDrops (a List<WorldDrop>). A drop on a wooden plate calls touchPressurePlate -> primePlateTNT -> setBlock(TNT -> AIR) -> validateAttachmentsAround -> detachUnsupportedAt. In survival, detachUnsupportedAt calls spawnWorldDrop (VF.BlockRules.cs:453/468), which does worldDrops.Add. On the next MoveNext the foreach throws InvalidOperationException ('Collection was modified'). That aborts the rest of tickWorldDynamics and the frame's Update. Repro: a torch, button, or other attachment on a TNT block within 3x3x4 under a wooden pressure plate, and an item dropped onto the plate. JS keeps iterating with no error.",
+     "suggestedFix": "Iterate by index, as JS for-of over a growing array does: for (int i = 0; i < worldDrops.Count; i++) { var q = worldDrops[i]; scanPlateUnderEntity(q.x, q.y, q.z, 0.1, false, now); }. Index the liveMobs loop the same way for safety."
+    },
+    {
+     "id": "WORLD-3",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.WorldTick.cs",
+     "line": 407,
+     "jsRef": "snapshotSimMap / tickFire / tickFurnaces (pretty.js ~4850, 20311, 20533) - JS reuses the global simEntryKeys/simEntryVals scratch arrays",
+     "severity": "minor",
+     "category": "performance",
+     "description": "snapshotSimMap() builds a new List<KeyValuePair> on every call. tickFire calls it every frame even when worldSim.fires is empty, which allocates a List plus the OrderedMap enumerator. tickFurnaces (line 617) also allocates new List<KeyValuePair<string,Furnace>>(furnaces) every frame, and tickFallingBlocks (line 473) does OrderBy(...).ToList() every frame while more than one block is falling. JS avoids these per-frame allocations by reusing scratch arrays, so the port adds steady GC pressure in the hot game loop.",
+     "suggestedFix": "Return early from tickFire when worldSim.fires.Count == 0, and from tickFurnaces when furnaces.Count == 0. Snapshot into reusable static scratch lists (one per caller, since the calls are not nested), cleared before each use. For falling blocks, sort in place with a stable insertion sort on y, or skip the sort when the list is already ordered."
+    },
+    {
+     "id": "WORLD-4",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.WorldGen.cs",
+     "line": 31,
+     "jsRef": "caveBiomeAt wrapper (pretty.js 12081) and kernel caveBiomeAt (9267); caller pretty.js 26423 caveBiomeAt(player.x, Math.floor(player.y), player.z)",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "The JS ambient cave-biome query passes the fractional player.x/player.z. The kernel samples valueNoise3Main(x*0.018 ..., z*0.018 ...) at those unfloored coordinates. The C# wrapper only accepts ints, so the caller in VF.Frame.cs:122 floors x and z first. The lush, dripstone and deep-dark noise is then sampled at different points, so the ambient cave biome (fog, music, environment) flips at slightly different positions near biome borders than in JS.",
+     "suggestedFix": "Add a double overload, caveBiomeAt(double x, double y, double z, int? h = null), that forwards unfloored x/z to the kernel noise sampling (the surface lookup inside can still floor). This needs a matching double entry point in WorldGenKernel.caveBiomeAt."
+    }
+   ],
+   "coverageNotes": "I read all six files in full: VF.World.cs, VF.Light.cs, VF.LightRules.cs, VF.WorldGen.cs, VF.WorldTick.cs and Types.cs. I compared each function line by line with its pretty.js counterpart.\n- Storage: hash2/noise2, the water helpers, ITEM_DEFS including both Object.assign blocks and the combat stats, edits/editsByChunk/blockMeta/metaByChunk/generatedMeta, loadWorldSave/addEditIndex/serializeWorldEdits/saveWorldNow/scheduleWorldSave, the chunk lookup cache, sections, chunkGet/Set, buildInitialPackedLightDense/denseToSections, getBlock/getBlockMeta/installGeneratedMeta.\n- Fluid rules: decodeSimKey, the water slope search and spread mask, source rules, queueWater/queueLava caps, fluid mixing, sim seeds and boundary wakes, setFluidBlock.\n- Player edits: the edit light/mesh flush and withPlayerEdit, setBlock including its dirty-section and edit marking order, markDirty*.\n- Light: the whole of VF.Light.cs (packed get/set, emission, BFS increase and removal for block and sky, processLightDirty batching and deadlines, stitchChunkLight) and the light predicates.\n- Worldgen wrappers.\n- Ticks: crops, the water queue (urgent/active/seed budgets, the submerged-source guard, falling state), the lava queue, farmland, saplings and every tree shape including dark oak 2x2 restore, cactus growth, leaf decay, fire, falling blocks, pressure plates, furnaces, and tick order/rates.\nApart from the findings above, everything I compared matches JS, including iteration order through OrderedMap/OrderedSet, which I checked for safe delete-during-iterate behaviour.\nAlso checked:\n- Save JSON shape and number formatting (Json.WriteNum).\n- Gen and mesh threads use isolated kernels and do not touch the VF statics.\n- Main-thread-only use of Timers and LocalStorage.\n- The offline compile check passes ('compile check: OK').\nLeft unverified:\n- Callee internals in other subsystems (saplingSpeciesAt, validateAttachmentsAround, topSupportAt, hardenConcretePowderAt, fuelValue, setInteractableOpenAt, the WorldGenKernel internals).\n- The lightDirtyQueue/lightDirtyKeys state that survives returnToTitle; I judged it harmless because stale entries just get re-solved against the current world.\n- Edge-case parsing of malformed saves."
+  },
+  {
+   "findings": [
+    {
+     "id": "MOBS-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Game/VF.Mobs.cs",
+     "line": 544,
+     "jsRef": "mobPathHeapPush, pretty.js ~22378-22392",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "In JS, the heap's sift-up compares the stored Float32 parent key against the caller's unrounded double f (`if (mobPathHeapF[p] <= f) break;`). Only the stored copy is rounded to float32. The C# version rounds f to float before the loop (`float f = (float)fd;`) and compares with that rounded value. Take a new node whose double f is slightly below its parent's float32 key but rounds to the same float32. JS swaps it upward and C# stops (P <= P). That changes which node pops next among near-equal f values, so A* can expand nodes in a different order and occasionally return a different path or best-partial node than the reference.",
+     "suggestedFix": "Keep the double for the comparison and store the float: `mobPathHeap[i] = idx; mobPathHeapF[i] = (float)fd; while (i > 0) { int p = (i - 1) >> 1; if (mobPathHeapF[p] <= fd) break; ...; mobPathHeapF[i] = (float)fd; }`."
+    },
+    {
+     "id": "MOBS-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Game/VF.Mobs.cs",
+     "line": 942,
+     "jsRef": "mobSwimPhysics `can` arrow, pretty.js ~22956",
+     "severity": "minor",
+     "category": "performance",
+     "description": "mobSwimPhysics builds a capturing lambda (`Func<double,double,double,bool> can`, which captures m and wasWater) on every call. This runs for every aquatic mob on every 50 ms fixed step, and also on dry-land hops through updateAquaticSource. With up to 40 fish plus sharks that is about 800+ closure and delegate allocations per second (more when the loop catches up with up to 3 steps per frame), which adds avoidable GC pressure in a hot path. The JS arrow allocates too, but in Unity's Mono GC this costs more.",
+     "suggestedFix": "Replace the lambda with a static helper, for example `static bool mobSwimCan(Mob m, bool wasWater, double x, double y, double z) { return mobSpaceClear(x, y, z, m) && (!wasWater || mobWaterLike(mobLoadedBlock(x, y + 0.05, z))); }`, and call it directly at the three call sites."
+    }
+   ],
+   "coverageNotes": "I read all of VF.Mobs.cs (1706 lines) and compared each function line by line with its pretty.js counterpart (lines 21560-21620 and 21620-23770, plus spawning at 24534-24780). Covered: makeMob (including the order of JS.random calls in the object initializer), mobWidth/CollisionWidth/Height (the cw NaN sentinel stands in for `??`), serialize/deserialize/storeMobRecord/attach/detach/removeLiveMob/storeChunkMobs/restoreStoredMobs/load and serialize persistence, daylight and night, combined light, aggro (neutralLight 0 standing in for null), the sight DDA and rayBoxDistanceScalar NaN sentinel, LOS caching, enderman stare, teleport, slimeChunkSource hashing (imul constant, unsigned shifts), damageMobSource/finishMobDeath (splits, killedMobs, drops), collision (point, AABB, ground height, recover-overlap), mobWishToward, path hazard and floor, heuristic, heap push/pop, Fast2D and sparse 3D A* (float32 storage semantics, epochs, overflow nodes, ushort ranges with WORLD_H=384), mobFollowPath, cliff/liquid/danger checks, partial step, land physics, swim physics, fish escape, shark prey, aquatic AI, land AI (flee, love/breeding, creeper fuse, leaper, jumper, teleporter, ranged, melee, wander, detours, stuck handling), updateEntitiesFixed (despawn and overflow order, hazards, enderman water, burning, eggs, chunk moves, removal during the backward loop), projectiles (stuck pickup, binary-search impact, enderman deflect, damage args), snapshot/lerp/tickMobSimulation fixed step, and spawning (support solidity, dry volume, hostile/slime/passive rules, groups, caps, fish, sharks, chunk seeding). I also checked the MOB_INFO table in VF.Data.cs against JS, that Player derives from Entity, the call order in VF.Frame.cs and VF.Workers.cs (spawnChunkMobs, then restoreStoredMobs, then storeChunkMobs on unload), the modEnabled defaults, and that the stub compile check prints OK. Nothing in the file touches Unity APIs (only sfxHurt, through the audio module, on the main thread). Not reviewed: render interpolation consumers (_renderX and so on in VF.EntityModels.cs), drawProjectiles rendering (VF.WorldFx.cs), and how player arrows are created (VF.Vehicles.cs); these belong to other subsystems. JS functions with no C# counterpart (mobCollisionAt merged into mobCollides; findMobGroundRaw, mobWaterFree, mobSourceOpaqueSightBlock and mobSupportHeightAt are unused or inlined) are behaviourally covered. Apart from the two minor items reported, the port matched the JS in every function checked."
+  },
+  {
+   "findings": [
+    {
+     "id": "PLAYER-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Game/VF.Physics.cs",
+     "line": 142,
+     "jsRef": "stairsBoxesMainSync (pretty.js ~20983-21030), playerCollisionAt (21301)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "stairsBoxesMainSync creates three Func delegates (isStair, mm, guard) plus a closure object, and allocates `new JObj()` for each missing neighbour meta, every time it runs. collisionBoxesAt -> specialShapeBoxes(stairs) calls it once per stair cell inside every playerCollisionAt scan. movePlayer runs 3+ such scans per substep (one per axis, the 0.6 step-up probe and its 0.05 descent loop of up to 12 probes), and mob collision (VF.Mobs.cs:420) uses the same path. Walking on or next to stairs therefore makes dozens of short-lived delegate and closure objects per frame, which is GC churn in the hottest physics path. The same pattern hits recoverPlayerOverlapSource (line 336): it captures ox/oy/oz in the tryNudge lambda, so the closure display class is allocated on every movePlayer substep even when there is no overlap.",
+     "suggestedFix": "Turn the stairs lambdas into private static helpers that take (x, y, z) as parameters, e.g. static bool stairAt(int x,int y,int z) and static JObj stairMeta(int x,int y,int z) that return a shared static empty JObj, and inline guard as a static method. In recoverPlayerOverlapSource, make tryNudge a static method that takes ox/oz, or create the lambda only after the early 'no overlap' return, so the common path allocates nothing."
+    },
+    {
+     "id": "PLAYER-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Game/VF.Vehicles.cs",
+     "line": 110,
+     "jsRef": "vehicleBlocked / railYNear / railConnections (pretty.js 23854-23935)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "Each vehicle allocates several heap arrays every frame. vehicleBlocked loops over `new[] { -0.8, 0.8 }` and `new[] { -0.5, 0.5 }`, or over a 5-array jagged literal for minecarts (line 119), and is called twice per boat per frame. railYNear (line 75) allocates `new[] {0,1,-1,2,-2}`. railConnections (lines 80-83) allocates a List, a `new[] {0,1,-1}` per arm and an int[] per connection. updateVehicles calls these for every vehicle in a loaded chunk (up to VEHICLE_MAX=128) on every frame, so a rail network full of carts produces steady per-frame garbage.",
+     "suggestedFix": "Hoist the constant offset arrays into static readonly fields (BOAT_FW = {-0.8,0.8}, BOAT_SIDE = {-0.5,0.5}, CART_CORNERS, RAIL_DY = {0,1,-1,2,-2}, RAIL_CONN_DY = {0,1,-1}). Let railConnections fill a reusable static List<int[]> with preallocated int[3] entries; pickRailDirection copies the chosen values out right away, so a reused list is safe on the single main thread."
+    }
+   ],
+   "coverageNotes": "I read all four owned files in full and compared them function by function against pretty.js. Physics: virtualRotateBox, virtualConnectsAt, virtualShapeBoxesAt (all shapes), facingRotBox, stairsBoxesMainSync (corner logic), specialShapeBoxes (every special type, including gate open/closed, seapickle count and wall 1.5 collision height), collisionBoxesAt (doors, bed, virtual), pointBlocked, selectionBoxesAt, playerCollisionAt, movePlayerAxisSource (step-up 0.6 / 0.05 descent, eps), collides, onLadder, recoverPlayerOverlapSource (nudge rings, FULL then SHORT up/down order), and movePlayer (fly, swim and pitch swim, water drag/boost, ladder, gravity 23 / clamp -42 / jump 7.6, cobweb, ice accel, shore climb). Player: every spawn function (spawnPassable/GroundOK, safeSpawnAt, findSpawnNear, findLandSpawnAnchor, findSpawn, the loaded-spawn helpers, startupPositionValidLoaded, resolveInitialSpawnLoaded, findSafeWorldSpawnNear), rayAABB, raycastMob, intersectsPlayer, viewDir, rayBoxDistance(Scalar), and raycast (DDA, `||1e-9` handling, prev). Survival: armorPoints, damageArmor, addExhaustion, dropEquipmentOnDeath, damagePlayer, die, respawn, survivalTick (fall, drowning, lava/fire, cactus/berry, void, exhaustion rates, regen, starvation). Vehicles: serialize/restore, spawnVehicle, rail helpers, pickRailDirection, updateMinecart, waterSurfaceY, updateBoat with BOAT_MODE constants, dismount logic, updateVehicles, the vehicle raycast functions, interact/destroy/useVehicleItem, the bow functions, every fishing function, teleportSafeNear, throwEnderPearl, updatePearls (pointHitsMob matches JS projectileHitsMob), and useActiveItem. I checked the helper semantics I depend on (JObj.Bool/Str/Num, getBlock double overload, idef never null, Stack.dur 0 = undefined, JS.now in ms, JS.round) and the frame ordering in Engine/VF.Frame.cs against the JS render(). Constants, ordering and null/sentinel handling all match JS, and I found no functional divergences: the only findings are the two minor per-frame allocation issues above. The offline compile check passes (\"compile check: OK\"). I did not check the callers in Interact.cs/Input.cs beyond confirming the call sites exist, and I did not check how vehicles, bobbers and pearls are rendered (vehiclePoint lives in a render file I do not own)."
+  },
+  {
+   "findings": [
+    {
+     "id": "INTERACT-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Game/VF.Interact.cs",
+     "line": 916,
+     "jsRef": "useBucketOrIgniter, pretty.js 19510-19513 (`if (left) { st.count++; return toast(\"Нет места для наполненного ведра\"); }`); toast() at 25674 returns undefined",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "When you fill a bucket from a stack of more than one and the inventory has no room, JS runs `return toast(...)`. toast() returns undefined, so useBucketOrIgniter returns a falsy value and placeBlock() keeps going: interactMobFeed, interactMobShear, useAxeStrip/useFarmItem/useHoe, eatSelected, and then `!isBK(s.key)` calls toast(\"В руке нет блока\"). In JS the last message the player sees is therefore \"В руке нет блока\". The C# port returns true, so placeBlock stops early and shows \"Нет места для наполненного ведра\". The toast text and the rest of the placeBlock flow differ from JS.",
+     "suggestedFix": "To match JS exactly, change that branch to `{ st.count++; toast(\"Нет места для наполненного ведра\"); return false; }` so placeBlock continues as it does in JS. If keeping the clearer message on purpose, list it as an intentional deviation."
+    },
+    {
+     "id": "INTERACT-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Game/VF.Drops.cs",
+     "line": 107,
+     "jsRef": "dropLight, pretty.js 16757-16760",
+     "severity": "minor",
+     "category": "performance",
+     "description": "buildWorldDropBatches runs every frame. For every visible drop it calls dropLight -> getWorldLight (Render/VF.EntityModels.cs:170), which allocates a new double[2] each call. After an explosion or a chest break that leaves dozens or hundreds of drops, this creates steady GC garbage every frame on a hot render path. The rest of the batch builder already avoids allocations (static dropPts, out-param dropRotate).",
+     "suggestedFix": "In dropLight, read the packed light directly: `int p = getPackedLightWorld(JS.floor(q.x), JS.floor(q.y + 0.3), JS.floor(q.z)); double sky = ((p >> 4) & 15) / 15.0, blk = (p & 15) / 15.0;` then use the same formula. No array is allocated."
+    }
+   ],
+   "coverageNotes": "I read all three files under review in full: VF.Interact.cs (1105 lines), VF.BlockRules.cs (505) and VF.Drops.cs (173). I compared each function line by line with its JS counterpart in pretty.js. JS sections covered: 16488-16560 (spawn/throw/physics/pickup of world drops), 16692-16880 (DROP_FACES, dropLight, addDropBlock/addDropItem, drawWorldDrops), 17392-17945 (currentTool, canHarvest, miningRate, cleanupContainerAt, blockDrops, support and attachment rules, neighbour transforms such as concrete, coral and sponge, sapling species, detach/prune/validateAttachmentsAround), and 18323-19760 (virtualHarvestable/destroy*, mining state, mob drops, attack charge and meter, primaryAction/processMining, feed/shear, farming, bone meal, axe strip, hoe, sleep, doors, TNT, cave vines, placeVirtualBlock, slab merge, sea pickle, flower pots, open/close, spawn eggs, interactBlock, eating, lily pads, fluid raycast, buckets/igniter, placeBlock, explodeAt, tickTNT).\n\nI checked every function the JS has in these ranges. All exist in C# except sleepOverlay and uploadAndDrawDrops, which are DOM/GL helpers and intentional. I confirmed the frame loop calls processMining, tickTNT and updateWorldDrops, and that primed TNT is rendered.\n\nEdge cases I checked and found equivalent:\n- JObj Bool/Str/Num/Int semantics match JS truthiness and `|0` (string metadata values like bedPart and potKey are truthy).\n- Every entry in virtual_blocks.json has hardness, so the JS `hardness ?? 1` fallback can never apply.\n- Stack.dur uses 0 to mean undefined, consistently with addItem.\n- liveMobs: mob death does not remove the mob from the array immediately, so the C# snapshot in explodeAt behaves the same as JS.\n\nNot reported because the JS code is dead: the `inf.amphibious` branch in useSpawnEgg (no MOB_INFO entry has amphibious), `d.cross` in bucketReplaceableAt (no virtual block has cross), and `b.icon` in addDropBlock (no block has icon).\n\nThe offline compile check (Tools/compile-check/check.sh) printed \"compile check: OK\".\n\nNot checked in depth (outside these files): setBlock/getBlockMeta reference-versus-copy semantics, damageMobSource/finishMobDeath internals, growSaplingAt, findChestPairTarget/linkChestPair, and the drop sprite shader and material in the render subsystem."
+  },
+  {
+   "findings": [
+    {
+     "id": "INV-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Core/Ordered.cs",
+     "line": 36,
+     "jsRef": "JS Map/Set iteration semantics (used by worldSim queues, chests/furnaces, blockMeta, etc.)",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "The header comment says entries added during iteration are visited, but Delete() unlinks the node, so the tail moves back to n.prev. A Set() after that links the new node from n.prev, not from the deleted node n. An enumerator parked on n follows n.next, which is still null, and ends without visiting the new entry. Clear() during iteration has the same problem. Example: map {a}; foreach: at 'a' call Delete(\"a\") then Set(\"b\",..). A JS Map visits 'b'; OrderedMap ends after 'a'. This also applies to a chain of deleted trailing nodes. I found no current caller that does delete-then-add inside a foreach (the water queues snapshot first), so this is a latent semantic gap in a core helper.",
+     "suggestedFix": "Record removed nodes whose next was null when they were deleted (a small 'deadTail' list, or one pointer per chain). When Set() appends, point each of them at the new node: deadTail.next = n. After Clear(), make the old removed chain forward to the new head the same way. Or use lazy deletion: mark the node removed and unlink it only when no enumerator is active (count active enumerators with try/finally in GetEnumerator)."
+    },
+    {
+     "id": "INV-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Core/JsRuntime.cs",
+     "line": 64,
+     "jsRef": "localStorage.setItem (atomic per key)",
+     "severity": "minor",
+     "category": "crash",
+     "description": "setItem writes key.json.tmp, then File.Delete(f), then File.Move(tmp, f). If the process is killed, crashes or loses power between the Delete and the Move, the only copy left is the .tmp file. getItem never looks at .tmp, so the next launch sees the key as missing. Hitting the world 'edits'/'state'/'seed' keys loses the save, and for the seed key loadOrCreateWorldSeed then makes a new random seed, which regenerates the world. Saves run every 300 ms (saveGameSoon) and during OnApplicationQuit/OnApplicationPause, so the window is hit often.",
+     "suggestedFix": "When f exists, use File.Replace(tmp, f, null) (atomic on NTFS and POSIX). When it does not, use File.Move. In getItem, if f is missing but f+\".tmp\" exists, recover it by moving it into place and reading it."
+    },
+    {
+     "id": "INV-3",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Core/JsRuntime.cs",
+     "line": 49,
+     "jsRef": "localStorage.getItem; loadOrCreateWorldSeed (pretty.js 901), loadGame (6387)",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "getItem swallows every exception from File.Exists/ReadAllText, adds the key to 'missing' and returns null, the same as 'key absent'. A transient read failure (file locked by antivirus or a cloud-sync client, a sharing violation) is then cached for the whole session. Traced effect: loadOrCreateWorldSeed sees r == null, makes a random seed and setItem overwrites the real seed file. loadGame sees no state, gives the starter inventory, and the next saveStateNow overwrites the real state. JS localStorage cannot fail this way.",
+     "suggestedFix": "Add a key to 'missing' only when File.Exists returns false. On an IOException, retry a few times with short sleeps. If it still fails, do not cache anything and surface the error (log it, and stop callers from overwriting, for example by throwing so the seed and state paths skip their regenerate-and-write)."
+    },
+    {
+     "id": "INV-4",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Core/JsRuntime.cs",
+     "line": 178,
+     "jsRef": "Number.prototype.toString / toFixed (used where JS does String(x), x.toFixed(n))",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "JS.ToStr and JS.Fixed do not match JS number formatting. Verified with Mono 6.8. Fixed uses .NET 'F' rounding, which rounds the 15-digit decimal: 1.005 gives \"1.01\" (JS toFixed(2) gives \"1.00\"), 2.675 gives \"2.68\" (JS \"2.67\"), -0.001 gives \"0.00\" (JS \"-0.00\"). ToStr uses \"R\" for anything outside |x|<1e15 integers: 0.00001 gives \"1E-05\" (JS \"0.00001\"), 1e-7 gives \"1E-07\" (JS \"1e-7\"), 1e15 gives \"1E+15\" (JS \"1000000000000000\"). Json.WriteNum (Json.cs:197) has the same issue for integers of 9e15 and above and for small decimals. These values show up in the debug HUD (VF.Frame.cs:127), the render-scale label and the world list spawn coordinates.",
+     "suggestedFix": "ToStr: print integers below 1e21 in full (\"0\" format on a decimal or BigInteger). For other values, take the shortest round-trip digits (\"R\") and re-layout them with JS rules: fixed notation when the decimal exponent is between -7 and 21 (exclusive), otherwise lowercase 'e' with an explicit sign and no zero padding. Fixed: format from the exact decimal value of the double (new decimal(v) when |v|<7.9e28), round half-up on that exact value, and keep the '-' sign for negative values that round to zero."
+    },
+    {
+     "id": "INV-5",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Game/VF.Inventory.cs",
+     "line": 876,
+     "jsRef": "craftGridRecipe / recipeFits / canCraft (pretty.js 7663, 6613-6621), called by renderCraftGrid/renderRecipeBook only on UI re-render",
+     "severity": "minor",
+     "category": "performance",
+     "description": "In JS these run once per UI re-render. In the port, IMGUI calls them on every OnGUI event: Layout, Repaint and mouse events, several times per frame while the inventory is open. Each craftGridRecipe call scans about 350 RECIPES and allocates `new bool[arr.Length]` for every shapeless rule (line 876) and `new[] { false, true }` / `new[] { false }` for every shaped rule (line 889). With the recipe book open, canCraft runs twice per recipe per event. Every craftable recipe goes through recipeFits → cloneInventory (LINQ Select/ToArray plus 36 Stack clones). Together this is hundreds to thousands of short-lived allocations per frame, plus Regex work in ingredientMatches (isPlankInventoryKey/woodFamilyForInventoryKey), which causes steady GC spikes while the inventory UI is open.",
+     "suggestedFix": "Use static readonly bool[] MIRROR_BOTH = {false,true}, MIRROR_ONE = {false}, and one reusable 'taken' buffer cleared with Array.Clear. In recipeFits, copy into a reusable static Stack[36] scratch buffer of reusable Stack objects instead of cloneInventory(). Optionally cache craftGridRecipe/canCraft results keyed on an inventory/grid revision counter that is bumped whenever inventoryDirty is set."
+    },
+    {
+     "id": "INV-6",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Core/VF.Audio.cs",
+     "line": 16,
+     "jsRef": "audioPaused() pretty.js ~425: document.hidden || pauseOpen || player.sleeping",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "audioPaused() checks `!Application.isFocused && Application.runInBackground == false`. VoxelForgeGame.Awake always sets Application.runInBackground = true, so this clause is always false. On desktop, minimizing or hiding the game never pauses audio, and since the simulation keeps running, sounds such as explosions and mob hits keep playing. JS suspends the AudioContext whenever document.hidden is true.",
+     "suggestedFix": "Track visibility in a static flag set from OnApplicationFocus/OnApplicationPause (for example appHidden = !focus || paused) and use `appHidden || pauseOpen || (player != null && player.sleeping)`. syncAudioState is already called from both callbacks."
+    },
+    {
+     "id": "INV-7",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Core/VF.Audio.cs",
+     "line": 106,
+     "jsRef": "audioNoise/audioTone/sfxExplosion (pretty.js 506-560, 603-622)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "Every sound effect is synthesized synchronously on the main thread, with new buffers on every call. playSamples/applyReverbSend allocate buf, wet and four comb-delay lines, plus a new AudioClip. expRamp/envAt call Math.Pow per sample. sfxExplosion renders about 1.32 s of noise plus 1.2 s of tone (around 120k samples at 48 kHz), roughly 1 MB of float arrays and two Math.Pow calls per sample. A TNT chain fires many explosions in one frame, which produces multi-millisecond main-thread hitches and large GC spikes. WebAudio does this work off-thread in JS.",
+     "suggestedFix": "Precompute and cache clips (or per-material/per-preset buffers with a few randomized variants) on first use and play them with randomized pitch, or synthesize on a worker thread and only create/SetData the AudioClip on the main thread. Reuse scratch buffers (wet, delay lines) between calls. Replace the per-sample Math.Pow in expRamp with an incremental multiplicative ramp."
+    }
+   ],
+   "coverageNotes": "I read every line of the 8 owned files and the inventory/craft/chest/furnace/world-list parts of UI/VF.UI.cs. I compared them against pretty.js: settings/mods/world index/legacy worlds/seed/killedMobs (330-1040), block defs and mining/explosion tables (1123-2380), data header and tile/item/entity tables (1-330), inventory/save/load/recipes/slots/creative/craft grid/loot/chests/smelting/fuel/noise (6135-8275), and the furnace tick and miningRate call sites.\n\nDiffs done by script:\n- All def/def2 calls in JS and C# match textually and in order.\n- The base RECIPES list matches 1:1 (names, outputs, needs).\n- ITEM_TILE_NAMES, the alpha-test tile list and ENTITY_TILE match.\n- virtual_blocks.json has hardness/name/stack on every entry, so the defaults in VirtualDef parsing are not hit.\n\nThese check out:\n- Save/load JSON layout and key order for state, furnaces, player and sims.\n- Cursor-recovery logic, double-chest pairing and the loot RNG (ToInt32/ushr/imul paths).\n- craftGridRecipe mirroring and sameWool.\n- replaceRecipe semantics, including JS dropping 'basic' (reproduced faithfully).\n- Settings parsing and the mods merge.\n\nChecked on the Mono 6.8 runtime here:\n- Culture NegativeSign is ASCII '-' for sv/fi/nb/ru/etc., so key3/seed int formatting is not a culture problem on Mono.\n- string.GetHashCode (used in the LocalStorage file names) is deterministic across runs, so I did not report it.\n- JS.Fixed/ToStr divergences are reproduced.\n\nThe offline compile check prints \"compile check: OK\".\n\nNot checked: IL2CPP-specific culture/hash behaviour; and the callers of Inventory helpers in non-owned files (VF.Interact, VF.WorldTick tickFurnaces, VF.Mobs persistence, VF.World edits save), apart from confirming their signatures and types."
+  },
+  {
+   "findings": [
+    {
+     "id": "UI-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs",
+     "line": 100,
+     "jsRef": "#pause z-index:15 vs #settingsUI/#modsUI z-index:30 (HTML CSS); openSettingsUI/openModsUI pretty.js 25972/26006; reset confirm() pretty.js 27183",
+     "severity": "critical",
+     "category": "faithfulness",
+     "description": "drawUI draws the layers bottom to top (pause, then settings, mods, death, dialog) in one OnGUI pass. In IMGUI the control drawn first gets MouseDown/MouseUp first and uses the event, so the pause buttons underneath take clicks meant for the panels drawn over them. The DOM modals are separate full-screen layers (z-index 30, or a native confirm()), so the pause screen gets no clicks while they are open. Traced at H=900 UI units. Pause row 1 is at y 429..463, row 2 ('Моды' / 'Выбор режима') at 471..505, row 3 ('Сбросить мир') at 513..547. In Settings, the Sound toggle (y 427..449, x from W/2-120) lies on top of 'Продолжить': clicking the checkbox resumes the game (hidePause + pointer lock) with Settings still open, and the setting does not change. The dynamic-resolution toggle (491..513) lies on top of 'Моды' and 'Выбор режима': clicking its label calls returnToTitle(). In the 'Сбросить мир' confirm dialog, OK (x W/2-8..W/2+92, y 482..514) and 'Отмена' (W/2+102..W/2+202) both lie on top of 'Выбор режима', so either button quits to the title screen and leaves the dialog and its reset callback pending. On the start screen, the delete/copy dialog buttons lie on top of the 'Играть' and 'Копия' buttons of the 4th visible world row: confirming a delete can start another world, and confirming the copy alert makes one more copy.",
+     "suggestedFix": "Make the top-most modal the only layer that receives input. Compute the top layer first (dialog > death > mods/settings > gameUI > pause > HUD/start). For every layer below it, draw only on Repaint, or wrap it in GUI.enabled=false (restore afterwards). For example, `bool modal = dialogText != null; bool overPause = settingsOpen || modsOpen;`, then draw the pause screen with GUI.enabled = !(modal || overPause) and the start screen and world list with GUI.enabled = !modal. Another option is to use GUI.ModalWindow for the dialog."
+    },
+    {
+     "id": "UI-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Input.cs",
+     "line": 170,
+     "jsRef": "keydown/keyup listeners pretty.js 26203-26277 (no focus gating; Escape always handled)",
+     "severity": "major",
+     "category": "faithfulness",
+     "description": "While uiTextFocused is true, pollInput skips every key: KeyDown and KeyUp, Escape and E included. uiTextFocused is GUIUtility.keyboardControl != 0 while the start screen is up or the recipe book is open. In runtime IMGUI, GUI.Button, Toggle and Slider are FocusType.Passive and clicking elsewhere does not remove TextField focus. So once the player clicks into the recipe search field, Escape and E stop working for the rest of the time the inventory is open; it can only be closed with the 'Закрыть' button. The JS window keydown handler always handles Escape (closeGameUI). Dropped KeyUp events also leave keys stuck. Example: hold W in the inventory, click the search field, release W. keys keeps 'KeyW', closeGameUI does not clear it and pointer-lock acquisition does not call clearInputState, so the player walks forward by itself after re-locking. recipeBookOpen persists, and keyboardControl is never reset by the code, so a stale focus id can block keys the next time the inventory is opened.",
+     "suggestedFix": "Always process KeyUp, whatever the focus. Always process Escape, and when it arrives with a field focused, also clear focus (GUIUtility.keyboardControl = 0). Compute uiTextFocused from the focused control's name (GUI.GetNameOfFocusedControl() is \"worldName\" or \"recipeSearch\") and only while that field is actually drawn this frame. Clear focus on any MouseDown that is not inside a text field: in drawUI, before the layers, `if (e.type==MouseDown) GUIUtility.keyboardControl = 0;` and let the TextField re-take it. Also set keyboardControl = 0 in openGameUI and closeGameUI."
+    },
+    {
+     "id": "UI-3",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Input.cs",
+     "line": 258,
+     "jsRef": "initTouchControls touchInv pointerdown + e.preventDefault() pretty.js 26146-26151",
+     "severity": "major",
+     "category": "faithfulness",
+     "description": "On touch devices Unity sends each touch both to Input.touches, which pollTouch reads in Update, and to IMGUI as a simulated MouseDown in the same frame's OnGUI. Tapping the inventory button calls openGameUI() in Update, so that frame's OnGUI already draws the inventory and gives it the same MouseDown at the button's position (bottom-right, which is inside the right panel). If the tap lands on the creative palette, the item is picked at once on MouseDown and replaces the selected hotbar slot. If it lands on a slot, drag state is set and the MouseUp at touch end runs slotLeftClick, which picks the stack up into the cursor. In JS, preventDefault() on pointerdown stops the gesture from reaching the newly shown UI.",
+     "suggestedFix": "Ignore IMGUI mouse events that come from a touch that began while gameplay touch was active. For example, record the frame in which pollTouch opened UI or pause (uiOpenedByTouchFrame = Time.frameCount) and skip MouseDown/MouseUp in drawGameUI for that touch until all touches have ended. Alternatively, set Input.simulateMouseWithTouches=false and feed IMGUI from touches yourself."
+    },
+    {
+     "id": "UI-4",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs",
+     "line": 227,
+     "jsRef": "drawHotbar el.onpointerdown (TOUCH_DEVICE) pretty.js 26350-26357; #gameUI,#deathUI,... inset:0 z-index:30 pointer-events:auto",
+     "severity": "major",
+     "category": "faithfulness",
+     "description": "The touch hotbar handler in drawHUD runs whenever the HUD is drawn, including while the inventory, pause or death screen is open. It runs before drawGameUI and calls Event.current.Use(). On short screens the inventory panel (wh = min(720, H-24), centred) covers the hotbar rect (H-58..H-12). Example: H=400, the panel's bottom inventory row is at about y 308..354 and the hotbar at 342..388. A tap there selects a hotbar slot and the inventory slot never sees the event. In JS the full-screen #gameUI/#deathUI overlay takes these pointer events, so the hotbar cannot be tapped while a UI is open. pollTouch also treats a hotbar tap as the start of a camera look (p.x > 0.35*W), so dragging on the hotbar turns the camera.",
+     "suggestedFix": "Handle the hotbar tap only when touchGameplayEnabled() (or at least when !uiOpen && !pauseOpen && !player.dead), or block lower layers as in UI-1. In pollTouch, do not start a look touch when the finger begins inside the hotbar rect."
+    },
+    {
+     "id": "UI-5",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs",
+     "line": 441,
+     "jsRef": "slotEl el.onclick + el.ondblclick pretty.js 6878-6960",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "A browser double-click fires click, click, dblclick. The port runs slotDoubleClick on the second MouseDown (clickCount==2) and drops that second click's left-click action. The result differs whenever the first click swaps the cursor with the slot. Example: cursor holds Y, slot holds X. In JS the two clicks swap twice (slot X, cursor Y) and dblclick then collects Y items into the cursor. In C# only one swap happens (slot Y, cursor X) and X items are collected. With armor (single) slots this leaves the wrong piece equipped.",
+     "suggestedFix": "On MouseDown with clickCount==2, set a pendingDouble flag and keep the drag state. On the matching MouseUp, run slotLeftClick(arr,i,opts,e.shift) first, then slotDoubleClick(arr,i), which matches the JS event order."
+    },
+    {
+     "id": "UI-6",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs",
+     "line": 556,
+     "jsRef": "renderRecipeBook pretty.js 7027-7083 (rebuilt only on change)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "drawRecipeBook runs on every OnGUI event: Layout, Repaint and every mouse move or drag, so at least twice per frame. Each time it calls canCraft(rec) twice per recipe (lines 556 and 566), and each call runs countItem plus recipeFits → cloneInventory + removeItem simulation. It also rebuilds and lower-cases the 'hay' string and recipeNeedTextUI per recipe. With a few hundred RECIPES (block/virtual recipes are added in a loop), that is thousands of inventory clones and many strings per frame while the book is open, which causes steady GC churn. JS rebuilds the list only when renderCurrentUI is called.",
+     "suggestedFix": "Cache the filtered list together with each recipe's ok flag. Recompute only when the inventory, the search text, the filter or the mode changes (for example a version counter bumped wherever inventoryDirty is set), or at most once per frame on EventType.Layout, and reuse it for Repaint and input events."
+    },
+    {
+     "id": "UI-7",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs",
+     "line": 142,
+     "jsRef": "renderWorldList pretty.js 949-1004 (called only on change)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "drawStartScreen calls ensureLegacyWorldIndex() on every OnGUI event. That re-parses the world index JSON from LocalStorage, runs legacyWorldExists for both modes, and builds a LINQ OrderByDescending list plus per-row meta strings (with string.Join/Select and DateTime formatting) several times per frame. JS renders the list only when it changes.",
+     "suggestedFix": "Cache the sorted world list. Invalidate it after create, copy, delete and returnToTitle, or re-read it at most once per frame on EventType.Layout."
+    },
+    {
+     "id": "UI-8",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Input.cs",
+     "line": 228,
+     "jsRef": "resetTouchMove pretty.js 26037-26044; syncTouchControls 26027-26036",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "resetTouchMove returns early when !TOUCH_DEVICE. In JS it always clears KeyW/A/S/D/Space/ShiftLeft and sprintLatch. On desktop, syncTouchControls() (on = false) runs on every showPause/hidePause/openGameUI/closeGameUI/startGame, so JS clears movement keys and the sprint latch at every pause or UI transition, for example when pointer lock is regained (hidePause) and when the inventory closes. In the port, movement keys or sprintLatch that went stale while a UI was open (see UI-2) survive these transitions.",
+     "suggestedFix": "Remove the `if (!TOUCH_DEVICE) return;` line so that the key and sprintLatch clearing always runs, as in JS."
+    },
+    {
+     "id": "UI-9",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs",
+     "line": 199,
+     "jsRef": "#tip CSS: top:14px centred, hidden at max-width:700px or pointer:coarse; #mode right/top; #toast top:70px; #xrayBadge right:12px bottom:250px",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "The controls tip is drawn at the bottom-left (y = H-26, width W-20). It runs straight through the hotbar (y H-58..H-12, x W/2-215..W/2+215) and overlaps the slot icons and counts on any desktop width. In JS it is a top-centred pill, hidden below 700px width. Other HUD elements are also moved: modeText sits under the stats on the left (JS: top-right), the toast is at 0.28*H (JS: top 70px), the X-RAY badge is at top-centre (JS: bottom-right above the minimap), and the mine bar is 160px wide (JS: 92px).",
+     "suggestedFix": "Draw the tip top-centred (y≈14) inside a translucent box and hide it when W <= 700. Place modeText top-right, the toast at y=70, the xray badge at right:12 / bottom:250 (205 on small screens), and make the mine bar 92x7, matching the CSS."
+    },
+    {
+     "id": "UI-10",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs",
+     "line": 153,
+     "jsRef": "renderWorldList b.textContent = w.name pretty.js 968",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "World names, which the player types freely (up to 40 characters), are drawn through styles with richText=true and wrapped in <b>…</b>. They are also concatenated into the dialog texts at lines 164 and 166. A name such as '<size=300>X' or '</b><color=red>' is read as markup, which breaks the row layout. JS sets them with textContent, so the text is always literal.",
+     "suggestedFix": "Draw user-supplied names with a style that has richText=false (draw the bold header separately), or escape '<' (for example replace it with '<​') before concatenating."
+    },
+    {
+     "id": "UI-11",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs",
+     "line": 353,
+     "jsRef": "renderModsUI <label class=modRow> wrapping checkbox pretty.js 25984-25996; renderCreativePalette el.title pretty.js 7292",
+     "severity": "minor",
+     "category": "faithfulness",
+     "description": "In JS each mod row is a <label> that wraps the checkbox, so clicking the mod name or description toggles it. The port makes only a 24x24 toggle clickable; clicks on the text do nothing, or hit the pause buttons underneath (UI-1). The creative palette items also have no hover name: JS sets el.title = d.name, and the port draws no tooltip for palette cells at line 501.",
+     "suggestedFix": "Make the toggle rect cover the whole row (new Rect(4, y, inner.width-30, rowH-4)) with an empty label, drawn under the text labels. For palette cells, draw idef(k).name as a hover label, the same way slotEl does."
+    }
+   ],
+   "coverageNotes": "I read all of UI/VF.UI.cs and Engine/VF.Input.cs, plus VoxelForgeGame.cs (call order: Update → pollInput, OnGUI → drawUI, focus handlers), VF.Frame.cs, VF.Settings.cs and the slot and craft operations in VF.Inventory.cs. I compared them with the JS keydown/keyup/pointerlock/mousemove/mousedown/mouseup/wheel handlers (pretty.js 26203-26330), the touch controls (26014-26172), showPause/hidePause/drawHotbar, the slotEl click/contextmenu/dblclick/drag handlers, quickMoveSlot/collectMatchingToCursor, the craft grid, recipe book and creative palette, the chest and furnace panels, renderSettingsUI/renderModsUI, renderWorldList/createAndStartWorld/copy/delete/reset/titleMenu, sleep and death, toast/vitals/resource HUD, and the original HTML/CSS for layering and HUD layout. The offline compile check printed \"compile check: OK\".\n\nChecked and found faithful: every key path (Escape order: sleeping, then settings, then mods, then UI, then pause; E, Q, F flight, X, F5, digits, brackets, double-tap W sprint and its keyup), the first click only taking pointer lock, the mouseup bow/mining reset, the wheel direction, the mouse-delta scaling, the pointer-lock-loss → pause flow, focus loss, the touch stick/look/hold buttons, shift/right/left slot click semantics, drag rules (single/accept/extractOnly), the craft-grid output, the creative pick, and the furnace accept filters.\n\nNot checked: whether the builtin IMGUI font can render the emoji/glyph labels (⛏ ◉ 🔥), and Unity WebGL-specific pointer-lock timing. Logic outside these two files (mine bar values, sleep timers, the death flow) was checked only where the UI reads it. Some confidence notes: UI-1's overlap figures are computed for H=900 UI units (any Screen.height ≥ 900); smaller screens move the overlaps but do not remove them. UI-2 relies on runtime IMGUI keeping TextField focus when other controls are clicked (buttons, toggles and sliders are FocusType.Passive). Whether the focus id also survives after the field stops being drawn is less certain."
+  }
+ ],
+ "fixes": [
+  {
+   "results": [
+    {
+     "id": "SHD-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. `line` is a reserved HLSL keyword (a geometry-shader primitive type), so fxc/HLSLcc reject `float line = ...`. In VFTerrainXray.shader I renamed the local to `edgeLine` in its declaration, the discard test and the alpha output; the maths is unchanged. I also scanned the other shaders and VFCommon.cginc for reserved words and found no other collisions."
+    },
+    {
+     "id": "SHD-2",
+     "verdict": "fixed",
+     "reason": "Confirmed. JS drawEntities (pretty.js 3446) disables DEPTH_TEST in X-Ray mode, and a disabled depth test writes no depth. The port's ZWrite On made X-Ray mobs write depth. VFEntity.shader now has `_ZWrite (\"ZWrite\", Float) = 1` and uses `ZWrite [_ZWrite]`. The default 1 keeps matEntity as it was. The behaviour fix itself needs one line in VF.Renderer.cs, which I do not own (see crossFileIssues)."
+    },
+    {
+     "id": "SHD-3",
+     "verdict": "fixed",
+     "reason": "Confirmed. Global depthFunc is LESS (pretty.js 1100), and every LEQUAL change is set back to LESS (27054->27057 for the water colour pass, and also 15397->15410), so the function is LESS when drawMainClouds runs at 27062. VFCloud.shader changed from ZTest LEqual to ZTest Less."
+    }
+   ],
+   "crossFileIssues": [
+    "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.Renderer.cs line 83 (SHD-2): matEntityXray must turn off depth writes to match JS gl.disable(DEPTH_TEST). Change to `matEntityXray = mk(\"VoxelForge/Entity\", m => { m.mainTexture = entityTex; m.SetFloat(\"_ZTest\", (float)CompareFunction.Always); m.SetFloat(\"_ZWrite\", 0); });`. Leave matEntity (line 82) as is: the shader default _ZWrite=1 already covers it."
+   ],
+   "compileOk": true,
+   "compileNotes": "TMPDIR=$(mktemp -d) sh Tools/compile-check/check.sh printed 'compile check: OK'. That check covers only C#. The shader edits are small ShaderLab/HLSL changes that this check cannot compile; a real Unity shader compile was not available offline."
+  }
+ ]
+}

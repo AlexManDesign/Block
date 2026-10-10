@@ -5,6 +5,7 @@ Shader "VoxelForge/Entity"
     {
         _MainTex ("Entity atlas", 2D) = "white" {}
         [Enum(UnityEngine.Rendering.CompareFunction)] _ZTest ("ZTest", Float) = 4
+        _ZWrite ("ZWrite", Float) = 1
     }
     SubShader
     {
@@ -13,7 +14,7 @@ Shader "VoxelForge/Entity"
         {
             Cull Off
             ZTest [_ZTest]
-            ZWrite On
+            ZWrite [_ZWrite]
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
