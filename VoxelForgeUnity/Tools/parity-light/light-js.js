@@ -16,6 +16,8 @@ const WINDOWS = {
   caves: { seed: 12345, cx0: 2, cx1: 5, cz0: -5, cz1: -3, rounds: 70 },
   // seed -5: ocean shore, kelp/seagrass (waterPlant attenuation), lava, caves, leaves
   ocean: { seed: -5, cx0: 5, cx1: 7, cz0: -3, cz1: -1, rounds: 60 },
+  // seed 12345: desert pyramid (structure metadata without berries, structure blocks)
+  pyramid: { seed: 12345, cx0: 46, cx1: 48, cz0: -48, cz1: -46, rounds: 40 },
 };
 if (!prettyPath || !outDir || !WINDOWS[winName]) { console.error("usage: node light-js.js <pretty.js> <outDir> <" + Object.keys(WINDOWS).join("|") + "> [--dump=step] [--rounds=N]"); process.exit(2); }
 const dumpStep = +((args.find((a) => a.startsWith("--dump=")) || "--dump=-1").slice(7));
@@ -115,11 +117,14 @@ function exec(line) {
     case "unload": unloadChunk(n(1), n(2)); state(); break;
     case "set": setB(n(1), n(2), n(3), n(4), a[5] === "-" ? null : JSON.parse(a[5])); out("Q " + W.lightDirtyCount() + " " + W.lightDirtyKeys.size); break;
     case "light": out("L " + W.processLightDirty(Infinity)); state(); break;
+    case "lightpast": out("L " + W.processLightDirty(0)); state(); break; // deadline already passed: must not start a batch
+    case "lightfuture": out("L " + W.processLightDirty(1e15)); state(); break; // timed path that never runs out of budget
     case "pbegin": if (W.getPlayerEditDepth() === 0) W.resetPlayerEditLightN(); W.setPlayerEditDepth(W.getPlayerEditDepth() + 1); break;
     case "pend": W.setPlayerEditDepth(W.getPlayerEditDepth() - 1); if (W.getPlayerEditDepth() === 0) out("P " + W.flushImmediatePlayerEditLighting()); state(); break;
     case "repair": W.repairLightAt(n(1), n(2), n(3)); state(); break;
     case "probe": { // point queries used by meshing/gameplay
       const x = n(1), y = n(2), z = n(3);
+      if (!W.chunkFastGet(Math.floor(x / CHUNK), Math.floor(z / CHUNK))) { out("R " + W.getPackedLightWorld(x, y, z)); break; } // block queries would hit worldgen
       out("R " + W.getPackedLightWorld(x, y, z) + " " + W.blockEmissionAt(x, y, z) + " " + (W.lightStopsAt(x, y, z) ? 1 : 0) + " " + W.lightCostAt(x, y, z) + " " + fnv(W.directSkyColumn(x, z), 2166136261).toString(16));
       break;
     }
@@ -200,6 +205,22 @@ const ACTIONS = {
     set(x, y, z, pick([B.STONE, B.TORCH, B.LAVA, B.WATER, B.GLASS])); if (rng() < 0.5) set(x, y, z, B.AIR); },
   repair(edge) { const [x, z] = borderXZ(edge); exec("repair " + x + " " + (surfaceY(x, z) - ri(20)) + " " + z); },
   probe(edge) { const [x, z] = borderXZ(edge); exec("probe " + x + " " + (surfaceY(x, z) + 1 - ri(30)) + " " + z); },
+  probeOdd() { // above/below the world, an unloaded column, an empty (null) section high above the terrain
+    const c = pick(loaded()), x = c.cx * 16 + ri(16), z = c.cz * 16 + ri(16);
+    exec("probe " + x + " " + pick([MAXY, MAXY + 5, MINY - 1, MAXY - 1, 300]) + " " + z);
+    exec("probe " + (WIN.cx1 + 3) * 16 + " " + (60 + ri(20)) + " " + z);
+  },
+  pair(edge) { // two emitters side by side, then the weaker one goes (removal BFS meets brighter light)
+    const p = caveCell(edge); if (!p) return; const q = [p[0] + pick([-1, 1]), p[1], p[2]];
+    set(q[0], q[1], q[2], B.LAVA); exec("light"); set(p[0], p[1], p[2], B.TORCH); exec("light"); set(p[0], p[1], p[2], B.AIR); exec("light"); set(q[0], q[1], q[2], B.AIR);
+  },
+  bulk(edge) { // > 64 queued repairs in one batch (takeLightDirty compaction), later removed in one go
+    const [x, z] = borderXZ(edge), y = surfaceY(x, z) + 1, id = pick([B.STONE, B.GLASS, B.WATER, pick(LEAVES)]);
+    for (let dy = 0; dy < 3; dy++) for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) set(x + dx, y + dy, z + dz, id);
+    exec(pick(["light", "lightfuture"]));
+    if (rng() < 0.6) { for (let dy = 0; dy < 3; dy++) for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) set(x + dx, y + dy, z + dz, B.AIR); exec("lightpast"); }
+  },
+  repairUnloaded() { exec("repair " + (WIN.cx0 - 2) * 16 + " 70 " + (WIN.cz0 * 16 + ri(16))); },
 };
 const ANAMES = Object.keys(ACTIONS);
 function round(edge) {

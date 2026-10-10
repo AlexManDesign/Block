@@ -63,9 +63,12 @@ namespace VoxelForge
         static bool setSkyAt(int x, int y, int z, int lv, Dictionary<string, HashSet<int>> dirty) { int p = getPackedLightWorld(x, y, z); return setPackedLightWorld(x, y, z, (p & 15) | ((lv & 15) << 4), dirty); }
         static bool setBlockAtLight(int x, int y, int z, int lv, Dictionary<string, HashSet<int>> dirty) { int p = getPackedLightWorld(x, y, z); return setPackedLightWorld(x, y, z, (p & 0xf0) | (lv & 15), dirty); }
         public static int lightCost(int id) { return lightAttenuation(id) ? 2 : 1; }
+        // Light predicates ignore metadata for AIR (lightStopsState/lightAttenuationState return false first), so the
+        // metadata lookup (several map probes) is skipped for the cells light mostly travels through. Same results as JS.
+        static JObj lightMetaAt(int id, int x, int y, int z) { return id == B.AIR ? null : getBlockMeta(x, y, z); }
         public static int blockEmissionAt(int x, int y, int z)
         {
-            int id = getBlock(x, y, z); var m = getBlockMeta(x, y, z);
+            int id = getBlock(x, y, z); var m = lightMetaAt(id, x, y, z);
             var v = isVirtualId(id) ? virtualDefFromMeta(m) : null;
             if (id == B.CAVE_VINES && m != null && m.Bool("berries")) return 14;
             int light = v != null ? v.light : (bdef(id) != null ? bdef(id).light : 0);
@@ -100,13 +103,34 @@ namespace VoxelForge
             if (cache != null && cache.TryGetValue(key, out a)) return a;
             a = new byte[WORLD_H];
             int sv = 15;
-            for (int iy = WORLD_H - 1; iy >= 0; iy--)
+            var c = chunkForWorld(x, z);
+            if (c != null)
             {
-                int id = getBlock(x, WORLD_MIN_Y + iy, z);
-                if (lightStopsState(id, getBlockMeta(x, WORLD_MIN_Y + iy, z))) sv = 0;
-                else if (sv > 0 && lightAttenuationState(id, getBlockMeta(x, WORLD_MIN_Y + iy, z))) sv = Math.Max(0, sv - 2);
-                a[iy] = (byte)sv;
+                // Loaded column: read sections directly, skip empty sections (all AIR keeps sv), and stop at the first
+                // fully dark cell - from there sv stays 0 (stops -> 0, attenuation only while sv > 0) and a[] is zeroed.
+                int lx = x & 15, lz = z & 15;
+                for (int iy = WORLD_H - 1; iy >= 0 && sv > 0; iy--)
+                {
+                    var sec = c.sections[iy >> 4];
+                    if (sec == null) { int lo = iy & ~15; for (; iy >= lo; iy--) a[iy] = (byte)sv; iy++; continue; }
+                    int id = sec.blocks[((iy & 15) * CHUNK + lz) * CHUNK + lx];
+                    if (id != B.AIR)
+                    {
+                        var m = getBlockMeta(x, WORLD_MIN_Y + iy, z);
+                        if (lightStopsState(id, m)) sv = 0;
+                        else if (lightAttenuationState(id, m)) sv = Math.Max(0, sv - 2);
+                    }
+                    a[iy] = (byte)sv;
+                }
             }
+            else
+                for (int iy = WORLD_H - 1; iy >= 0; iy--)
+                {
+                    int id = getBlock(x, WORLD_MIN_Y + iy, z);
+                    if (lightStopsState(id, getBlockMeta(x, WORLD_MIN_Y + iy, z))) sv = 0;
+                    else if (sv > 0 && lightAttenuationState(id, getBlockMeta(x, WORLD_MIN_Y + iy, z))) sv = Math.Max(0, sv - 2);
+                    a[iy] = (byte)sv;
+                }
             if (cache != null) cache[key] = a;
             return a;
         }
@@ -123,13 +147,13 @@ namespace VoxelForge
                 if (!yInWorld(y) || !lightCellLoaded(x, z)) continue;
                 int p = getPackedLightWorld(x, y, z), lv = skyMode ? p >> 4 : p & 15;
                 if (lv <= 1) continue;
-                int source = getBlock(x, y, z); var sm = getBlockMeta(x, y, z);
+                int source = getBlock(x, y, z); var sm = lightMetaAt(source, x, y, z);
                 if (lightStopsState(source, sm) && !(!skyMode && blockEmissionAt(x, y, z) > 0)) continue;
                 foreach (var d in LIGHT_DIRS)
                 {
                     int nx = x + d[0], ny = y + d[1], nz = z + d[2];
                     if (!yInWorld(ny) || !lightCellLoaded(nx, nz)) continue;
-                    int id = getBlock(nx, ny, nz); var tm = getBlockMeta(nx, ny, nz);
+                    int id = getBlock(nx, ny, nz); var tm = lightMetaAt(id, nx, ny, nz);
                     if (lightStopsState(id, tm)) continue;
                     int nv = lv - (lightAttenuationState(id, tm) ? 2 : 1);
                     if (nv <= 0) continue;
@@ -313,9 +337,9 @@ namespace VoxelForge
                     if (!lightCellLoaded(wx, wz)) return;
                     int sp = getPackedLightWorld(wx, y, wz), lv = skyMode ? sp >> 4 : sp & 15;
                     if (lv <= 1) return;
-                    int sid = getBlock(wx, y, wz); var sm = getBlockMeta(wx, y, wz);
+                    int sid = getBlock(wx, y, wz); var sm = lightMetaAt(sid, wx, y, wz);
                     if (lightStopsState(sid, sm) && !(!skyMode && blockEmissionAt(wx, y, wz) > 0)) return;
-                    int tx = x0 + lx, tz = z0 + lz, tid = chunkGet(c, lx, y, lz); var tm = getBlockMeta(tx, y, tz);
+                    int tx = x0 + lx, tz = z0 + lz, tid = chunkGet(c, lx, y, lz); var tm = lightMetaAt(tid, tx, y, tz);
                     if (lightStopsState(tid, tm)) return;
                     int nv = lv - (lightAttenuationState(tid, tm) ? 2 : 1);
                     if (nv <= 0) return;
@@ -340,13 +364,13 @@ namespace VoxelForge
                     int code = lightStitchQueue[head++], lx = code % CHUNK, n = (code - lx) / CHUNK, lz = n % CHUNK, iy = (n - lz) / CHUNK, y = WORLD_MIN_Y + iy,
                         op = chunkPackedLocal(c, lx, y, lz), lv = skyMode ? op >> 4 : op & 15;
                     if (lv <= 1) continue;
-                    int sx = x0 + lx, sz = z0 + lz, sid = chunkGet(c, lx, y, lz); var sm = getBlockMeta(sx, y, sz);
+                    int sx = x0 + lx, sz = z0 + lz, sid = chunkGet(c, lx, y, lz); var sm = lightMetaAt(sid, sx, y, sz);
                     if (lightStopsState(sid, sm) && !(!skyMode && blockEmissionAt(sx, y, sz) > 0)) continue;
                     foreach (var d in LIGHT_DIRS)
                     {
                         int nx = lx + d[0], ny = y + d[1], nz = lz + d[2];
                         if (nx < 0 || nx >= CHUNK || nz < 0 || nz >= CHUNK || !yInWorld(ny)) continue;
-                        int tx = x0 + nx, tz = z0 + nz, tid = chunkGet(c, nx, ny, nz); var tm = getBlockMeta(tx, ny, tz);
+                        int tx = x0 + nx, tz = z0 + nz, tid = chunkGet(c, nx, ny, nz); var tm = lightMetaAt(tid, tx, ny, tz);
                         if (lightStopsState(tid, tm)) continue;
                         int nv = lv - (lightAttenuationState(tid, tm) ? 2 : 1);
                         if (nv <= 0) continue;

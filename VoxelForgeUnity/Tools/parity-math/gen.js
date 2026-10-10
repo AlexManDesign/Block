@@ -9,11 +9,11 @@ const v8 = require('v8');
 v8.setFlagsFromString('--allow-natives-syntax');
 const args = Object.fromEntries(process.argv.slice(2).map(a => { const m = /^--([^=]+)=?(.*)$/.exec(a); return m ? [m[1], m[2]] : [a, '']; }));
 const N = +(args.n || 5000000), SEED = +(args.seed || 1) >>> 0;
-const ALL = ['sin', 'cos', 'tan', 'log', 'log10', 'atan', 'pow', 'atan2', 'hypot2', 'hypot3'];
+const ALL = ['round', 'sin', 'cos', 'tan', 'log', 'log10', 'atan', 'pow', 'atan2', 'hypot2', 'hypot3'];
 const FNS = args.fns ? args.fns.split(',') : ALL;
-const IMPL = { sin: Math.sin, cos: Math.cos, tan: Math.tan, log: Math.log, log10: Math.log10, atan: Math.atan, pow: Math.pow, atan2: Math.atan2,
+const IMPL = { round: Math.round, sin: Math.sin, cos: Math.cos, tan: Math.tan, log: Math.log, log10: Math.log10, atan: Math.atan, pow: Math.pow, atan2: Math.atan2,
   hypot2: (a, b) => Math.hypot(a, b), hypot3: (a, b, c) => Math.hypot(a, b, c) };
-const ARITY = { sin: 1, cos: 1, tan: 1, log: 1, log10: 1, atan: 1, pow: 2, atan2: 2, hypot2: 2, hypot3: 3 };
+const ARITY = { round: 1, sin: 1, cos: 1, tan: 1, log: 1, log10: 1, atan: 1, pow: 2, atan2: 2, hypot2: 2, hypot3: 3 };
 
 // ---- bits helpers
 const F = new Float64Array(1), U = new Uint32Array(F.buffer);
@@ -86,8 +86,11 @@ const atan2Gens = [() => [anyBits(), anyBits()], () => [finiteBits(), finiteBits
 const hyGen = () => { switch (ri(0, 6)) { case 0: return anyBits(); case 1: return uni(-1e3, 1e3); case 2: return expUni(-1074, 1023); case 3: return pick(SPEC);
   case 4: return uni(-1, 1); case 5: return subnormal(); default: return expUni(-30, 30); } };
 const hy2Gens = [() => [hyGen(), hyGen()]], hy3Gens = [() => [hyGen(), hyGen(), hyGen()]];
-const GENS = { sin: trigGens, cos: trigGens, tan: trigGens, log: logGens, log10: logGens, atan: atanGens, pow: powGens, atan2: atan2Gens, hypot2: hy2Gens, hypot3: hy3Gens };
+const roundGens = [anyBits, finiteBits, () => uni(-10, 10), () => ri(-1e6, 1e6) + 0.5, () => nextUp(ri(-1e6, 1e6) + 0.5, ri(-3, 3)), () => uni(-(2 ** 54), 2 ** 54),
+  () => expUni(50, 54), () => uni(-1, 1), () => uni(-1e4, 1e4), () => nextUp((u32() & 1 ? -1 : 1) * (ri(0, 1e3) + 0.5), ri(-2, 2))];
+const GENS = { round: roundGens, sin: trigGens, cos: trigGens, tan: trigGens, log: logGens, log10: logGens, atan: atanGens, pow: powGens, atan2: atan2Gens, hypot2: hy2Gens, hypot3: hy3Gens };
 const FIXED = {
+  round: SPEC.concat([0.49999999999999994, -0.49999999999999994, 0.5, -0.5, -0.3, 4503599627370497, -4503599627370497, 4503599627370495.5, 2.5, -2.5, 1.5, -1.5]),
   sin: SPEC.concat(ringAng, ravineP), cos: SPEC.concat(ringAng, ravineP), tan: SPEC.concat(ringAng), log: SPEC.concat(groupLog), log10: SPEC.concat(groupLog), atan: SPEC,
   pow: [].concat(...SPEC.map(a => SPEC.map(b => [a, b]))), atan2: [].concat(...SPEC.map(a => SPEC.map(b => [a, b]))),
   hypot2: [].concat(...SPEC.map(a => SPEC.map(b => [a, b]))), hypot3: [],

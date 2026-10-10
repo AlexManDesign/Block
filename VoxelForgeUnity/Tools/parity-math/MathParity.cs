@@ -10,23 +10,23 @@ using VoxelForge;
 
 public static class MathParity
 {
-    static readonly string[] NAMES = { "sin", "cos", "tan", "log", "log10", "atan", "pow", "atan2", "hypot2", "hypot3" };
+    static readonly string[] NAMES = { "round", "sin", "cos", "tan", "log", "log10", "atan", "pow", "atan2", "hypot2", "hypot3" };
     static double J(int f, double a, double b, double c)
     {
         switch (f)
         {
-            case 0: return JsMath.sin(a); case 1: return JsMath.cos(a); case 2: return JsMath.tan(a); case 3: return JsMath.log(a);
-            case 4: return JsMath.log10(a); case 5: return JsMath.atan(a); case 6: return JsMath.pow(a, b); case 7: return JsMath.atan2(a, b);
-            case 8: return JsMath.hypot(a, b); default: return JsMath.hypot(a, b, c);
+            case 0: return JsMath.round(a); case 1: return JsMath.sin(a); case 2: return JsMath.cos(a); case 3: return JsMath.tan(a); case 4: return JsMath.log(a);
+            case 5: return JsMath.log10(a); case 6: return JsMath.atan(a); case 7: return JsMath.pow(a, b); case 8: return JsMath.atan2(a, b);
+            case 9: return JsMath.hypot(a, b); default: return JsMath.hypot(a, b, c);
         }
     }
     static double M(int f, double a, double b, double c)
     {
         switch (f)
         {
-            case 0: return Math.Sin(a); case 1: return Math.Cos(a); case 2: return Math.Tan(a); case 3: return Math.Log(a);
-            case 4: return Math.Log10(a); case 5: return Math.Atan(a); case 6: return Math.Pow(a, b); case 7: return Math.Atan2(a, b);
-            case 8: return Math.Sqrt(a * a + b * b); default: return Math.Sqrt(a * a + b * b + c * c);
+            case 0: return Math.Floor(a + 0.5); case 1: return Math.Sin(a); case 2: return Math.Cos(a); case 3: return Math.Tan(a); case 4: return Math.Log(a);
+            case 5: return Math.Log10(a); case 6: return Math.Atan(a); case 7: return Math.Pow(a, b); case 8: return Math.Atan2(a, b);
+            case 9: return Math.Sqrt(a * a + b * b); default: return Math.Sqrt(a * a + b * b + c * c);
         }
     }
     static bool Same(double x, long eb) { double e = BitConverter.Int64BitsToDouble(eb); if (double.IsNaN(e)) return double.IsNaN(x); return BitConverter.DoubleToInt64Bits(x) == eb; }
@@ -84,6 +84,7 @@ public static class MathParity
             big[i] = (rng.NextDouble() - 0.5) * 2e9; cnt[i] = rng.Next(1, 100000) - 0.01; gen[i] = (rng.NextDouble() - 0.5) * 200; ten[i] = rng.Next(-5, 6);
         }
         Console.WriteLine("ns/call (best of 7, " + L + " args x 40 passes)          JsMath     System.Math");
+        Row("(delegate-call overhead, included in all rows)", ang, x => x, x => x);
         Row("sin  ravine/ring angles", ang, x => JsMath.sin(x), x => Math.Sin(x));
         Row("cos  ravine/ring angles", ang, x => JsMath.cos(x), x => Math.Cos(x));
         Row("sin  |x|~1e9 (Payne-Hanek)", big, x => JsMath.sin(x), x => Math.Sin(x));

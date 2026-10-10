@@ -53,6 +53,7 @@ __out.W={chunks,edits,editsByChunk,blockMeta,metaByChunk,generatedMetaByChunk,li
  WORLD_MIN_Y,WORLD_MAX_Y,WORLD_H,CHUNK,SECTION_COUNT};`;
   const out = {};
   const body = "with(__sb){try{" + src + tail + "}catch(e){__out.err=e;try{" + tail + "}catch(e2){__out.err2=e2}}}";
+  if (process.env.JSENV_DUMP) fs.writeFileSync(process.env.JSENV_DUMP, JSON.stringify({ body })); // for cover.js
   new Function("__sb", "__out", body)(sandbox, out);
   if (!out.W) throw out.err2 || out.err || new Error("pretty.js did not initialize");
   if (out.err) throw new Error("pretty.js top level failed (light engine may be in TDZ): " + out.err);

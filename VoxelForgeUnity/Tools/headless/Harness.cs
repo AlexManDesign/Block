@@ -26,6 +26,8 @@ static class Harness
             else if (args[i] == "--data" && i + 1 < args.Length) data = args[++i];
             else if (args[i] == "--verbose") HeadlessHost.verboseLog = true;
             else if (args[i] == "--frame-ms" && i + 1 < args.Length) frameMs = int.Parse(args[++i]);
+            else if (args[i] == "--seed" && i + 1 < args.Length) seedArg = args[++i];
+            else if (args[i] == "--soak" && i + 1 < args.Length) soakSeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--only" && i + 1 < args.Length) only = new HashSet<string>(args[++i].Split(','));
             else if (args[i] == "--idle-seconds" && i + 1 < args.Length) idleSeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--scale" && i + 1 < args.Length) scale = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
@@ -51,8 +53,18 @@ static class Harness
         Environment.Exit(bad == 0 && rc == 0 ? 0 : 1);
         return 0;
     }
-    static double timeScale = 1, idleSeconds = 8;
+    static double timeScale = 1, idleSeconds = 8, soakSeconds = 0;
     static HashSet<string> only;
+    static string seedArg;
+    /// <summary>createAndStartWorld, but with --seed "a" or "a,b" the creative/survival worlds get fixed seeds (reproducible runs).</summary>
+    static void CreateWorld(string mode, string name, int which)
+    {
+        var sp = seedArg != null ? seedArg.Split(',') : new string[0];
+        if (which >= sp.Length || sp[which] == "") { VF.createAndStartWorld(mode, name); return; }
+        var w = VF.createWorldRecord(mode, name);
+        LocalStorage.setItem(VF.worldKeysForNamespace(VF.worldNamespace(w.id)).seed, "" + JS.toInt32(double.Parse(sp[which], System.Globalization.CultureInfo.InvariantCulture)));
+        VF.startGame(mode, w.id);
+    }
     /// <summary>Scenario section filter (--only flight,edits,...); the boot + creative world start always run.</summary>
     static bool Do(string section) { return only == null || section == "look" || only.Contains(section); }
 
@@ -174,18 +186,32 @@ static class Harness
         return false;
     }
     /// <summary>Runs an idle window and reports chunks whose mesh revision keeps changing without edits (remesh loops).</summary>
+    static long TerrainUploads() { long[] v; return HeadlessMesh.byName.TryGetValue("vf-terrain", out v) ? v[0] : 0; }
+    static string SimQueues() { var w = VF.worldSim; return "water " + w.waterUrgentQueue.Count + "/" + w.waterQueue.Count + "/" + w.waterSeedQueue.Count + " lava " + w.lavaQueue.Count + "/" + w.lavaSeedQueue.Count; }
+    /// <summary>--soak S: idles S seconds before the remesh probe, printing fluid queues / remesh activity every 5 s (convergence check).</summary>
+    static void Soak(string label)
+    {
+        for (double t = 0; t < soakSeconds; t += 5)
+        {
+            long u0 = TerrainUploads(); int revs0 = VF.chunks.Values.Sum(c => c.meshRev), map0 = VF.chunks.Values.Sum(c => c.mapRev);
+            var end = DateTime.UtcNow.AddSeconds(5); while (DateTime.UtcNow < end) Frame();
+            Console.WriteLine("  soak[" + label + "] t=" + (t + 5) + "s: " + SimQueues() + " | meshRev +" + (VF.chunks.Values.Sum(c => c.meshRev) - revs0) + " mapRev +" + (VF.chunks.Values.Sum(c => c.mapRev) - map0) + " terrain uploads +" + (TerrainUploads() - u0) + " edits " + VF.edits.Count);
+        }
+    }
     static void IdleRemeshProbe(string label, double seconds)
     {
+        Soak(label);
+        long up0 = TerrainUploads(); string q0 = SimQueues();
         var rev0 = new Dictionary<string, int>(); foreach (var kv in VF.chunks) rev0[kv.Key] = kv.Value.meshRev;
 #if VF_TRACE_REV
-        VF.__traceStacks.Clear(); VF.__traceOn = true;
+        VF.__traceStacks.Clear(); VF.__traceFluidCells.Clear(); VF.__traceOn = true;
 #endif
         int edits0 = VF.edits.Count; var end = DateTime.UtcNow.AddSeconds(seconds); int n = 0;
         while (DateTime.UtcNow < end) { Frame(); n++; }
         var d = new List<KeyValuePair<string, int>>();
         foreach (var kv in VF.chunks) { int r0; if (rev0.TryGetValue(kv.Key, out r0) && kv.Value.meshRev - r0 > 0) d.Add(new KeyValuePair<string, int>(kv.Key, kv.Value.meshRev - r0)); }
         d.Sort((a, b) => b.Value - a.Value);
-        Console.WriteLine("  idle probe[" + label + "] " + n + " frames: " + d.Count + " chunks remeshed; top: " + string.Join(", ", d.Take(8).Select(k => k.Key + "x" + k.Value)) + " (edits " + edits0 + " -> " + VF.edits.Count + ")");
+        Console.WriteLine("  idle probe[" + label + "] " + n + " frames: " + d.Count + " chunks remeshed; top: " + string.Join(", ", d.Take(8).Select(k => k.Key + "x" + k.Value)) + " (edits " + edits0 + " -> " + VF.edits.Count + "; terrain uploads +" + (TerrainUploads() - up0) + "; " + q0 + " -> " + SimQueues() + ")");
 #if VF_TRACE_REV
         VF.__traceOn = false; VF.__traceDump(d.Take(4).Select(k => k.Key));
 #endif
@@ -216,7 +242,7 @@ static class Harness
         Check(HeadlessHost.buttons.Count > 0, "start screen draws buttons (" + HeadlessHost.buttons.Count + ")");
 
         Phase("creative world: create + start");
-        VF.createAndStartWorld("creative", "test");
+        CreateWorld("creative", "test", 0);
         Check(VF.started, "started");
         WaitWorld("creative");
         int[] g = null;
@@ -483,7 +509,7 @@ static class Harness
         {
         Phase("survival world");
         VF.returnToTitle(); Frames(10);
-        VF.createAndStartWorld("survival", "test2");
+        CreateWorld("survival", "test2", 1);
         WaitWorld("survival");
         EnsureLocked();
         Until(() => P.onGround || P.inWater, 20, "survival: player lands");

@@ -148,7 +148,7 @@ namespace VoxelForge
         static double fade(double t) { return t * t * t * (t * (t * 6 - 15) + 10); }
         static int floorDiv(int v, int d) { return (int)Math.Floor(v / (double)d); }
         static int ffloor(double v) { return (int)Math.Floor(v); }
-        static double round(double v) { return Math.Floor(v + 0.5); }
+        static double round(double v) { return JsMath.round(v); }
         static uint mix32(int v)
         {
             v ^= ushr(v, 16); v = imul(v, 0x7feb352d); v ^= ushr(v, 15); v = imul(v, unchecked((int)0x846ca68b)); v ^= ushr(v, 16);

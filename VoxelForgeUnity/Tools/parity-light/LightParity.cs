@@ -18,6 +18,9 @@ namespace VoxelForge
         static int lpStep, lpDump = -1, lpSeed, lpGeoChunks;
         static string lpDir;
         static GenWorker lpGen;
+        // time spent inside the port's light code (stitch on chunk load / dirty queue + player flush + repair)
+        static readonly System.Diagnostics.Stopwatch lpStitchSw = new System.Diagnostics.Stopwatch(), lpRelightSw = new System.Diagnostics.Stopwatch();
+        static int lpT(Func<int> f) { lpRelightSw.Start(); try { return f(); } finally { lpRelightSw.Stop(); } }
 
         static uint lpFnv(byte[] a, uint h) { for (int i = 0; i < a.Length; i++) h = unchecked((h ^ a[i]) * 16777619u); return h; }
         static uint lpFnv1(int v, uint h) { return unchecked((h ^ (uint)v) * 16777619u); }
@@ -78,7 +81,7 @@ namespace VoxelForge
             var c = new Chunk { cx = cx, cz = cz, key = k, sections = sections, dirty = true, fullMeshDirty = !geo, dirtySections = new HashSet<int>(), sectionGeo = geo ? new SectionGeo[SECTION_COUNT] : null, meshRev = 0, boundaryRev = 1, mapRev = 0 };
             chunks.Set(k, c);
             chunkFastSet(c);
-            stitchChunkLight(c);
+            lpStitchSw.Start(); stitchChunkLight(c); lpStitchSw.Stop();
             // installMetadataSimulationSeeds: light part, same iteration as the port
             Dictionary<int, JObj> mm;
             if (metaByChunk.TryGetValue(c.key, out mm) && mm.Count > 0)
@@ -127,13 +130,16 @@ namespace VoxelForge
                 case "gen": lpGenChunk(n(1), n(2)); lpState(); break;
                 case "unload": lpUnload(n(1), n(2)); lpState(); break;
                 case "set": lpSet(n(1), n(2), n(3), n(4), a[5] == "-" ? null : (JObj)Json.Parse(a[5])); lpOut.Add("Q " + lightDirtyCount() + " " + lightDirtyKeys.Count); break;
-                case "light": lpOut.Add("L " + processLightDirty(double.PositiveInfinity)); lpState(); break;
+                case "light": lpOut.Add("L " + lpT(() => processLightDirty(double.PositiveInfinity))); lpState(); break;
+                case "lightpast": lpOut.Add("L " + lpT(() => processLightDirty(0))); lpState(); break;
+                case "lightfuture": lpOut.Add("L " + lpT(() => processLightDirty(1e15))); lpState(); break;
                 case "pbegin": if (playerEditDepth == 0) playerEditLightN = 0; playerEditDepth++; break;
-                case "pend": playerEditDepth--; if (playerEditDepth == 0) lpOut.Add("P " + (flushImmediatePlayerEditLighting() ? "true" : "false")); lpState(); break;
-                case "repair": repairLightAt(n(1), n(2), n(3)); lpState(); break;
+                case "pend": playerEditDepth--; if (playerEditDepth == 0) lpOut.Add("P " + (lpT(() => flushImmediatePlayerEditLighting() ? 1 : 0) == 1 ? "true" : "false")); lpState(); break;
+                case "repair": lpT(() => { repairLightAt(n(1), n(2), n(3)); return 0; }); lpState(); break;
                 case "probe":
                     {
                         int x = n(1), y = n(2), z = n(3);
+                        if (chunkFastGet(x >> 4, z >> 4) == null) { lpOut.Add("R " + getPackedLightWorld(x, y, z)); break; }
                         lpOut.Add("R " + getPackedLightWorld(x, y, z) + " " + blockEmissionAt(x, y, z) + " " + (lightStopsAt(x, y, z) ? 1 : 0) + " " + lightCostAt(x, y, z) + " " + lpHex(lpFnv(directSkyColumn(x, z, null), 2166136261u)));
                         break;
                     }
@@ -178,7 +184,8 @@ namespace VoxelForge
             foreach (var raw in lines) { var l = raw.Trim(); if (l.Length > 0) lpExec(l); }
             File.WriteAllText(Path.Combine(lpDir, "cs.txt"), string.Join("\n", lpOut) + "\n");
             lpRules(outDir);
-            Console.WriteLine("cs " + win + ": " + lpStep + " commands, " + chunks.Count + " chunks, " + lpOut.Count + " state lines, " + (int)(DateTime.UtcNow - t0).TotalMilliseconds + "ms");
+            Console.WriteLine("cs " + win + ": " + lpStep + " commands, " + chunks.Count + " chunks, " + lpOut.Count + " state lines, " + (int)(DateTime.UtcNow - t0).TotalMilliseconds + "ms (light code: stitch " +
+                lpStitchSw.Elapsed.TotalMilliseconds.ToString("0") + "ms, relight " + lpRelightSw.Elapsed.TotalMilliseconds.ToString("0") + "ms)");
             return 0;
         }
     }
