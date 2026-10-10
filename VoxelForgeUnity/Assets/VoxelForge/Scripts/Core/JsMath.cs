@@ -500,6 +500,10 @@ namespace VoxelForge
             switch (m) { case 0: return z; case 1: return -z; case 2: return pi - (z - pi_lo); default: return (z - pi_lo) - pi; }
         }
 
+        /// <summary>JS Math.round (V8 Float64Round: ceil, step back if ceil - 0.5 > x). Unlike floor(x + 0.5) it is exact for
+        /// 0.49999999999999994 and |x| >= 2^52, and keeps -0 for x in [-0.5, -0].</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)] public static double round(double x) { double r = Math.Ceiling(x); return r - 0.5 > x ? r - 1.0 : r; }
+
         /// <summary>JS Math.hypot(a, b) (V8 Torque MathHypot: max-normalised Kahan sum).</summary>
         public static double hypot(double a, double b)
         {

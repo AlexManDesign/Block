@@ -26,6 +26,8 @@ static class Harness
             else if (args[i] == "--data" && i + 1 < args.Length) data = args[++i];
             else if (args[i] == "--verbose") HeadlessHost.verboseLog = true;
             else if (args[i] == "--frame-ms" && i + 1 < args.Length) frameMs = int.Parse(args[++i]);
+            else if (args[i] == "--only" && i + 1 < args.Length) only = new HashSet<string>(args[++i].Split(','));
+            else if (args[i] == "--idle-seconds" && i + 1 < args.Length) idleSeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--scale" && i + 1 < args.Length) scale = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
         }
         if (root == null) { Console.Error.WriteLine("usage: harness.exe --project <VoxelForgeUnity> [--data <dir>] [--verbose] [--frame-ms 16]"); return 2; }
@@ -49,7 +51,10 @@ static class Harness
         Environment.Exit(bad == 0 && rc == 0 ? 0 : 1);
         return 0;
     }
-    static double timeScale = 1;
+    static double timeScale = 1, idleSeconds = 8;
+    static HashSet<string> only;
+    /// <summary>Scenario section filter (--only flight,edits,...); the boot + creative world start always run.</summary>
+    static bool Do(string section) { return only == null || section == "look" || only.Contains(section); }
 
     // ---------------- frame driving ----------------
     static void Frame()
@@ -172,12 +177,18 @@ static class Harness
     static void IdleRemeshProbe(string label, double seconds)
     {
         var rev0 = new Dictionary<string, int>(); foreach (var kv in VF.chunks) rev0[kv.Key] = kv.Value.meshRev;
+#if VF_TRACE_REV
+        VF.__traceStacks.Clear(); VF.__traceOn = true;
+#endif
         int edits0 = VF.edits.Count; var end = DateTime.UtcNow.AddSeconds(seconds); int n = 0;
         while (DateTime.UtcNow < end) { Frame(); n++; }
         var d = new List<KeyValuePair<string, int>>();
         foreach (var kv in VF.chunks) { int r0; if (rev0.TryGetValue(kv.Key, out r0) && kv.Value.meshRev - r0 > 0) d.Add(new KeyValuePair<string, int>(kv.Key, kv.Value.meshRev - r0)); }
         d.Sort((a, b) => b.Value - a.Value);
         Console.WriteLine("  idle probe[" + label + "] " + n + " frames: " + d.Count + " chunks remeshed; top: " + string.Join(", ", d.Take(8).Select(k => k.Key + "x" + k.Value)) + " (edits " + edits0 + " -> " + VF.edits.Count + ")");
+#if VF_TRACE_REV
+        VF.__traceOn = false; VF.__traceDump(d.Take(4).Select(k => k.Key));
+#endif
         Check(d.Count == 0 || d[0].Value <= Math.Max(6, seconds * 1.5), label + ": no remesh loop (max " + (d.Count > 0 ? d[0].Value : 0) + " revs in " + seconds + "s)");
     }
     static void EnsureLocked()
@@ -208,16 +219,22 @@ static class Harness
         VF.createAndStartWorld("creative", "test");
         Check(VF.started, "started");
         WaitWorld("creative");
+        int[] g = null;
         var creativeId = VF.loadWorldIndex().OrderByDescending(w => w.updatedAt).First().id;
         Frames(30);
         StateCheck("creative idle");
 
-        IdleRemeshProbe("creative idle", 8);
+        if (Do("idle")) IdleRemeshProbe("creative idle", idleSeconds);
+        if (Do("look"))
+        {
         Phase("lock pointer, look around");
         EnsureLocked();
         for (int i = 0; i < 20; i++) { HeadlessHost.MouseMove(1.5f, i < 10 ? 0.4f : -0.4f); Frame(); }
         Check(PlayerFinite(), "mouse look keeps finite angles");
 
+        }
+        if (Do("flight"))
+        {
         Phase("fly across chunk borders");
         Tap(KeyCode.F);
         Check(P.flying, "flight toggled by F in creative");
@@ -244,8 +261,11 @@ static class Harness
         Frames(20);
         StateCheck("landed", true);
 
+        }
+        if (Do("edits"))
+        {
         Phase("creative break + place");
-        var g = GroundAhead();
+        g = GroundAhead();
         Check(g != null, "found ground ahead");
         if (g != null)
         {
@@ -267,6 +287,9 @@ static class Harness
             StateCheck("after edits");
         }
 
+        }
+        if (Do("inventory"))
+        {
         Phase("inventory open/close (creative palette)");
         Tap(KeyCode.E);
         Check(VF.uiOpen, "E opens inventory");
@@ -278,6 +301,9 @@ static class Harness
         Check(!VF.uiOpen, "E closes inventory");
         EnsureLocked();
 
+        }
+        if (Do("pause"))
+        {
         Phase("pause menu: mods (enable X-Ray) + settings");
         Tap(KeyCode.Escape);
         Check(VF.pauseOpen, "Esc opens pause");
@@ -302,6 +328,9 @@ static class Harness
         ClickButton(t => t == "Продолжить", "Продолжить");
         Check(!VF.pauseOpen && VF.locked, "resume re-locks pointer");
 
+        }
+        if (Do("xray"))
+        {
         Phase("x-ray + camera modes");
         Tap(KeyCode.X); Frames(20);
         Check(VF.xrayActive, "x-ray on");
@@ -311,6 +340,9 @@ static class Harness
         for (int i = 0; i < 3; i++) { Tap(KeyCode.F5); Frames(10); Check(PlayerFinite() && HeadlessHost.lastDraws > 0, "camera mode " + P.camMode + " renders"); }
         Check(P.camMode == 0, "camera cycled back to first person");
 
+        }
+        if (Do("mobs"))
+        {
         Phase("mobs: spawn eggs + simulation");
         int mobs0 = VF.liveMobs.Count(m => !m.dead);
         foreach (var egg in new[] { "pig_spawn_egg", "cow_spawn_egg", "sheep_spawn_egg", "chicken_spawn_egg", "zombie_spawn_egg", "skeleton_spawn_egg", "creeper_spawn_egg", "spider_spawn_egg" })
@@ -327,6 +359,9 @@ static class Harness
         StateCheck("mobs simulated");
         Check(VF.liveMobs.All(m => m.dead || m.y > VF.WORLD_MIN_Y), "no mob fell out of the world");
 
+        }
+        if (Do("water"))
+        {
         Phase("water bucket -> fluids");
         g = GroundAhead(3);
         if (g != null)
@@ -381,6 +416,9 @@ static class Harness
             StateCheck("after vehicles");
         }
 
+        }
+        if (Do("tnt"))
+        {
         Phase("TNT explosion");
         g = GroundAhead(5);
         if (g != null)
@@ -403,6 +441,9 @@ static class Harness
             StateCheck("after TNT");
         }
 
+        }
+        if (Do("rd"))
+        {
         Phase("render distance switch");
         int rd0 = VF.renderDistance;
         Tap(KeyCode.RightBracket); Frames(5);
@@ -415,6 +456,9 @@ static class Harness
         VF.applyRenderDistanceSetting(rd0);
         Frames(30);
 
+        }
+        if (Do("reload"))
+        {
         Phase("save, return to title, load");
         double px = P.x, py = P.y, pz = P.z;
         VF.saveGameNow();
@@ -433,7 +477,10 @@ static class Harness
         Frames(60);
         StateCheck("reloaded idle");
 
-        IdleRemeshProbe("reloaded idle", 8);
+        IdleRemeshProbe("reloaded idle", idleSeconds);
+        }
+        if (Do("survival"))
+        {
         Phase("survival world");
         VF.returnToTitle(); Frames(10);
         VF.createAndStartWorld("survival", "test2");
@@ -544,11 +591,15 @@ static class Harness
         VF.saveGameNow();
         Frames(10);
 
+        }
+        if (Do("quit"))
+        {
         Phase("pause + quit");
         Tap(KeyCode.Escape);
         Check(VF.pauseOpen, "Esc shows pause");
         Frames(10);
         Tap(KeyCode.Escape);
+        }
         return 0;
     }
 

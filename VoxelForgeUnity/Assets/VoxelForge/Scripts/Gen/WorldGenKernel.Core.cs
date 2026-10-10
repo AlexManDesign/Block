@@ -342,7 +342,7 @@ namespace VoxelForge
         static List<CNode> climateGroups(List<CNode> items, int axis)
         {
             var sorted = items.OrderBy(a => climateMid(a.bounds, axis)).ToList(); // stable, like V8 TimSort
-            int groupSize = (int)Math.Pow(10, Math.Floor(Math.Log10(items.Count - 0.01)));
+            int groupSize = (int)JsMath.pow(10, Math.Floor(JsMath.log10(items.Count - 0.01)));
             var o = new List<CNode>();
             for (int i = 0; i < sorted.Count; i += groupSize)
             {
@@ -498,7 +498,7 @@ namespace VoxelForge
             for (int i = 0; i < 8; i++)
             {
                 double ang = (i * Math.PI) / 4;
-                for (int r = 6; r <= 20; r += 7) a.Add(new[] { round(Math.Cos(ang) * r), round(Math.Sin(ang) * r), 1 - (r - 6) / 20.0 });
+                for (int r = 6; r <= 20; r += 7) a.Add(new[] { round(JsMath.cos(ang) * r), round(JsMath.sin(ang) * r), 1 - (r - 6) / 20.0 });
             }
             return a.ToArray();
         }
@@ -514,8 +514,8 @@ namespace VoxelForge
         double[] terrainShapeMain(double[] p, int x, int z)
         {
             double cont = p[2], eros = p[3], weird = p[4], pv = clamp(peakValley(weird), -1, 1), bs = curveSample(MAIN_HEIGHT_CONT, cont),
-                land = clamp((cont + 0.25) / 0.4, 0, 1), mount = curveSample(MAIN_HEIGHT_EROS, eros) * land, rdg = Math.Pow(pv * 0.5 + 0.5, 1.4);
-            double h = bs + Math.Pow(mount, 1.15) * rdg * 235;
+                land = clamp((cont + 0.25) / 0.4, 0, 1), mount = curveSample(MAIN_HEIGHT_EROS, eros) * land, rdg = JsMath.pow(pv * 0.5 + 0.5, 1.4);
+            double h = bs + JsMath.pow(mount, 1.15) * rdg * 235;
             if (h > SEA - 3) { double d = mainFbm2(4, x, z, 1 / 22.0, 3); h += d * (9 + mount * 15) * clamp((h - (SEA - 2)) / 11, 0, 1); }
             else if (h < SEA - 4)
             {
@@ -821,8 +821,8 @@ namespace VoxelForge
             double minx = double.PositiveInfinity, maxx = double.NegativeInfinity, minz = double.PositiveInfinity, maxz = double.NegativeInfinity;
             for (int i = 0; i < steps; i++)
             {
-                x += Math.Cos(ang) * RAVINE_STEP; z += Math.Sin(ang) * RAVINE_STEP; ang += (rng() - 0.5) * 0.55;
-                double p = steps > 1 ? i / (double)(steps - 1) : 0.5, r = baseR * Math.Sin(p * Math.PI) + 0.5;
+                x += JsMath.cos(ang) * RAVINE_STEP; z += JsMath.sin(ang) * RAVINE_STEP; ang += (rng() - 0.5) * 0.55;
+                double p = steps > 1 ? i / (double)(steps - 1) : 0.5, r = baseR * JsMath.sin(p * Math.PI) + 0.5;
                 nodes.Add(new[] { x, z, r });
                 if (x - r < minx) minx = x - r; if (x + r > maxx) maxx = x + r; if (z - r < minz) minz = z - r; if (z + r > maxz) maxz = z + r;
             }
