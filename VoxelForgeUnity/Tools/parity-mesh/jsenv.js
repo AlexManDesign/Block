@@ -34,8 +34,11 @@ function load(prettyPath, resDir) {
   // afterwards; later top-level UI code spins forever on stubs);
   // the two worker-side factories are appended verbatim.
   const cut = process.env.JSENV_CUT ? +process.env.JSENV_CUT : lines.findIndex((l) => l.startsWith("const BLOCK_SYMBOL_BY_ID = "));
-  src = lines.slice(0, cut).join("\n") + "\n" + fnSrc("createWorldGenKernel") + "\n" + fnSrc("createSharedMeshCore") + "\n";
-  const tail = "\n;__out.B=B;__out.blocks=blocks;__out.VIRTUAL_BLOCKS=VIRTUAL_BLOCKS;__out.createSharedMeshCore=createSharedMeshCore;__out.createWorldGenKernel=createWorldGenKernel;__out.TILE_NAMES=TILE_NAMES;";
+  const ga = lines.findIndex((l) => l.startsWith("const GEN_WORKER_SOURCE =")); let gb = ga; while (!lines[gb].startsWith('  "self.onmessage=')) gb++;
+  // structureCandidate is exposed on the kernel (test-only addition) so the driver can find structure chunks.
+  const kernel = fnSrc("createWorldGenKernel").replace("    generateDense,\n    structureMetaForChunk,", "    generateDense,\n    structureCandidate,\n    structureMetaForChunk,");
+  src = lines.slice(0, cut).join("\n") + "\n" + kernel + "\n" + fnSrc("applyChunkDeltaDense") + "\n" + fnSrc("createSharedMeshCore") + "\n" + lines.slice(ga, gb + 1).join("\n") + "\n";
+  const tail = "\n;__out.B=B;__out.blocks=blocks;__out.VIRTUAL_BLOCKS=VIRTUAL_BLOCKS;__out.createSharedMeshCore=createSharedMeshCore;__out.createWorldGenKernel=createWorldGenKernel;__out.TILE_NAMES=TILE_NAMES;__out.GEN_WORKER_SOURCE=GEN_WORKER_SOURCE;";
   const out = {};
   // Run the whole top level; a late browser-only failure is tolerated as long as the block tables are complete.
   const body = "with(__sb){try{" + src + tail + "}catch(e){__out.err=e;try{" + tail + "}catch(e2){}}}";

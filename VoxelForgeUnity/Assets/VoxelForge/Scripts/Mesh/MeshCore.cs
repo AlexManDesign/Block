@@ -9,7 +9,7 @@ namespace VoxelForge
     public sealed class MeshCore
     {
         const int C = 16, H = 384, PAD = 16, RW = 48, RN = RW * H * RW;
-        static readonly float[] SHADE_POS = { 0.74f, 1, 0.84f }, SHADE_NEG = { 0.66f, 0.56f, 0.78f };
+        static readonly double[] SHADE_POS = { 0.74, 1, 0.84 }, SHADE_NEG = { 0.66, 0.56, 0.78 };
         readonly byte[] region = new byte[RN], lightRegion = new byte[RN];
         readonly MDef[] defs;
         readonly Dictionary<string, MDef> vdefs;
@@ -47,6 +47,8 @@ namespace VoxelForge
             var s = q.sp;
             return q.solid || s == "fence" || s == "wall" || s == "pane" || s == "gate";
         }
+        /// <summary>JS `m.k || d` for a value only compared against names: falsy -> d, a truthy non-string -> a sentinel matching no name.</summary>
+        static string orStr(JObj m, string k, string d) { object o; if (m == null || !m.TryGetValue(k, out o) || !Json.Truthy(o)) return d; return o as string ?? "\u0000"; }
         static int vTile(MDef b, int axis, int sign, JObj m)
         {
             var part = m != null ? m.Str("part") : null;
@@ -64,9 +66,9 @@ namespace VoxelForge
         static readonly int[][] DIRS = { new[] { 1, 0, 0 }, new[] { -1, 0, 0 }, new[] { 0, 1, 0 }, new[] { 0, -1, 0 }, new[] { 0, 0, 1 }, new[] { 0, 0, -1 } };
         static readonly int[] FACE_AXIS = { 0, 0, 1, 1, 2, 2 }, FACE_SIGN = { 1, -1, 1, -1, 1, -1 };
         // p offset, du, dv per face (unit block)
-        static readonly float[][] FACE_P = { new float[] { 1, 0, 0 }, new float[] { 0, 0, 0 }, new float[] { 0, 1, 0 }, new float[] { 0, 0, 0 }, new float[] { 0, 0, 1 }, new float[] { 0, 0, 0 } };
-        static readonly float[][] FACE_DU = { new float[] { 0, 1, 0 }, new float[] { 0, 1, 0 }, new float[] { 0, 0, 1 }, new float[] { 0, 0, 1 }, new float[] { 1, 0, 0 }, new float[] { 1, 0, 0 } };
-        static readonly float[][] FACE_DV = { new float[] { 0, 0, 1 }, new float[] { 0, 0, 1 }, new float[] { 1, 0, 0 }, new float[] { 1, 0, 0 }, new float[] { 0, 1, 0 }, new float[] { 0, 1, 0 } };
+        static readonly double[][] FACE_P = { new double[] { 1, 0, 0 }, new double[] { 0, 0, 0 }, new double[] { 0, 1, 0 }, new double[] { 0, 0, 0 }, new double[] { 0, 0, 1 }, new double[] { 0, 0, 0 } };
+        static readonly double[][] FACE_DU = { new double[] { 0, 1, 0 }, new double[] { 0, 1, 0 }, new double[] { 0, 0, 1 }, new double[] { 0, 0, 1 }, new double[] { 1, 0, 0 }, new double[] { 1, 0, 0 } };
+        static readonly double[][] FACE_DV = { new double[] { 0, 0, 1 }, new double[] { 0, 0, 1 }, new double[] { 1, 0, 0 }, new double[] { 1, 0, 0 }, new double[] { 0, 1, 0 }, new double[] { 0, 1, 0 } };
 
         void vQuadFace(VBuf v, IBuf i, MDef b, JObj m, int x, int y, int z, int f, double alpha = 1, int tileOverride = -1)
         {
@@ -78,30 +80,30 @@ namespace VoxelForge
         }
         void vBox(VBuf v, IBuf i, MDef b, JObj m, int x, int y, int z, double[] q, double alpha = 1)
         {
-            float x0 = (float)(x + q[0]), y0 = (float)(y + q[1]), z0 = (float)(z + q[2]), x1 = (float)(x + q[3]), y1 = (float)(y + q[4]), z1 = (float)(z + q[5]),
+            double x0 = (x + q[0]), y0 = (y + q[1]), z0 = (z + q[2]), x1 = (x + q[3]), y1 = (y + q[4]), z1 = (z + q[5]),
                 sx = x1 - x0, sy = y1 - y0, sz = z1 - z0;
             int L = packedLight(x, y, z), side = vTile(b, 0, 1, m), top = vTile(b, 1, 1, m), bottom = vTile(b, 1, -1, m);
-            float ls = sky(L), lb = blk(L);
-            quad(v, i, x1, y0, z0, 0, sy, 0, 0, 0, sz, side, 0.74f, alpha, false, null, ls, lb, 0, false);
-            quad(v, i, x0, y0, z0, 0, 0, sz, 0, sy, 0, side, 0.66f, alpha, false, null, ls, lb, 0, false);
+            double ls = sky(L), lb = blk(L);
+            quad(v, i, x1, y0, z0, 0, sy, 0, 0, 0, sz, side, 0.74, alpha, false, null, ls, lb, 0, false);
+            quad(v, i, x0, y0, z0, 0, 0, sz, 0, sy, 0, side, 0.66, alpha, false, null, ls, lb, 0, false);
             quad(v, i, x0, y1, z0, 0, 0, sz, sx, 0, 0, top, 1, alpha, false, null, ls, lb, 0, false);
-            quad(v, i, x0, y0, z0, sx, 0, 0, 0, 0, sz, bottom, 0.56f, alpha, false, null, ls, lb, 0, false);
-            quad(v, i, x0, y0, z1, sx, 0, 0, 0, sy, 0, side, 0.84f, alpha, false, null, ls, lb, 0, false);
-            quad(v, i, x0, y0, z0, 0, sy, 0, sx, 0, 0, side, 0.78f, alpha, false, null, ls, lb, 0, false);
+            quad(v, i, x0, y0, z0, sx, 0, 0, 0, 0, sz, bottom, 0.56, alpha, false, null, ls, lb, 0, false);
+            quad(v, i, x0, y0, z1, sx, 0, 0, 0, sy, 0, side, 0.84, alpha, false, null, ls, lb, 0, false);
+            quad(v, i, x0, y0, z0, 0, sy, 0, sx, 0, 0, side, 0.78, alpha, false, null, ls, lb, 0, false);
         }
         void vCross(VBuf v, IBuf i, MDef b, JObj m, int x, int y, int z, double alpha = 1)
         {
             int L = packedLight(x, y, z), t = partTileOr(b, m, b.top >= 0 ? b.top : b.side);
-            quad(v, i, x + 0.15f, y, z + 0.15f, 0.7f, 0, 0.7f, 0, 1, 0, t, 0.95f, alpha, false, null, sky(L), blk(L), 0, true);
-            quad(v, i, x + 0.85f, y, z + 0.15f, -0.7f, 0, 0.7f, 0, 1, 0, t, 0.95f, alpha, false, null, sky(L), blk(L), 0, true);
+            quad(v, i, x + 0.15, y, z + 0.15, 0.7, 0, 0.7, 0, 1, 0, t, 0.95, alpha, false, null, sky(L), blk(L), 0, true);
+            quad(v, i, x + 0.85, y, z + 0.15, -0.7, 0, 0.7, 0, 1, 0, t, 0.95, alpha, false, null, sky(L), blk(L), 0, true);
         }
         void thinQuad(VBuf v, IBuf i, int x, int y, int z, string facing, int t, double alpha, int cls)
         {
-            int L = packedLight(x, y, z); const float e = 0.03f;
-            if (facing == "north") quad(v, i, x, y, z + e, 1, 0, 0, 0, 1, 0, t, 0.82f, alpha, false, null, sky(L), blk(L), cls, true);
-            else if (facing == "south") quad(v, i, x + 1, y, z + 1 - e, -1, 0, 0, 0, 1, 0, t, 0.82f, alpha, false, null, sky(L), blk(L), cls, true);
-            else if (facing == "west") quad(v, i, x + e, y, z + 1, 0, 0, -1, 0, 1, 0, t, 0.82f, alpha, false, null, sky(L), blk(L), cls, true);
-            else quad(v, i, x + 1 - e, y, z, 0, 0, 1, 0, 1, 0, t, 0.82f, alpha, false, null, sky(L), blk(L), cls, true);
+            int L = packedLight(x, y, z); const double e = 0.03;
+            if (facing == "north") quad(v, i, x, y, z + e, 1, 0, 0, 0, 1, 0, t, 0.82, alpha, false, null, sky(L), blk(L), cls, true);
+            else if (facing == "south") quad(v, i, x + 1, y, z + 1 - e, -1, 0, 0, 0, 1, 0, t, 0.82, alpha, false, null, sky(L), blk(L), cls, true);
+            else if (facing == "west") quad(v, i, x + e, y, z + 1, 0, 0, -1, 0, 1, 0, t, 0.82, alpha, false, null, sky(L), blk(L), cls, true);
+            else quad(v, i, x + 1 - e, y, z, 0, 0, 1, 0, 1, 0, t, 0.82, alpha, false, null, sky(L), blk(L), cls, true);
         }
         void vThin(VBuf v, IBuf i, MDef b, JObj m, int x, int y, int z, string facing, double alpha = 1) { thinQuad(v, i, x, y, z, facing, partTileOr(b, m, b.side), alpha, 0); }
         static string workerMount(JObj m, string fallback = "south")
@@ -132,27 +134,27 @@ namespace VoxelForge
         }
         void emitAttachmentPlanes(VBuf v, IBuf i, int tile, int x, int y, int z, int mask, double alpha = 1, int cls = 0)
         {
-            int L = packedLight(x, y, z); float ls = sky(L), lb = blk(L); const float e = 0.03f;
-            if ((mask & 1) != 0) quad(v, i, x + 1, y, z + 1 - e, -1, 0, 0, 0, 1, 0, tile, 0.82f, alpha, false, null, ls, lb, cls, true);
-            if ((mask & 2) != 0) quad(v, i, x + e, y, z + 1, 0, 0, -1, 0, 1, 0, tile, 0.82f, alpha, false, null, ls, lb, cls, true);
-            if ((mask & 4) != 0) quad(v, i, x, y, z + e, 1, 0, 0, 0, 1, 0, tile, 0.82f, alpha, false, null, ls, lb, cls, true);
-            if ((mask & 8) != 0) quad(v, i, x + 1 - e, y, z, 0, 0, 1, 0, 1, 0, tile, 0.82f, alpha, false, null, ls, lb, cls, true);
-            if ((mask & 16) != 0) quad(v, i, x, y + 1 - e, z, 1, 0, 0, 0, 0, 1, tile, 0.82f, alpha, false, null, ls, lb, cls, true);
-            if ((mask & 32) != 0) quad(v, i, x, y + e, z, 1, 0, 0, 0, 0, 1, tile, 0.82f, alpha, false, null, ls, lb, cls, true);
+            int L = packedLight(x, y, z); double ls = sky(L), lb = blk(L); const double e = 0.03;
+            if ((mask & 1) != 0) quad(v, i, x + 1, y, z + 1 - e, -1, 0, 0, 0, 1, 0, tile, 0.82, alpha, false, null, ls, lb, cls, true);
+            if ((mask & 2) != 0) quad(v, i, x + e, y, z + 1, 0, 0, -1, 0, 1, 0, tile, 0.82, alpha, false, null, ls, lb, cls, true);
+            if ((mask & 4) != 0) quad(v, i, x, y, z + e, 1, 0, 0, 0, 1, 0, tile, 0.82, alpha, false, null, ls, lb, cls, true);
+            if ((mask & 8) != 0) quad(v, i, x + 1 - e, y, z, 0, 0, 1, 0, 1, 0, tile, 0.82, alpha, false, null, ls, lb, cls, true);
+            if ((mask & 16) != 0) quad(v, i, x, y + 1 - e, z, 1, 0, 0, 0, 0, 1, tile, 0.82, alpha, false, null, ls, lb, cls, true);
+            if ((mask & 32) != 0) quad(v, i, x, y + e, z, 1, 0, 0, 0, 0, 1, tile, 0.82, alpha, false, null, ls, lb, cls, true);
         }
         void torchSprite(VBuf v, IBuf i, int id, int x, int y, int z, JObj m)
         {
             var b = def(id); int L = packedLight(x, y, z), tile = b.front >= 0 ? b.front : b.side; var q = workerMount(m, "floor");
-            float cx = 0.5f, cz = 0.5f, y0 = 0;
-            if (q != "floor") y0 = 0.15f;
-            if (q == "west") cx = 0.18f; else if (q == "east") cx = 0.82f; else if (q == "north") cz = 0.18f; else if (q == "south") cz = 0.82f;
-            const float r = 0.12f, h = 0.7f; int cls = xrayClass(id);
-            quad(v, i, x + cx - r, y + y0, z + cz - r, r * 2, 0, r * 2, 0, h, 0, tile, 0.95f, 1, false, null, sky(L), blk(L), cls, true);
-            quad(v, i, x + cx + r, y + y0, z + cz - r, -r * 2, 0, r * 2, 0, h, 0, tile, 0.95f, 1, false, null, sky(L), blk(L), cls, true);
+            double cx = 0.5, cz = 0.5, y0 = 0;
+            if (q != "floor") y0 = 0.15;
+            if (q == "west") cx = 0.18; else if (q == "east") cx = 0.82; else if (q == "north") cz = 0.18; else if (q == "south") cz = 0.82;
+            const double r = 0.12, h = 0.7; int cls = xrayClass(id);
+            quad(v, i, x + cx - r, y + y0, z + cz - r, r * 2, 0, r * 2, 0, h, 0, tile, 0.95, 1, false, null, sky(L), blk(L), cls, true);
+            quad(v, i, x + cx + r, y + y0, z + cz - r, -r * 2, 0, r * 2, 0, h, 0, tile, 0.95, 1, false, null, sky(L), blk(L), cls, true);
         }
         List<double[]> vStairBoxes(JObj m)
         {
-            var f = (m != null ? m.Str("facing") : null) ?? "south"; bool up = m != null && m.Bool("upper");
+            var f = orStr(m, "facing", "south"); bool up = m != null && m.Bool("upper");
             return boxes(up ? BOX_SLAB_TOP : BOX_SLAB_BOT, STAIR_STEP[up ? 1 : 0][0][faceIndexForFacing(f)]);
         }
         static readonly double[][][] FENCE_ARMS = {
@@ -195,7 +197,7 @@ namespace VoxelForge
             if (sp == "fence" || sp == "wall" || sp == "pane") return connectBoxes(sp, x, y, z);
             if (sp == "gate")
             {
-                var f = (m != null ? m.Str("facing") : null) ?? "south"; bool axis = f == "east" || f == "west";
+                var f = orStr(m, "facing", "south"); bool axis = f == "east" || f == "west";
                 var posts = boxes(axis ? GATE_POSTS_X[0] : GATE_POSTS_Z[0], axis ? GATE_POSTS_X[1] : GATE_POSTS_Z[1]);
                 if (m != null && m.Bool("open")) return posts;
                 var rails = axis ? GATE_RAILS_X : GATE_RAILS_Z; posts.Add(rails[0]); posts.Add(rails[1]);
@@ -203,7 +205,7 @@ namespace VoxelForge
             }
             if (sp == "trapdoor")
             {
-                if (m != null && m.Bool("open")) return boxes(TRAP_OPEN[faceIndexForFacing(m.Str("facing") ?? "south")]);
+                if (m != null && m.Bool("open")) return boxes(TRAP_OPEN[faceIndexForFacing(orStr(m, "facing", "south"))]);
                 return boxes(m != null && m.Bool("upper") ? BOX_TRAP_TOP : BOX_TRAP_BOT);
             }
             if (sp == "carpet" || sp == "lilypad" || sp == "rail") return boxes(BOX_CARPET);
@@ -223,7 +225,7 @@ namespace VoxelForge
             if (sp == "cross" || sp == "tallplant" || b.plant) { vCross(v, i, b, m, x, y, z, alpha); return; }
             if (sp == "door")
             {
-                var f = m.Str("facing") ?? "south";
+                var f = orStr(m, "facing", "south");
                 if (m.Bool("open")) f = rotateDoorOpen(f);
                 vThin(v, i, b, m, x, y, z, f, alpha); return;
             }
@@ -235,7 +237,7 @@ namespace VoxelForge
             if (sp == "rail")
             {
                 int L = packedLight(x, y, z), t = b.top >= 0 ? b.top : b.side;
-                quadPoints(v, i, x, y + 0.03f, z, x + 1, y + 0.03f, z, x, y + 0.03f, z + 1, x + 1, y + 0.03f, z + 1, t, 0.96f, alpha, false, null, sky(L), blk(L), 0);
+                quadPoints(v, i, x, y + 0.03, z, x + 1, y + 0.03, z, x, y + 0.03, z + 1, x + 1, y + 0.03, z + 1, t, 0.96, alpha, false, null, sky(L), blk(L), 0);
                 return;
             }
             if (sp == "pot")
@@ -249,7 +251,7 @@ namespace VoxelForge
             if (boxes != null) { foreach (var q in boxes) vBox(v, i, b, m, x, y, z, q, alpha); return; }
             if (b.axislog)
             {
-                var axis = m.Str("axis") ?? "y";
+                var axis = orStr(m, "axis", "y");
                 for (int f = 0; f < 6; f++)
                 {
                     var d = DIRS[f]; var nd = actualDefAt(x + d[0], y + d[1], z + d[2]);
@@ -283,16 +285,16 @@ namespace VoxelForge
             if (!inside(rx, y, rz)) return 15 << 4;
             return lightRegion[rIndex(rx, y, rz)];
         }
-        static float sky(int L) { return ((L >> 4) & 15) / 15f; }
-        static float blk(int L) { return (L & 15) / 15f; }
+        static double sky(int L) { return ((L >> 4) & 15) / 15.0; }
+        static double blk(int L) { return (L & 15) / 15.0; }
         int faceTile(int id, int axis, int sign)
         {
             var b = def(id);
             if (b == null) return 0;
             return axis == 1 ? (sign > 0 ? b.top : b.bottom) : b.side;
         }
-        readonly float[] uvScratch = new float[8];
-        float[] faceUV(int axis, int sign, float u, float v)
+        readonly double[] uvScratch = new double[8];
+        double[] faceUV(int axis, int sign, double u, double v)
         {
             var o = uvScratch;
             if (axis == 0)
@@ -311,22 +313,22 @@ namespace VoxelForge
             else { o[0] = u; o[1] = 0; o[2] = 0; o[3] = 0; o[4] = u; o[5] = v; o[6] = 0; o[7] = v; }
             return o;
         }
-        static readonly float[] DEFAULT_UV = { 0, 0, 1, 0, 0, 1, 1, 1 };
-        static int round15(float x) { int r = (int)Math.Floor(x * 15 + 0.5f); return r < 0 ? 0 : r > 15 ? 15 : r; }
-        static float packSA(float shade, double alpha, int cls)
+        static readonly double[] DEFAULT_UV = { 0, 0, 1, 0, 0, 1, 1, 1 };
+        static int round15(double x) { int r = (int)Math.Floor(x * 15 + 0.5); return r < 0 ? 0 : r > 15 ? 15 : r; }
+        static double packSA(double shade, double alpha, int cls)
         {
             int a8 = (int)Math.Max(0, Math.Min(255, Math.Floor(alpha * 255 + 0.5)));
             return (float)(shade + a8 * 2 + (cls != 0 ? 512 : 0));
         }
-        static void putV(VBuf v, float x, float y, float z, float u, float w, int tile, float sa, int light)
+        static void putV(VBuf v, double x, double y, double z, double u, double w, int tile, double sa, int light)
         {
             var a = v.a; int n = v.n;
-            a[n].x = x; a[n].y = y; a[n].z = z; a[n].sa = sa; a[n].u = Half.FromFloat(u); a[n].v = Half.FromFloat(w); a[n].tile = Half.FromInt(tile); a[n].light = Half.FromInt(light);
+            a[n].x = (float)x; a[n].y = (float)y; a[n].z = (float)z; a[n].sa = (float)sa; a[n].u = Half.FromFloat((float)u); a[n].v = Half.FromFloat((float)w); a[n].tile = Half.FromInt(tile); a[n].light = Half.FromInt(light);
             v.n = n + 1;
         }
-        void quad(VBuf v, IBuf i, float px, float py, float pz, float dux, float duy, float duz, float dvx, float dvy, float dvz, int tile, float shade, double alpha, bool flip, float[] uv, float ls, float lb, int cls, bool two)
+        void quad(VBuf v, IBuf i, double px, double py, double pz, double dux, double duy, double duz, double dvx, double dvy, double dvz, int tile, double shade, double alpha, bool flip, double[] uv, double ls, double lb, int cls, bool two)
         {
-            int n = v.n; var tc = uv ?? DEFAULT_UV; float sa = packSA(shade, alpha, cls); int light = round15(ls) * 16 + round15(lb);
+            int n = v.n; var tc = uv ?? DEFAULT_UV; double sa = packSA(shade, alpha, cls); int light = round15(ls) * 16 + round15(lb);
             v.Ensure(4);
             putV(v, px, py, pz, tc[0], tc[1], tile, sa, light);
             putV(v, px + dux, py + duy, pz + duz, tc[2], tc[3], tile, sa, light);
@@ -336,9 +338,9 @@ namespace VoxelForge
             if (two) { if (flip) i.Add6(n, n + 1, n + 2, n + 2, n + 1, n + 3); else i.Add6(n, n + 2, n + 1, n + 1, n + 2, n + 3); }
         }
         /// <summary>quad with per-corner sky/block light (greedy faces).</summary>
-        void quadL(VBuf v, IBuf i, float px, float py, float pz, float dux, float duy, float duz, float dvx, float dvy, float dvz, int tile, float shade, double alpha, bool flip, float[] uv, float[] ls, float[] lb, int cls)
+        void quadL(VBuf v, IBuf i, double px, double py, double pz, double dux, double duy, double duz, double dvx, double dvy, double dvz, int tile, double shade, double alpha, bool flip, double[] uv, double[] ls, double[] lb, int cls)
         {
-            int n = v.n; var tc = uv ?? DEFAULT_UV; float sa = packSA(shade, alpha, cls);
+            int n = v.n; var tc = uv ?? DEFAULT_UV; double sa = packSA(shade, alpha, cls);
             v.Ensure(4);
             putV(v, px, py, pz, tc[0], tc[1], tile, sa, round15(ls[0]) * 16 + round15(lb[0]));
             putV(v, px + dux, py + duy, pz + duz, tc[2], tc[3], tile, sa, round15(ls[1]) * 16 + round15(lb[1]));
@@ -346,10 +348,10 @@ namespace VoxelForge
             putV(v, px + dux + dvx, py + duy + dvy, pz + duz + dvz, tc[6], tc[7], tile, sa, round15(ls[3]) * 16 + round15(lb[3]));
             if (flip) i.Add6(n, n + 2, n + 1, n + 1, n + 2, n + 3); else i.Add6(n, n + 1, n + 2, n + 2, n + 1, n + 3);
         }
-        void quadPoints(VBuf v, IBuf i, float x0, float y0, float z0, float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3,
-            int tile, float shade, double alpha, bool flip, float[] uv, float ls, float lb, int cls)
+        void quadPoints(VBuf v, IBuf i, double x0, double y0, double z0, double x1, double y1, double z1, double x2, double y2, double z2, double x3, double y3, double z3,
+            int tile, double shade, double alpha, bool flip, double[] uv, double ls, double lb, int cls)
         {
-            int n = v.n; var tc = uv ?? DEFAULT_UV; float sa = packSA(shade, alpha, cls); int light = round15(ls) * 16 + round15(lb);
+            int n = v.n; var tc = uv ?? DEFAULT_UV; double sa = packSA(shade, alpha, cls); int light = round15(ls) * 16 + round15(lb);
             v.Ensure(4);
             putV(v, x0, y0, z0, tc[0], tc[1], tile, sa, light);
             putV(v, x1, y1, z1, tc[2], tc[3], tile, sa, light);
@@ -357,7 +359,7 @@ namespace VoxelForge
             putV(v, x3, y3, z3, tc[6], tc[7], tile, sa, light);
             if (flip) i.Add6(n, n + 2, n + 1, n + 1, n + 2, n + 3); else i.Add6(n, n + 1, n + 2, n + 2, n + 1, n + 3);
         }
-        readonly float[] flSS = new float[4], flBB = new float[4];
+        readonly double[] flSS = new double[4], flBB = new double[4];
         readonly int[] flP = new int[3];
         void faceLightSection(int axis, int sign, int[] x, int u, int v, int w, int h, int y0)
         {
@@ -367,7 +369,7 @@ namespace VoxelForge
                 var p = flP; p[0] = x[0]; p[1] = x[1]; p[2] = x[2];
                 p[axis] = dd; p[u] = (k & 1) == 0 ? x[u] : x[u] + w - 1; p[v] = k < 2 ? x[v] : x[v] + h - 1; p[1] += y0;
                 int L = packedLight(p[0], p[1], p[2]);
-                flSS[k] = ((L >> 4) & 15) / 15f; flBB[k] = (L & 15) / 15f;
+                flSS[k] = ((L >> 4) & 15) / 15.0; flBB[k] = (L & 15) / 15.0;
             }
         }
         static int xrayClass(int id)
@@ -441,7 +443,7 @@ namespace VoxelForge
                                 if (!ok) break;
                             }
                             x[u] = ii; x[v] = j;
-                            float dux = 0, duy = 0, duz = 0, dvx = 0, dvy = 0, dvz = 0;
+                            double dux = 0, duy = 0, duz = 0, dvx = 0, dvy = 0, dvz = 0;
                             if (u == 0) dux = w; else if (u == 1) duy = w; else duz = w;
                             if (v == 0) dvx = h; else if (v == 1) dvy = h; else dvz = h;
                             int key = Math.Abs(m), id = key & 255, sign = m > 0 ? 1 : -1;
@@ -454,7 +456,7 @@ namespace VoxelForge
                 }
             }
         }
-        void emitFace(VBuf v, IBuf i, int id, int x, int y, int z, int f, double alpha = 1, int tileOverride = -1, float[] uvOverride = null)
+        void emitFace(VBuf v, IBuf i, int id, int x, int y, int z, int f, double alpha = 1, int tileOverride = -1, double[] uvOverride = null)
         {
             int axis = FACE_AXIS[f], sign = FACE_SIGN[f]; var d = DIRS[f];
             int L = packedLight(x + d[0], y + d[1], z + d[2]);
@@ -462,15 +464,15 @@ namespace VoxelForge
             quad(v, i, x + p[0], y + p[1], z + p[2], du[0], du[1], du[2], dv[0], dv[1], dv[2], tileOverride < 0 ? faceTile(id, axis, sign) : tileOverride,
                 sign > 0 ? SHADE_POS[axis] : SHADE_NEG[axis], alpha, sign < 0, uvOverride ?? faceUV(axis, sign, 1, 1), sky(L), blk(L), XRAY[id], false);
         }
-        readonly float[] rotUV = new float[8];
-        float[] rotateFaceUV(float[] uv, int turns)
+        readonly double[] rotUV = new double[8];
+        double[] rotateFaceUV(double[] uv, int turns)
         {
             turns &= 3;
             if (turns == 0) return uv;
             for (int k = 0; k < 4; k++)
             {
-                float u = uv[k * 2], w = uv[k * 2 + 1];
-                for (int r = 0; r < turns; r++) { float q = u; u = 1 - w; w = q; }
+                double u = uv[k * 2], w = uv[k * 2 + 1];
+                for (int r = 0; r < turns; r++) { double q = u; u = 1 - w; w = q; }
                 rotUV[k * 2] = u; rotUV[k * 2 + 1] = w;
             }
             return rotUV;
@@ -478,14 +480,14 @@ namespace VoxelForge
         static readonly string[] CHEST_NAMES = { "east", "west", "up", "down", "south", "north" };
         void emitChest(VBuf v, IBuf i, int id, int x, int y, int z, MDef b, JObj m)
         {
-            bool paired = m.Bool("chestDouble"); var facing = m.Str("facing") ?? "south"; bool axisOdd = facing == "west" || facing == "east";
+            bool paired = m.Bool("chestDouble"); var facing = orStr(m, "facing", "south"); bool axisOdd = facing == "west" || facing == "east";
             int facingIndex = facing == "west" ? 1 : facing == "north" ? 2 : facing == "east" ? 3 : 0;
             int pdx = JS.toInt32(m.Num("pairDX")), pdz = JS.toInt32(m.Num("pairDZ"));
             for (int f = 0; f < 6; f++)
             {
                 var d = DIRS[f];
                 if (paired && d[1] == 0 && d[0] == pdx && d[2] == pdz) continue;
-                int tile = -1; float[] uv = null;
+                int tile = -1; double[] uv = null;
                 if (f == 2 && paired)
                 {
                     tile = m.Bool("chestSide") ? (b.topL >= 0 ? b.topL : b.top) : (b.topR >= 0 ? b.topR : b.top);
@@ -504,14 +506,14 @@ namespace VoxelForge
             var b = def(id); int L = packedLight(x, y, z), t = b.top >= 0 ? b.top : b.side;
             int cropStage = id >= B.WHEAT0 && id <= B.WHEAT3 ? id - B.WHEAT0 : id >= B.CARROTS0 && id <= B.CARROTS3 ? id - B.CARROTS0 : id >= B.POTATOES0 && id <= B.POTATOES3 ? id - B.POTATOES0
                 : id >= B.PUMPKIN_STEM0 && id <= B.PUMPKIN_STEM3 ? id - B.PUMPKIN_STEM0 : id >= B.MELON_STEM0 && id <= B.MELON_STEM3 ? id - B.MELON_STEM0 : -1;
-            float h = cropStage == 0 ? 0.35f : cropStage == 1 ? 0.55f : cropStage == 2 ? 0.76f : 1;
+            double h = cropStage == 0 ? 0.35 : cropStage == 1 ? 0.55 : cropStage == 2 ? 0.76 : 1;
             int cls = XRAY[id];
-            quad(v, i, x + 0.15f, y, z + 0.15f, 0.7f, 0, 0.7f, 0, h, 0, t, 0.95f, alpha, false, null, sky(L), blk(L), cls, true);
-            quad(v, i, x + 0.85f, y, z + 0.15f, -0.7f, 0, 0.7f, 0, h, 0, t, 0.95f, alpha, false, null, sky(L), blk(L), cls, true);
+            quad(v, i, x + 0.15, y, z + 0.15, 0.7, 0, 0.7, 0, h, 0, t, 0.95, alpha, false, null, sky(L), blk(L), cls, true);
+            quad(v, i, x + 0.85, y, z + 0.15, -0.7, 0, 0.7, 0, h, 0, t, 0.95, alpha, false, null, sky(L), blk(L), cls, true);
         }
-        static readonly float[] WATER_VIS_H = { 0, 1 / 9f, 2 / 9f, 3 / 9f, 4 / 9f, 5 / 9f, 6 / 9f, 7 / 9f, 8 / 9f };
-        static readonly float[] LAVA_VIS_H = { 0, 0.3f, 0.55f, 0.875f };
-        static readonly float[] FLUID_FACE_SHADE = { 0.72f, 0.72f, 1, 0.55f, 0.82f, 0.82f };
+        static readonly double[] WATER_VIS_H = { 0, 1 / 9.0, 2 / 9.0, 3 / 9.0, 4 / 9.0, 5 / 9.0, 6 / 9.0, 7 / 9.0, 8 / 9.0 };
+        static readonly double[] LAVA_VIS_H = { 0, 0.3, 0.55, 0.875 };
+        static readonly double[] FLUID_FACE_SHADE = { 0.72, 0.72, 1, 0.55, 0.82, 0.82 };
         static int waterVisLevel(int id)
         {
             if (id == B.WATER || id == B.WATER_FALLING) return 8;
@@ -540,53 +542,61 @@ namespace VoxelForge
             return b.needsWater || m.Bool("waterlogged") || connectedWaterAt(x, y + 1, z) || connectedWaterAt(x + 1, y, z) || connectedWaterAt(x - 1, y, z) || connectedWaterAt(x, y, z + 1) || connectedWaterAt(x, y, z - 1);
         }
         bool minecraftWaterCellAt(int x, int y, int z) { int id = at(x, y, z); var b = def(id); return isFluidWater(id) || (b != null && b.waterPlant); }
-        float minecraftWaterHeightAt(int x, int y, int z)
+        double minecraftWaterHeightAt(int x, int y, int z)
         {
             int id = at(x, y, z); var b = def(id);
             if (!isFluidWater(id) && !(b != null && b.waterPlant)) return -1;
             if (id == B.WATER_FALLING || minecraftWaterCellAt(x, y + 1, z)) return 1;
             return isFluidWater(id) ? WATER_VIS_H[waterVisLevel(id)] : WATER_VIS_H[8];
         }
-        static void minecraftWaterAddHeight(float h, ref double s, ref double w)
+        static void minecraftWaterAddHeight(double h, ref double s, ref double w)
         {
             if (h < 0) return;
             double q = h >= 0.8 ? 10 : 1;
             s += h * q; w += q;
         }
-        float minecraftWaterCornerAverage(float cur, float a, float b, int x, int y, int z)
+        double minecraftWaterCornerAverage(double cur, double a, double b, int x, int y, int z)
         {
             // Vanilla-style calculateAverageHeight: diagonal is queried only if one orthogonal neighbour contains fluid/open space.
-            if (cur >= 0.999f || a >= 0.999f || b >= 0.999f) return 1;
+            if (cur >= 0.999 || a >= 0.999 || b >= 0.999) return 1;
             double s = 0, w = 0;
             if (a > 0 || b > 0)
             {
-                float d = minecraftWaterHeightAt(x, y, z);
-                if (d >= 0.999f) return 1;
+                double d = minecraftWaterHeightAt(x, y, z);
+                if (d >= 0.999) return 1;
                 minecraftWaterAddHeight(d, ref s, ref w);
             }
             minecraftWaterAddHeight(cur, ref s, ref w);
             minecraftWaterAddHeight(a, ref s, ref w);
             minecraftWaterAddHeight(b, ref s, ref w);
-            return w != 0 ? (float)(s / w) : 0;
+            return w != 0 ? (s / w) : 0;
         }
         bool minecraftWaterSideOccluded(int id) { var b = def(id); return b != null && b.solid && !b.transparent && !b.cutout && !b.plant && !b.waterPlant && b.special == null; }
         // Flat water tops are collected per section and greedily merged; UVs repeat per block via fract() in the water shader.
-        struct FlatCell { public int x, y, z; public float h; public int lp; }
+        struct FlatCell { public int x, y, z; public double h; public int lp; }
         readonly List<FlatCell> flatCells = new List<FlatCell>();
         VBuf flatCollectV;
         readonly int[] flatGrid = new int[C * C];
-        readonly List<List<FlatCell>> flatGroups = new List<List<FlatCell>>(); readonly Dictionary<long, int> flatGroupIdx = new Dictionary<long, int>();
+        readonly List<List<FlatCell>> flatGroups = new List<List<FlatCell>>(); readonly Dictionary<FlatKey, int> flatGroupIdx = new Dictionary<FlatKey, int>();
+        // JS groups by the string q.y + "|" + h + "|" + lp; h is never -0/NaN, so the double's bits are an exact equivalent.
+        struct FlatKey : IEquatable<FlatKey>
+        {
+            public int y, lp; public long hb;
+            public bool Equals(FlatKey o) { return y == o.y && lp == o.lp && hb == o.hb; }
+            public override bool Equals(object o) { return o is FlatKey && Equals((FlatKey)o); }
+            public override int GetHashCode() { return (y * 397 ^ lp) * 397 ^ hb.GetHashCode(); }
+        }
         void flushFlatWaterTops(VBuf v, IBuf i)
         {
             var collectV = flatCollectV; flatCollectV = null;
             if (collectV == null || flatCells.Count == 0) { flatCells.Clear(); return; }
             var wb = def(B.WATER); double alpha = wb != null ? wb.alpha : 0.62; int tile = faceTile(B.WATER, 1, 1);
-            int a8 = (int)Math.Max(0, Math.Min(255, Math.Floor(alpha * 255 + 0.5))); float packed = FLUID_FACE_SHADE[2] + a8 * 2;
+            int a8 = (int)Math.Max(0, Math.Min(255, Math.Floor(alpha * 255 + 0.5))); double packed = FLUID_FACE_SHADE[2] + a8 * 2;
             // group by (y, h, lp) preserving first-seen order
             var groups = flatGroups; var gidx = flatGroupIdx; gidx.Clear(); int gn = 0; // pooled per instance
             foreach (var q in flatCells)
             {
-                long k = ((long)q.y << 40) ^ ((long)BitConverterCompat.SingleBits(q.h) << 8) ^ q.lp;
+                var k = new FlatKey { y = q.y, lp = q.lp, hb = BitConverter.DoubleToInt64Bits(q.h) };
                 int gi; if (!gidx.TryGetValue(k, out gi)) { gi = gn++; gidx[k] = gi; if (gi == groups.Count) groups.Add(new List<FlatCell>()); else groups[gi].Clear(); }
                 groups[gi].Add(q);
             }
@@ -595,7 +605,7 @@ namespace VoxelForge
             for (int gix = 0; gix < gn; gix++)
             {
                 var g = groups[gix]; stamp++;
-                int y = g[0].y; float h = g[0].h; int lp = g[0].lp; float yy = y + h - 0.001f;
+                int y = g[0].y; double h = g[0].h; int lp = g[0].lp; double yy = y + h - 0.001;
                 foreach (var q in g) grid[q.z * C + q.x] = stamp;
                 for (int z = 0; z < C; z++)
                     for (int x = 0; x < C; x++)
@@ -622,11 +632,11 @@ namespace VoxelForge
                     }
             }
         }
-        void waterTopQuad(VBuf v, IBuf i, int x, int y, int z, float h00, float h10, float h01, float h11)
+        void waterTopQuad(VBuf v, IBuf i, int x, int y, int z, double h00, double h10, double h01, double h11)
         {
             var wb = def(B.WATER); double alpha = wb != null ? wb.alpha : 0.62; int L = packedLight(x, y + 1, z);
             int tile = faceTile(B.WATER, 1, 1); var uv = faceUV(1, 1, 1, 1);
-            int a8 = (int)Math.Max(0, Math.Min(255, Math.Floor(alpha * 255 + 0.5))); float packed = FLUID_FACE_SHADE[2] + a8 * 2;
+            int a8 = (int)Math.Max(0, Math.Min(255, Math.Floor(alpha * 255 + 0.5))); double packed = FLUID_FACE_SHADE[2] + a8 * 2;
             int sk = round15(sky(L)), bk = round15(blk(L));
             if (flatCollectV == v && h00 == h10 && h00 == h01 && h00 == h11 && x >= 0 && x < C && z >= 0 && z < C)
             {
@@ -634,18 +644,18 @@ namespace VoxelForge
                 return;
             }
             int n = v.n; v.Ensure(4);
-            putV(v, x, y + h00 - 0.001f, z, uv[0], uv[1], tile, packed, sk * 16 + bk);
-            putV(v, x, y + h01 - 0.001f, z + 1, uv[2], uv[3], tile, packed, sk * 16 + bk);
-            putV(v, x + 1, y + h10 - 0.001f, z, uv[4], uv[5], tile, packed, sk * 16 + bk);
-            putV(v, x + 1, y + h11 - 0.001f, z + 1, uv[6], uv[7], tile, packed, sk * 16 + bk);
+            putV(v, x, y + h00 - 0.001, z, uv[0], uv[1], tile, packed, sk * 16 + bk);
+            putV(v, x, y + h01 - 0.001, z + 1, uv[2], uv[3], tile, packed, sk * 16 + bk);
+            putV(v, x + 1, y + h10 - 0.001, z, uv[4], uv[5], tile, packed, sk * 16 + bk);
+            putV(v, x + 1, y + h11 - 0.001, z + 1, uv[6], uv[7], tile, packed, sk * 16 + bk);
             // Stable quad split, like Minecraft's fixed vertex order.
             i.Add6(n, n + 1, n + 2, n + 2, n + 1, n + 3);
         }
-        void waterSideQuad(VBuf v, IBuf i, int x, int y, int z, int f, float h0, float h1)
+        void waterSideQuad(VBuf v, IBuf i, int x, int y, int z, int f, double h0, double h1)
         {
             var d = DIRS[f]; int nb = at(x + d[0], y + d[1], z + d[2]);
             if (minecraftWaterCellAt(x + d[0], y + d[1], z + d[2]) || minecraftWaterSideOccluded(nb)) return;
-            const float eps = 0.001f; float b0 = Math.Max(0, h0 - eps), b1 = Math.Max(0, h1 - eps);
+            const double eps = 0.001; double b0 = Math.Max(0, h0 - eps), b1 = Math.Max(0, h1 - eps);
             int axis, sign;
             var wb = def(B.WATER); double alpha = wb != null ? wb.alpha : 0.62; int L = packedLight(x + d[0], y, z + d[2]);
             if (f == 0) { axis = 0; sign = 1; quadPoints(v, i, x + 1, y, z, x + 1, y + b0, z, x + 1, y, z + 1, x + 1, y + b1, z + 1, faceTile(B.WATER, axis, sign), FLUID_FACE_SHADE[f], alpha, sign < 0, faceUV(axis, sign, 1, 1), sky(L), blk(L), XRAY[B.WATER]); }
@@ -662,7 +672,7 @@ namespace VoxelForge
                 waterSideQuad(v, i, x, y, z, 0, 1, 1); waterSideQuad(v, i, x, y, z, 1, 1, 1); waterSideQuad(v, i, x, y, z, 4, 1, 1); waterSideQuad(v, i, x, y, z, 5, 1, 1);
                 return;
             }
-            float hc = minecraftWaterHeightAt(x, y, z), hn = minecraftWaterHeightAt(x, y, z - 1), hs = minecraftWaterHeightAt(x, y, z + 1),
+            double hc = minecraftWaterHeightAt(x, y, z), hn = minecraftWaterHeightAt(x, y, z - 1), hs = minecraftWaterHeightAt(x, y, z + 1),
                 hw = minecraftWaterHeightAt(x - 1, y, z), he = minecraftWaterHeightAt(x + 1, y, z),
                 h00 = minecraftWaterCornerAverage(hc, hn, hw, x - 1, y, z - 1), h10 = minecraftWaterCornerAverage(hc, hn, he, x + 1, y, z - 1),
                 h01 = minecraftWaterCornerAverage(hc, hs, hw, x - 1, y, z + 1), h11 = minecraftWaterCornerAverage(hc, hs, he, x + 1, y, z + 1);
@@ -674,11 +684,11 @@ namespace VoxelForge
         }
         void emitWaterVolume(VBuf v, IBuf i, int x, int y, int z) { emitMinecraftWater(v, i, x, y, z, B.WATER); }
         void emitFluidWater(VBuf v, IBuf i, int id, int x, int y, int z) { emitMinecraftWater(v, i, x, y, z, id); }
-        void emitLavaQuad(VBuf v, IBuf i, int id, int x, int y, int z, int f, float lo, float hi, float inset = 0)
+        void emitLavaQuad(VBuf v, IBuf i, int id, int x, int y, int z, int f, double lo, double hi, double inset = 0)
         {
-            if (hi <= lo + 0.0001f) return;
+            if (hi <= lo + 0.0001) return;
             int axis = FACE_AXIS[f], sign = FACE_SIGN[f]; var d = DIRS[f];
-            float px, py, pz, dux = 0, duy = 0, duz = 0, dvx = 0, dvy = 0, dvz = 0;
+            double px, py, pz, dux = 0, duy = 0, duz = 0, dvx = 0, dvy = 0, dvz = 0;
             if (f == 0) { px = x + 1; py = y + lo; pz = z; duy = hi - lo; dvz = 1; }
             else if (f == 1) { px = x; py = y + lo; pz = z; duy = hi - lo; dvz = 1; }
             else if (f == 2) { px = x; py = y + hi; pz = z; duz = 1; dvx = 1; }
@@ -693,19 +703,19 @@ namespace VoxelForge
         {
             int lev = lavaVisLevel(id);
             if (lev == 0) return;
-            int above = at(x, y + 1, z); float selfH = isLava(above) ? 1 : LAVA_VIS_H[lev];
+            int above = at(x, y + 1, z); double selfH = isLava(above) ? 1 : LAVA_VIS_H[lev];
             for (int f = 0; f < 6; f++)
             {
-                var d = DIRS[f]; int nb = at(x + d[0], y + d[1], z + d[2]); float lo = 0;
+                var d = DIRS[f]; int nb = at(x + d[0], y + d[1], z + d[2]); double lo = 0;
                 if (!mainFluidFaceVisible(id, nb))
                 {
                     bool same = isLava(nb);
                     if (!same || f == 2 || f == 3 || selfH >= 1) continue;
-                    int nab = at(x + d[0], y + 1, z + d[2]); float nh = isLava(nab) ? 1 : LAVA_VIS_H[lavaVisLevel(nb)];
-                    if (selfH <= nh + 0.001f) continue;
+                    int nab = at(x + d[0], y + 1, z + d[2]); double nh = isLava(nab) ? 1 : LAVA_VIS_H[lavaVisLevel(nb)];
+                    if (selfH <= nh + 0.001) continue;
                     lo = nh;
                 }
-                float inset = nb != B.AIR && !isFluidWater(nb) && !isLava(nb) ? 0.004f : 0;
+                double inset = nb != B.AIR && !isFluidWater(nb) && !isLava(nb) ? 0.004 : 0;
                 emitLavaQuad(v, i, id, x, y, z, f, lo, selfH, inset);
             }
         }
@@ -748,17 +758,17 @@ namespace VoxelForge
         bool stairGuard(int x, int y, int z, int wantDir, bool wantUp, int testDir)
         {
             var dd = MAIN_STAIR_DIR[testDir]; int xx = x + dd[0], zz = z + dd[1]; var mm = vmeta(xx, y, zz);
-            return !stairAt(xx, y, zz) || faceIndexForFacing(mm.Str("facing") ?? "south") != wantDir || mm.Bool("upper") != wantUp;
+            return !stairAt(xx, y, zz) || faceIndexForFacing(orStr(mm, "facing", "south")) != wantDir || mm.Bool("upper") != wantUp;
         }
         List<double[]> stairBoxesMain(int id, int x, int y, int z, JObj m)
         {
-            var facing = m.Str("facing") ?? "south"; int dir = faceIndexForFacing(facing); bool up = m.Bool("upper");
+            var facing = orStr(m, "facing", "south"); int dir = faceIndexForFacing(facing); bool up = m.Bool("upper");
             var parts = boxes(up ? BOX_SLAB_TOP : BOX_SLAB_BOT); var st = STAIR_STEP[up ? 1 : 0];
             int cornerType = 0; bool cornerLeft = false; // 0 none, 1 outer, 2 inner
             var d = MAIN_STAIR_DIR[dir]; int x1 = x + d[0], z1 = z + d[1]; var nm = vmeta(x1, y, z1);
             if (stairAt(x1, y, z1) && nm.Bool("upper") == up)
             {
-                int nd = faceIndexForFacing(nm.Str("facing") ?? "south");
+                int nd = faceIndexForFacing(orStr(nm, "facing", "south"));
                 if ((nd & 1) != (dir & 1) && stairGuard(x, y, z, dir, up, (nd + 2) & 3)) { cornerType = 1; cornerLeft = nd == ((dir + 1) & 3); }
             }
             if (cornerType == 0)
@@ -766,7 +776,7 @@ namespace VoxelForge
                 d = MAIN_STAIR_DIR[(dir + 2) & 3]; x1 = x + d[0]; z1 = z + d[1]; nm = vmeta(x1, y, z1);
                 if (stairAt(x1, y, z1) && nm.Bool("upper") == up)
                 {
-                    int nd = faceIndexForFacing(nm.Str("facing") ?? "south");
+                    int nd = faceIndexForFacing(orStr(nm, "facing", "south"));
                     if ((nd & 1) != (dir & 1) && stairGuard(x, y, z, dir, up, nd)) { cornerType = 2; cornerLeft = nd == ((dir + 1) & 3); }
                 }
             }
@@ -825,7 +835,7 @@ namespace VoxelForge
         static readonly Dictionary<string, List<KeyValuePair<double[], int>>> wheelCache = new Dictionary<string, List<KeyValuePair<double[], int>>>();
         static List<KeyValuePair<double[], int>> shipWheelParts(JObj m)
         {
-            var f = m.Str("facing") ?? "south";
+            var f = orStr(m, "facing", "south");
             lock (wheelCache)
             {
                 List<KeyValuePair<double[], int>> cached;
@@ -851,14 +861,14 @@ namespace VoxelForge
             if (sp == "fence" || sp == "wall" || sp == "pane") return connectBoxes(sp, x, y, z);
             if (sp == "gate")
             {
-                var f = m.Str("facing") ?? "south"; bool axis = f == "east" || f == "west";
+                var f = orStr(m, "facing", "south"); bool axis = f == "east" || f == "west";
                 var posts = boxes(axis ? GATE_POSTS_X[0] : GATE_POSTS_Z[0], axis ? GATE_POSTS_X[1] : GATE_POSTS_Z[1]);
                 var rails = m.Bool("open") ? (axis ? GATE_OPEN_X : GATE_OPEN_Z) : (axis ? GATE_RAILS_X : GATE_RAILS_Z); posts.Add(rails[0]); posts.Add(rails[1]);
                 return posts;
             }
             if (sp == "trapdoor")
             {
-                if (m.Bool("open")) return boxes(TRAP_OPEN[faceIndexForFacing(m.Str("facing") ?? "south")]);
+                if (m.Bool("open")) return boxes(TRAP_OPEN[faceIndexForFacing(orStr(m, "facing", "south"))]);
                 return boxes(m.Bool("upper") ? BOX_TRAP_TOP : BOX_TRAP_BOT);
             }
             if (sp == "carpet" || sp == "lilypad") return boxes(BOX_CARPET);
@@ -866,7 +876,7 @@ namespace VoxelForge
             if (sp == "button") return boxes(workerButtonBox(m));
             if (sp == "seapickle")
             {
-                int n = Math.Max(1, Math.Min(4, m.Int("count") != 0 ? m.Int("count") : 1));
+                object cv = m.Get("count"); double cn = Math.Max(1, Math.Min(4, Json.Truthy(cv) ? Json.ToNum(cv) : 1)); int n = double.IsNaN(cn) ? 0 : (int)cn; // P.slice(0, n)
                 var o = boxScratch; o.Clear(); for (int k = 0; k < n; k++) o.Add(SEA_PICKLES[k]); return o;
             }
             if (sp == "bamboo") return boxes(BOX_BAMBOO);
@@ -876,16 +886,16 @@ namespace VoxelForge
         void boxPart(VBuf v, IBuf i, int id, int x, int y, int z, double[] bx, double alpha = 1)
         {
             var b = def(id); int cls = XRAY[id];
-            float x0 = (float)(x + bx[0]), y0 = (float)(y + bx[1]), z0 = (float)(z + bx[2]), x1 = (float)(x + bx[3]), y1 = (float)(y + bx[4]), z1 = (float)(z + bx[5]), sx = x1 - x0, sy = y1 - y0, sz = z1 - z0;
-            int L = packedLight(x, y, z); float ls = sky(L), lb = blk(L);
-            quad(v, i, x1, y0, z0, 0, sy, 0, 0, 0, sz, b.side, 0.74f, alpha, false, null, ls, lb, cls, false);
-            quad(v, i, x0, y0, z0, 0, 0, sz, 0, sy, 0, b.side, 0.66f, alpha, false, null, ls, lb, cls, false);
+            double x0 = (x + bx[0]), y0 = (y + bx[1]), z0 = (z + bx[2]), x1 = (x + bx[3]), y1 = (y + bx[4]), z1 = (z + bx[5]), sx = x1 - x0, sy = y1 - y0, sz = z1 - z0;
+            int L = packedLight(x, y, z); double ls = sky(L), lb = blk(L);
+            quad(v, i, x1, y0, z0, 0, sy, 0, 0, 0, sz, b.side, 0.74, alpha, false, null, ls, lb, cls, false);
+            quad(v, i, x0, y0, z0, 0, 0, sz, 0, sy, 0, b.side, 0.66, alpha, false, null, ls, lb, cls, false);
             quad(v, i, x0, y1, z0, 0, 0, sz, sx, 0, 0, b.top, 1, alpha, false, null, ls, lb, cls, false);
-            quad(v, i, x0, y0, z0, sx, 0, 0, 0, 0, sz, b.bottom, 0.56f, alpha, false, null, ls, lb, cls, false);
-            quad(v, i, x0, y0, z1, sx, 0, 0, 0, sy, 0, b.side, 0.84f, alpha, false, null, ls, lb, cls, false);
-            quad(v, i, x0, y0, z0, 0, sy, 0, sx, 0, 0, b.side, 0.78f, alpha, false, null, ls, lb, cls, false);
+            quad(v, i, x0, y0, z0, sx, 0, 0, 0, 0, sz, b.bottom, 0.56, alpha, false, null, ls, lb, cls, false);
+            quad(v, i, x0, y0, z1, sx, 0, 0, 0, sy, 0, b.side, 0.84, alpha, false, null, ls, lb, cls, false);
+            quad(v, i, x0, y0, z0, 0, sy, 0, sx, 0, 0, b.side, 0.78, alpha, false, null, ls, lb, cls, false);
         }
-        void halfBox(VBuf v, IBuf i, int id, int x, int y, int z, float height = 0.56f)
+        void halfBox(VBuf v, IBuf i, int id, int x, int y, int z, double height = 0.56)
         {
             int cls = XRAY[id];
             for (int f = 0; f < 6; f++)
@@ -894,21 +904,21 @@ namespace VoxelForge
                 else if (f == 3)
                 {
                     if (at(x, y - 1, z) != B.AIR) continue;
-                    int L = packedLight(x, y - 1, z); quad(v, i, x, y, z, 1, 0, 0, 0, 0, 1, faceTile(id, 1, -1), 0.56f, 1, false, null, sky(L), blk(L), cls, false);
+                    int L = packedLight(x, y - 1, z); quad(v, i, x, y, z, 1, 0, 0, 0, 0, 1, faceTile(id, 1, -1), 0.56, 1, false, null, sky(L), blk(L), cls, false);
                 }
                 else
                 {
                     var d = DIRS[f]; int L = packedLight(x + d[0], y + d[1], z + d[2]);
-                    if (f == 0) quad(v, i, x + 1, y, z, 0, height, 0, 0, 0, 1, faceTile(id, 0, 1), 0.74f, 1, false, null, sky(L), blk(L), cls, false);
-                    if (f == 1) quad(v, i, x, y, z, 0, 0, 1, 0, height, 0, faceTile(id, 0, -1), 0.66f, 1, false, null, sky(L), blk(L), cls, false);
-                    if (f == 4) quad(v, i, x, y, z + 1, 1, 0, 0, 0, height, 0, faceTile(id, 2, 1), 0.84f, 1, false, null, sky(L), blk(L), cls, false);
-                    if (f == 5) quad(v, i, x, y, z, 0, height, 0, 1, 0, 0, faceTile(id, 2, -1), 0.78f, 1, false, null, sky(L), blk(L), cls, false);
+                    if (f == 0) quad(v, i, x + 1, y, z, 0, height, 0, 0, 0, 1, faceTile(id, 0, 1), 0.74, 1, false, null, sky(L), blk(L), cls, false);
+                    if (f == 1) quad(v, i, x, y, z, 0, 0, 1, 0, height, 0, faceTile(id, 0, -1), 0.66, 1, false, null, sky(L), blk(L), cls, false);
+                    if (f == 4) quad(v, i, x, y, z + 1, 1, 0, 0, 0, height, 0, faceTile(id, 2, 1), 0.84, 1, false, null, sky(L), blk(L), cls, false);
+                    if (f == 5) quad(v, i, x, y, z, 0, height, 0, 1, 0, 0, faceTile(id, 2, -1), 0.78, 1, false, null, sky(L), blk(L), cls, false);
                 }
             }
         }
         static readonly int[][] RAIL_DIRS = { new[] { 1, 0 }, new[] { -1, 0 }, new[] { 0, 1 }, new[] { 0, -1 } };
-        static readonly float[][] RAIL_UVS = { new float[] { 0, 0, 1, 0, 0, 1, 1, 1 }, new float[] { 0, 1, 0, 0, 1, 1, 1, 0 }, new float[] { 1, 1, 0, 1, 1, 0, 0, 0 }, new float[] { 1, 0, 1, 1, 0, 0, 0, 1 } };
-        static float railUp(int d, float px, float pz) { const float eps = 0.0625f; return d == 0 ? (px > 0.5f ? 1 : eps) : d == 1 ? (px < 0.5f ? 1 : eps) : d == 2 ? (pz > 0.5f ? 1 : eps) : pz < 0.5f ? 1 : eps; }
+        static readonly double[][] RAIL_UVS = { new double[] { 0, 0, 1, 0, 0, 1, 1, 1 }, new double[] { 0, 1, 0, 0, 1, 1, 1, 0 }, new double[] { 1, 1, 0, 1, 1, 0, 0, 0 }, new double[] { 1, 0, 1, 1, 0, 0, 0, 1 } };
+        static double railUp(int d, double px, double pz) { const double eps = 0.0625; return d == 0 ? (px > 0.5 ? 1 : eps) : d == 1 ? (px < 0.5 ? 1 : eps) : d == 2 ? (pz > 0.5 ? 1 : eps) : pz < 0.5 ? 1 : eps; }
         static int railCurveUV(int xd, int zd) { return xd == 0 && zd == 2 ? 0 : xd == 0 && zd == 3 ? 3 : xd == 1 && zd == 2 ? 1 : 2; }
         void emitRail(VBuf v, IBuf i, int id, int x, int y, int z, MDef b, JObj m)
         {
@@ -919,12 +929,12 @@ namespace VoxelForge
                 if (at(nx, y, nz) == B.RAIL) mask |= 1 << d;
                 else if (at(nx, y + 1, nz) == B.RAIL) { mask |= 1 << d; if (slope < 0) slope = d; }
             }
-            int L = packedLight(x, y, z), cls = XRAY[id]; const float eps = 0.0625f;
+            int L = packedLight(x, y, z), cls = XRAY[id]; const double eps = 0.0625;
             if (slope >= 0)
             {
                 int d = slope;
                 var uv = d == 0 || d == 1 ? RAIL_UVS[1] : RAIL_UVS[0];
-                quadPoints(v, i, x, y + railUp(d, 0, 0), z, x + 1, y + railUp(d, 1, 0), z, x, y + railUp(d, 0, 1), z + 1, x + 1, y + railUp(d, 1, 1), z + 1, b.top, 0.96f, b.alpha, false, uv, sky(L), blk(L), cls);
+                quadPoints(v, i, x, y + railUp(d, 0, 0), z, x + 1, y + railUp(d, 1, 0), z, x, y + railUp(d, 0, 1), z + 1, x + 1, y + railUp(d, 1, 1), z + 1, b.top, 0.96, b.alpha, false, uv, sky(L), blk(L), cls);
                 return;
             }
             string kind; int axis = 0, xd = 0, zd = 0;
@@ -940,15 +950,26 @@ namespace VoxelForge
             }
             if (kind == "curve")
             {
-                quadPoints(v, i, x, y + eps, z, x + 1, y + eps, z, x, y + eps, z + 1, x + 1, y + eps, z + 1, b.corner >= 0 ? b.corner : b.top, 0.96f, b.alpha, false, RAIL_UVS[railCurveUV(xd, zd)], sky(L), blk(L), cls);
+                quadPoints(v, i, x, y + eps, z, x + 1, y + eps, z, x, y + eps, z + 1, x + 1, y + eps, z + 1, b.corner >= 0 ? b.corner : b.top, 0.96, b.alpha, false, RAIL_UVS[railCurveUV(xd, zd)], sky(L), blk(L), cls);
                 return;
             }
-            quadPoints(v, i, x, y + eps, z, x + 1, y + eps, z, x, y + eps, z + 1, x + 1, y + eps, z + 1, b.top, 0.96f, b.alpha, false, axis == 1 ? RAIL_UVS[1] : RAIL_UVS[0], sky(L), blk(L), cls);
+            quadPoints(v, i, x, y + eps, z, x + 1, y + eps, z, x, y + eps, z + 1, x + 1, y + eps, z + 1, b.top, 0.96, b.alpha, false, axis == 1 ? RAIL_UVS[1] : RAIL_UVS[0], sky(L), blk(L), cls);
+        }
+        static readonly System.Text.RegularExpressions.Regex JS_DEC = new System.Text.RegularExpressions.Regex(@"^[+-]?(\d+\.?\d*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?)$"),
+            JS_RADIX = new System.Text.RegularExpressions.Regex(@"^0([xX][0-9a-fA-F]+|[oO][0-7]+|[bB][01]+)$");
+        /// <summary>JS Number(string) (StringToNumber); only finite results matter to the callers.</summary>
+        static double jsNumber(string s)
+        {
+            s = s.Trim(' ', '\t', '\n', '\v', '\f', '\r', '\u00a0', '\u1680', '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006', '\u2007', '\u2008', '\u2009', '\u200a', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff');
+            if (s.Length == 0) return 0;
+            if (JS_DEC.IsMatch(s)) return double.Parse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture);
+            if (JS_RADIX.IsMatch(s)) { char r = char.ToLowerInvariant(s[1]); int b = r == 'x' ? 16 : r == 'o' ? 8 : 2; double v = 0; for (int k = 2; k < s.Length; k++) v = v * b + Convert.ToInt32(s[k].ToString(), 16); return v; }
+            return double.NaN;
         }
         MDef pottedDef(string key)
         {
             if (key == null) return null;
-            if (key.StartsWith("b:", StringComparison.Ordinal)) { int id; return int.TryParse(key.Substring(2), out id) ? def(id) : null; }
+            if (key.StartsWith("b:", StringComparison.Ordinal)) { double n = jsNumber(key.Substring(2)); return n == Math.Floor(n) && n >= 0 && n < defs.Length ? def((int)n) : null; } // def(+key.slice(2))
             if (key.StartsWith("v:", StringComparison.Ordinal)) { MDef d; return vdefs != null && vdefs.TryGetValue(key.Substring(2), out d) ? d : null; }
             return null;
         }
@@ -958,9 +979,9 @@ namespace VoxelForge
             if (b == null) return;
             int t = b.partBottom >= 0 ? b.partBottom : b.top >= 0 ? b.top : b.side;
             if (t < 0) return;
-            int L = packedLight(x, y, z); float y0 = y + 0.26f, h = 0.62f, r = 0.23f;
-            quad(v, i, x + 0.5f - r, y0, z + 0.5f - r, r * 2, 0, r * 2, 0, h, 0, t, 0.95f, 1, false, null, sky(L), blk(L), 0, true);
-            quad(v, i, x + 0.5f + r, y0, z + 0.5f - r, -r * 2, 0, r * 2, 0, h, 0, t, 0.95f, 1, false, null, sky(L), blk(L), 0, true);
+            int L = packedLight(x, y, z); double y0 = y + 0.26, h = 0.62, r = 0.23;
+            quad(v, i, x + 0.5 - r, y0, z + 0.5 - r, r * 2, 0, r * 2, 0, h, 0, t, 0.95, 1, false, null, sky(L), blk(L), 0, true);
+            quad(v, i, x + 0.5 + r, y0, z + 0.5 - r, -r * 2, 0, r * 2, 0, h, 0, t, 0.95, 1, false, null, sky(L), blk(L), 0, true);
         }
         static readonly string[] FACE_FACING = { "east", "west", "up", "down", "south", "north" };
 
@@ -996,7 +1017,7 @@ namespace VoxelForge
                         if (b.cutout || b.plant || b.waterPlant) { v = cv; i = ci; } else if (b.transparent) { v = tv; i = ti; } else { v = ov; i = oi; }
                         if (axisLogId(id))
                         {
-                            var axis = m.Str("axis") ?? "y";
+                            var axis = orStr(m, "axis", "y");
                             for (int f = 0; f < 6; f++)
                             {
                                 var d = DIRS[f]; var nd = def(at(x + d[0], y + d[1], z + d[2]));
@@ -1011,11 +1032,11 @@ namespace VoxelForge
                         if (b.special == "torch") { torchSprite(v, i, id, x, y, z, m); continue; }
                         if (b.special == "ladder" || b.special == "door" || b.special == "doorOpen")
                         {
-                            var f = m.Str("facing") ?? "south";
+                            var f = orStr(m, "facing", "south");
                             if (b.special == "doorOpen") f = rotateDoorOpen(f);
                             thinPlane(v, i, id, x, y, z, f, b.alpha); continue;
                         }
-                        if (b.special == "bed") { halfBox(v, i, id, x, y, z, 0.56f); continue; }
+                        if (b.special == "bed") { halfBox(v, i, id, x, y, z, 0.56); continue; }
                         if (b.special == "vine" || b.special == "lichen")
                         {
                             emitAttachmentPlanes(v, i, b.front >= 0 ? b.front : b.side, x, y, z, workerFaceMask(m, b.special == "vine" ? 15 : 63), b.alpha, XRAY[id]);
@@ -1031,7 +1052,7 @@ namespace VoxelForge
                         var sb = shapeBoxes(id, x, y, z, m);
                         if (sb != null) { foreach (var q in sb) boxPart(v, i, id, x, y, z, q, b.alpha); continue; }
                         if (b.special == "rail") { emitRail(v, i, id, x, y, z, b, m); continue; }
-                        var facing = m.Str("facing") ?? "south";
+                        var facing = orStr(m, "facing", "south");
                         for (int f = 0; f < 6; f++)
                         {
                             var d = DIRS[f]; int nb = at(x + d[0], y + d[1], z + d[2]); var nd = def(nb);
@@ -1120,9 +1141,4 @@ namespace VoxelForge
         }
     }
 
-    static class BitConverterCompat
-    {
-        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)] struct U { [System.Runtime.InteropServices.FieldOffset(0)] public float f; [System.Runtime.InteropServices.FieldOffset(0)] public int i; }
-        public static int SingleBits(float f) { var u = new U { f = f }; return u.i; }
-    }
 }
