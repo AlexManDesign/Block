@@ -141,7 +141,9 @@ static class Harness
             {
                 int fy = JS.floor(P.y - 0.05), id = VF.getBlock(JS.floor(P.x), fy, JS.floor(P.z));
                 var bd = VF.bdef(id);
-                Check(P.onGround || P.swimming || P.inWater || P.flying, label + ": player supported (block below " + (bd != null ? bd.name : "" + id) + ")");
+                // onGround is only set on frames whose downward step reaches the floor: at >150 fps 23*dt^2 < eps (0.001), so it
+                // alternates exactly as in the reference render loop; resting contact is checked with the collision probe instead.
+                Check(P.onGround || VF.collides(P.x, P.y - 0.01, P.z) || P.swimming || P.inWater || P.flying, label + ": player supported (block below " + (bd != null ? bd.name : "" + id) + ")");
             }
         }
         foreach (var m in VF.liveMobs) if (!(JS.isFinite(m.x) && JS.isFinite(m.y) && JS.isFinite(m.z))) { Check(false, label + ": mob " + m.type + " has non-finite position"); break; }
@@ -163,16 +165,38 @@ static class Harness
                 int x = JS.floor(P.x) + off[0] * d, z = JS.floor(P.z) + off[1] * d;
                 for (int y = JS.floor(P.y) + 2; y > JS.floor(P.y) - 5; y--)
                 {
-                    int id = VF.getBlock(x, y, z); var b = VF.bdef(id);
-                    if (!(b != null && b.solid && !b.plant && !VF.isWater(id) && VF.getBlock(x, y + 1, z) == B.AIR && VF.getBlock(x, y + 2, z) == B.AIR)) continue;
-                    Aim(x + 0.5, y + 0.98, z + 0.5);
-                    var h = VF.raycast();
-                    if (h != null && h.x == x && h.y == y && h.z == z && h.prev != null && h.prev.x == x && h.prev.y == y + 1 && h.prev.z == z) return new[] { x, y, z };
+                    int id = VF.getBlock(x, y, z);
+                    if (!PlainGround(id) || VF.getBlock(x, y + 1, z) != B.AIR || VF.getBlock(x, y + 2, z) != B.AIR) continue;
+                    if (AimHitsTop(x, y, z)) return new[] { x, y, z };
                     break;
                 }
             }
+        // Fixture fallback (dense grass/flowers or a cliff around the player): build a stone pedestal `dist` blocks away at
+        // foot level and clear the plants in the line of sight, exactly like a player would before building.
+        foreach (var off in new[] { new[] { 0, -1 }, new[] { 1, 0 }, new[] { 0, 1 }, new[] { -1, 0 } })
+        {
+            int px = JS.floor(P.x), pz = JS.floor(P.z), y = JS.floor(P.y) - 1, x = px + off[0] * dist, z = pz + off[1] * dist;
+            if (!PlainGround(VF.getBlock(x, y, z)) && VF.getBlock(x, y, z) != B.AIR && VF.bdef(VF.getBlock(x, y, z)) != null && VF.bdef(VF.getBlock(x, y, z)).solid) continue; // keep containers etc. intact
+            for (int k = 1; k <= dist; k++) for (int dy = 1; dy <= 3; dy++) { int xx = px + off[0] * k, zz = pz + off[1] * k, id = VF.getBlock(xx, y + dy, zz); var bb = VF.bdef(id); if (id != B.AIR && (bb == null || !bb.solid)) VF.setBlock(xx, y + dy, zz, B.AIR); }
+            VF.setBlock(x, y, z, B.STONE); VF.setBlock(x, y + 1, z, B.AIR); VF.setBlock(x, y + 2, z, B.AIR);
+            Frames(3);
+            if (AimHitsTop(x, y, z)) { Info("ground fixture: stone pedestal at " + x + "," + y + "," + z); return new[] { x, y, z }; }
+        }
         P.yaw = yaw0; P.pitch = pitch0;
+        Check(false, "found a reachable ground block " + dist + ".." + (dist + 3) + " blocks around " + JS.Fixed(P.x, 1) + "," + JS.Fixed(P.y, 1) + "," + JS.Fixed(P.z, 1));
         return null;
+    }
+    /// <summary>A plain full cube to build on: no container/workstation/TNT/bed (a right click on those interacts instead of placing).</summary>
+    static bool PlainGround(int id)
+    {
+        var b = VF.bdef(id);
+        return b != null && b.solid && !b.plant && !b.transparent && b.special == null && !VF.isWater(id) && id != B.CHEST && id != B.FURNACE && id != B.FURNACE_LIT && id != B.CRAFT && id != B.TNT && id != B.BED && id != B.BEDROCK;
+    }
+    static bool AimHitsTop(int x, int y, int z)
+    {
+        Aim(x + 0.5, y + 0.98, z + 0.5);
+        var h = VF.raycast();
+        return h != null && h.x == x && h.y == y && h.z == z && h.prev != null && h.prev.x == x && h.prev.y == y + 1 && h.prev.z == z;
     }
     /// <summary>Aims at the top of ground block g and right-clicks; returns the cell placement targets (raycast prev) or null.</summary>
     static int[] UseOn(int[] g, double fy = 0.98)
@@ -633,9 +657,11 @@ static class Harness
                 Aim(bc[0] + 0.5, bc[1] + 0.3, bc[2] + 0.5); Frame(); ClickMouse(1); Frames(5);
                 Info("bed use: sleeping " + P.sleeping + " (toast '" + VF.toastText + "')");
                 if (P.sleeping) Until(() => !P.sleeping, 20, "woke up after sleeping");
+                // the sleep overlay (DOM z 12000) fades out 900 ms after waking and swallows clicks until then
+                Until(() => VF.sleepOverlayState == 0, 5, "sleep overlay hidden");
                 EnsureLocked();
             }
-            else Info("bed placement failed (toast '" + VF.toastText + "')");
+            else Check(false, "bed placed (cell " + (bc == null ? "null" : string.Join(",", bc) + " = " + VF.getBlock(bc[0], bc[1], bc[2])) + ", ground " + string.Join(",", g) + " = " + VF.getBlock(g[0], g[1], g[2]) + ", selected " + (VF.selectedStack() != null ? VF.selectedStack().key : "-") + ", toast '" + VF.toastText + "')");
         }
         VF.addItem(VF.BK(B.DIRT), 10);
         VF.damagePlayer(100, "test");
