@@ -151,19 +151,27 @@ static class Harness
         double ex = P.x, ey = P.y + 1.62, ez = P.z, dx = tx - ex, dy = ty - ey, dz = tz - ez, len = Math.Sqrt(dx * dx + dy * dy + dz * dz);
         P.yaw = Math.Atan2(dx, -dz); P.pitch = -Math.Asin(dy / len);
     }
-    /// <summary>A solid surface block 2..4 blocks in front of the player (top face visible).</summary>
+    /// <summary>A solid surface block dist..dist+3 blocks around the player whose top face the crosshair really reaches:
+    /// the player is turned to aim at it and VF.raycast() must hit exactly that block through its top face (so the
+    /// placement cell is the air cell above it, outside the player's body).</summary>
     static int[] GroundAhead(int dist = 3)
     {
+        double yaw0 = P.yaw, pitch0 = P.pitch;
         for (int d = dist; d <= dist + 3; d++)
-            foreach (var off in new[] { new[] { 0, -1 }, new[] { 1, 0 }, new[] { 0, 1 }, new[] { -1, 0 } })
+            foreach (var off in new[] { new[] { 0, -1 }, new[] { 1, 0 }, new[] { 0, 1 }, new[] { -1, 0 }, new[] { 1, -1 }, new[] { 1, 1 }, new[] { -1, 1 }, new[] { -1, -1 } })
             {
                 int x = JS.floor(P.x) + off[0] * d, z = JS.floor(P.z) + off[1] * d;
                 for (int y = JS.floor(P.y) + 2; y > JS.floor(P.y) - 5; y--)
                 {
                     int id = VF.getBlock(x, y, z); var b = VF.bdef(id);
-                    if (b != null && b.solid && !b.plant && !VF.isWater(id) && VF.getBlock(x, y + 1, z) == B.AIR && VF.getBlock(x, y + 2, z) == B.AIR) return new[] { x, y, z };
+                    if (!(b != null && b.solid && !b.plant && !VF.isWater(id) && VF.getBlock(x, y + 1, z) == B.AIR && VF.getBlock(x, y + 2, z) == B.AIR)) continue;
+                    Aim(x + 0.5, y + 0.98, z + 0.5);
+                    var h = VF.raycast();
+                    if (h != null && h.x == x && h.y == y && h.z == z && h.prev != null && h.prev.x == x && h.prev.y == y + 1 && h.prev.z == z) return new[] { x, y, z };
+                    break;
                 }
             }
+        P.yaw = yaw0; P.pitch = pitch0;
         return null;
     }
     /// <summary>Aims at the top of ground block g and right-clicks; returns the cell placement targets (raycast prev) or null.</summary>
@@ -291,6 +299,7 @@ static class Harness
         Check(P.flying, "flight toggled by F in creative");
         double sx = P.x, sz = P.z; int scx = JS.floor(sx / 16), scz = JS.floor(sz / 16);
         P.yaw = 0; P.pitch = 0;
+        { int top = 0; for (int k = 0; k <= 120; k++) top = Math.Max(top, VF.heightAt(JS.floor(P.x), JS.floor(P.z) - k)); if (P.y < top + 16) P.y = top + 16; }
         HeadlessHost.PressKey(KeyCode.W); Frames(3); HeadlessHost.ReleaseKey(KeyCode.W); Frames(2); HeadlessHost.PressKey(KeyCode.W); // double tap = sprint latch
         var flyEnd = DateTime.UtcNow.AddSeconds(5);
         { int fi = 0; while (DateTime.UtcNow < flyEnd) { Frame(); if (++fi % 60 == 0) Info("fly t" + fi + ": pos " + JS.Fixed(P.x, 2) + "," + JS.Fixed(P.y, 2) + "," + JS.Fixed(P.z, 2) + " v " + JS.Fixed(P.vx, 2) + "," + JS.Fixed(P.vy, 2) + "," + JS.Fixed(P.vz, 2) + " fly " + P.flying + " wall " + P.hitWall + " sprint " + P.sprinting + " dt " + JS.Fixed(Time.deltaTime, 4)); } }
@@ -601,6 +610,9 @@ static class Harness
             }
             else Check(false, "furnace placed (toast '" + VF.toastText + "')");
         }
+        // look up at the sky: a right click aimed at the furnace/chest just used would reopen its UI instead of eating (placeBlock order)
+        Check(!VF.uiOpen, "container UI closed before eating");
+        P.pitch = -1.2; Frame();
         P.hunger = 10; Give(2, "bread", 3);
         ClickMouse(1); Frames(5);
         Check(P.hunger > 10, "ate bread (hunger " + P.hunger + ")");
