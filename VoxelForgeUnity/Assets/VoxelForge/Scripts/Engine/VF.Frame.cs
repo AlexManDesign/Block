@@ -213,6 +213,11 @@ namespace VoxelForge
             started = false; worldReady = false; pauseOpen = false; uiOpen = false; initialSpawnPending = false; resumeLoadPending = false;
             startScreenVisible = true; hudVisible = false; deathUIVisible = false; startButtonsDisabled = false;
             settingsOpen = false; modsOpen = false; sleepOverlayState = 0; player.sleeping = false; player.dead = false;
+            // A page reload re-runs `let day = 0.18` and the player literal; loadGame() only restores what a save contains.
+            day = 0.18; player.yaw = 0; player.pitch = 0; player.camMode = 0; player.vx = player.vy = player.vz = 0; player.onGround = false;
+            player.swimming = false; player.sneaking = false; player.inWater = false; player.hitWall = false; player.boostUntil = 0;
+            interactionPrevYaw = interactionPrevPitch = interactionPrevX = interactionPrevZ = double.NaN;
+            streamCleanupIter = null; queue.Clear();
             startNote = "Старые сохранения Creator/Survival автоматически показываются как legacy-миры и продолжают использовать прежние данные.";
             releasePointerLock(false);
         }

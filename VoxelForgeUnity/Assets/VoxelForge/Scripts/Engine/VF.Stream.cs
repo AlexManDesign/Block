@@ -150,10 +150,36 @@ namespace VoxelForge
             for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) if ((dx != 0 || dz != 0) && chunkFastGet(c.cx + dx, c.cz + dz) == null) return false;
             return true;
         }
+        // In-place stable sort by streamPriority (JS Array.sort is stable); keys are computed once into a reused buffer.
+        static int[] prioSortKeys = new int[0];
+        static void sortJobsByKeys<T>(List<T> list, int n)
+        {
+            var k = prioSortKeys;
+            for (int i = 1; i < n; i++)
+            {
+                int kv = k[i]; T v = list[i]; int j = i - 1;
+                while (j >= 0 && k[j] > kv) { k[j + 1] = k[j]; list[j + 1] = list[j]; j--; }
+                k[j + 1] = kv; list[j + 1] = v;
+            }
+        }
+        static void sortGenJobsByPriority(int pcx, int pcz)
+        {
+            int n = genJobs.Count; if (n < 2) return;
+            if (prioSortKeys.Length < n) prioSortKeys = new int[Math.Max(n, prioSortKeys.Length * 2)];
+            for (int i = 0; i < n; i++) prioSortKeys[i] = streamPriority(genJobs[i].cx, genJobs[i].cz, pcx, pcz);
+            sortJobsByKeys(genJobs, n);
+        }
+        static void sortMeshJobsByPriority(int pcx, int pcz)
+        {
+            int n = meshJobs.Count; if (n < 2) return;
+            if (prioSortKeys.Length < n) prioSortKeys = new int[Math.Max(n, prioSortKeys.Length * 2)];
+            for (int i = 0; i < n; i++) prioSortKeys[i] = streamPriority(meshJobs[i].cx, meshJobs[i].cz, pcx, pcz);
+            sortJobsByKeys(meshJobs, n);
+        }
         static void prioritizeWorkerQueues(int pcx, int pcz)
         {
-            if (genJobs.Count > 1) { var s = genJobs.OrderBy(a => streamPriority(a.cx, a.cz, pcx, pcz)).ToList(); genJobs.Clear(); genJobs.AddRange(s); }
-            if (meshJobs.Count > 1) { var s = meshJobs.OrderBy(a => streamPriority(a.cx, a.cz, pcx, pcz)).ToList(); meshJobs.Clear(); meshJobs.AddRange(s); }
+            sortGenJobsByPriority(pcx, pcz);
+            sortMeshJobsByPriority(pcx, pcz);
         }
         static int[] genPickDist = new int[0], genPickCX = new int[0], genPickCZ = new int[0];
         static void fillGenJobsMain(int pcx, int pcz, double deadline)
@@ -292,7 +318,7 @@ namespace VoxelForge
                     if (queueChunkMesh(c)) sent++;
                     avgMeshQueueMs += (JS.now() - ts - avgMeshQueueMs) * 0.2;
                 }
-                if (meshJobs.Count > 1) { var s = meshJobs.OrderBy(a => streamPriority(a.cx, a.cz, pcx, pcz)).ToList(); meshJobs.Clear(); meshJobs.AddRange(s); }
+                sortMeshJobsByPriority(pcx, pcz);
                 pumpMeshWorkers();
             }
             cleanupStreamCache(pcx, pcz, deadline, interactionHot ? 12 : 48);

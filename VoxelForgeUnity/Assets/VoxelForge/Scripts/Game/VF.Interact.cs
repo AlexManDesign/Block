@@ -913,7 +913,7 @@ namespace VoxelForge
                         {
                             st.count--;
                             int left = addItem(filled, 1);
-                            if (left != 0) { st.count++; toast("Нет места для наполненного ведра"); return true; }
+                            if (left != 0) { st.count++; toast("Нет места для наполненного ведра"); return false; } // JS: return toast(...) -> undefined (falsy), placeBlock continues
                         }
                         else inventory[selected] = new Stack { key = filled, count = 1 };
                     }

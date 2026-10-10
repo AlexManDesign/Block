@@ -11,6 +11,9 @@ namespace VoxelForge
         sealed class Node { public K key; public V val; public Node prev, next; public bool removed; }
         readonly Dictionary<K, Node> map;
         Node head, tail;
+        // Removed nodes whose 'next' was the end of the list when they were unlinked: the next appended node is
+        // linked from them too, so an enumerator parked on one of them still reaches entries added afterwards (JS Map).
+        List<Node> deadTails;
         public OrderedMap() { map = new Dictionary<K, Node>(); }
         public OrderedMap(IEqualityComparer<K> cmp) { map = new Dictionary<K, Node>(cmp); }
         public int Count { get { return map.Count; } }
@@ -25,6 +28,7 @@ namespace VoxelForge
             if (map.TryGetValue(k, out n)) { n.val = v; return; }
             n = new Node { key = k, val = v, prev = tail };
             if (tail != null) tail.next = n; else head = n;
+            if (deadTails != null && deadTails.Count > 0) { foreach (var d in deadTails) d.next = n; deadTails.Clear(); }
             tail = n; map[k] = n;
         }
         public V this[K k] { get { return map[k].val; } set { Set(k, value); } }
@@ -34,7 +38,7 @@ namespace VoxelForge
             if (!map.TryGetValue(k, out n)) return false;
             map.Remove(k); n.removed = true;
             if (n.prev != null) n.prev.next = n.next; else head = n.next;
-            if (n.next != null) n.next.prev = n.prev; else tail = n.prev;
+            if (n.next != null) n.next.prev = n.prev; else { tail = n.prev; addDeadTail(n); }
             // keep n.next so an iterator sitting on n can continue
             return true;
         }
@@ -42,8 +46,10 @@ namespace VoxelForge
         public void Clear()
         {
             for (var n = head; n != null; n = n.next) n.removed = true;
+            if (tail != null) addDeadTail(tail);
             map.Clear(); head = tail = null;
         }
+        void addDeadTail(Node n) { if (deadTails == null) deadTails = new List<Node>(); deadTails.Add(n); }
         public IEnumerator<KeyValuePair<K, V>> GetEnumerator()
         {
             var n = head;

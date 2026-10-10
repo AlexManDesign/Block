@@ -150,11 +150,10 @@ namespace VoxelForge
             quad(v, i, x + cx - r, y + y0, z + cz - r, r * 2, 0, r * 2, 0, h, 0, tile, 0.95f, 1, false, null, sky(L), blk(L), cls, true);
             quad(v, i, x + cx + r, y + y0, z + cz - r, -r * 2, 0, r * 2, 0, h, 0, tile, 0.95f, 1, false, null, sky(L), blk(L), cls, true);
         }
-        static List<double[]> vStairBoxes(JObj m)
+        List<double[]> vStairBoxes(JObj m)
         {
             var f = (m != null ? m.Str("facing") : null) ?? "south"; bool up = m != null && m.Bool("upper");
-            double lo = up ? 0 : 0.5, hi = up ? 0.5 : 1;
-            return new List<double[]> { up ? new[] { 0, 0.5, 0, 1, 1, 1.0 } : new[] { 0, 0, 0, 1, 0.5, 1.0 }, rotateBox(new[] { 0, lo, 0.5, 1, hi, 1 }, f) };
+            return boxes(up ? BOX_SLAB_TOP : BOX_SLAB_BOT, STAIR_STEP[up ? 1 : 0][0][faceIndexForFacing(f)]);
         }
         static readonly double[][][] FENCE_ARMS = {
             new[] { new[] { 1.0, 0 }, new[] { 0.625, 0.375, 0.4375, 1, 0.5625, 0.5625 }, new[] { 0.625, 0.75, 0.4375, 1, 0.9375, 0.5625 } },
@@ -171,18 +170,18 @@ namespace VoxelForge
         {
             if (sp == "fence")
             {
-                var a = new List<double[]> { new[] { 0.375, 0, 0.375, 0.625, 1, 0.625 } };
+                var a = boxes(BOX_FENCE_POST);
                 foreach (var q in FENCE_ARMS) if (virtualConnects(x + (int)q[0][0], y, z + (int)q[0][1])) { a.Add(q[1]); a.Add(q[2]); }
                 return a;
             }
             if (sp == "wall")
             {
-                var a = new List<double[]> { new[] { 0.25, 0, 0.25, 0.75, 1, 0.75 } };
+                var a = boxes(BOX_WALL_POST);
                 foreach (var q in WALL_ARMS) if (virtualConnects(x + (int)q[0][0], y, z + (int)q[0][1])) a.Add(q[1]);
                 return a;
             }
             {
-                var a = new List<double[]> { new[] { 0.4375, 0, 0.4375, 0.5625, 1, 0.5625 } };
+                var a = boxes(BOX_PANE_POST);
                 foreach (var q in PANE_ARMS) if (virtualConnects(x + (int)q[0][0], y, z + (int)q[0][1])) a.Add(q[1]);
                 return a;
             }
@@ -190,29 +189,29 @@ namespace VoxelForge
         List<double[]> vShapeBoxes(MDef b, JObj m, int x, int y, int z)
         {
             var sp = b.sp;
-            if (m != null && m.Bool("bedPart")) return new List<double[]> { new[] { 0, 0, 0, 1, 0.56, 1 } };
-            if (sp == "slab") return new List<double[]> { m != null && m.Bool("upper") ? new[] { 0, 0.5, 0, 1, 1, 1.0 } : new[] { 0, 0, 0, 1, 0.5, 1.0 } };
+            if (m != null && m.Bool("bedPart")) return boxes(BOX_BED);
+            if (sp == "slab") return boxes(m != null && m.Bool("upper") ? BOX_SLAB_TOP : BOX_SLAB_BOT);
             if (sp == "stairs") return vStairBoxes(m);
             if (sp == "fence" || sp == "wall" || sp == "pane") return connectBoxes(sp, x, y, z);
             if (sp == "gate")
             {
                 var f = (m != null ? m.Str("facing") : null) ?? "south"; bool axis = f == "east" || f == "west";
-                var posts = axis ? new List<double[]> { new[] { 0.05, 0, 0.36, 0.18, 1, 0.64 }, new[] { 0.82, 0, 0.36, 0.95, 1, 0.64 } } : new List<double[]> { new[] { 0.36, 0, 0.05, 0.64, 1, 0.18 }, new[] { 0.36, 0, 0.82, 0.64, 1, 0.95 } };
+                var posts = boxes(axis ? GATE_POSTS_X[0] : GATE_POSTS_Z[0], axis ? GATE_POSTS_X[1] : GATE_POSTS_Z[1]);
                 if (m != null && m.Bool("open")) return posts;
-                posts.AddRange(axis ? new[] { new[] { 0.18, 0.34, 0.43, 0.82, 0.5, 0.57 }, new[] { 0.18, 0.7, 0.43, 0.82, 0.86, 0.57 } } : new[] { new[] { 0.43, 0.34, 0.18, 0.57, 0.5, 0.82 }, new[] { 0.43, 0.7, 0.18, 0.57, 0.86, 0.82 } });
+                var rails = axis ? GATE_RAILS_X : GATE_RAILS_Z; posts.Add(rails[0]); posts.Add(rails[1]);
                 return posts;
             }
             if (sp == "trapdoor")
             {
-                if (m != null && m.Bool("open")) return new List<double[]> { rotateBox(new[] { 0, 0, 0.8125, 1, 1, 1.0 }, (m.Str("facing")) ?? "south") };
-                return new List<double[]> { m != null && m.Bool("upper") ? new[] { 0, 0.8125, 0, 1, 1, 1.0 } : new[] { 0, 0, 0, 1, 0.1875, 1.0 } };
+                if (m != null && m.Bool("open")) return boxes(TRAP_OPEN[faceIndexForFacing(m.Str("facing") ?? "south")]);
+                return boxes(m != null && m.Bool("upper") ? BOX_TRAP_TOP : BOX_TRAP_BOT);
             }
-            if (sp == "carpet" || sp == "lilypad" || sp == "rail") return new List<double[]> { new[] { 0, 0, 0, 1, 0.0625, 1.0 } };
-            if (sp == "plate") { double ph = m != null && m.Bool("pressed") ? 0.03125 : 0.0625; return new List<double[]> { new[] { 0.0625, 0, 0.0625, 0.9375, ph, 0.9375 } }; }
-            if (sp == "button") return new List<double[]> { workerButtonBox(m) };
-            if (sp == "seapickle") return new List<double[]> { new[] { 0.375, 0, 0.375, 0.625, 0.375, 0.625 } };
-            if (sp == "bamboo") return new List<double[]> { new[] { 0.4375, 0, 0.4375, 0.5625, 1, 0.5625 } };
-            if (sp == "pot") return new List<double[]> { new[] { 0.3125, 0, 0.3125, 0.6875, 0.375, 0.6875 } };
+            if (sp == "carpet" || sp == "lilypad" || sp == "rail") return boxes(BOX_CARPET);
+            if (sp == "plate") return boxes(m != null && m.Bool("pressed") ? BOX_PLATE_DOWN : BOX_PLATE);
+            if (sp == "button") return boxes(workerButtonBox(m));
+            if (sp == "seapickle") return boxes(SEA_PICKLES[0]);
+            if (sp == "bamboo") return boxes(BOX_BAMBOO);
+            if (sp == "pot") return boxes(BOX_POT);
             return null;
         }
         static string rotateDoorOpen(string f) { return f == "north" ? "east" : f == "east" ? "south" : f == "south" ? "west" : f == "west" ? "north" : f; }
@@ -576,6 +575,7 @@ namespace VoxelForge
         readonly List<FlatCell> flatCells = new List<FlatCell>();
         VBuf flatCollectV;
         readonly int[] flatGrid = new int[C * C];
+        readonly List<List<FlatCell>> flatGroups = new List<List<FlatCell>>(); readonly Dictionary<long, int> flatGroupIdx = new Dictionary<long, int>();
         void flushFlatWaterTops(VBuf v, IBuf i)
         {
             var collectV = flatCollectV; flatCollectV = null;
@@ -583,18 +583,18 @@ namespace VoxelForge
             var wb = def(B.WATER); double alpha = wb != null ? wb.alpha : 0.62; int tile = faceTile(B.WATER, 1, 1);
             int a8 = (int)Math.Max(0, Math.Min(255, Math.Floor(alpha * 255 + 0.5))); float packed = FLUID_FACE_SHADE[2] + a8 * 2;
             // group by (y, h, lp) preserving first-seen order
-            var groups = new List<List<FlatCell>>(); var gidx = new Dictionary<long, int>();
+            var groups = flatGroups; var gidx = flatGroupIdx; gidx.Clear(); int gn = 0; // pooled per instance
             foreach (var q in flatCells)
             {
                 long k = ((long)q.y << 40) ^ ((long)BitConverterCompat.SingleBits(q.h) << 8) ^ q.lp;
-                int gi; if (!gidx.TryGetValue(k, out gi)) { gi = groups.Count; gidx[k] = gi; groups.Add(new List<FlatCell>()); }
+                int gi; if (!gidx.TryGetValue(k, out gi)) { gi = gn++; gidx[k] = gi; if (gi == groups.Count) groups.Add(new List<FlatCell>()); else groups[gi].Clear(); }
                 groups[gi].Add(q);
             }
-            flatCells.Clear();
+            flatCells.Clear(); gidx.Clear();
             var grid = flatGrid; Array.Clear(grid, 0, grid.Length); int stamp = 0;
-            foreach (var g in groups)
+            for (int gix = 0; gix < gn; gix++)
             {
-                stamp++;
+                var g = groups[gix]; stamp++;
                 int y = g[0].y; float h = g[0].h; int lp = g[0].lp; float yy = y + h - 0.001f;
                 foreach (var q in g) grid[q.z * C + q.x] = stamp;
                 for (int z = 0; z < C; z++)
@@ -723,39 +723,56 @@ namespace VoxelForge
         static bool axisLogId(int id) { return id == B.LOG || id == B.SPRUCE_LOG || id == B.BIRCH_LOG || id == B.JUNGLE_LOG || id == B.ACACIA_LOG || id == B.DARK_LOG; }
         static int faceIndexForFacing(string f) { return f == "west" ? 1 : f == "north" ? 2 : f == "east" ? 3 : 0; }
         static readonly int[][] MAIN_STAIR_DIR = { new[] { 0, 1 }, new[] { -1, 0 }, new[] { 0, -1 }, new[] { 1, 0 } };
+        // Fixed box shapes are cached (read-only) and box lists are written into one reusable per-instance list: callers only iterate it immediately.
+        static readonly double[] BOX_SLAB_TOP = { 0, 0.5, 0, 1, 1, 1.0 }, BOX_SLAB_BOT = { 0, 0, 0, 1, 0.5, 1.0 }, BOX_TRAP_TOP = { 0, 0.8125, 0, 1, 1, 1.0 }, BOX_TRAP_BOT = { 0, 0, 0, 1, 0.1875, 1.0 },
+            BOX_CARPET = { 0, 0, 0, 1, 0.0625, 1.0 }, BOX_PLATE = { 0.0625, 0, 0.0625, 0.9375, 0.0625, 0.9375 }, BOX_PLATE_DOWN = { 0.0625, 0, 0.0625, 0.9375, 0.03125, 0.9375 },
+            BOX_BAMBOO = { 0.4375, 0, 0.4375, 0.5625, 1, 0.5625 }, BOX_POT = { 0.3125, 0, 0.3125, 0.6875, 0.375, 0.6875 }, BOX_BED = { 0, 0, 0, 1, 0.56, 1 },
+            BOX_FENCE_POST = { 0.375, 0, 0.375, 0.625, 1, 0.625 }, BOX_WALL_POST = { 0.25, 0, 0.25, 0.75, 1, 0.75 }, BOX_PANE_POST = { 0.4375, 0, 0.4375, 0.5625, 1, 0.5625 };
+        static readonly double[][] SEA_PICKLES = { new[] { 0.375, 0, 0.375, 0.625, 0.375, 0.625 }, new[] { 0.18, 0, 0.22, 0.43, 0.3125, 0.47 }, new[] { 0.6, 0, 0.5, 0.85, 0.4375, 0.75 }, new[] { 0.32, 0, 0.62, 0.57, 0.3125, 0.87 } };
+        static readonly double[][] GATE_POSTS_X = { new[] { 0.05, 0, 0.36, 0.18, 1, 0.64 }, new[] { 0.82, 0, 0.36, 0.95, 1, 0.64 } }, GATE_POSTS_Z = { new[] { 0.36, 0, 0.05, 0.64, 1, 0.18 }, new[] { 0.36, 0, 0.82, 0.64, 1, 0.95 } },
+            GATE_OPEN_X = { new[] { 0.05, 0.34, 0.18, 0.42, 0.9, 0.34 }, new[] { 0.58, 0.34, 0.66, 0.95, 0.9, 0.82 } }, GATE_OPEN_Z = { new[] { 0.18, 0.34, 0.05, 0.34, 0.9, 0.42 }, new[] { 0.66, 0.34, 0.58, 0.82, 0.9, 0.95 } },
+            GATE_RAILS_X = { new[] { 0.18, 0.34, 0.43, 0.82, 0.5, 0.57 }, new[] { 0.18, 0.7, 0.43, 0.82, 0.86, 0.57 } }, GATE_RAILS_Z = { new[] { 0.43, 0.34, 0.18, 0.57, 0.5, 0.82 }, new[] { 0.43, 0.7, 0.18, 0.57, 0.86, 0.82 } };
+        static readonly string[] ROT_FACINGS = { "south", "west", "north", "east" };
+        static double[][] rot4(double[] b) { var r = new double[4][]; for (int k = 0; k < 4; k++) r[k] = rotateBox(b, ROT_FACINGS[k]); return r; }
+        static readonly double[][] TRAP_OPEN = rot4(new[] { 0, 0, 0.8125, 1, 1, 1.0 });
+        // STAIR_STEP[up][kind][dir]: kind 0 straight step, 1/2 outer corner left/right, 3/4 inner corner extra left/right (rotateBox(q, facing) for dir = faceIndexForFacing(facing)).
+        static readonly double[][][][] STAIR_STEP = { stairSteps(0.5, 1), stairSteps(0, 0.5) };
+        static double[][][] stairSteps(double lo, double hi)
+        {
+            return new[] { rot4(new[] { 0, lo, 0.5, 1, hi, 1 }), rot4(new[] { 0, lo, 0.5, 0.5, hi, 1 }), rot4(new[] { 0.5, lo, 0.5, 1, hi, 1 }), rot4(new[] { 0, lo, 0, 0.5, hi, 0.5 }), rot4(new[] { 0.5, lo, 0, 1, hi, 0.5 }) };
+        }
+        readonly List<double[]> boxScratch = new List<double[]>(16);
+        List<double[]> boxes(double[] a) { var o = boxScratch; o.Clear(); o.Add(a); return o; }
+        List<double[]> boxes(double[] a, double[] b) { var o = boxScratch; o.Clear(); o.Add(a); o.Add(b); return o; }
+        bool stairAt(int xx, int y, int zz) { var q = def(at(xx, y, zz)); return q != null && q.special == "stairs"; }
+        bool stairGuard(int x, int y, int z, int wantDir, bool wantUp, int testDir)
+        {
+            var dd = MAIN_STAIR_DIR[testDir]; int xx = x + dd[0], zz = z + dd[1]; var mm = vmeta(xx, y, zz);
+            return !stairAt(xx, y, zz) || faceIndexForFacing(mm.Str("facing") ?? "south") != wantDir || mm.Bool("upper") != wantUp;
+        }
         List<double[]> stairBoxesMain(int id, int x, int y, int z, JObj m)
         {
             var facing = m.Str("facing") ?? "south"; int dir = faceIndexForFacing(facing); bool up = m.Bool("upper");
-            double lo = up ? 0 : 0.5, hi = up ? 0.5 : 1;
-            var parts = new List<double[]> { up ? new[] { 0, 0.5, 0, 1, 1, 1.0 } : new[] { 0, 0, 0, 1, 0.5, 1.0 } };
-            Func<int, int, JObj> metaAt = (xx, zz) => vmeta(xx, y, zz);
-            Func<int, int, bool> isStair = (xx, zz) => { var q = def(at(xx, y, zz)); return q != null && q.special == "stairs"; };
-            Func<int, bool, int, bool> guard = (wantDir, wantUp, testDir) =>
-            {
-                var dd = MAIN_STAIR_DIR[testDir]; int xx = x + dd[0], zz = z + dd[1]; var mm = metaAt(xx, zz);
-                return !isStair(xx, zz) || faceIndexForFacing(mm.Str("facing") ?? "south") != wantDir || mm.Bool("upper") != wantUp;
-            };
-            string cornerType = null; bool cornerLeft = false;
-            var d = MAIN_STAIR_DIR[dir]; int x1 = x + d[0], z1 = z + d[1]; var nm = metaAt(x1, z1);
-            if (isStair(x1, z1) && nm.Bool("upper") == up)
+            var parts = boxes(up ? BOX_SLAB_TOP : BOX_SLAB_BOT); var st = STAIR_STEP[up ? 1 : 0];
+            int cornerType = 0; bool cornerLeft = false; // 0 none, 1 outer, 2 inner
+            var d = MAIN_STAIR_DIR[dir]; int x1 = x + d[0], z1 = z + d[1]; var nm = vmeta(x1, y, z1);
+            if (stairAt(x1, y, z1) && nm.Bool("upper") == up)
             {
                 int nd = faceIndexForFacing(nm.Str("facing") ?? "south");
-                if ((nd & 1) != (dir & 1) && guard(dir, up, (nd + 2) & 3)) { cornerType = "outer"; cornerLeft = nd == ((dir + 1) & 3); }
+                if ((nd & 1) != (dir & 1) && stairGuard(x, y, z, dir, up, (nd + 2) & 3)) { cornerType = 1; cornerLeft = nd == ((dir + 1) & 3); }
             }
-            if (cornerType == null)
+            if (cornerType == 0)
             {
-                d = MAIN_STAIR_DIR[(dir + 2) & 3]; x1 = x + d[0]; z1 = z + d[1]; nm = metaAt(x1, z1);
-                if (isStair(x1, z1) && nm.Bool("upper") == up)
+                d = MAIN_STAIR_DIR[(dir + 2) & 3]; x1 = x + d[0]; z1 = z + d[1]; nm = vmeta(x1, y, z1);
+                if (stairAt(x1, y, z1) && nm.Bool("upper") == up)
                 {
                     int nd = faceIndexForFacing(nm.Str("facing") ?? "south");
-                    if ((nd & 1) != (dir & 1) && guard(dir, up, nd)) { cornerType = "inner"; cornerLeft = nd == ((dir + 1) & 3); }
+                    if ((nd & 1) != (dir & 1) && stairGuard(x, y, z, dir, up, nd)) { cornerType = 2; cornerLeft = nd == ((dir + 1) & 3); }
                 }
             }
-            List<double[]> step;
-            if (cornerType == "outer") step = new List<double[]> { cornerLeft ? new[] { 0, lo, 0.5, 0.5, hi, 1 } : new[] { 0.5, lo, 0.5, 1, hi, 1 } };
-            else if (cornerType == "inner") step = new List<double[]> { new[] { 0, lo, 0.5, 1, hi, 1 }, cornerLeft ? new[] { 0, lo, 0, 0.5, hi, 0.5 } : new[] { 0.5, lo, 0, 1, hi, 0.5 } };
-            else step = new List<double[]> { new[] { 0, lo, 0.5, 1, hi, 1 } };
-            foreach (var q in step) parts.Add(rotateBox(q, facing));
+            if (cornerType == 1) parts.Add(st[cornerLeft ? 1 : 2][dir]);
+            else if (cornerType == 2) { parts.Add(st[0][dir]); parts.Add(st[cornerLeft ? 3 : 4][dir]); }
+            else parts.Add(st[0][dir]);
             return parts;
         }
         sealed class WheelMask { public int[][] hub, disc, grip; }
@@ -829,33 +846,31 @@ namespace VoxelForge
         List<double[]> shapeBoxes(int id, int x, int y, int z, JObj m)
         {
             var b = def(id); var sp = b != null ? b.special : null;
-            if (sp == "slab") return new List<double[]> { m.Bool("upper") ? new[] { 0, 0.5, 0, 1, 1, 1.0 } : new[] { 0, 0, 0, 1, 0.5, 1.0 } };
+            if (sp == "slab") return boxes(m.Bool("upper") ? BOX_SLAB_TOP : BOX_SLAB_BOT);
             if (sp == "stairs") return stairBoxesMain(id, x, y, z, m);
             if (sp == "fence" || sp == "wall" || sp == "pane") return connectBoxes(sp, x, y, z);
             if (sp == "gate")
             {
                 var f = m.Str("facing") ?? "south"; bool axis = f == "east" || f == "west";
-                var posts = axis ? new List<double[]> { new[] { 0.05, 0, 0.36, 0.18, 1, 0.64 }, new[] { 0.82, 0, 0.36, 0.95, 1, 0.64 } } : new List<double[]> { new[] { 0.36, 0, 0.05, 0.64, 1, 0.18 }, new[] { 0.36, 0, 0.82, 0.64, 1, 0.95 } };
-                if (m.Bool("open")) { posts.AddRange(axis ? new[] { new[] { 0.05, 0.34, 0.18, 0.42, 0.9, 0.34 }, new[] { 0.58, 0.34, 0.66, 0.95, 0.9, 0.82 } } : new[] { new[] { 0.18, 0.34, 0.05, 0.34, 0.9, 0.42 }, new[] { 0.66, 0.34, 0.58, 0.82, 0.9, 0.95 } }); return posts; }
-                posts.AddRange(axis ? new[] { new[] { 0.18, 0.34, 0.43, 0.82, 0.5, 0.57 }, new[] { 0.18, 0.7, 0.43, 0.82, 0.86, 0.57 } } : new[] { new[] { 0.43, 0.34, 0.18, 0.57, 0.5, 0.82 }, new[] { 0.43, 0.7, 0.18, 0.57, 0.86, 0.82 } });
+                var posts = boxes(axis ? GATE_POSTS_X[0] : GATE_POSTS_Z[0], axis ? GATE_POSTS_X[1] : GATE_POSTS_Z[1]);
+                var rails = m.Bool("open") ? (axis ? GATE_OPEN_X : GATE_OPEN_Z) : (axis ? GATE_RAILS_X : GATE_RAILS_Z); posts.Add(rails[0]); posts.Add(rails[1]);
                 return posts;
             }
             if (sp == "trapdoor")
             {
-                if (m.Bool("open")) return new List<double[]> { rotateBox(new[] { 0, 0, 0.8125, 1, 1, 1.0 }, m.Str("facing") ?? "south") };
-                return new List<double[]> { m.Bool("upper") ? new[] { 0, 0.8125, 0, 1, 1, 1.0 } : new[] { 0, 0, 0, 1, 0.1875, 1.0 } };
+                if (m.Bool("open")) return boxes(TRAP_OPEN[faceIndexForFacing(m.Str("facing") ?? "south")]);
+                return boxes(m.Bool("upper") ? BOX_TRAP_TOP : BOX_TRAP_BOT);
             }
-            if (sp == "carpet" || sp == "lilypad") return new List<double[]> { new[] { 0, 0, 0, 1, 0.0625, 1.0 } };
-            if (sp == "plate") { double ph = m.Bool("pressed") ? 0.03125 : 0.0625; return new List<double[]> { new[] { 0.0625, 0, 0.0625, 0.9375, ph, 0.9375 } }; }
-            if (sp == "button") return new List<double[]> { workerButtonBox(m) };
+            if (sp == "carpet" || sp == "lilypad") return boxes(BOX_CARPET);
+            if (sp == "plate") return boxes(m.Bool("pressed") ? BOX_PLATE_DOWN : BOX_PLATE);
+            if (sp == "button") return boxes(workerButtonBox(m));
             if (sp == "seapickle")
             {
                 int n = Math.Max(1, Math.Min(4, m.Int("count") != 0 ? m.Int("count") : 1));
-                var P = new[] { new[] { 0.375, 0, 0.375, 0.625, 0.375, 0.625 }, new[] { 0.18, 0, 0.22, 0.43, 0.3125, 0.47 }, new[] { 0.6, 0, 0.5, 0.85, 0.4375, 0.75 }, new[] { 0.32, 0, 0.62, 0.57, 0.3125, 0.87 } };
-                var o = new List<double[]>(); for (int k = 0; k < n; k++) o.Add(P[k]); return o;
+                var o = boxScratch; o.Clear(); for (int k = 0; k < n; k++) o.Add(SEA_PICKLES[k]); return o;
             }
-            if (sp == "bamboo") return new List<double[]> { new[] { 0.4375, 0, 0.4375, 0.5625, 1, 0.5625 } };
-            if (sp == "pot") return new List<double[]> { new[] { 0.3125, 0, 0.3125, 0.6875, 0.375, 0.6875 } };
+            if (sp == "bamboo") return boxes(BOX_BAMBOO);
+            if (sp == "pot") return boxes(BOX_POT);
             return null;
         }
         void boxPart(VBuf v, IBuf i, int id, int x, int y, int z, double[] bx, double alpha = 1)
@@ -893,6 +908,7 @@ namespace VoxelForge
         }
         static readonly int[][] RAIL_DIRS = { new[] { 1, 0 }, new[] { -1, 0 }, new[] { 0, 1 }, new[] { 0, -1 } };
         static readonly float[][] RAIL_UVS = { new float[] { 0, 0, 1, 0, 0, 1, 1, 1 }, new float[] { 0, 1, 0, 0, 1, 1, 1, 0 }, new float[] { 1, 1, 0, 1, 1, 0, 0, 0 }, new float[] { 1, 0, 1, 1, 0, 0, 0, 1 } };
+        static float railUp(int d, float px, float pz) { const float eps = 0.0625f; return d == 0 ? (px > 0.5f ? 1 : eps) : d == 1 ? (px < 0.5f ? 1 : eps) : d == 2 ? (pz > 0.5f ? 1 : eps) : pz < 0.5f ? 1 : eps; }
         static int railCurveUV(int xd, int zd) { return xd == 0 && zd == 2 ? 0 : xd == 0 && zd == 3 ? 3 : xd == 1 && zd == 2 ? 1 : 2; }
         void emitRail(VBuf v, IBuf i, int id, int x, int y, int z, MDef b, JObj m)
         {
@@ -907,9 +923,8 @@ namespace VoxelForge
             if (slope >= 0)
             {
                 int d = slope;
-                Func<float, float, float> up = (px, pz) => d == 0 ? (px > 0.5f ? 1 : eps) : d == 1 ? (px < 0.5f ? 1 : eps) : d == 2 ? (pz > 0.5f ? 1 : eps) : pz < 0.5f ? 1 : eps;
                 var uv = d == 0 || d == 1 ? RAIL_UVS[1] : RAIL_UVS[0];
-                quadPoints(v, i, x, y + up(0, 0), z, x + 1, y + up(1, 0), z, x, y + up(0, 1), z + 1, x + 1, y + up(1, 1), z + 1, b.top, 0.96f, b.alpha, false, uv, sky(L), blk(L), cls);
+                quadPoints(v, i, x, y + railUp(d, 0, 0), z, x + 1, y + railUp(d, 1, 0), z, x, y + railUp(d, 0, 1), z + 1, x + 1, y + railUp(d, 1, 1), z + 1, b.top, 0.96f, b.alpha, false, uv, sky(L), blk(L), cls);
                 return;
             }
             string kind; int axis = 0, xd = 0, zd = 0;

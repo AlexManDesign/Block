@@ -198,6 +198,8 @@ namespace VoxelForge
         public static int metaLocalKey(int x, int y, int z) { return ((y - WORLD_MIN_Y) << 8) | ((z & 15) << 4) | (x & 15); }
         public static void clearRuntimeWorld()
         {
+            // JS leaves a world via page reload, which kills any pending scheduleWorldSave timer; never let it fire against an emptied world.
+            Timers.clearTimeout(saveTimer); saveTimer = 0;
             edits.Clear(); editsByChunk.Clear(); blockMeta.Clear(); metaByChunk.Clear(); generatedMetaByChunk.Clear();
             killedMobs.Clear(); liveMobs.Clear();
             clearVehicles();

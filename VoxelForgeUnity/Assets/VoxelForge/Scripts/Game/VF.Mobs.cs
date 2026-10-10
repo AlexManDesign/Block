@@ -547,7 +547,7 @@ namespace VoxelForge
             while (i > 0)
             {
                 int p = (i - 1) >> 1;
-                if (mobPathHeapF[p] <= f) break;
+                if (mobPathHeapF[p] <= fd) break;
                 mobPathHeap[i] = mobPathHeap[p]; mobPathHeapF[i] = mobPathHeapF[p];
                 i = p;
                 mobPathHeap[i] = idx; mobPathHeapF[i] = f;
@@ -908,6 +908,7 @@ namespace VoxelForge
             }
             return fallback;
         }
+        static bool mobSwimCan(Mob m, bool wasWater, double x, double y, double z) { return mobSpaceClear(x, y, z, m) && (!wasWater || mobWaterLike(mobLoadedBlock(x, y + 0.05, z))); }
         static void mobSwimPhysics(Mob m, double dt)
         {
             if (!mobSpaceClear(m.x, m.y, m.z, m))
@@ -939,17 +940,16 @@ namespace VoxelForge
             }
             turnToward(m, dt * 4);
             bool wasWater = m.inWater == true;
-            Func<double, double, double, bool> can = (x, y, z) => mobSpaceClear(x, y, z, m) && (!wasWater || mobWaterLike(mobLoadedBlock(x, y + 0.05, z)));
             double nx = m.x + m.vx * dt;
-            if (can(nx, m.y, m.z)) m.x = nx; else { m.vx = 0; m.wishX = -m.wishX; }
+            if (mobSwimCan(m, wasWater, nx, m.y, m.z)) m.x = nx; else { m.vx = 0; m.wishX = -m.wishX; }
             double nz = m.z + m.vz * dt;
-            if (can(m.x, m.y, nz)) m.z = nz; else { m.vz = 0; m.wishZ = -m.wishZ; }
+            if (mobSwimCan(m, wasWater, m.x, m.y, nz)) m.z = nz; else { m.vz = 0; m.wishZ = -m.wishZ; }
             double dy = m.vy * dt; int vs = Math.Max(1, (int)Math.Ceiling(Math.Abs(dy) / 0.35)); double vstep = dy / vs;
             bool landed = false;
             for (int k = 0; k < vs; k++)
             {
                 double ny = m.y + vstep;
-                if (can(m.x, ny, m.z)) { m.y = ny; m.onGround = false; continue; }
+                if (mobSwimCan(m, wasWater, m.x, ny, m.z)) { m.y = ny; m.onGround = false; continue; }
                 if (vstep <= 0)
                 {
                     double gy = mobGroundHeightNear(m.x, m.z, ny, m, 0.75, 1.5);

@@ -33,6 +33,9 @@ namespace VoxelForge
             foreach (char c in key) sb.Append((char.IsLetterOrDigit(c) || c == '_' || c == '-') && c < 128 ? c : '_');
             return Path.Combine(Dir, sb.ToString() + "_" + ((uint)key.GetHashCode()).ToString("x8") + ".json");
         }
+        // Keys whose file exists but could not be read this session: never overwritten, so a transient lock
+        // (antivirus / cloud sync) cannot make the game regenerate and clobber the real save.
+        static readonly HashSet<string> readFailed = new HashSet<string>();
         public static string getItem(string key)
         {
             if (key == null) return null;
@@ -41,13 +44,20 @@ namespace VoxelForge
                 string v;
                 if (cache.TryGetValue(key, out v)) return v;
                 if (missing.Contains(key)) return null;
-                try
+                var f = FileFor(key); var tmp = f + ".tmp"; Exception err = null;
+                for (int attempt = 0; attempt < 4; attempt++)
                 {
-                    var f = FileFor(key);
-                    if (File.Exists(f)) { v = File.ReadAllText(f, Encoding.UTF8); cache[key] = v; return v; }
+                    try
+                    {
+                        // crash between "delete old" and "move tmp" (older builds / fallback path): recover the tmp copy
+                        if (!File.Exists(f) && File.Exists(tmp)) File.Move(tmp, f);
+                        if (!File.Exists(f)) { missing.Add(key); readFailed.Remove(key); return null; }
+                        v = File.ReadAllText(f, Encoding.UTF8); cache[key] = v; readFailed.Remove(key); return v;
+                    }
+                    catch (Exception e) { err = e; if (attempt < 3) System.Threading.Thread.Sleep(10 + attempt * 20); }
                 }
-                catch { }
-                missing.Add(key);
+                readFailed.Add(key);
+                UnityEngine.Debug.LogError("localStorage read failed for '" + key + "' (writes to it are blocked this session): " + (err != null ? err.Message : ""));
                 return null;
             }
         }
@@ -56,13 +66,23 @@ namespace VoxelForge
             if (key == null) return;
             lock (cache)
             {
+                var f = FileFor(key); var tmp = f + ".tmp";
+                if (readFailed.Contains(key))
+                {
+                    bool exists = true; try { exists = File.Exists(f); } catch { }
+                    if (exists) { UnityEngine.Debug.LogWarning("localStorage write skipped for unreadable key '" + key + "'"); return; }
+                    readFailed.Remove(key);
+                }
                 cache[key] = value; missing.Remove(key);
                 try
                 {
-                    var f = FileFor(key); var tmp = f + ".tmp";
                     File.WriteAllText(tmp, value ?? "", Encoding.UTF8);
-                    if (File.Exists(f)) File.Delete(f);
-                    File.Move(tmp, f);
+                    if (!File.Exists(f)) File.Move(tmp, f);
+                    else
+                    {
+                        try { File.Replace(tmp, f, null); }
+                        catch (Exception) { if (File.Exists(tmp)) { File.Delete(f); File.Move(tmp, f); } }
+                    }
                 }
                 catch (Exception e) { UnityEngine.Debug.LogWarning("localStorage write failed: " + e.Message); }
             }
@@ -72,8 +92,8 @@ namespace VoxelForge
             if (key == null) return;
             lock (cache)
             {
-                cache.Remove(key); missing.Add(key);
-                try { var f = FileFor(key); if (File.Exists(f)) File.Delete(f); } catch { }
+                cache.Remove(key); missing.Add(key); readFailed.Remove(key);
+                try { var f = FileFor(key); if (File.Exists(f)) File.Delete(f); if (File.Exists(f + ".tmp")) File.Delete(f + ".tmp"); } catch { }
             }
         }
     }

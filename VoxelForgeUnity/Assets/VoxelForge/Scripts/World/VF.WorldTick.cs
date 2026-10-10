@@ -8,7 +8,9 @@ namespace VoxelForge
 {
     public static partial class VF
     {
-        static List<KeyValuePair<string, T>> snapshotSimMap<T>(OrderedMap<string, T> m) { return new List<KeyValuePair<string, T>>(m); }
+        // Shared read-only empty snapshot: an empty sim map (the common per-frame case) allocates nothing.
+        static class EmptySimSnap<T> { public static readonly List<KeyValuePair<string, T>> v = new List<KeyValuePair<string, T>>(0); }
+        static List<KeyValuePair<string, T>> snapshotSimMap<T>(OrderedMap<string, T> m) { return m.Count == 0 ? EmptySimSnap<T>.v : new List<KeyValuePair<string, T>>(m); }
 
         // ---------------- crops ----------------
         static bool cropFruitSoil(int id) { return id == B.GRASS || id == B.DIRT || id == B.PODZOL || id == B.FARMLAND || id == B.FARMLAND_MOIST; }
@@ -468,10 +470,12 @@ namespace VoxelForge
                     startFallingBlock(q[0], q[1], q[2]);
                 }
             }
-            if (fallingBlocks.Count > 1)
+            // Stable in-place insertion sort by y (== JS Array.sort((a, b) => a.y - b.y)); near-sorted between frames, no per-frame allocation.
+            for (int i = 1; i < fallingBlocks.Count; i++)
             {
-                var sorted = fallingBlocks.OrderBy(b => b.y).ToList();
-                fallingBlocks.Clear(); fallingBlocks.AddRange(sorted);
+                var b = fallingBlocks[i]; int j = i - 1;
+                while (j >= 0 && fallingBlocks[j].y > b.y) { fallingBlocks[j + 1] = fallingBlocks[j]; j--; }
+                fallingBlocks[j + 1] = b;
             }
             for (int i = 0; i < fallingBlocks.Count; i++)
             {
@@ -584,8 +588,9 @@ namespace VoxelForge
             pressurePlateAccum %= 0.05;
             double now = JS.now();
             if (!player.dead) scanPlateUnderEntity(player.x, player.y, player.z, PLAYER_COLLISION_RADIUS, true, now);
-            foreach (var m in liveMobs) { if (m.dead) continue; scanPlateUnderEntity(m.x, m.y, m.z, mobWidth(m), true, now); }
-            foreach (var q in worldDrops) scanPlateUnderEntity(q.x, q.y, q.z, 0.1, false, now);
+            // JS for-of over live arrays: plate side effects (TNT priming -> detached attachments) can push drops mid-scan.
+            for (int i = 0; i < liveMobs.Count; i++) { var m = liveMobs[i]; if (m.dead) continue; scanPlateUnderEntity(m.x, m.y, m.z, mobWidth(m), true, now); }
+            for (int i = 0; i < worldDrops.Count; i++) { var q = worldDrops[i]; scanPlateUnderEntity(q.x, q.y, q.z, 0.1, false, now); }
             foreach (var kv in new List<KeyValuePair<string, double>>(pressurePlateActive))
             {
                 if (kv.Value > now) continue;
@@ -614,7 +619,7 @@ namespace VoxelForge
         public static void tickFurnaces(double dt)
         {
             bool changed = false;
-            foreach (var kv in new List<KeyValuePair<string, Furnace>>(furnaces))
+            foreach (var kv in snapshotSimMap(furnaces))
             {
                 var f = kv.Value;
                 if (f == null) continue;

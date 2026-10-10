@@ -104,8 +104,10 @@ namespace VoxelForge
         };
         static double dropLight(WorldDrop q, double sun)
         {
-            var L = getWorldLight(q.x, q.y + 0.3, q.z);
-            return Math.Max(0.15, Math.Min(1, Math.Max(L[0] * (0.12 + 0.88 * sun), L[1]) * 0.94 + 0.06));
+            // getWorldLight decoded inline (no per-drop array allocation)
+            int p = getPackedLightWorld(JS.floor(q.x), JS.floor(q.y + 0.3), JS.floor(q.z));
+            double sky = ((p >> 4) & 15) / 15.0, blk = (p & 15) / 15.0;
+            return Math.Max(0.15, Math.Min(1, Math.Max(sky * (0.12 + 0.88 * sun), blk) * 0.94 + 0.06));
         }
         static readonly double[][] dropPts = { new double[3], new double[3], new double[3], new double[3] };
         static void setPt(int k, double x, double y, double z) { dropPts[k][0] = x; dropPts[k][1] = y; dropPts[k][2] = z; }

@@ -134,32 +134,34 @@ namespace VoxelForge
         }
         public static int facingIndexMain(string f) { return f == "west" ? 1 : f == "north" ? 2 : f == "east" ? 3 : 0; }
         static readonly int[][] MAIN_STAIR_DIR_SYNC = { new[] { 0, 1 }, new[] { -1, 0 }, new[] { 0, -1 }, new[] { 1, 0 } };
+        /// <summary>Shared read-only empty meta (never mutate) so neighbour probes allocate nothing.</summary>
+        static readonly JObj STAIR_EMPTY_META = new JObj();
+        static bool stairAtSync(int x, int y, int z) { var b = bdef(getBlock(x, y, z)); return b != null && b.special == "stairs"; }
+        static JObj stairMetaSync(int x, int y, int z) { return getBlockMeta(x, y, z) ?? STAIR_EMPTY_META; }
+        static bool stairGuardSync(int x, int y, int z, int wantDir, bool wantUp, int testDir)
+        {
+            var dd = MAIN_STAIR_DIR_SYNC[testDir]; int gx = x + dd[0], gz = z + dd[1]; var gq = stairMetaSync(gx, y, gz);
+            return !stairAtSync(gx, y, gz) || facingIndexMain(gq.Str("facing") ?? "south") != wantDir || gq.Bool("upper") != wantUp;
+        }
         static List<double[]> stairsBoxesMainSync(int id, int x, int y, int z, JObj m)
         {
             string facing = m.Str("facing") ?? "south"; int dir = facingIndexMain(facing); bool up = m.Bool("upper");
             double lo = up ? 0 : 0.5, hi = up ? 0.5 : 1;
             var outp = L(up ? new[] { 0, 0.5, 0, 1, 1, 1 } : new[] { 0, 0, 0, 1, 0.5, 1 });
-            Func<int, int, bool> isStair = (xx, zz) => { var b = bdef(getBlock(xx, y, zz)); return b != null && b.special == "stairs"; };
-            Func<int, int, JObj> mm = (xx, zz) => getBlockMeta(xx, y, zz) ?? new JObj();
-            Func<int, bool, int, bool> guard = (wantDir, wantUp, testDir) =>
-            {
-                var dd = MAIN_STAIR_DIR_SYNC[testDir]; int gx = x + dd[0], gz = z + dd[1]; var gq = mm(gx, gz);
-                return !isStair(gx, gz) || facingIndexMain(gq.Str("facing") ?? "south") != wantDir || gq.Bool("upper") != wantUp;
-            };
             string cornerType = null; bool cornerLeft = false;
-            var d = MAIN_STAIR_DIR_SYNC[dir]; int x1 = x + d[0], z1 = z + d[1]; var q = mm(x1, z1);
-            if (isStair(x1, z1) && q.Bool("upper") == up)
+            var d = MAIN_STAIR_DIR_SYNC[dir]; int x1 = x + d[0], z1 = z + d[1]; var q = stairMetaSync(x1, y, z1);
+            if (stairAtSync(x1, y, z1) && q.Bool("upper") == up)
             {
                 int nd = facingIndexMain(q.Str("facing") ?? "south");
-                if ((nd & 1) != (dir & 1) && guard(dir, up, (nd + 2) & 3)) { cornerType = "outer"; cornerLeft = nd == ((dir + 1) & 3); }
+                if ((nd & 1) != (dir & 1) && stairGuardSync(x, y, z, dir, up, (nd + 2) & 3)) { cornerType = "outer"; cornerLeft = nd == ((dir + 1) & 3); }
             }
             if (cornerType == null)
             {
-                d = MAIN_STAIR_DIR_SYNC[(dir + 2) & 3]; x1 = x + d[0]; z1 = z + d[1]; q = mm(x1, z1);
-                if (isStair(x1, z1) && q.Bool("upper") == up)
+                d = MAIN_STAIR_DIR_SYNC[(dir + 2) & 3]; x1 = x + d[0]; z1 = z + d[1]; q = stairMetaSync(x1, y, z1);
+                if (stairAtSync(x1, y, z1) && q.Bool("upper") == up)
                 {
                     int nd = facingIndexMain(q.Str("facing") ?? "south");
-                    if ((nd & 1) != (dir & 1) && guard(dir, up, nd)) { cornerType = "inner"; cornerLeft = nd == ((dir + 1) & 3); }
+                    if ((nd & 1) != (dir & 1) && stairGuardSync(x, y, z, dir, up, nd)) { cornerType = "inner"; cornerLeft = nd == ((dir + 1) & 3); }
                 }
             }
             List<double[]> step;
@@ -333,6 +335,17 @@ namespace VoxelForge
                 { var b = bdef(getBlock(x, y, z)); if (b != null && b.special == "ladder") return true; }
             return false;
         }
+        static readonly double[] RECOVER_NUDGE_RINGS = { 0.35, 0.7, 1.05 }, RECOVER_NUDGE_HEIGHTS = { 1.8, 0.85 };
+        static bool recoverTryNudge(double ox, double oz, double y, double hh)
+        {
+            foreach (var r in RECOVER_NUDGE_RINGS)
+                for (int k = 0; k < 8; k++)
+                {
+                    double a = k * Math.PI / 4, nx = ox + Math.Cos(a) * r, nz = oz + Math.Sin(a) * r;
+                    if (playerCollisionAt(nx, y, nz, hh) == null) { player.x = nx; player.y = y; player.z = nz; player.h = hh; player.vx = player.vz = 0; return true; }
+                }
+            return false;
+        }
         static bool recoverPlayerOverlapSource()
         {
             const double FULL = 1.8, SHORT = 0.85;
@@ -341,20 +354,10 @@ namespace VoxelForge
             double h = player.h != 0 ? player.h : FULL;
             if (playerCollisionAt(ox, oy, oz, h) == null) return false;
             if (playerCollisionAt(ox, oy, oz, SHORT) == null) { player.h = SHORT; return true; }
-            Func<double, double, bool> tryNudge = (y, hh) =>
-            {
-                foreach (var r in new[] { 0.35, 0.7, 1.05 })
-                    for (int k = 0; k < 8; k++)
-                    {
-                        double a = k * Math.PI / 4, nx = ox + Math.Cos(a) * r, nz = oz + Math.Sin(a) * r;
-                        if (playerCollisionAt(nx, y, nz, hh) == null) { player.x = nx; player.y = y; player.z = nz; player.h = hh; player.vx = player.vz = 0; return true; }
-                    }
-                return false;
-            };
-            if (tryNudge(oy, h)) return true;
+            if (recoverTryNudge(ox, oz, oy, h)) return true;
             double fy = Math.Floor(oy) + 0.01;
             if (fy < oy - 0.01 && playerCollisionAt(ox, fy, oz, SHORT) == null) { player.y = fy; player.h = SHORT; player.vy = 0; return true; }
-            foreach (var hh in new[] { FULL, SHORT })
+            foreach (var hh in RECOVER_NUDGE_HEIGHTS)
                 for (int d = 1; d <= 4; d++)
                 {
                     double up = Math.Floor(oy) + d + 0.01;

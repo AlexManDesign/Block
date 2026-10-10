@@ -108,10 +108,19 @@ namespace VoxelForge
         readonly int[] oceanFloodStack = new int[OCEAN_FLOOD_CAP];
         int seed;
         List<byte[]> perms = new List<byte[]>();
-        readonly Dictionary<string, RavinePlan> ravinePlanCache = new Dictionary<string, RavinePlan>();
-        readonly Dictionary<string, List<RavinePlan>> ravineChunkCache = new Dictionary<string, List<RavinePlan>>();
-        readonly Dictionary<string, MinePlan> mineshaftPlanCache = new Dictionary<string, MinePlan>();
-        readonly Dictionary<string, List<MinePlan>> mineshaftChunkCache = new Dictionary<string, List<MinePlan>>();
+        // JS keys these caches with `${seed}:${x},${z}` strings; setSeed clears them on every seed change, so an allocation-free
+        // (x,z) long key is equivalent (lookups only, never iterated). The comparer mixes both halves (long.GetHashCode is lo^hi).
+        sealed class XZKeyCmp : IEqualityComparer<long>
+        {
+            public static readonly XZKeyCmp I = new XZKeyCmp();
+            public bool Equals(long a, long b) { return a == b; }
+            public int GetHashCode(long k) { return unchecked((int)k * -1640531535 ^ (int)(k >> 32) * 668265261); }
+        }
+        static long xzKey(int x, int z) { return ((long)x << 32) | (uint)z; }
+        readonly Dictionary<long, RavinePlan> ravinePlanCache = new Dictionary<long, RavinePlan>(XZKeyCmp.I);
+        readonly Dictionary<long, List<RavinePlan>> ravineChunkCache = new Dictionary<long, List<RavinePlan>>(XZKeyCmp.I);
+        readonly Dictionary<long, MinePlan> mineshaftPlanCache = new Dictionary<long, MinePlan>(XZKeyCmp.I);
+        readonly Dictionary<long, List<MinePlan>> mineshaftChunkCache = new Dictionary<long, List<MinePlan>>(XZKeyCmp.I);
 
         // Fixed direct caches; every hit verifies x/z, so collisions only evict.
         const int COLUMN_HOT_SIZE = 65536, COLUMN_HOT_MASK = COLUMN_HOT_SIZE - 1;
@@ -226,7 +235,7 @@ namespace VoxelForge
             Array.Clear(featureKindHotValid, 0, featureKindHotValid.Length); Array.Clear(featureKindHotValue, 0, featureKindHotValue.Length);
             Array.Clear(baseBlockHotValid, 0, baseBlockHotValid.Length);
             ravinePlanCache.Clear(); ravineChunkCache.Clear(); mineshaftPlanCache.Clear(); mineshaftChunkCache.Clear();
-            structureCache.Clear();
+            foreach (var sc in structureCache) sc.Clear();
         }
 
         // ---------------- main-compatible biome climate layer ----------------
@@ -787,7 +796,7 @@ namespace VoxelForge
         }
         RavinePlan planRavine(int cellX, int cellZ)
         {
-            var key = seed + ":" + cellX + "," + cellZ; RavinePlan cached;
+            var key = xzKey(cellX, cellZ); RavinePlan cached;
             if (ravinePlanCache.TryGetValue(key, out cached)) return cached;
             if (ravinePlanCache.Count > 20000) ravinePlanCache.Clear();
             var rng = ravineRng(cellX, cellZ);
@@ -809,7 +818,7 @@ namespace VoxelForge
         }
         List<RavinePlan> ravinesForChunk(int cx, int cz)
         {
-            var key = seed + ":" + cx + "," + cz; List<RavinePlan> cached;
+            var key = xzKey(cx, cz); List<RavinePlan> cached;
             if (ravineChunkCache.TryGetValue(key, out cached)) return cached;
             if (ravineChunkCache.Count > 6000) ravineChunkCache.Clear();
             var o = new List<RavinePlan>(); int x0 = cx * CHUNK, z0 = cz * CHUNK;

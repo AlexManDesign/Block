@@ -8,15 +8,15 @@ namespace VoxelForge
 {
     public sealed partial class WorldGenKernel
     {
-        sealed class StructCfg { public int salt, spacing, sep, half, flat, flatR, depth, clearHalf; public double freq; public bool water; }
+        sealed class StructCfg { public int idx, salt, spacing, sep, half, flat, flatR, depth, clearHalf; public double freq; public bool water; }
         static readonly Dictionary<string, StructCfg> STRUCT_CFG = new Dictionary<string, StructCfg> {
-            { "pyramid", new StructCfg { salt = 14357617, spacing = 32, sep = 8, half = 10, flat = 8, depth = 15 } },
-            { "outpost", new StructCfg { salt = 165745296, spacing = 32, sep = 8, half = 7, flat = 6, freq = 0.2, depth = 2 } },
-            { "portal", new StructCfg { salt = 34222645, spacing = 40, sep = 15, half = 5, flat = 0, depth = 2 } },
-            { "ship", new StructCfg { salt = 165745295, spacing = 24, sep = 4, half = 14, flat = 6, flatR = 4, depth = 2, clearHalf = 4, water = true } } };
+            { "pyramid", new StructCfg { idx = 0, salt = 14357617, spacing = 32, sep = 8, half = 10, flat = 8, depth = 15 } },
+            { "outpost", new StructCfg { idx = 1, salt = 165745296, spacing = 32, sep = 8, half = 7, flat = 6, freq = 0.2, depth = 2 } },
+            { "portal", new StructCfg { idx = 2, salt = 34222645, spacing = 40, sep = 15, half = 5, flat = 0, depth = 2 } },
+            { "ship", new StructCfg { idx = 3, salt = 165745295, spacing = 24, sep = 4, half = 14, flat = 6, flatR = 4, depth = 2, clearHalf = 4, water = true } } };
         static readonly string[] STRUCT_TYPES = { "pyramid", "outpost", "portal", "ship" };
         public sealed class Structure { public string type; public int wx, wz, baseY, rot, acx, acz, variant; public bool beached; }
-        readonly Dictionary<string, Structure> structureCache = new Dictionary<string, Structure>();
+        readonly Dictionary<long, Structure>[] structureCache = { new Dictionary<long, Structure>(XZKeyCmp.I), new Dictionary<long, Structure>(XZKeyCmp.I), new Dictionary<long, Structure>(XZKeyCmp.I), new Dictionary<long, Structure>(XZKeyCmp.I) }; // per STRUCT_CFG idx (JS key `${seed}:${salt}:${rx}:${rz}`)
         static readonly HashSet<string> OUTPOST_BIOMES = new HashSet<string> { "PLAINS", "DESERT", "SAVANNA", "TAIGA", "SNOWY", "SNOWY_TAIGA", "MEADOW", "GROVE", "SNOWY_SLOPES", "CHERRY_GROVE", "FROZEN_PEAKS", "JAGGED_PEAKS", "STONY_PEAKS" };
         static readonly HashSet<string> SHIP_BIOMES = new HashSet<string> { "OCEAN", "COLD_OCEAN", "LUKEWARM_OCEAN", "WARM_OCEAN", "FROZEN_OCEAN", "BEACH", "SNOWY_BEACH" };
         static readonly object[][] MAIN_OUTPOST_PAL = {
@@ -28,15 +28,21 @@ namespace VoxelForge
             new object[] { "COBBLE_STAIRS", 2, 1 }, new object[] { "COBBLE_WALL", 0, 0 }, new object[] { "TORCH", 0, 0 }, new object[] { "CHEST", 1, 1 } };
         static readonly Dictionary<string, string> MAIN_KEY_ALIAS = new Dictionary<string, string> { { "DARK_PLANKS_SLAB", "DARK_SLAB" }, { "DARK_PLANKS_FENCE", "DARK_FENCE" }, { "DARK_PLANKS_STAIRS", "DARK_STAIRS" }, { "STONE_PRESSURE_PLATE", "STONE_PLATE" } };
         static int[] SHIP_ALL, SHIP_BEACHABLE; static double[] SHIP_ALL_WEIGHT, SHIP_BEACH_WEIGHT;
+        static readonly object shipTablesLock = new object();
+        // Kernels on several VF-Gen threads (and the main thread) hit this lazily; publish SHIP_ALL last with a release store
+        // under a lock so a reader that sees it non-null (acquire) also sees the three companion tables (JS builds them once).
         static void ensureShipTables()
         {
+            if (System.Threading.Volatile.Read(ref SHIP_ALL) != null) return;
+            lock (shipTablesLock) {
             if (SHIP_ALL != null) return;
             var ships = GenData.ships;
             var all = Enumerable.Range(0, ships.Length).ToArray();
             var beach = all.Where(i => ships[i].beachable).ToArray();
             Func<int, double> shipWeight = i => ships[i].name.StartsWith("with_mast", StringComparison.Ordinal) ? 5 : ships[i].beachable ? 2 : 1;
             Func<int[], double[]> prefix = list => { double sum = 0; return list.Select(i => sum += shipWeight(i)).ToArray(); };
-            SHIP_ALL_WEIGHT = prefix(all); SHIP_BEACH_WEIGHT = prefix(beach); SHIP_BEACHABLE = beach; SHIP_ALL = all;
+            SHIP_ALL_WEIGHT = prefix(all); SHIP_BEACH_WEIGHT = prefix(beach); SHIP_BEACHABLE = beach; System.Threading.Volatile.Write(ref SHIP_ALL, all);
+            }
         }
         static int weightedShip(int[] list, double[] prefix, double q)
         {
@@ -63,8 +69,8 @@ namespace VoxelForge
         Structure structureCandidate(string type, int rx, int rz)
         {
             ensureShipTables();
-            var cfg = STRUCT_CFG[type]; var key = seed + ":" + cfg.salt + ":" + rx + ":" + rz; Structure cached;
-            if (structureCache.TryGetValue(key, out cached)) return cached;
+            var cfg = STRUCT_CFG[type]; var cache = structureCache[cfg.idx]; var key = xzKey(rx, rz); Structure cached;
+            if (cache.TryGetValue(key, out cached)) return cached;
             var r = structRand(rx, rz, cfg.salt);
             int span = cfg.spacing - cfg.sep, acx = rx * cfg.spacing + (int)Math.Floor(r() * span), acz = rz * cfg.spacing + (int)Math.Floor(r() * span);
             double freqRoll = r(); int rot = (int)Math.Floor(r() * 4); double waterRoll = cfg.water ? r() : 0;
@@ -94,7 +100,7 @@ namespace VoxelForge
                 }
                 o = new Structure { type = type, wx = wx, wz = wz, baseY = baseY, rot = rot, acx = acx, acz = acz, beached = beached, variant = variant };
             } while (false);
-            structureCache[key] = o;
+            cache[key] = o;
             return o;
         }
         List<Structure> nearbyStructures(string type, int cx, int cz)
@@ -254,7 +260,16 @@ namespace VoxelForge
             foreach (var type in STRUCT_TYPES)
             {
                 var cfg = STRUCT_CFG[type]; int R = (cfg.clearHalf != 0 ? cfg.clearHalf : cfg.half) + 1;
-                foreach (var s in nearbyStructures(type, cx, cz)) if (Math.Abs(x - s.wx) <= R && Math.Abs(z - s.wz) <= R) return true;
+                // nearbyStructures inlined without the List: every candidate is still evaluated in the same order before returning.
+                int a = ffloor((cx - 2) / (double)cfg.spacing), b = ffloor((cx + 2) / (double)cfg.spacing), c = ffloor((cz - 2) / (double)cfg.spacing), d = ffloor((cz + 2) / (double)cfg.spacing);
+                bool hit = false;
+                for (int rx = a; rx <= b; rx++)
+                    for (int rz = c; rz <= d; rz++)
+                    {
+                        var s = structureCandidate(type, rx, rz);
+                        if (s != null && Math.Abs(s.acx - cx) <= 2 && Math.Abs(s.acz - cz) <= 2 && Math.Abs(x - s.wx) <= R && Math.Abs(z - s.wz) <= R) hit = true;
+                    }
+                if (hit) return true;
             }
             for (int dz = -1; dz <= 1; dz++)
                 for (int dx = -1; dx <= 1; dx++)
@@ -358,7 +373,7 @@ namespace VoxelForge
         sealed class MineQ { public int x, z, y, ax, dir; }
         MinePlan planMineshaft(int cellX, int cellZ)
         {
-            var key = seed + ":" + cellX + "," + cellZ; MinePlan cached;
+            var key = xzKey(cellX, cellZ); MinePlan cached;
             if (mineshaftPlanCache.TryGetValue(key, out cached)) return cached;
             if (mineshaftPlanCache.Count > 20000) mineshaftPlanCache.Clear();
             var rng = mineshaftRng(cellX, cellZ);
@@ -431,7 +446,7 @@ namespace VoxelForge
         }
         public List<MinePlan> mineshaftsForChunk(int cx, int cz)
         {
-            var key = seed + ":" + cx + "," + cz; List<MinePlan> hit;
+            var key = xzKey(cx, cz); List<MinePlan> hit;
             if (mineshaftChunkCache.TryGetValue(key, out hit) && hit != null) return hit;
             if (mineshaftChunkCache.Count > 6000) mineshaftChunkCache.Clear();
             var o = new List<MinePlan>(); int x0 = cx * CHUNK, z0 = cz * CHUNK;

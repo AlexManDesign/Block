@@ -69,18 +69,24 @@ namespace VoxelForge
             if (save) saveGameSoon();
             return v;
         }
+        static readonly int[] RAIL_NEAR_DY = { 0, 1, -1, 2, -2 }, RAIL_CONN_DY = { 0, 1, -1 };
+        static readonly double[] BOAT_BLOCK_FW = { -0.8, 0.8 }, BOAT_BLOCK_SIDE = { -0.5, 0.5 };
+        static readonly double[][] CART_BLOCK_CORNERS = { new[] { -0.45, -0.45 }, new[] { 0.45, -0.45 }, new[] { -0.45, 0.45 }, new[] { 0.45, 0.45 } };
+        /// <summary>Reused main-thread scratch for railConnections (pickRailDirection copies the chosen entry out immediately).</summary>
+        static readonly List<int[]> RAIL_CONN_BUF = new List<int[]>(4);
+        static readonly int[][] RAIL_CONN_POOL = { new int[3], new int[3], new int[3], new int[3] };
         static int railYNear(double fx, double fz, double fy)
         {
             int x = JS.floor(fx), z = JS.floor(fz), by = JS.floor(fy);
-            foreach (var d in new[] { 0, 1, -1, 2, -2 }) if (getBlock(x, by + d, z) == B.RAIL) return by + d;
+            foreach (var d in RAIL_NEAR_DY) if (getBlock(x, by + d, z) == B.RAIL) return by + d;
             return int.MinValue;
         }
         static List<int[]> railConnections(int x, int y, int z)
         {
-            var outp = new List<int[]>();
+            var outp = RAIL_CONN_BUF; outp.Clear();
             foreach (var d in ARM_DIRS)
-                foreach (var dy in new[] { 0, 1, -1 })
-                    if (getBlock(x + d[0], y + dy, z + d[1]) == B.RAIL) { outp.Add(new[] { d[0], d[1], dy }); break; }
+                foreach (var dy in RAIL_CONN_DY)
+                    if (getBlock(x + d[0], y + dy, z + d[1]) == B.RAIL) { var e = RAIL_CONN_POOL[outp.Count]; e[0] = d[0]; e[1] = d[1]; e[2] = dy; outp.Add(e); break; }
             return outp;
         }
         static void pickRailDirection(Vehicle v, int cx, int cy, int cz, List<int[]> con)
@@ -107,16 +113,15 @@ namespace VoxelForge
             if (v.kind == "boat")
             {
                 double sy = Math.Sin(v.yaw), cy = Math.Cos(v.yaw), fx = sy, fz = -cy, rx = cy, rz = sy;
-                foreach (var fw in new[] { -0.8, 0.8 })
-                    foreach (var side in new[] { -0.5, 0.5 })
+                foreach (var fw in BOAT_BLOCK_FW)
+                    foreach (var side in BOAT_BLOCK_SIDE)
                     {
                         double x = nx + fx * fw + rx * side, z = nz + fz * fw + rz * side;
                         if (mobPointBlocked(x, v.y + 0.05, z) || mobPointBlocked(x, v.y + 0.25, z)) return true;
                     }
                 return false;
             }
-            const double r = 0.45;
-            foreach (var d in new[] { new[] { -r, -r }, new[] { r, -r }, new[] { -r, r }, new[] { r, r } })
+            foreach (var d in CART_BLOCK_CORNERS)
                 if (mobPointBlocked(nx + d[0], v.y + 0.2, nz + d[1]) || mobPointBlocked(nx + d[0], v.y + 0.65, nz + d[1])) return true;
             return false;
         }
