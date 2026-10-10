@@ -41,6 +41,7 @@ namespace VoxelForge
         public float[] waterSortKeys; public int[] waterSortOrder; public int[] waterSortIndices;
         // per-frame render bookkeeping
         public int _opaqueVisTag, _opaqueRegionTag; public RenderRegion _opaqueRegionRef; public double _renderDist2, _waterViewDepth;
+        public string _rrKey; public int _rrKeyCx, _rrKeyCz; // cached chunkRenderRegionKey (avoids per-frame string building)
     }
 
     public static partial class VF
@@ -73,7 +74,7 @@ namespace VoxelForge
         static void recycleMesh(Mesh m)
         {
             if (m == null) return;
-            if (meshPool.Count < 256) meshPool.Push(m); else UnityEngine.Object.Destroy(m);
+            if (meshPool.Count < 256) { m.Clear(); meshPool.Push(m); } else UnityEngine.Object.Destroy(m); // Clear releases the vertex/index buffers (JS deletes GL buffers at once)
         }
         static readonly List<SubMeshDescriptor> subScratch = new List<SubMeshDescriptor>();
         /// <summary>Uploads vertices + indices and the given submesh ranges. Returns true when 32-bit indices were used.</summary>
@@ -228,6 +229,7 @@ namespace VoxelForge
         public static int renderRegionCoord(int v) { return JS.floor((double)v / RENDER_REGION_SIZE); }
         public static string renderRegionKey(int rx, int rz) { return rx + "," + rz; }
         public static string chunkRenderRegionKey(int cx, int cz) { return renderRegionKey(renderRegionCoord(cx), renderRegionCoord(cz)); }
+        static string chunkRenderRegionKeyCached(Chunk c) { if (c._rrKey == null || c._rrKeyCx != c.cx || c._rrKeyCz != c.cz) { c._rrKey = chunkRenderRegionKey(c.cx, c.cz); c._rrKeyCx = c.cx; c._rrKeyCz = c.cz; } return c._rrKey; }
         public static RenderRegion getRenderRegion(int rx, int rz, bool create = true)
         {
             var k = renderRegionKey(rx, rz); RenderRegion r;
@@ -504,7 +506,7 @@ namespace VoxelForge
             {
                 if (!opaqueBucketVisible(c)) { c._opaqueVisTag = 0; c._opaqueRegionTag = 0; continue; }
                 c._opaqueVisTag = tag;
-                RenderRegion r; renderRegions.TryGetValue(chunkRenderRegionKey(c.cx, c.cz), out r);
+                RenderRegion r; renderRegions.TryGetValue(chunkRenderRegionKeyCached(c), out r);
                 if (r == null || r.dirty || r.opaqueAll == null || r.chunkCount < 2 || !renderRegionFullyInsideRD(r, pcx, pcz)) { c._opaqueRegionTag = 0; continue; }
                 c._opaqueRegionTag = tag; c._opaqueRegionRef = r;
                 if (r._tag != tag) { r._tag = tag; r._visibleOpaque = 0; r._firstDist = c._renderDist2; }

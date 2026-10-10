@@ -12,7 +12,9 @@ namespace VoxelForge
         public static readonly Dictionary<string, object> minimapCache = new Dictionary<string, object>();
         static readonly Dictionary<int, double[]> minimapTileRGB = new Dictionary<int, double[]>();
         static double minimapLastSweep = 0, minimapLastX = double.PositiveInfinity, minimapLastZ = double.PositiveInfinity, minimapLastYaw = double.PositiveInfinity;
-        static string minimapLastSpawn = "";
+        static bool minimapLastHasSpawn = false;
+        static int minimapLastSpawnLen = 0;
+        static readonly double[] minimapLastSpawn = new double[3];
         public static Texture2D minimapTex;
         static Color32[] minimapBuf;
         public static bool minimapVisible = false;
@@ -69,8 +71,19 @@ namespace VoxelForge
                 else bse = new double[] { 118, 112, 105 };
             }
             double shade = Math.Max(0.62, Math.Min(1.18, 0.86 + (y - SEA) * 0.006));
-            Func<double, byte> cl = v => (byte)Math.Max(0, Math.Min(255, JS.round(v * shade)));
-            return new Color32(cl(bse[0]), cl(bse[1]), cl(bse[2]), 255);
+            return new Color32(mmClamp(bse[0], shade), mmClamp(bse[1], shade), mmClamp(bse[2], shade), 255);
+        }
+        static byte mmClamp(double v, double shade) { return (byte)Math.Max(0, Math.Min(255, JS.round(v * shade))); }
+        static bool mmSame(double a, double b) { return a == b || (double.IsNaN(a) && double.IsNaN(b)); }
+        /// <summary>spawnKey !== minimapLastSpawn, comparing the rounded components instead of building the joined string.</summary>
+        static bool minimapSpawnChanged(bool commit)
+        {
+            var sp = player.spawn; bool has = sp != null; int n = has ? sp.Length : 0;
+            bool diff = has != minimapLastHasSpawn || (has && n != minimapLastSpawnLen);
+            for (int i = 0; i < n && i < 3 && !diff; i++) diff = !mmSame(JS.round(sp[i] * 10) / 10, minimapLastSpawn[i]);
+            if (n > 3) diff = true; // unexpected shape: always treat as changed
+            if (commit) { minimapLastHasSpawn = has; minimapLastSpawnLen = n; for (int i = 0; i < n && i < 3; i++) minimapLastSpawn[i] = JS.round(sp[i] * 10) / 10; }
+            return diff;
         }
         static void rebuildMinimapChunk(Chunk c)
         {
@@ -143,10 +156,9 @@ namespace VoxelForge
                 foreach (var k in minimapCache.Keys) if (!chunks.Has(k)) drop.Add(k);
                 foreach (var k in drop) { minimapCache.Remove(k); changed = true; }
             }
-            string spawnKey = player.spawn != null ? string.Join(",", Array.ConvertAll(player.spawn, v => JS.ToStr(JS.round(v * 10) / 10))) : "";
-            bool moved = Math.Abs(player.x - minimapLastX) > 0.2 || Math.Abs(player.z - minimapLastZ) > 0.2 || Math.Abs(player.yaw - minimapLastYaw) > 0.02 || spawnKey != minimapLastSpawn;
+            bool moved = Math.Abs(player.x - minimapLastX) > 0.2 || Math.Abs(player.z - minimapLastZ) > 0.2 || Math.Abs(player.yaw - minimapLastYaw) > 0.02 || minimapSpawnChanged(false);
             if (!changed && !moved) return;
-            minimapLastX = player.x; minimapLastZ = player.z; minimapLastYaw = player.yaw; minimapLastSpawn = spawnKey;
+            minimapLastX = player.x; minimapLastZ = player.z; minimapLastYaw = player.yaw; minimapSpawnChanged(true);
             int w = MINIMAP_SIZE, h = MINIMAP_SIZE; double scale = w <= 120 ? 1.15 : 1.35, cx = w / 2.0, cy = h / 2.0;
             mmFill(0, 0, w, h, new Color32(0x17, 0x21, 0x2a, 255));
             int mapRX = (int)Math.Ceiling(w / (2 * scale * CHUNK)) + 1, mapRZ = (int)Math.Ceiling(h / (2 * scale * CHUNK)) + 1;
@@ -177,15 +189,15 @@ namespace VoxelForge
             }
             // heading arrow (rotate(-yaw)): points (0,-7) (5,6) (0,3) (-5,6)
             double ca = Math.Cos(-player.yaw), sa = Math.Sin(-player.yaw);
-            Func<double, double, double[]> rot = (x, y) => new[] { cx + x * ca - y * sa, cy + x * sa + y * ca };
-            var P0 = rot(0, -7); var P1 = rot(5, 6); var P2 = rot(0, 3); var P3 = rot(-5, 6);
+            double p0x = cx + 0 * ca - -7 * sa, p0y = cy + 0 * sa + -7 * ca, p1x = cx + 5 * ca - 6 * sa, p1y = cy + 5 * sa + 6 * ca,
+                p2x = cx + 0 * ca - 3 * sa, p2y = cy + 0 * sa + 3 * ca, p3x = cx + -5 * ca - 6 * sa, p3y = cy + -5 * sa + 6 * ca;
             var white = new Color32(255, 255, 255, 255); var dark = new Color32(0x11, 0x11, 0x11, 255);
             for (int y = (int)cy - 10; y <= (int)cy + 10; y++)
                 for (int x = (int)cx - 10; x <= (int)cx + 10; x++)
                 {
                     double qx = x + 0.5, qy = y + 0.5;
-                    bool inside = pointInTri(qx, qy, P0[0], P0[1], P1[0], P1[1], P2[0], P2[1]) || pointInTri(qx, qy, P0[0], P0[1], P2[0], P2[1], P3[0], P3[1]);
-                    double ed = Math.Min(Math.Min(segDist(qx, qy, P0[0], P0[1], P1[0], P1[1]), segDist(qx, qy, P1[0], P1[1], P2[0], P2[1])), Math.Min(segDist(qx, qy, P2[0], P2[1], P3[0], P3[1]), segDist(qx, qy, P3[0], P3[1], P0[0], P0[1])));
+                    bool inside = pointInTri(qx, qy, p0x, p0y, p1x, p1y, p2x, p2y) || pointInTri(qx, qy, p0x, p0y, p2x, p2y, p3x, p3y);
+                    double ed = Math.Min(Math.Min(segDist(qx, qy, p0x, p0y, p1x, p1y), segDist(qx, qy, p1x, p1y, p2x, p2y)), Math.Min(segDist(qx, qy, p2x, p2y, p3x, p3y), segDist(qx, qy, p3x, p3y, p0x, p0y)));
                     if (ed <= 0.75) mmPixel(x, y, dark);
                     else if (inside) mmPixel(x, y, white);
                 }

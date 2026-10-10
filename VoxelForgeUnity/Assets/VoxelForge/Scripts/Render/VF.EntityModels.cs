@@ -174,9 +174,10 @@ namespace VoxelForge
         }
         public static double entityLight(Mob m)
         {
-            var l = getWorldLight(m.x, m.y + (mobInfo(m).aquatic ? Math.Min(0.2, mobHeight(m) * 0.5) : Math.Min(0.8, mobHeight(m) * 0.65)), m.z);
-            double sky = (0.1 + 0.9 * entityBuildSun) * l[0];
-            return Math.Max(0.08, Math.Min(1, Math.Max(sky, l[1]) * 0.94 + 0.06));
+            // getWorldLight decoded inline (no per-mob array)
+            int pk = getPackedLightWorld(JS.floor(m.x), JS.floor(m.y + (mobInfo(m).aquatic ? Math.Min(0.2, mobHeight(m) * 0.5) : Math.Min(0.8, mobHeight(m) * 0.65))), JS.floor(m.z));
+            double l0 = ((pk >> 4) & 15) / 15.0, l1 = (pk & 15) / 15.0, sky = (0.1 + 0.9 * entityBuildSun) * l0;
+            return Math.Max(0.08, Math.Min(1, Math.Max(sky, l1) * 0.94 + 0.06));
         }
         static double[] entityPartAngles(Mob m, ModelPart p)
         {
@@ -261,24 +262,24 @@ namespace VoxelForge
             entityBoxCount++;
             entityIndexCount = entityBoxCount * 36;
         }
-        static double[] skeletonHandAt(Mob m, double x, double y, double z, double angle)
+        static void skeletonHandAt(Mob m, double x, double y, double z, double angle, out double ox, out double oy, out double oz)
         {
             double walk = m.moving ? Math.Sin(m.walkPhase * 3) * 0.6 : 0, arm = -1.25 + walk * 0.08, sc = (m.baby ? 0.5 : 1) / 16.0, w = 5, l = 13, p = 24,
                 c = Math.Cos(arm), sn = Math.Sin(arm), q = l - p, hy = q * c + p, hz = q * sn, D = -Math.Cos(angle), Tt = Math.Sin(angle);
-            return new[] { x + (w * D + hz * Tt) * sc + Tt * 0.1, y + hy * sc, z + (-w * Tt + hz * D) * sc + D * 0.1 };
+            ox = x + (w * D + hz * Tt) * sc + Tt * 0.1; oy = y + hy * sc; oz = z + (-w * Tt + hz * D) * sc + D * 0.1;
         }
         static void addSkeletonBow(Mob m)
         {
             int tile = ItemTile("bow"); if (tile < 0) return;
             double a = m._renderAngle ?? m.angle, x = m._renderX ?? m.x, y = m._renderY ?? m.y, z = m._renderZ ?? m.z;
-            var hand = skeletonHandAt(m, x, y, z, a);
+            double h0, h1, h2; skeletonHandAt(m, x, y, z, a, out h0, out h1, out h2);
             double sa = Math.Sin(a), ca = Math.Cos(a), hx = 0.95 * sa + 0.31 * ca, hz = -0.95 * ca + 0.31 * sa, d = 0.34, rc = Math.Cos(-2.356), rs = Math.Sin(-2.356);
-            var pts = new double[4][]; int n = 0;
+            var pts = fxPts; int n = 0;
             for (int row = 0; row < 2; row++)
                 for (int col = 0; col < 2; col++)
                 {
                     double u = (col - 0.5) * 2 * d, v = (0.5 - row) * 2 * d, W = u * rc - v * rs, Y = u * rs + v * rc;
-                    pts[n++] = new[] { hand[0] + hx * W, hand[1] + Y, hand[2] + hz * W };
+                    var q = pts[n++]; q[0] = h0 + hx * W; q[1] = h1 + Y; q[2] = h2 + hz * W;
                 }
             dropPushQuad(mobHeldV, mobHeldI, pts, tile, 0.9 * (m._frameLight ?? entityLight(m)));
         }
@@ -316,9 +317,9 @@ namespace VoxelForge
             int tile = ItemTile(st.key);
             if (tile < 0) return;
             double a = player.yaw, sa = Math.Sin(a), ca = Math.Cos(a), cx = player.x + sa * 0.42 + ca * 0.18, cy = player.y + (m.renderSneaking ? 1.0 : 1.18), cz = player.z - ca * 0.42 + sa * 0.18, u = 0.23;
-            dropPushQuad(mobHeldV, mobHeldI, new[] {
-                new[] { cx - u * ca, cy + u, cz - u * sa }, new[] { cx + u * ca, cy + u, cz + u * sa },
-                new[] { cx - u * ca, cy - u, cz - u * sa }, new[] { cx + u * ca, cy - u, cz + u * sa } }, tile, 0.9 * (m._frameLight ?? 1));
+            dropPushQuad(mobHeldV, mobHeldI, P4(
+                cx - u * ca, cy + u, cz - u * sa, cx + u * ca, cy + u, cz + u * sa,
+                cx - u * ca, cy - u, cz - u * sa, cx + u * ca, cy - u, cz + u * sa), tile, 0.9 * (m._frameLight ?? 1));
         }
         static void addThirdPersonPlayer()
         {

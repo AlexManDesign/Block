@@ -97,6 +97,7 @@ namespace VoxelForge
             if (workerEngineFailed) return;
             workerEngineFailed = true;
             UnityEngine.Debug.LogError("Generation worker engine stopped " + (err ?? ""));
+            foreach (var s in genSlots) { s.stop = true; s.ev.Set(); }
             genSlots.Clear(); genJobs.Clear(); genPending.Clear();
             lastStreamCx = 999; lastStreamCz = 999;
             try { toast("Ошибка generation worker."); } catch { }
@@ -217,6 +218,7 @@ namespace VoxelForge
                     if (m.err != null)
                     {
                         var job = slot.job; slot.job = null; slot.busy = false; slot.ready = false; slot.alive = false;
+                        slot.stop = true; slot.ev.Set();
                         restoreFailedMeshJob(job);
                         UnityEngine.Debug.LogWarning("Mesh worker unavailable; shared-core synchronous path will be used " + m.err);
                         bool any = false; foreach (var s in meshSlots) if (s.alive) any = true;
@@ -466,7 +468,7 @@ namespace VoxelForge
                     {
                         var light = q.light;
                         if (light == null) { light = new byte[4096]; for (int i = 0; i < 4096; i++) light[i] = 0xf0; }
-                        sections[q.si] = new Section { blocks = q.blocks, light = light };
+                        sections[q.si] = new Section(q.blocks, light);
                     }
             createChunkFromData(m.cx, m.cz, sections, m.sim, m.fluidBoundary);
         }

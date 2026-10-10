@@ -72,10 +72,11 @@ namespace VoxelForge
                             r += sp[q] * w; g += sp[q + 1] * w; b += sp[q + 2] * w; a += sp[q + 3] * w; tw += w;
                         }
                     int bs = (y * 16 + x) * 4;
-                    dp[o] = (byte)Math.Max(0, Math.Min(255, (r / tw) * 0.8 + sp[bs] * 0.2));
-                    dp[o + 1] = (byte)Math.Max(0, Math.Min(255, (g / tw) * 0.8 + sp[bs + 1] * 0.2));
-                    dp[o + 2] = (byte)Math.Max(0, Math.Min(255, (b / tw) * 0.8 + sp[bs + 2] * 0.2));
-                    dp[o + 3] = (byte)Math.Max(0, Math.Min(255, a / tw));
+                    // Uint8ClampedArray assignment rounds half to even
+                    dp[o] = (byte)Math.Max(0, Math.Min(255, Math.Round((r / tw) * 0.8 + sp[bs] * 0.2, MidpointRounding.ToEven)));
+                    dp[o + 1] = (byte)Math.Max(0, Math.Min(255, Math.Round((g / tw) * 0.8 + sp[bs + 1] * 0.2, MidpointRounding.ToEven)));
+                    dp[o + 2] = (byte)Math.Max(0, Math.Min(255, Math.Round((b / tw) * 0.8 + sp[bs + 2] * 0.2, MidpointRounding.ToEven)));
+                    dp[o + 3] = (byte)Math.Max(0, Math.Min(255, Math.Round(a / tw, MidpointRounding.ToEven)));
                 }
             // back to layer orientation (FLIP_Y upload)
             var outp = new byte[16 * 16 * 4];

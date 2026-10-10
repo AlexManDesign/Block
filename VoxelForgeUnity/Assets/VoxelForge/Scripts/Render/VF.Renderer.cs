@@ -80,7 +80,7 @@ namespace VoxelForge
             matHeld = mk("VoxelForge/Sprite", m => { m.mainTexture = atlasImg; m.SetFloat("_Grid", 32); m.SetFloat("_NoFog", 1); state(m, CULL_OFF, BlendMode.One, BlendMode.Zero, CompareFunction.Less, true); });
             matHeldItem = mk("VoxelForge/Sprite", m => { m.mainTexture = itemTex; m.SetFloat("_Grid", 16); m.SetFloat("_NoFog", 1); state(m, CULL_OFF, BlendMode.One, BlendMode.Zero, CompareFunction.Less, true); });
             matEntity = mk("VoxelForge/Entity", m => { m.mainTexture = entityTex; m.SetFloat("_ZTest", (float)CompareFunction.Less); });
-            matEntityXray = mk("VoxelForge/Entity", m => { m.mainTexture = entityTex; m.SetFloat("_ZTest", (float)CompareFunction.Always); });
+            matEntityXray = mk("VoxelForge/Entity", m => { m.mainTexture = entityTex; m.SetFloat("_ZTest", (float)CompareFunction.Always); m.SetFloat("_ZWrite", 0); }); // gl.disable(DEPTH_TEST) also disables depth writes
             matParticle = mk("VoxelForge/Particle", m => { });
             matLineSel = mk("VoxelForge/Line", m => m.SetColor("_Color", new Color(0, 0, 0, 0.85f)));
             matLineProj = mk("VoxelForge/Line", m => m.SetColor("_Color", new Color(0.85f, 0.78f, 0.55f, 1)));
@@ -124,7 +124,34 @@ namespace VoxelForge
         static readonly double[] renderEye = new double[3], renderDir = new double[3], renderTarget = new double[3], renderUp = { 0, 1, 0 };
         public static readonly double[] renderFog = new double[3];
         static readonly float[] heldProj = new float[16];
-        static readonly Comparison<Chunk> renderDistCmp = (a, b) => a._renderDist2.CompareTo(b._renderDist2);
+        static Chunk[] rdSortA = new Chunk[256], rdSortB = new Chunk[256];
+        /// <summary>visible.sort(renderDistCompare): stable (like Array.prototype.sort) and allocation-free — insertion-sorted runs + bottom-up merge.</summary>
+        static void sortByRenderDist(List<Chunk> v)
+        {
+            int n = v.Count;
+            if (rdSortA.Length < n) { int c = rdSortA.Length; while (c < n) c *= 2; rdSortA = new Chunk[c]; rdSortB = new Chunk[c]; }
+            Chunk[] a = rdSortA, b = rdSortB;
+            for (int i = 0; i < n; i++) a[i] = v[i];
+            const int RUN = 16;
+            for (int s = 0; s < n; s += RUN)
+            {
+                int e = Math.Min(n, s + RUN);
+                for (int i = s + 1; i < e; i++) { var x = a[i]; double k = x._renderDist2; int j = i - 1; while (j >= s && a[j]._renderDist2 > k) { a[j + 1] = a[j]; j--; } a[j + 1] = x; }
+            }
+            for (int w = RUN; w < n; w *= 2)
+            {
+                for (int lo = 0; lo < n; lo += 2 * w)
+                {
+                    int mid = Math.Min(n, lo + w), hi = Math.Min(n, lo + 2 * w), i = lo, j = mid, k = lo;
+                    while (i < mid && j < hi) b[k++] = a[j]._renderDist2 < a[i]._renderDist2 ? a[j++] : a[i++];
+                    while (i < mid) b[k++] = a[i++];
+                    while (j < hi) b[k++] = a[j++];
+                }
+                var t = a; a = b; b = t;
+            }
+            for (int i = 0; i < n; i++) v[i] = a[i];
+            Array.Clear(rdSortA, 0, n); Array.Clear(rdSortB, 0, n);
+        }
 
         static void drawG(CommandBuffer cb, GpuMesh g, Material m)
         {
@@ -207,7 +234,7 @@ namespace VoxelForge
             int pcx = JS.floor(player.x / CHUNK), pcz = JS.floor(player.z / CHUNK);
             double visStart = JS.now();
             collectVisibleChunksHierarchical(eye[0], eye[1], eye[2], fogFar, pcx, pcz, visible);
-            if (visible.Count > 1) visible.Sort(renderDistCmp);
+            if (visible.Count > 1) sortByRenderDist(visible);
             renderVisibleCount = visible.Count;
             buildOpaqueRenderList(visible, pcx, pcz);
             buildAlphaRenderLists(visible);
