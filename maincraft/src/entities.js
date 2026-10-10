@@ -152,18 +152,18 @@ const MOB_DEFS = {
   chicken: { w: 0.4, h: 0.7, eye: 0.644, hp: 4, attr: 0.25, tempt: 1.0, food: [IT.WHEAT_SEEDS, IT.PUMPKIN_SEEDS, IT.MELON_SEEDS, IT.BEETROOT_SEEDS], panic: 1.4, drops: (e) => [[e.fire > 0 ? IT.COOKED_CHICKEN : IT.CHICKEN, 1], [IT.FEATHER, Math.random() * 3 | 0]], passive: true },
   // zombie loot: 0-2 rotten flesh, and when the player killed it one in 40 an iron ingot, a carrot
   // or a potato (killed_by_player, random_chance 0.025)
-  zombie: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true },
+  zombie: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true, undead: true },
   // drowned (Drowned, a zombie of the sea): the zombie's attributes; loot 0-2 rotten flesh and,
   // killed by the player, a copper ingot one time in 9 (random_chance 0.11)
-  drowned: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.11 ? IT.COPPER_INGOT : 0, 1]], hostile: true, burns: true, sinks: true, drowned: true },
-  skeleton: { w: 0.6, h: 1.99, eye: 1.74, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
+  drowned: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.11 ? IT.COPPER_INGOT : 0, 1]], hostile: true, burns: true, sinks: true, drowned: true, undead: true },
+  skeleton: { w: 0.6, h: 1.99, eye: 1.74, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true, undead: true },
   creeper: { w: 0.6, h: 1.7, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
   spider: { w: 1.4, h: 0.9, eye: 0.65, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
   cave_spider: { w: 0.7, h: 0.5, eye: 0.45, hp: 12, attr: 0.3, wander: 0.8, dmg: 2, poison: 7, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
   enderman: { w: 0.6, h: 2.9, eye: 2.55, hp: 40, attr: 0.3, dmg: 7, detect: 64, drops: () => [[IT.ENDER_PEARL, Math.random() * 2 | 0]], hostile: true, neutral: true },
   slime: { w: 1.02, h: 1.02, eye: 0.6375, hp: 4, speed: 2.7, dmg: 2, drops: (e) => [[IT.SLIME_BALL, e.size === 1 ? Math.random() * 3 | 0 : 0]], hostile: true, slime: true },
-  salmon: { w: 0.7, h: 0.4, eye: 0.26, hp: 3, speed: 1.6, drops: (e) => [[e.fire > 0 ? IT.COOKED_SALMON : IT.RAW_SALMON, 1], [Math.random() < 0.05 ? IT.BONE_MEAL : 0, 1]], passive: true, aquatic: true },
-  shark: { w: 0.9, h: 0.8, hp: 24, speed: 4.2, dmg: 6, drops: (e) => [[e.fire > 0 ? IT.COOKED_COD : IT.RAW_COD, 1 + (Math.random() * 2 | 0)], [IT.BONE, Math.random() < 0.35 ? 1 : 0]], hostile: true, aquatic: true },
+  salmon: { w: 0.7, h: 0.4, eye: 0.26, hp: 3, speed: 1.6, fishAttr: 0.7, drops: (e) => [[e.fire > 0 ? IT.COOKED_SALMON : IT.RAW_SALMON, 1], [Math.random() < 0.05 ? IT.BONE_MEAL : 0, 1]], passive: true, aquatic: true },
+  shark: { w: 0.9, h: 0.8, hp: 24, speed: 4.2, fishAttr: 2.1, dmg: 6, drops: (e) => [[e.fire > 0 ? IT.COOKED_COD : IT.RAW_COD, 1 + (Math.random() * 2 | 0)], [IT.BONE, Math.random() < 0.35 ? 1 : 0]], hostile: true, aquatic: true },
 };
 // Ground mobs move like Minecraft's: MoveControl sets both the speed and the forward input to
 // modifier * movement-speed attribute, ground drag is 0.546 per tick, so the steady speed is
@@ -226,6 +226,48 @@ function entCollides(world, x, y, z, w, h) {
         for (const b of boxes) if (bx + b[0] < x1 && bx + b[3] > x0 && by + b[1] < y1 && by + b[4] > y0 && bz + b[2] < z1 && bz + b[5] > z0) return true;
       }
   return false;
+}
+// FlowingFluid.getOwnHeight of water at a cell: amount / 9 (a source, falling water 8 / 9), 0 for none
+function waterOwnHeight(w, x, y, z) {
+  const id = w.getBlock(x, y, z);
+  if (!isWaterId(id)) return 0;
+  if (id !== B.WATER) return 8 / 9;
+  const m = w.getMeta(x, y, z);
+  return (m & 8) ? 8 / 9 : (8 - (m & 7)) / 9;
+}
+// FluidState.getHeight: 1 with water over it, else the own height
+function waterHeight(w, x, y, z) { return isWaterId(w.getBlock(x, y + 1, z)) ? 1 : waterOwnHeight(w, x, y, z); }
+// FlowingFluid.getFlow of the water at a cell (unit vector, or zeros): the pull of each side by the
+// height difference (over an open side by the water one below it, less 8/9); falling water against
+// a solid face is pulled down
+const FLOW_V = [0, 0, 0];
+function waterFlow(w, x, y, z) {
+  const own = waterOwnHeight(w, x, y, z);
+  let fx = 0, fy = 0, fz = 0;
+  for (let d = 0; d < 4; d++) {
+    const nx = x + DIRX_W[d], nz = z + DIRZ_W[d], n = w.getBlock(nx, y, nz);
+    if (isLiquidId(n) && !isWaterId(n)) continue;
+    const h = waterOwnHeight(w, nx, y, nz);
+    let k = 0;
+    if (h === 0) { if (!COLLIDE[n]) { const hb = waterOwnHeight(w, nx, y - 1, nz); if (hb > 0) k = own - (hb - 8 / 9); } }
+    else k = own - h;
+    fx += DIRX_W[d] * k; fz += DIRZ_W[d] * k;
+  }
+  const id = w.getBlock(x, y, z);
+  if (id === B.WATER && (w.getMeta(x, y, z) & 8)) {
+    for (let d = 0; d < 4; d++) {
+      const nx = x + DIRX_W[d], nz = z + DIRZ_W[d], a = w.getBlock(nx, y, nz), b = w.getBlock(nx, y + 1, nz);
+      if ((OPAQUE[a] && a !== B.ICE && !isWaterId(a)) || (OPAQUE[b] && b !== B.ICE && !isWaterId(b))) {
+        const l = Math.hypot(fx, fz);
+        if (l > 1e-5) { fx /= l; fz /= l; } else { fx = fz = 0; }
+        fy = -6;
+        break;
+      }
+    }
+  }
+  const l = Math.hypot(fx, fy, fz);
+  if (l < 1e-5) { FLOW_V[0] = FLOW_V[1] = FLOW_V[2] = 0; } else { FLOW_V[0] = fx / l; FLOW_V[1] = fy / l; FLOW_V[2] = fz / l; }
+  return FLOW_V;
 }
 // LivingEntity.isInWall: a suffocating block (a full solid cube one cannot see through) at the eyes,
 // over a square 0.8 x the body's width
@@ -597,7 +639,8 @@ class Entities {
       }
       if (a.age > 8) { this.arrows.splice(i, 1); continue; }
       a.vel[1] -= 20 * dt;
-      { const dr = Math.pow(0.99, dt * 20); a.vel[0] *= dr; a.vel[1] *= dr; a.vel[2] *= dr; }
+      // AbstractArrow.tick: x0.99 a tick in the air, x0.6 in water (getWaterInertia)
+      { const dr = Math.pow(isWaterId(w.getBlock(Math.floor(a.pos[0]), Math.floor(a.pos[1]), Math.floor(a.pos[2]))) ? 0.6 : 0.99, dt * 20); a.vel[0] *= dr; a.vel[1] *= dr; a.vel[2] *= dr; }
       const n = Math.max(1, Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) * dt / 0.3)), s = dt / n;
       for (let k = 0; k < n; k++) {
         const ox = a.pos[0], oy = a.pos[1], oz = a.pos[2], mx = a.vel[0] * s, my = a.vel[1] * s, mz = a.vel[2] * s;
@@ -685,9 +728,16 @@ class Entities {
       // LivingEntity.baseTick: 1 damage while the eyes are inside a suffocating block (isInWall)
       if (eyeInWall(w, e.pos[0], e.pos[1] + this.eyeH(e), e.pos[2], e.w)) { this.damageMob(e, 1, null, null, false, true); if (e.hp <= 0) continue; }
       if (d.aquatic) { this.aiFish(e, d, dt, dx, dz, h); continue; }
-      const feet = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2]));
-      const inW = isWaterId(feet);
+      const inW = this.waterAt(e);
       if (inW) e.fire = 0;
+      // LivingEntity.baseTick: with the eyes in water the air (300 ticks) runs out, 1 a tick; at -20
+      // it is 0 again and the mob takes 2 (drowning, no cause for panic); out of the water it comes
+      // back 4 a tick. The undead breathe under water
+      if (!d.undead) {
+        if (e.air === undefined) e.air = 300;
+        if (this.eyeInWater(e)) { if (--e.air <= -20) { e.air = 0; this.damageMob(e, 2, null, null, false, true); if (e.hp <= 0) continue; } }
+        else if (e.air < 300) e.air = Math.min(300, e.air + 4);
+      }
       // enderman: provoked by a stare, hates water
       if (e.type === 'enderman') {
         if (e.angryT <= 0 && hunt) {
@@ -849,6 +899,7 @@ class Entities {
     if (hunting) {
       face();
       if (d.slime) {
+        if (inW && !e.onGround) { this.slimeSwim(e, dx, dz, S); return; }
         if (e.onGround) {
           e.hopT -= dt;
           // SlimeMoveControl: jump delay 10..29 ticks, a third of it when attacking
@@ -952,6 +1003,7 @@ class Entities {
       // it never stops hopping (jump delay 10..29 ticks)
       e.dirT = (e.dirT || 0) - dt;
       if (e.dirT <= 0) { e.dirT = (40 + (Math.random() * 60 | 0)) / 20; e.hopYaw = Math.random() * 6.2832; }
+      if (inW && !e.onGround) { this.slimeSwim(e, Math.sin(e.hopYaw), -Math.cos(e.hopYaw), S); return; }
       if (e.onGround) {
         e.hopT -= dt;
         if (e.hopT <= 0) { e.hopT = (10 + (Math.random() * 20 | 0)) / 20; this.hop(e, Math.sin(e.hopYaw), -Math.cos(e.hopYaw), S[2]); }
@@ -1142,6 +1194,14 @@ class Entities {
     e.wish[0] = dx / l * sp; e.wish[2] = dz / l * sp; e.wantJump = true;
     e.bodyYaw = e.tgtYaw = Math.atan2(dx, -dz);
     e.tsq = 1;
+  }
+  // SlimeFloatGoal: in water (off the ground) a slime swims on along its heading at 1.2 x its speed
+  // (SlimeMoveControl.setWantedMovement(1.2): the speed set while not on the ground); it bobs up
+  // 4 ticks in 5 like a FloatGoal
+  slimeSwim(e, dx, dz, S) {
+    const l = Math.hypot(dx, dz) || 1, sp = MOB_SPEED_K * (1.2 * S[2]) ** 2;
+    e.wish[0] = dx / l * sp; e.wish[2] = dz / l * sp;
+    e.bodyYaw = e.tgtYaw = Math.atan2(dx, -dz);
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
@@ -1353,7 +1413,9 @@ class Entities {
     // jumping (JumpControl acts on the tick after it was asked; FloatGoal in water). Zombies and
     // skeletons have no FloatGoal: they sink and walk the bottom, rising only while they want to
     // jump (LivingEntity.jumpInLiquid)
-    const depth = inW ? this.waterDepth(e) : 0, deep = depth > (this.eyeH(e) < 0.4 ? 0 : 0.4);
+    // the current's push (Entity.baseTick, before the move)
+    if (inW && e.wPush) { v[0] += e.wPush[0]; v[1] += e.wPush[1]; v[2] += e.wPush[2]; }
+    const depth = inW ? e.wDepth : 0, deep = depth > (this.eyeH(e) < 0.4 ? 0 : 0.4);
     if (deep && (d.sinks ? e.wantJump : Math.random() < 0.8)) v[1] += 0.04;
     else if (e.wantJump && e.onGround && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
     e.wantJump = false;
@@ -1362,6 +1424,7 @@ class Entities {
     if (inW) {
       v[0] += fx * input * 0.02; v[2] += fz * input * 0.02;
       this.entStep(e, v, wasGround);
+      if (d.climber && e.hitWall) v[1] = 0.2;          // a spider climbs a wall under water too
       v[0] *= 0.8; v[1] *= 0.8; v[2] *= 0.8; v[1] -= 0.005;
       if (e.hitWall && !entCollides(w, e.pos[0] + v[0], e.pos[1] + 0.6 + v[1], e.pos[2] + v[2], e.w, e.h)) v[1] = 0.3;
     } else {
@@ -1373,7 +1436,7 @@ class Entities {
       v[1] -= 0.08;
       v[0] *= f3; v[1] *= 0.98; v[2] *= f3;
     }
-    e.climbing = d.climber && e.hitWall && !inW;
+    e.climbing = d.climber && e.hitWall;
     // a full block ahead: jump on the next tick
     if (e.hitWall && e.onGround && wl > 0.05 && !d.climber) e.wantJump = true;
     e.vel[0] = v[0] * 20; e.vel[1] = v[1] * 20; e.vel[2] = v[2] * 20;
@@ -1402,19 +1465,33 @@ class Entities {
       v[ax] = 0; e.hitWall = true;
     }
   }
-  // depth of the feet in water along the centre column (8/9 for a full source block)
-  waterDepth(e) {
-    const w = this.game.world, x = Math.floor(e.pos[0]), z = Math.floor(e.pos[2]);
-    let dep = 0;
-    for (let y = Math.floor(e.pos[1]); y <= Math.floor(e.pos[1] + e.h); y++) {
-      const id = w.getBlock(x, y, z);
-      if (!isWaterId(id)) continue;
-      let top = 8 / 9;
-      if (!(FLAGS[id] & (BF_AQUATIC | BF_WET))) { const m = w.getMeta(x, y, z); if (!(m & 8)) top = (8 - (m & 7)) / 9; }
-      if (isWaterId(w.getBlock(x, y + 1, z))) top = 1;
-      dep = Math.max(dep, y + top - e.pos[1]);
+  // Entity.updateFluidHeightAndDoFluidPushing: the water cells the body's box (less 0.001) touches.
+  // In the water when any surface (FluidState.getHeight) is at or over the box's bottom; the depth
+  // is the highest; the push is the cells' flow (each scaled by the depth so far while it is under
+  // 0.4), averaged, for a mob made unit length and 0.014 a tick. Sets e.wDepth, e.wPush; true when in water
+  waterAt(e) {
+    const w = this.game.world, hw = e.w / 2, E = 0.001, bot = e.pos[1] + E;
+    const x0 = Math.floor(e.pos[0] - hw + E), x1 = Math.ceil(e.pos[0] + hw - E), z0 = Math.floor(e.pos[2] - hw + E), z1 = Math.ceil(e.pos[2] + hw - E);
+    const y0 = Math.floor(bot), y1 = Math.ceil(e.pos[1] + e.h - E);
+    let dep = 0, wet = false, px = 0, py = 0, pz = 0, n = 0;
+    for (let x = x0; x < x1; x++) for (let z = z0; z < z1; z++) for (let y = y0; y < y1; y++) {
+      if (!isWaterId(w.getBlock(x, y, z))) continue;
+      const top = y + waterHeight(w, x, y, z);
+      if (top < bot) continue;
+      wet = true; dep = Math.max(dep, top - bot);
+      const f = waterFlow(w, x, y, z), k = dep < 0.4 ? dep : 1;
+      px += f[0] * k; py += f[1] * k; pz += f[2] * k; n++;
     }
-    return dep;
+    e.wDepth = dep;
+    const P = e.wPush || (e.wPush = [0, 0, 0]);
+    const l = Math.hypot(px, py, pz);
+    if (l > 1e-5) { P[0] = px / l * 0.014; P[1] = py / l * 0.014; P[2] = pz / l * 0.014; } else P[0] = P[1] = P[2] = 0;
+    return wet;
+  }
+  // Entity.updateFluidOnEyes: the eyes (less 1/9) under the surface of the water in their cell
+  eyeInWater(e) {
+    const w = this.game.world, ey = e.pos[1] + this.eyeH(e) - 1 / 9, x = Math.floor(e.pos[0]), y = Math.floor(ey), z = Math.floor(e.pos[2]);
+    return isWaterId(w.getBlock(x, y, z)) && y + waterHeight(w, x, y, z) > ey;
   }
 
   // ------------------------------------------------------------------ fish (original yp / pf)
@@ -1473,7 +1550,8 @@ class Entities {
         else { e.esc = null; e.escT = 0.6; }
       }
       if (e.esc) {
-        const sp = d.speed * (e.fleeT > 0 ? 3.8 : 3.4), vx = e.esc[0] - e.pos[0], vy = e.esc[1] - e.pos[1], vz = e.esc[2] - e.pos[2], l = Math.hypot(vx, vy, vz) || 1;
+        // AbstractFish: PanicGoal(1.25) when hurt, else AvoidEntityGoal(player, 8, 1.6, 1.4: within 7)
+        const sp = d.speed * (e.fleeT > 0 ? 1.25 : h < 7 ? 1.4 : 1.6), vx = e.esc[0] - e.pos[0], vy = e.esc[1] - e.pos[1], vz = e.esc[2] - e.pos[2], l = Math.hypot(vx, vy, vz) || 1;
         e.wish[0] = vx / l * sp; e.wish[1] = vy / l * sp * 0.5; e.wish[2] = vz / l * sp;
         e.fleeing = true; e.swimT = 0.5;
       } else e.fleeing = false;
@@ -1482,9 +1560,8 @@ class Entities {
       e.escD = null;
       e.swimT = 2.5 + Math.random() * 2.5;
       if (Math.random() < 0.35) {
-        // drift slowly in the current direction
-        const b = Math.hypot(e.wish[0], e.wish[2]), a = b > 0.01 ? Math.atan2(e.wish[0], e.wish[2]) : Math.random() * 6.2832;
-        e.wish[0] = Math.sin(a) * d.speed * 0.2; e.wish[2] = Math.cos(a) * d.speed * 0.2; e.wish[1] = 0;
+        // rest: no swim target, so FishMoveControl sets no speed and the fish drifts to a stop
+        e.wish[0] = e.wish[1] = e.wish[2] = 0;
       } else {
         const a = Math.random() * 6.2832;
         e.wish[0] = Math.cos(a) * d.speed; e.wish[2] = Math.sin(a) * d.speed; e.wish[1] = (Math.random() - 0.5) * d.speed * 0.2;
@@ -1562,19 +1639,35 @@ class Entities {
     e.inWater = water(e.pos[0], e.pos[1] + 0.05, e.pos[2]);
     const wet = e.inWater;
     if (wet) {
-      const a = Math.min(1, dt * (e.fleeing ? 10 : 4));
-      for (let k = 0; k < 3; k++) e.vel[k] += (e.wish[k] - e.vel[k]) * a;
+      // FishMoveControl: buoyed 0.005 a tick while the eyes are in water; swimming somewhere (the
+      // AI's wish, its length the goal's speed modifier x d.speed) the speed eases by 1/8 toward
+      // modifier x the movement speed attribute, the heading turns up to 90 degrees a tick and the
+      // up/down share of the way adds 0.1 x speed. AbstractFish.travel: moveRelative(0.01 x speed)
+      // along the heading, move, x0.9, and 0.005 down with no target
+      const v = [e.vel[0] * 0.05, e.vel[1] * 0.05, e.vel[2] * 0.05], wl = Math.hypot(e.wish[0], e.wish[1], e.wish[2]);
+      if (this.eyeInWater(e)) v[1] += 0.005;
+      if (wl > 1e-3) {
+        e.fSpd = (e.fSpd || 0) + (wl / d.speed * d.fishAttr - (e.fSpd || 0)) * 0.125;
+        v[1] += e.fSpd * e.wish[1] / wl * 0.1;
+        if (Math.hypot(e.wish[0], e.wish[2]) > 1e-3) {
+          let a = Math.atan2(e.wish[0], -e.wish[2]) - e.bodyYaw;
+          while (a > Math.PI) a -= 6.2832; while (a < -Math.PI) a += 6.2832;
+          e.bodyYaw += Math.max(-Math.PI / 2, Math.min(Math.PI / 2, a));
+        }
+      } else e.fSpd = 0;
+      v[0] += Math.sin(e.bodyYaw) * 0.01 * e.fSpd; v[2] -= Math.cos(e.bodyYaw) * 0.01 * e.fSpd;
+      e.vel[0] = v[0] * 20; e.vel[1] = v[1] * 20; e.vel[2] = v[2] * 20;
+      e.tgtYaw = e.bodyYaw;
     }
+    // the shark (no Minecraft fish) tips with its way up or down; Minecraft's fish stay level
     const sp = Math.hypot(e.vel[0], e.vel[1], e.vel[2]);
-    if (sp > 0.15) {
-      e.tgtYaw = Math.atan2(e.vel[0], -e.vel[2]);
-      const pt = Math.atan2(e.vel[1], Math.hypot(e.vel[0], e.vel[2]));
-      e.swimPitch += (pt - e.swimPitch) * Math.min(1, dt * 4);
+    if (e.type === 'shark' && sp > 0.15 && wet) e.swimPitch += (Math.atan2(e.vel[1], Math.hypot(e.vel[0], e.vel[2])) - e.swimPitch) * Math.min(1, dt * 4);
+    else e.swimPitch += (0 - e.swimPitch) * Math.min(1, dt * 4);
+    if (!wet) {
+      let dy = e.tgtYaw - e.bodyYaw;
+      while (dy > Math.PI) dy -= 6.2832; while (dy < -Math.PI) dy += 6.2832;
+      const tr = dt * 4; e.bodyYaw += dy > tr ? tr : dy < -tr ? -tr : dy;
     }
-    if (!e.inWater) e.swimPitch += (0 - e.swimPitch) * Math.min(1, dt * 4);
-    let dy = e.tgtYaw - e.bodyYaw;
-    while (dy > Math.PI) dy -= 6.2832; while (dy < -Math.PI) dy += 6.2832;
-    const tr = dt * 4; e.bodyYaw += dy > tr ? tr : dy < -tr ? -tr : dy;
     e.headYaw = e.bodyYaw;
     // in water a fish only moves to spots that are water too (it bounces off the edge)
     const ok = (x, y, z) => !entCollides(w, x, y, z, e.w, e.h) && (!e.inWater || water(x, y + 0.05, z));
@@ -1586,9 +1679,10 @@ class Entities {
     if (ok(e.pos[0], e.pos[1] + vy, e.pos[2])) { e.pos[1] += vy; e.onGround = false; }
     else if (vy <= 0) { this.moveAxis(e, 1, vy); e.vel[1] = 0; e.onGround = true; }
     else e.vel[1] = 0;
+    if (wet) { e.vel[0] *= 0.9; e.vel[1] *= 0.9; e.vel[2] *= 0.9; if (!(d.hostile && e.prey)) e.vel[1] -= 0.1; }
     // out of the water: LivingEntity.travel after the move, gravity 0.08 and x0.98, sideways x0.546 on
     // the ground, x0.91 in the air (per tick; velocities here in blocks a second)
-    if (!wet) { e.vel[1] = (e.vel[1] - 1.6) * 0.98; const f = e.onGround ? 0.546 : 0.91; e.vel[0] *= f; e.vel[2] *= f; }
+    else { e.vel[1] = (e.vel[1] - 1.6) * 0.98; const f = e.onGround ? 0.546 : 0.91; e.vel[0] *= f; e.vel[2] *= f; }
     e.walk += dt * (0.6 + sp * 0.5);
     e.walkAmt = 0;
   }
@@ -2125,6 +2219,8 @@ class Entities {
         e.rpitch = e.pitchP !== undefined ? e.pitchP + ((e.swimPitch || 0) - e.pitchP) * al : e.swimPitch;
         e.rswim = e.pswim !== undefined ? e.pswim + ((e.swimAmt || 0) - e.pswim) * al : e.swimAmt;
       } else { P[0] = e.pos[0]; P[1] = e.pos[1]; P[2] = e.pos[2]; e.ryaw = e.bodyYaw; e.rhead = e.headYaw; e.rwalk = e.walk; e.rpitch = e.swimPitch; e.rswim = e.swimAmt; }
+      // SalmonRenderer.setupRotations: the body sways 4.3 degrees at 0.6 x ticks (out of the water 1.3 x as far, 1.7 x as fast)
+      if (e.type === 'salmon') { const dry = e.inWater === false; e.ryaw += (dry ? 1.3 : 1) * 4.3 * Math.PI / 180 * Math.sin((dry ? 1.7 : 1) * 0.6 * performance.now() / 50); }
       // a zombie turning into a drowned shakes (LivingEntityRenderer.isShaking: cos(ticks x 3.25) x 0.4 pi degrees)
       if (e.convT > 0) e.ryaw += Math.cos(e.age * 65) * 0.0219;
       const dx = P[0] - cam[0], dz = P[2] - cam[2], rr = Math.max(2, e.w * 0.5 + 1);
@@ -2215,7 +2311,10 @@ class Entities {
     let S = (m.scale || 1) * (e.size ? e.size * 0.999 : 1) * (e.baby ? 0.5 : 1) * (e.dispScale || 1), sxz = 1, syy = 1;
     if (e.size) { const f = (e.squish || 0) / (e.size * 0.5 + 1), f1 = 1 / (f + 1); sxz = f1; syy = 1 / f1; }
     const sp = (e.rpitch !== undefined ? e.rpitch : e.swimPitch) || 0, cpt = Math.cos(sp), spt = Math.sin(sp), pY = (m.pitchY || 0) / 16 * S;
-    const tail = Math.sin(performance.now() / 1000 * (e.type === 'shark' ? 7 : 12)) * (e.type === 'shark' ? 0.3 : 0.25) * (e.inWater === false ? 1.5 : 1);
+    // SalmonModel: the tail swings 0.25 rad at 0.6 x ticks (out of the water 1.3 x as far, 1.7 x as
+    // fast); the shark (our own) its own way
+    const dry = e.inWater === false, tk = performance.now() / 50;
+    const tail = e.type === 'shark' ? Math.sin(tk / 20 * 7) * 0.3 * (dry ? 1.5 : 1) : Math.sin((dry ? 1.7 : 1) * 0.6 * tk) * 0.25 * (dry ? 1.3 : 1);
     // dying: the body tips over sideways (LivingEntityRenderer); a fish out of the water lies on its
     // side (SalmonRenderer: 90 degrees about z)
     const death = e.deathT > 0 ? Math.min(1, e.deathT * 2.5) * Math.PI / 2 : e.inWater === false && m.pitchY ? Math.PI / 2 : 0;
