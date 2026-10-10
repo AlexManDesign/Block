@@ -321,6 +321,7 @@ namespace VoxelForge
             if (chunkLookupValid[i] && chunkLookupCX[i] == c.cx && chunkLookupCZ[i] == c.cz) { chunkLookupValid[i] = false; chunkLookupValue[i] = null; }
         }
         static void clearChunkLookupCache() { for (int i = 0; i < CHUNK_LOOKUP_CACHE_SIZE; i++) { chunkLookupValid[i] = false; chunkLookupValue[i] = null; } }
+        static void clearChunkRowsForReset() { chunkRows.Clear(); clearChunkLookupCache(); }
 
         public static readonly WorldSim worldSim = new WorldSim();
         public static double waterSimAt = 0, lavaSimAt = 0, farmlandT = 0, saplingT = 0, columnGrowT = 0, leafT = 0;

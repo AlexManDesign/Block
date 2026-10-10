@@ -20,12 +20,12 @@ namespace VoxelForge
 
     sealed class GenSlot
     {
-        public Thread th; public volatile bool ready; public bool busy; public GenJob job;
+        public Thread th; public volatile bool ready, stop; public bool busy; public GenJob job;
         public readonly AutoResetEvent ev = new AutoResetEvent(false); public GenJob mailbox;
     }
     sealed class MeshSlot
     {
-        public Thread th; public volatile bool ready; public bool busy; public MeshJob job; public bool alive;
+        public Thread th; public volatile bool ready, stop; public bool busy; public MeshJob job; public bool alive;
         public readonly AutoResetEvent ev = new AutoResetEvent(false); public MeshJob mailbox;
     }
     sealed class WorkerMsg { public int kind; public object slot; public GenResult gen; public MeshResult mesh; public Exception err; public bool ready; }
@@ -125,10 +125,10 @@ namespace VoxelForge
             try { w = new GenWorker(seed, defs); }
             catch (Exception e) { workerInbox.Enqueue(new WorkerMsg { kind = 0, slot = slot, err = e }); return; }
             workerInbox.Enqueue(new WorkerMsg { kind = 0, slot = slot, ready = true });
-            while (!workerShutdown)
+            while (!slot.stop)
             {
                 slot.ev.WaitOne();
-                if (workerShutdown) break;
+                if (slot.stop) break;
                 var j = Interlocked.Exchange(ref slot.mailbox, null);
                 if (j == null) continue;
                 try { workerInbox.Enqueue(new WorkerMsg { kind = 0, slot = slot, gen = w.Run(j) }); }
@@ -141,10 +141,10 @@ namespace VoxelForge
             try { core = new MeshCore(workerBlockCfg, workerVirtualCfg); }
             catch (Exception e) { workerInbox.Enqueue(new WorkerMsg { kind = 1, slot = slot, err = e }); return; }
             workerInbox.Enqueue(new WorkerMsg { kind = 1, slot = slot, ready = true });
-            while (!workerShutdown)
+            while (!slot.stop)
             {
                 slot.ev.WaitOne();
-                if (workerShutdown) break;
+                if (slot.stop) break;
                 var j = Interlocked.Exchange(ref slot.mailbox, null);
                 if (j == null) continue;
                 try { workerInbox.Enqueue(new WorkerMsg { kind = 1, slot = slot, mesh = core.run(j) }); }
@@ -182,8 +182,8 @@ namespace VoxelForge
         public static void shutdownWorkerEngine()
         {
             workerShutdown = true;
-            foreach (var s in genSlots) s.ev.Set();
-            foreach (var s in meshSlots) s.ev.Set();
+            foreach (var s in genSlots) { s.stop = true; s.ev.Set(); }
+            foreach (var s in meshSlots) { s.stop = true; s.ev.Set(); }
             genSlots.Clear(); meshSlots.Clear();
             genJobs.Clear(); meshJobs.Clear(); genPending.Clear(); meshPending.Clear();
             genDone.Clear(); meshDone.Clear();
