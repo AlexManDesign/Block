@@ -120,6 +120,45 @@ def drowned_skin(img):
     return out
 
 
+def flow_frames(still, n=16):
+    """A flowing-liquid tile (own, made from the still one): each column smeared along the flow
+    into streaks, seamless, brought back to a little more than the still tile's contrast; the
+    frames move the streaks one pixel a frame along +v (the way the liquid runs), as Minecraft's
+    flow textures run."""
+    base = still.crop((0, 0, 16, 16)).convert('RGBA')
+    bp = base.load()
+    lum = lambda c: c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11
+    sm = {}
+    for x in range(16):
+        for y in range(16):
+            acc = [0.0, 0.0, 0.0, 0.0]
+            for j, wgt in enumerate((4, 3, 2, 2, 1, 1)):
+                c = bp[x, (y - j) % 16]
+                for i in range(4):
+                    acc[i] += c[i] * wgt
+            sm[x, y] = [v / 13 for v in acc]
+
+    def spread(vals):
+        m = sum(vals) / len(vals)
+        return m, (sum((v - m) ** 2 for v in vals) / len(vals)) ** 0.5
+    _, s0 = spread([lum(bp[x, y]) for x in range(16) for y in range(16)])
+    m1, s1 = spread([lum(c) for c in sm.values()])
+    k = 1.3 * s0 / s1 if s1 > 0 else 1
+    streak = {}
+    for p, c in sm.items():
+        dl = (lum(c) - m1) * (k - 1)
+        streak[p] = tuple(max(0, min(255, int(round(v + dl)))) for v in c[:3]) + (int(round(c[3])),)
+    frames = []
+    for k in range(n):
+        f = Image.new('RGBA', (16, 16))
+        fp = f.load()
+        for x in range(16):
+            for y in range(16):
+                fp[x, y] = streak[x, (y - k) % 16]
+        frames.append(f)
+    return frames
+
+
 def spawn_egg(egg, c1, c2):
     """Grey spawn egg -> base colour with spots of the second colour (shading kept)."""
     out = egg.copy()
@@ -388,6 +427,12 @@ def collect():
         frames = [tint(f, rgb) for f in frames]
         tiles.append((name, frames, ANIM_TICKS.get(name, 4) if len(frames) > 1 else 0))
     names = {t[0] for t in tiles}
+    # flowing water and lava (sides and sloping tops, as Minecraft's *_flow textures): water's flow
+    # is biome-tinted like its still tile
+    wf = flow_frames(load('water_still'))
+    tiles.append(('water_flow_bt', [f.copy() for f in wf], 1))
+    tiles.append(('water_flow', [tint(f, TINT.get('water_still')) for f in wf], 1))
+    tiles.append(('lava_flow', flow_frames(load('lava_still')), 3))
     # synthesised textures missing from the pack
     oak = load('oak_planks'); spruce = load('spruce_planks')
     extra = {}

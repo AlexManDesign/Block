@@ -102,6 +102,8 @@ void main(){
   uvec4 an = texelFetch(uAnim, ivec2(int(layer & 255u), int(layer >> 8)), 0);
   if (an.r > 1u) layer += (uTick / max(an.g, 1u)) % an.r;
   vUV = vec3(float((w1 >> 11) & 31u) * 0.0625, float((w1 >> 16) & 31u) * 0.0625, float(layer));
+  // a flowing liquid running diagonally: its tile turned by 45 degrees about the window's centre
+  if (((w1 >> 30) & 1u) == 1u) { vec2 d = vUV.xy - 0.5; vUV.xy = 0.5 + vec2(d.x + d.y, d.y - d.x) * 0.70710678; }
   // light colour per vertex like Minecraft's terrain shaders: lightmap(sky, block) * face shade / AO
   vec2 li = vec2(float(w2 & 255u), float((w2 >> 8) & 255u)) / 240.0;
   vLit = textureLod(uLM, vec2(li.y * 0.9375 + 0.03125, li.x * 0.9375 + 0.03125), 0.0).rgb * (float((w1 >> 21) & 255u) / 255.0);

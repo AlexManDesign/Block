@@ -64,6 +64,7 @@ const FACE_GROUPS = 7;
 
 class Mesher {
   constructor() {
+    this.uvRot = 0;          // bit 30 of a vertex's second word: the shader turns its UV by 45 degrees (flowing liquid)
     this.bufs = [new QBuf(8192), new QBuf(4096), new QBuf(2048)];
     this.vis = new Uint8Array(4096);
     this.stack = new Int32Array(4096);
@@ -104,7 +105,7 @@ class Mesher {
       d[o++] = x | (y << 10) | (z << 20) | (fl << 30);
       let u = us[v], vv = vs[v];
       u = u < 0 ? 0 : u > 16 ? 16 : u; vv = vv < 0 ? 0 : vv > 16 ? 16 : vv;
-      d[o++] = layer | (Math.round(u) << 11) | (Math.round(vv) << 16) | (shades[v] << 21) | ovl;
+      d[o++] = layer | (Math.round(u) << 11) | (Math.round(vv) << 16) | (shades[v] << 21) | ovl | this.uvRot;
       d[o++] = skys[v] | (blks[v] << 8) | (tint << 16);
     }
     buf.n++;
@@ -777,11 +778,49 @@ class Mesher {
     add(this.fluidHeightAt(p, isW)); add(hx); add(hz);
     return w ? sum / w : 8 / 9;
   }
+  // FlowingFluid.getOwnHeight: amount / 9 (a source and falling liquid 8 / 9), 0 for no liquid
+  ownHeight(q, isW) {
+    const id = this.ids[q];
+    if (!(isW ? isWaterId(id) : id === B.LAVA)) return 0;
+    if (id !== B.WATER && id !== B.LAVA) return 8 / 9;
+    const m = this.metaArr[q];
+    return (m & 8) ? 8 / 9 : (8 - (m & 7)) / 9;
+  }
+  // FlowingFluid.getFlow: the pull of each side by the height difference (over an open side, by
+  // the liquid one below it, less 8/9); falling liquid against a solid face gets a strong pull
+  // down (so a little sideways). Writes [x, z] (not normalised; only its direction is used)
+  fluidFlow(p, isW, out) {
+    const ids = this.ids, own = this.ownHeight(p, isW);
+    let fx = 0, fz = 0;
+    for (const f of [0, 1, 4, 5]) {
+      const q = p + FACE_DELTA[f], n = ids[q];
+      const liq = isW ? isWaterId(n) : n === B.LAVA;
+      if (!liq && isLiquidId(n)) continue;              // another liquid: no part in the flow
+      let h = liq ? this.ownHeight(q, isW) : 0, d = 0;
+      if (h === 0) {
+        if (!SOLID[n]) { const hb = this.ownHeight(q - SY, isW); if (hb > 0) d = own - (hb - 8 / 9); }
+      } else d = own - h;
+      if (d) { const c = FN[f]; fx += c[0] * d; fz += c[2] * d; }
+    }
+    const id = ids[p];
+    if ((id === B.WATER || id === B.LAVA) && (this.metaArr[p] & 8)) {
+      for (const f of [0, 1, 4, 5]) {
+        const q = p + FACE_DELTA[f];
+        if ((OPAQUE[ids[q]] && ids[q] !== B.ICE) || (OPAQUE[ids[q + SY]] && ids[q + SY] !== B.ICE)) {
+          const l = Math.hypot(fx, fz);
+          if (l > 0) { fx /= l * 6; fz /= l * 6; }
+          break;
+        }
+      }
+    }
+    out[0] = fx; out[1] = fz;
+  }
   fluid(ids, meta, light, p, id, x, y, z, forceSource) {
     this.ids = ids; this.light = light;
     const isW = id !== B.LAVA;
     const buf = this.bufs[isW ? RL_TRANS : RL_SOLID];
-    const layer = FTEX[(isW ? B.WATER : B.LAVA) * 6 + 2];
+    const still = FTEX[(isW ? B.WATER : B.LAVA) * 6 + 2], flowL = (isW ? WATER_FLOW : LAVA_FLOW) || still;
+    let layer = still;
     const up = ids[p + SY];
     const upSame = isW ? isWaterId(up) : up === B.LAVA;
     let h00, h10, h01, h11;
@@ -807,7 +846,25 @@ class Mesher {
       tpx[1] = X + 16; tpy[1] = Y + h11 * 16; tpz[1] = Z + 16;
       tpx[2] = X + 16; tpy[2] = Y + h10 * 16; tpz[2] = Z;
       tpx[3] = X; tpy[3] = Y + h00 * 16; tpz[3] = Z;
-      tu[0] = 0; tv[0] = 16; tu[1] = 16; tv[1] = 16; tu[2] = 16; tv[2] = 0; tu[3] = 0; tv[3] = 0;
+      // LiquidBlockRenderer: no flow - the still tile; else the flowing one turned so that it runs
+      // along the flow (a 16-texel window turned by atan2(z, x) - 90 degrees). Here in steps of
+      // 45 degrees: quarter turns by the corners' UVs, the eighth turn by the shader (uvRot)
+      const F = this.flowV || (this.flowV = [0, 0]);
+      this.fluidFlow(p, isW, F);
+      if (F[0] === 0 && F[1] === 0) {
+        tu[0] = 0; tv[0] = 16; tu[1] = 16; tv[1] = 16; tu[2] = 16; tv[2] = 0; tu[3] = 0; tv[3] = 0;
+      } else {
+        layer = flowL;
+        let k = Math.round((Math.atan2(F[1], F[0]) - Math.PI / 2) / (Math.PI / 4));
+        if (k & 1) { this.uvRot = 1 << 30; k -= 1; }
+        const a = k * Math.PI / 4, sn = Math.round(Math.sin(a)) * 0.25, cs = Math.round(Math.cos(a)) * 0.25;
+        // MC's corner UVs (sprite units, a 32-texel sprite) -> texels of our 16-texel tile
+        const T = (w) => Math.round((2 * w - 0.5) * 16);
+        tu[0] = T(0.5 - cs + sn); tv[0] = T(0.5 + cs + sn);   // x 0, z 1
+        tu[1] = T(0.5 + cs + sn); tv[1] = T(0.5 + cs - sn);   // x 1, z 1
+        tu[2] = T(0.5 + cs - sn); tv[2] = T(0.5 - cs - sn);   // x 1, z 0
+        tu[3] = T(0.5 - cs - sn); tv[3] = T(0.5 - cs + sn);   // x 0, z 0
+      }
       setL(p + SY); shadeAll(1);
       this.quad(buf, tpx, tpy, tpz, tu, tv, layer, sh, sk, bl, 0, false);
       if (isW) {
@@ -818,8 +875,10 @@ class Mesher {
         shadeAll(0.8);
         this.quad(buf, tpx, tpy, tpz, tu, tv, layer, sh, sk, bl, 0, false);
       }
+      this.uvRot = 0;
     }
-    // bottom
+    // bottom (the still tile)
+    layer = still;
     const dn = ids[p - SY];
     if (!(isW ? isWaterId(dn) : dn === B.LAVA) && !OPAQUE[dn]) {
       tpx[0] = X + 16; tpy[0] = Y; tpz[0] = Z + 16; tpx[1] = X; tpy[1] = Y; tpz[1] = Z + 16;
@@ -828,7 +887,9 @@ class Mesher {
       setL(p - SY); shadeAll(0.55);
       this.quad(buf, tpx, tpy, tpz, tu, tv, layer, sh, sk, bl, 0, false);
     }
-    // sides
+    // sides: the flowing tile (its left half, from 1 - height down to the middle, in MC's 32-texel
+    // sprite: here the whole 16-texel tile from 16 - 16 x height)
+    layer = flowL;
     const sideH = [[h11, h10], [h00, h01], null, null, [h01, h11], [h10, h00]];
     for (const f of [0, 1, 4, 5]) {
       const q = p + FACE_DELTA[f];
@@ -923,7 +984,7 @@ const TINT_KIND = new Uint8Array(4096), TINT_LAYER = new Uint16Array(4096);
 const TINT_NAMES = [
   [1, 'grass_block_top'], [1, 'short_grass'], [1, 'fern'], [1, 'tall_grass_top'], [1, 'tall_grass_bottom'],
   [1, 'large_fern_top'], [1, 'large_fern_bottom'], [2, 'oak_leaves'], [2, 'vine'], [2, 'dark_oak_leaves'],
-  [2, 'jungle_leaves'], [2, 'acacia_leaves'], [2, 'mangrove_leaves'], [3, 'water_still'], [4, 'grass_block_side'],
+  [2, 'jungle_leaves'], [2, 'acacia_leaves'], [2, 'mangrove_leaves'], [3, 'water_still'], [3, 'water_flow'], [4, 'grass_block_side'],
 ];
 // default colours (plains grass / foliage, default water) when a job carries no biome tints
 const DEFAULT_TINTS = (() => {
@@ -935,8 +996,11 @@ const DEFAULT_TINTS = (() => {
 const OPAQUE_LEAF = new Uint16Array(4096);
 // edge texture of each pane block (its glass's '<name>_pane_top'), 0: the pane's own texture
 const PANE_EDGE = new Uint16Array(NBX);
+// the flowing liquids' tiles (sides and sloping tops)
+let WATER_FLOW = 0, LAVA_FLOW = 0;
 function initMesherTextures(layers) {
   TINT_KIND.fill(0); OPAQUE_LEAF.fill(0);
+  WATER_FLOW = layers['water_flow'] | 0; LAVA_FLOW = layers['lava_flow'] | 0;
   for (const n in layers) if (layers[n + '_opaque'] !== undefined) OPAQUE_LEAF[layers[n]] = layers[n + '_opaque'];
   for (const [k, n] of TINT_NAMES.concat(TINT_NAMES.filter(t => t[0] === 2).map(t => [2, t[1] + '_opaque']))) {
     const l = layers[n], u = layers[n + '_bt'];
