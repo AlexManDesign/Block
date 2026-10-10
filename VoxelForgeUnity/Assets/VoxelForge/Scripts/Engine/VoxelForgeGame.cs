@@ -9,7 +9,6 @@ namespace VoxelForge
 {
     public static partial class VF
     {
-        public const double DPR_CAP = 1.5;
         static bool booted = false;
 
         /// <summary>Top-level script initialisation of the reference page, in dependency order.</summary>
