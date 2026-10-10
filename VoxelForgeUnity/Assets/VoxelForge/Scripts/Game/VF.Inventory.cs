@@ -610,9 +610,17 @@ namespace VoxelForge
             }
         }
 
+        // IMGUI re-evaluates canCraft/craftGridRecipe on every OnGUI event: reuse scratch buffers (main thread only).
+        static Stack[] fitsSim = new Stack[0], fitsSimStacks = new Stack[0];
+        static bool[] craftTaken = new bool[9];
+        static readonly bool[] MIRROR_BOTH = { false, true }, MIRROR_ONE = { false };
         public static bool recipeFits(Recipe r)
         {
-            var sim = cloneInventory();
+            // == cloneInventory(), into reused Stack objects
+            int len = inventory.Length;
+            if (fitsSim.Length != len) { fitsSim = new Stack[len]; fitsSimStacks = new Stack[len]; for (int i = 0; i < len; i++) fitsSimStacks[i] = new Stack(); }
+            for (int i = 0; i < len; i++) { var s = inventory[i]; if (s == null) fitsSim[i] = null; else { var c = fitsSimStacks[i]; c.key = s.key; c.count = s.count; c.dur = s.dur; fitsSim[i] = c; } }
+            var sim = fitsSim;
             foreach (var kv in r.need) if (!removeItem(kv.Key, kv.Value, sim)) return false;
             return canFitItem(r.outKey, r.outCount, sim);
         }
@@ -873,7 +881,8 @@ namespace VoxelForge
                 if (rule.items != null)
                 {
                     if (rule.items.Count != used) continue;
-                    var taken = new bool[arr.Length]; bool ok = true;
+                    if (craftTaken.Length < arr.Length) craftTaken = new bool[arr.Length];
+                    var taken = craftTaken; Array.Clear(taken, 0, arr.Length); bool ok = true;
                     foreach (var spec in rule.items)
                     {
                         int hit = -1;
@@ -886,7 +895,7 @@ namespace VoxelForge
                 }
                 int h = rule.shape.Length, w = rule.shape[0].Length;
                 if (maxX - minX + 1 != w || maxY - minY + 1 != h || w > n || h > n) continue;
-                foreach (var mirrored in rule.mirror ? new[] { false, true } : new[] { false })
+                foreach (var mirrored in rule.mirror ? MIRROR_BOTH : MIRROR_ONE)
                 {
                     bool ok = true; string woolKey = null;
                     for (int y = 0; y < h && ok; y++)

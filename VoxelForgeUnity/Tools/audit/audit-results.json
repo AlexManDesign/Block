@@ -627,6 +627,309 @@
    "crossFileIssues": [],
    "compileOk": true,
    "compileNotes": "TMPDIR=$(mktemp -d) sh /home/user/Block/VoxelForgeUnity/Tools/compile-check/check.sh printed \"compile check: OK\" after all edits. Edited files: /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.Renderer.cs, /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.ChunkRender.cs, /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.DynMesh.cs. The stubs did not need changes."
+  },
+  {
+   "results": [
+    {
+     "id": "ENG-1",
+     "verdict": "fixed",
+     "reason": "Already applied: VF.Workers.cs:471 calls the two-argument constructor `new Section(q.blocks, light)`, so the throwaway 4096-byte arrays and the 0xf0 fill loop no longer run."
+    },
+    {
+     "id": "ENG-2",
+     "verdict": "fixed",
+     "reason": "Confirmed. loadGame only restores day when the save has it, and it never restores yaw, pitch or camMode. In returnToTitle (VF.Frame.cs) I now reset day = 0.18, player yaw/pitch/camMode, vx/vy/vz, onGround, swimming, sneaking, inWater, hitWall and boostUntil, plus the interactionPrev* NaN sentinels, streamCleanupIter = null and queue.Clear(). I left xrayActive out on purpose: in JS it is reloaded from localStorage (XRAY_STATE_KEY) after a reload, so it does persist across sessions, and the C# version keeps that state the same way through InitMods/toggleXray."
+    },
+    {
+     "id": "ENG-3",
+     "verdict": "fixed",
+     "reason": "Already applied: failWorkerEngine sets s.stop and calls s.ev.Set() on every gen slot before genSlots.Clear() (VF.Workers.cs:100). The mesh error branch sets slot.stop and calls slot.ev.Set() (line 221). The threads leave their wait loop and release their kernels. The AutoResetEvents are left for the GC to finalize; that is minor and optional."
+    },
+    {
+     "id": "ENG-4",
+     "verdict": "fixed",
+     "reason": "Replaced the LINQ OrderBy/ToList/Clear/AddRange in prioritizeWorkerQueues, and the extra meshJobs sort in stream(), with an in-place stable insertion sort. Keys come from streamPriority, computed once per element into a reused int[] buffer, so the sort no longer allocates and the order matches JS's stable Array.sort."
+    }
+   ],
+   "crossFileIssues": [],
+   "compileOk": true,
+   "compileNotes": "TMPDIR=$(mktemp -d) sh Tools/compile-check/check.sh printed \"compile check: OK\" after the edits. Files changed: /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Frame.cs (returnToTitle) and /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Stream.cs (prioritizeWorkerQueues and its new sort helpers, plus the meshJobs sort in stream())."
+  },
+  {
+   "results": [
+    {
+     "id": "RFX-1",
+     "verdict": "fixed",
+     "reason": "Already applied: VF.Atlas.cs buildRuntimeWaterFlowCanvas now writes all four channels as (byte)Math.Max(0, Math.Min(255, Math.Round(v, MidpointRounding.ToEven))). That matches Uint8ClampedArray assignment, which rounds half to even, in the JS (pretty.js 3508-3511)."
+    },
+    {
+     "id": "RFX-2",
+     "verdict": "fixed",
+     "reason": "Already applied and checked against JS 16974-17090. renderVehicleBox fills the static fxCorners[8], where corner k = (x1?4)|(y1?2)|(z1?1). Its QC face index lists (0,2,1,3), (5,7,4,6), (3,7,2,6), (0,4,1,5), (1,5,3,7) and (4,0,6,2) match the JS q() order face by face. renderVehiclePrismMain reuses fxCorners with a static PRISM_F. renderBoatOarMain computes c1/c2 and the mul() vectors inline (k1=shaft/2, k2=blade/2, e=shaft+blade/2, with 0.03/0.13/0.025 factors). addMainArrow builds its quads in fxPts with the same bases. dropPushQuad copies the points immediately and keeps no references, and the shared scratch arrays are never nested. All of these builders run on the main thread (Renderer.cs 264-303)."
+    },
+    {
+     "id": "RFX-3",
+     "verdict": "fixed",
+     "reason": "Already applied: appendSelectionBox fills fxCorners with corner k = (z1?4)|(y1?2)|(x1?1), which matches the JS p[] order, and walks a static BOX_EDGES that is the same as the JS E list. buildPrimedOutlines uses a static PRIMED_BOX {-0.05,-0.05,-0.05,1.05,1.05,1.05}."
+    },
+    {
+     "id": "RFX-4",
+     "verdict": "fixed",
+     "reason": "Already applied: the held matrices are composed in place. hCur/hTmp are swapped by hApply, and each op is filled into hOp. Product order and column-major layout match heldMatMul/heldPost (o = a*b, right-multiply). hOp is never aliased with hCur or hTmp. heldBoundsForKey returns static readonly HB_* instances whose values match JS 26609-26617, and the bounds are only read."
+    },
+    {
+     "id": "RFX-5",
+     "verdict": "fixed",
+     "reason": "Already applied: buildMainSkyBodies calls the static skyBodyAdd(ex,ey,ez,...) with no closure, and its math is the same as the JS add. buildFishingLine emits the 10 segments from the previous point kept in locals, and point 0 (t=0) is the start point, as in JS 24897-24900. mainSkyState returns one shared SkyState with a reused sky[3], and the renderer consumes it immediately on the main thread."
+    },
+    {
+     "id": "RFX-6",
+     "verdict": "fixed",
+     "reason": "Already applied: minimapColor uses the static mmClamp(v, shade), which is JS.round plus a clamp, so there is no closure. The spawnKey string is replaced by minimapSpawnChanged, which compares the round(v*10)/10 components (NaN-safe) to cached doubles and commits them on redraw. The initial no-spawn state matches JS minimapLastSpawn = \"\". The arrow corners are locals."
+    },
+    {
+     "id": "RFX-7",
+     "verdict": "fixed",
+     "reason": "Already applied: entityLight decodes the packed light inline, with the same sky/blk formula as JS 3140-3144. skeletonHandAt returns through out-parameters, and its math matches JS 3271-3286. addSkeletonBow fills fxPts, and addThirdPersonHeld uses P4. All of this is on the main thread. getWorldLight still allocates, but only for callers in Drops/Mobs, which are outside this hot path."
+    }
+   ],
+   "crossFileIssues": [],
+   "compileOk": true,
+   "compileNotes": "TMPDIR=$(mktemp -d) sh /home/user/Block/VoxelForgeUnity/Tools/compile-check/check.sh printed 'compile check: OK'. This run made no edits: the interrupted earlier run had already applied all 7 fixes, and each one was re-verified against pretty.js."
+  },
+  {
+   "results": [
+    {
+     "id": "WG-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. ensureShipTables() filled four static tables lazily with plain stores and checked SHIP_ALL != null without any barrier. Several VF-Gen kernels and the main-thread WORLDGEN kernel call it concurrently through structureCandidate, so on weakly ordered hardware a thread could see SHIP_ALL non-null while the prefix arrays still read as null. Fix in WorldGenKernel.Structures.cs: the fast path now uses Volatile.Read(ref SHIP_ALL). Building happens under a static lock with a second check inside it. The three companion tables are stored first and SHIP_ALL is published last with Volatile.Write. Table contents and order are unchanged."
+    },
+    {
+     "id": "WG-2",
+     "verdict": "fixed",
+     "reason": "Confirmed as a real allocation hot path; the output matched JS. Each lookup in planRavine, ravinesForChunk, planMineshaft, mineshaftsForChunk and structureCandidate built a string and boxed its ints. The seed prefix adds nothing because setSeed clears every cache whenever the seed changes, and these caches are only looked up, never iterated. Changes: (1) The caches are now Dictionary<long,...> keyed by xzKey(x,z) = ((long)x<<32)|(uint)z. They use a mixing IEqualityComparer<long> (XZKeyCmp), because long.GetHashCode is lo^hi and collides heavily on nearby grid cells. (2) structureCache is now one long-keyed dictionary per structure type, selected by a new StructCfg.idx field. This replaces the salt in the JS key, and setSeed clears all four. (3) surfaceStructureReservedAt now runs the nearbyStructures loop inline without allocating a List. It still evaluates every candidate of a type in the same order before returning, so the sequence of structureCandidate, biome and surface calls, and with it the climateLastLeaf state, stays identical. The size-cap clears and the hit != null check in mineshaftsForChunk are kept."
+    }
+   ],
+   "crossFileIssues": [],
+   "compileOk": true,
+   "compileNotes": "TMPDIR=$(mktemp -d) sh /home/user/Block/VoxelForgeUnity/Tools/compile-check/check.sh printed \"compile check: OK\" after the edits. Only these two files changed: /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Gen/WorldGenKernel.Core.cs and /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Gen/WorldGenKernel.Structures.cs. The stubs did not need changes, since System.Threading.Volatile comes from mscorlib."
+  },
+  {
+   "results": [
+    {
+     "id": "MESH-1",
+     "verdict": "deferred",
+     "reason": "The finding is real: in full mode, run() calls take() for each section, which allocates new arrays and worldifies them, and then concat() copies everything again into aggO/C/W/T. So every vertex and index is allocated and copied twice. JS avoids this with subarray views. It cannot be fixed inside MeshCore/MeshTypes alone. GeoBucket's contract (v.Length == VCount, indices start at 0 in its own array) is read directly by VF.ChunkRender.cs (makeMesh/updateMeshBuffers/writeTerrainMesh, the region Array.Copy(g.v,0,..), setChunkWaterCPU, the water sort) and by VF.Workers.cs (bucketEqual, combineSectionBucket). Section buckets in full24 must also stay separate arrays because Workers keeps them as c.sectionGeo for later partial remeshes. A view-based GeoBucket needs coordinated changes in those files. No change was made."
+    },
+    {
+     "id": "MESH-2",
+     "verdict": "fixed",
+     "reason": "Confirmed: these per-block heap allocations were real. Fixes in MeshCore.cs, each producing the same output as before. (1) stairBoxesMain: the Func closures metaAt/isStair/guard are replaced by the private methods stairAt/stairGuard, which call vmeta directly. The base slab and the step/corner boxes come from a static STAIR_STEP[up][kind][dir] table built once with rotateBox (dir = faceIndexForFacing(facing), the same mapping rotateBox uses). vStairBoxes uses the same table. (2) emitRail: the slope lambda is replaced by static railUp(d,px,pz) with the same expressions. (3) shapeBoxes, vShapeBoxes and connectBoxes: fixed shapes are static readonly arrays (slab, trapdoor, open trapdoor rotated x4, carpet, plate, bamboo, pot, bed, fence/wall/pane posts, gate posts/rails/open rails, sea pickles). They are returned through a reusable per-instance boxScratch list. The callers (buildSection, emitVirtualBlock) only iterate it immediately and never nest calls, and boxPart/vBox only read the arrays. Gate branches add elements explicitly rather than with AddRange, which can allocate a temporary array on Mono. workerButtonBox still allocates one small array per button, which is minor. (4) flushFlatWaterTops: the group lists and key dictionary are pooled per instance (flatGroups/flatGroupIdx, with gn as the live count). First-seen group order and the merge are unchanged."
+    }
+   ],
+   "crossFileIssues": [
+    "MESH-1 (perf, optional): to remove the double allocation and copy of full-mode meshes, GeoBucket (MeshTypes.cs) would need view fields (vOff, iOff, vLen, iLen, with VCount/ICount returning the lengths and indices relative to vOff), and run() would write all sections into chunk-level buffers and build full24[si] as views into aggO..aggT. Every consumer must be updated to honor the offsets: VF.ChunkRender.cs makeMesh/updateMeshBuffers (writeTerrainMesh(g.v, g.VCount, g.i, ...) needs offset parameters), the region batching Array.Copy(g.v, 0, regionScratchV, vo, g.VCount) and the index loops near lines 368/383/414, setChunkWaterCPU (w.v[k] loop at line 172), and the water sort; VF.Workers.cs bucketEqual (line 531) and combineSectionBucket (line 546). Until all of these change together, MeshCore must keep producing standalone arrays."
+   ],
+   "compileOk": true,
+   "compileNotes": "TMPDIR=$(mktemp -d) sh /home/user/Block/VoxelForgeUnity/Tools/compile-check/check.sh printed 'compile check: OK' after the edits. Edited file: /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Mesh/MeshCore.cs. MeshTypes.cs and UnityStubs.cs are unchanged."
+  },
+  {
+   "results": [
+    {
+     "id": "MOBS-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. JS mobPathHeapPush stores f into a Float32Array but compares the Float32 parent key against the double f (`mobPathHeapF[p] <= f`). In VF.Mobs.cs mobPathHeapPush the sift-up comparison now uses the double: `if (mobPathHeapF[p] <= fd) break;`. Stored values are still the float32 `f`, so the JS ordering among near-equal keys is matched."
+    },
+    {
+     "id": "MOBS-2",
+     "verdict": "fixed",
+     "reason": "Confirmed: a capturing Func<double,double,double,bool> was allocated on every mobSwimPhysics call. Replaced it with a static helper `mobSwimCan(Mob m, bool wasWater, double x, double y, double z)` that has the same expression as the JS arrow. JS's exactFeet=true argument is ignored by JS mobSpaceClear, so it is equivalent. The three call sites (x, z and vertical steps) now call the helper directly, and the behaviour is unchanged."
+    }
+   ],
+   "crossFileIssues": [],
+   "compileOk": true,
+   "compileNotes": "TMPDIR=$(mktemp -d) sh /home/user/Block/VoxelForgeUnity/Tools/compile-check/check.sh printed \"compile check: OK\" after the edits to /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Game/VF.Mobs.cs."
+  },
+  {
+   "results": [
+    {
+     "id": "WORLD-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. returnToTitle() calls saveGameNow() and then clearRuntimeWorld(), and clearRuntimeWorld() never cancelled saveTimer. Timers keep ticking on the title screen, so a pending 300 ms scheduleWorldSave would later call saveWorldNow() with the old SAVE_KEYS and empty edits/meta, wiping the save. Fix: clearRuntimeWorld() in World/VF.World.cs now starts with `Timers.clearTimeout(saveTimer); saveTimer = 0;`. This is also safe from the loadWorldSave() call path, because no world save is pending when a new world loads. The matching saveGameT problem in VF.Inventory.cs is listed in crossFileIssues."
+    },
+    {
+     "id": "WORLD-2",
+     "verdict": "fixed",
+     "reason": "Confirmed. spawnWorldDrop does worldDrops.Add (VF.Drops.cs:21), and detachUnsupportedAt calls it in survival (VF.BlockRules.cs:453/468). The C# foreach over that List<WorldDrop> would throw 'Collection was modified', where JS for-of over a growing array keeps going. Fix: in tickPressurePlates (World/VF.WorldTick.cs) the liveMobs and worldDrops loops now go by index, the same way JS for-of walks an array. The pressurePlateActive loop keeps its snapshot, because any entry added during the loop has an until time later than now and is skipped anyway."
+    },
+    {
+     "id": "WORLD-3",
+     "verdict": "fixed",
+     "reason": "Valid but only a performance issue; it changes no behaviour. Fixes in World/VF.WorldTick.cs: (1) snapshotSimMap now returns a shared, read-only empty list when the map is empty, so the common per-frame case allocates nothing. All callers only foreach over the result. (2) tickFurnaces now uses snapshotSimMap(furnaces), the same OrderedMap<string,Furnace> type, so an empty furnace map allocates nothing. The furnace UI-refresh code after the loop still runs, as in JS. (3) tickFallingBlocks replaced OrderBy(...).ToList() with an in-place stable insertion sort on y. That matches JS Array.sort((a,b)=>a.y-b.y), which is stable, and costs about O(n) because the list stays nearly sorted between frames. I did not use reusable scratch lists for non-empty snapshots: a C# foreach over a list that is cleared mid-loop by a nested snapshot would throw, so a fresh list stays the safe choice there."
+    },
+    {
+     "id": "WORLD-4",
+     "verdict": "deferred",
+     "reason": "Partly true. JS calls caveBiomeAt(player.x, Math.floor(player.y), player.z) and does not floor x/z for the noise samples (generatedSurfaceAt floors internally). But the only such caller is the debug stats overlay (pretty.js 26423, VF.Frame.cs:122 updateStats), not ambient fog or music as the reviewer says. The effect is cosmetic: the 'cave ...' label in the debug text can flip at a slightly different spot. The fix needs a double entry point in Gen/WorldGenKernel.Core.cs, because valueNoise3Main is private there, plus a change to the caller in Engine/VF.Frame.cs. I own neither file."
+    }
+   ],
+   "crossFileIssues": [
+    "Game/VF.Inventory.cs ~line 241 (saveGameT): a pending saveGameSoon() timer (300 ms, calls saveStateNow) can still fire after returnToTitle(), against the reset title-screen state with the old SAVE_KEYS. Fix: add `public static void cancelPendingStateSave() { Timers.clearTimeout(saveGameT); saveGameT = 0; }` (or inline it) and call it in Engine/VF.Frame.cs returnToTitle() right after `if (started) saveGameNow();`.",
+    "WORLD-4 (cosmetic, debug overlay only): in Gen/WorldGenKernel.Core.cs add `public int caveBiomeAt(double x, int y, double z) { int h = generatedSurfaceAt((int)Math.Floor(x), (int)Math.Floor(z)); double n = (h - y) / 128.0; ... }` with the same body as the int version, using unfloored x/z in the valueNoise3Main calls. Then add a wrapper `public static int caveBiomeAt(double x, int y, double z) { return WG.caveBiomeAt(x, y, z); }` (the world owner can add it to VF.WorldGen.cs). In Engine/VF.Frame.cs:122 call `caveBiomeAt(player.x, JS.floor(player.y), player.z)`."
+   ],
+   "compileOk": true,
+   "compileNotes": "The compile check printed \"compile check: OK\" after editing World/VF.World.cs (clearRuntimeWorld cancels saveTimer) and World/VF.WorldTick.cs (allocation-free empty snapshotSimMap via EmptySimSnap<T>, furnaces snapshot through snapshotSimMap, index loops in tickPressurePlates, in-place stable insertion sort in tickFallingBlocks)."
+  },
+  {
+   "results": [
+    {
+     "id": "INTERACT-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. In JS (pretty.js 19510-19513), the branch runs `return toast(...)`, and toast returns undefined. The falsy result lets placeBlock (19551) continue its flow. C# returned true, so placeBlock stopped early. I changed the branch in VF.Interact.cs useBucketOrIgniter to `{ st.count++; toast(\"Нет места для наполненного ведра\"); return false; }`."
+    },
+    {
+     "id": "INTERACT-2",
+     "verdict": "fixed",
+     "reason": "Confirmed. getWorldLight (Render/VF.EntityModels.cs:170) allocates a new double[2] on every call, and dropLight runs for every visible drop each frame. In VF.Drops.cs, dropLight now decodes getPackedLightWorld(JS.floor(q.x), JS.floor(q.y+0.3), JS.floor(q.z)) inline. The math is identical to getWorldLight followed by the same formula, so no array is allocated."
+    }
+   ],
+   "crossFileIssues": [],
+   "compileOk": true,
+   "compileNotes": "After both edits, TMPDIR=$(mktemp -d) sh Tools/compile-check/check.sh printed \"compile check: OK\"."
+  },
+  {
+   "results": [
+    {
+     "id": "PLAYER-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. Neither fix had been applied before this run. stairsBoxesMainSync was building three capturing Func delegates plus a closure object, and a new JObj for every missing neighbour meta, on each call. I replaced them with static helpers stairAtSync, stairMetaSync and stairGuardSync, each taking x/y/z as parameters. stairMetaSync returns a shared read-only STAIR_EMPTY_META, which is only ever read through Str/Bool. In recoverPlayerOverlapSource, the tryNudge lambda that captured ox/oz became the static recoverTryNudge(ox, oz, y, hh). The ring and height literal arrays are now the static readonly RECOVER_NUDGE_RINGS {0.35,0.7,1.05} and RECOVER_NUDGE_HEIGHTS {1.8,0.85}. Order and behaviour still match the JS: try rings, then the floor SHORT check, then FULL then SHORT up/down."
+    },
+    {
+     "id": "PLAYER-2",
+     "verdict": "fixed",
+     "reason": "Confirmed. C# allocates a new array each time a foreach runs over an array literal. The constant offsets are now static readonly fields: RAIL_NEAR_DY, RAIL_CONN_DY, BOAT_BLOCK_FW, BOAT_BLOCK_SIDE and CART_BLOCK_CORNERS (r=0.45). railConnections now fills a reused static RAIL_CONN_BUF from 4 preallocated int[3] entries in RAIL_CONN_POOL. ARM_DIRS has 4 arms, so it can return at most 4 connections. Its only caller is updateMinecart, which passes the list to pickRailDirection. That function copies best[0..2] into v.railDX/DZ/DY right away and runs on the main thread, so reusing the buffer is safe."
+    }
+   ],
+   "crossFileIssues": [],
+   "compileOk": true,
+   "compileNotes": "TMPDIR=$(mktemp -d) sh Tools/compile-check/check.sh printed \"compile check: OK\" after editing VF.Physics.cs and VF.Vehicles.cs."
+  },
+  {
+   "results": [
+    {
+     "id": "INV-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. When a tail node was deleted during iteration, its next stayed null and a later Set linked the new node from n.prev, so a parked enumerator stopped early. Clear() had the same gap. Fix in Ordered.cs: removed nodes whose next was the list end go into a deadTails list (Delete of the tail adds it, and Clear adds the old tail). Set() points each dead tail at the newly appended node and empties the list. Tested with Mono: delete-then-add gives 'ab', chained tail deletes give 'ade', clear-then-add gives 'ax', and re-adding a deleted key gives 'aba', all matching JS Map."
+    },
+    {
+     "id": "INV-2",
+     "verdict": "fixed",
+     "reason": "Confirmed: Delete+Move leaves a window where only key.json.tmp exists, and getItem ignored it. setItem now writes the tmp file, then calls File.Move when the target is missing or File.Replace(tmp, f, null) when it exists. It falls back to Delete+Move only if Replace throws. getItem moves an orphaned .tmp into place when the main file is missing. removeItem also deletes a leftover .tmp so a removed key cannot come back. File.Replace was checked on Mono: atomic, tmp consumed."
+    },
+    {
+     "id": "INV-3",
+     "verdict": "fixed",
+     "reason": "Confirmed: any IO exception was cached as 'missing' for the whole session, and the seed/state paths then regenerated their data and overwrote the real files. getItem now caches 'missing' only when File.Exists is false. It retries the read 4 times with short sleeps (10/30/50 ms), never caches a failure, and logs an error. A key that keeps failing to read goes into a readFailed set. setItem refuses to overwrite such a key while its file still exists, so the real save survives; it logs a warning instead. A later successful read, or removeItem, clears the flag. No caller changes were needed: callers still just see null, as in JS."
+    },
+    {
+     "id": "INV-4",
+     "verdict": "fixed",
+     "reason": "Confirmed. Rewrote JS.ToStr(double) to match JS Number::toString: shortest round-trip digits plus JS fixed/exponent layout (lowercase e with explicit sign, fixed notation for exponent -7 < n <= 21) and NaN/Infinity. Integers below 2^53 keep the fast path. I did not use the reviewer's 'print integers below 1e21 in full', which is wrong above 2^53: JS prints 2**60 as 1152921504606847000. Mono's double.Parse turned out not to be correctly rounded, so the round-trip check does not use it. The fast path is exact: the 15-digit rounding N, checked with N*10^q, which is a single IEEE operation and exact for N < 2^53, |q| <= 22. Otherwise it falls back to an exact check of the rounding interval with base-1e9 big integers (bigDec/bigMul/bigCmp). JS.Fixed now rounds half-up on the exact binary value of the double: a guarded double fast path, else exact digits from bigDec. It keeps '-' for small negatives (-0.001 gives '-0.00') and returns ToStr for values of 1e21 and above. Json.WriteNum now uses JS.ToStr (same rules as JSON.stringify). Checked with Node against about 140k values (fixed edge cases, random magnitudes, random bit patterns, subnormals, MAX_VALUE) for toString and toFixed(0,1,2,3,5,12), compared from exact bit patterns: 0 mismatches. Cost is about 3 us per ToStr call and 0.5 us per Fixed call."
+    },
+    {
+     "id": "INV-5",
+     "verdict": "fixed",
+     "reason": "Confirmed: IMGUI evaluates these on every OnGUI event, and each call allocated. In VF.Inventory.cs: added static MIRROR_BOTH/MIRROR_ONE arrays and a reusable craftTaken buffer (cleared with Array.Clear) in craftGridRecipe. recipeFits now copies the inventory into reusable scratch Stack objects instead of calling cloneInventory() (LINQ plus 36 new Stacks). Behavior is unchanged, including the JS-faithful inventoryDirty side effect of removeItem on the simulated inventory. Result caching was left out: inventory is changed in many places without a revision counter. The recipe book's own per-event string building (recipeNeedTextUI, ToLowerInvariant) in VF.UI.cs is out of scope; see crossFileIssues."
+    },
+    {
+     "id": "INV-6",
+     "verdict": "fixed",
+     "reason": "Confirmed: runInBackground is forced to true, so the isFocused clause could never pause audio. audioPaused() now returns !Application.isFocused || pauseOpen || player.sleeping. An unfocused window (minimized or in the background) is the closest Unity signal to document.hidden, and VF.Frame.cs already uses it the same way. syncAudioState is already called from OnApplicationFocus/OnApplicationPause, and soundReady() re-syncs on every sound, so a stale pause clears itself. No cross-file change needed."
+    },
+    {
+     "id": "INV-7",
+     "verdict": "fixed",
+     "reason": "Confirmed (the synth itself is an intentional deviation, but its main-thread cost was avoidable). Partial fix, no clip caching or off-thread synthesis. Added XRamp/XEnv, which call Math.Pow once per ramp segment and then multiply once per sample; these replace the per-sample Math.Pow in envAt and in the tone/explosion frequency ramps. The master lowpass coefficients, which never change, are now computed once instead of every 32 samples (same result). The reverb comb lines and wet buffer are static scratch buffers, cleared per call, with no modulo in the inner loop. Output matches the old code up to floating-point drift."
+    }
+   ],
+   "crossFileIssues": [
+    "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs:107 - the official compile check fails with CS0103 'touchSwallowGUI' does not exist. This looks like another agent's edit in progress: the static bool touchSwallowGUI is used but never declared. Declare it, e.g. 'public static bool touchSwallowGUI;' in the VF partial class.",
+    "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs drawRecipeBook (~line 548-575), optional performance: on every OnGUI event each RECIPES entry builds 'rec.name + d.name + recipeNeedTextUI(rec)' and calls ToLowerInvariant, and canCraft(rec) runs twice per shown recipe. Cache the lowercase haystack per Recipe (it is static data) and reuse the 'ok' from the filter pass instead of calling canCraft again in the draw loop."
+   ],
+   "compileOk": false,
+   "compileNotes": "The official check (TMPDIR=$(mktemp -d) sh Tools/compile-check/check.sh) still fails after a re-run, with one error outside my files: VF.UI.cs(107,17) CS0103 'touchSwallowGUI' does not exist (another agent's concurrent edit). I compiled the same full file set plus a one-line scratch stub declaring VF.touchSwallowGUI: 0 errors, so my edited files (Ordered.cs, JsRuntime.cs, Json.cs, VF.Inventory.cs, VF.Audio.cs) compile cleanly under C# 7.2. I also tested the new logic on Mono: OrderedMap iteration semantics, File.Replace behavior, and JS.ToStr/JS.Fixed against Node on about 140k values with 0 mismatches."
+  },
+  {
+   "results": [
+    {
+     "id": "UI-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. In IMGUI the control drawn first takes the MouseDown, so pause buttons were catching clicks meant for Settings, Mods and the dialog. drawUI now works out the DOM stacking (HUD 5 < touch 12 < pause 15 < start 20 < gameUI/settings/mods/death 30 < sleep 12000 < confirm) and calls uiLayer(on) before each layer. uiLayer sets GUI.enabled = on || Repaint, so lower layers still draw normally but take no input. The inner GUI.enabled resets (start buttons, craft output, recipe rows) now restore to uiInput instead of true, and the custom handlers in slotEl, the palette and the HUD hotbar also check uiInput."
+    },
+    {
+     "id": "UI-2",
+     "verdict": "fixed",
+     "reason": "Confirmed. pollInput now always handles KeyUp, and always handles Escape (it also clears keyboardControl when a field is focused); other KeyDowns are still skipped while typing. uiTextFocused is now true only if a text field was actually drawn this pass and keyboardControl != 0. A MouseDown outside the text-field rects from the previous pass clears focus. Focus is also cleared when the start screen is shown or hidden, and in openGameUI/closeGameUI."
+    },
+    {
+     "id": "UI-3",
+     "verdict": "fixed",
+     "reason": "Confirmed. pollTouch runs in Update, before OnGUI, so the tap's simulated MouseDown reached the inventory that tap had just opened. Tapping touchInv or touchPause now sets touchSwallowGUI. drawUI then calls Use() on Mouse Down/Up/Drag until Input.touchCount == 0, which pollTouch checks, standing in for preventDefault()."
+    },
+    {
+     "id": "UI-4",
+     "verdict": "fixed",
+     "reason": "Confirmed. The hotbar tap now needs the HUD layer to have input, i.e. no pause, UI, death, sleep, start screen or dialog. In JS, #touchLookZone (left:38%, z 12) covers the hotbar (z 5), so a tap at x >= 38% W, or on the stick, starts a camera look and does not select a slot. I matched that, so pollTouch still starting a look on the hotbar is correct and was kept (the reviewer's suggestion to stop it would not match JS). See ui-extra-1 for the 0.35 to 0.38 fix."
+    },
+    {
+     "id": "UI-5",
+     "verdict": "fixed",
+     "reason": "Confirmed. JS fires click, click, dblclick. A MouseDown with clickCount==2 now only sets dragDouble. The matching MouseUp runs slotLeftClick first, then slotDoubleClick. dragDouble is cleared on every drag end."
+    },
+    {
+     "id": "UI-6",
+     "verdict": "fixed",
+     "reason": "Confirmed. The recipe list and its canCraft flags are now cached, keyed on Time.frameCount plus query, advanced, filter and creative, so they are rebuilt at most once per frame. The search string and the need text are cached per Recipe. A craft click forces a rebuild."
+    },
+    {
+     "id": "UI-7",
+     "verdict": "fixed",
+     "reason": "Confirmed. The world rows and their meta strings are cached in worldListCache. It is cleared while the start screen is hidden, and after Play, Copy, Delete and New Creator/Survival (JS calls renderWorldList at those same points)."
+    },
+    {
+     "id": "UI-8",
+     "verdict": "fixed",
+     "reason": "Confirmed. In JS the #touchControls element always exists and resetTouchMove has no device check, so desktop clears WASD, Space, Shift and sprintLatch on every syncTouchControls(off). I removed the `if (!TOUCH_DEVICE) return;` line."
+    },
+    {
+     "id": "UI-9",
+     "verdict": "fixed",
+     "reason": "Confirmed against the CSS. The tip is now a top-centred translucent pill (top 14), hidden when W <= 700 or on touch. modeText is boxed top-right at 12/10. Resources sit at top 42 and are hidden when W <= 760. The toast is at top 70. The X-RAY badge is at right 12, bottom 250 (205 when W <= 760). The minimap switches to its small size at W <= 760 (CSS breakpoint; it was 620). The mine bar is now 92x7, and the attack meter 66x4 at 50%+35 in #e9eef3."
+    },
+    {
+     "id": "UI-10",
+     "verdict": "fixed",
+     "reason": "Confirmed. World names now use stPlainBold, a bold style with richText=false. Dialog text uses stWrapPlain (richText=false), so names placed in the confirm/alert text show as literal text."
+    },
+    {
+     "id": "UI-11",
+     "verdict": "fixed",
+     "reason": "Confirmed. Each mod row now has an invisible GUIStyle.none button over the name and description that toggles the mod, like the <label> wrapper in JS. Creative palette cells now show the item name next to the cursor on hover, like el.title."
+    },
+    {
+     "id": "ui-extra-1",
+     "verdict": "fixed",
+     "reason": "In VF.Input.cs pollTouch, the look zone started at p.x > 0.35*W, but CSS #touchLookZone starts at left:38%. Changed to >= 0.38*W, which is the same edge the HUD hotbar check uses."
+    },
+    {
+     "id": "ui-extra-2",
+     "verdict": "fixed",
+     "reason": "The creative palette is inside a scroll view, so a MouseDown below or beside the visible area could hit-test a cell that is scrolled out of view and pick it into the hotbar. Clicks and hover now also require the view rect to contain the mouse (inView)."
+    }
+   ],
+   "crossFileIssues": [],
+   "compileOk": true,
+   "compileNotes": "The compile check printed \"compile check: OK\" after all edits. I only changed /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/UI/VF.UI.cs and /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Engine/VF.Input.cs. The stubs needed no changes: the GUIUtility.keyboardControl setter, GUIStyle.none, GUIContent.none and Time.frameCount were already there."
   }
  ]
 }

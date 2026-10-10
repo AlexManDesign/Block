@@ -193,8 +193,7 @@ namespace VoxelForge
         static void WriteNum(StringBuilder sb, double d)
         {
             if (double.IsNaN(d) || double.IsInfinity(d)) { sb.Append("null"); return; }
-            if (d == Math.Floor(d) && Math.Abs(d) < 9e15) sb.Append(((long)d).ToString(CultureInfo.InvariantCulture));
-            else sb.Append(d.ToString("R", CultureInfo.InvariantCulture));
+            sb.Append(JS.ToStr(d)); // JSON.stringify number layout == Number::toString
         }
         static void WriteStr(StringBuilder sb, string s)
         {

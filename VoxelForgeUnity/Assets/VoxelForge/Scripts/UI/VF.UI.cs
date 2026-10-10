@@ -11,6 +11,7 @@ namespace VoxelForge
     public static partial class VF
     {
         static bool uiStylesReady = false;
+        static GUIStyle stPlainBold, stWrapPlain, stStatsR;
         static GUIStyle stLabel, stSmall, stTitle, stH2, stH3, stButton, stDanger, stPanel, stCount, stCenter, stToast, stStats, stInput, stWrap, stSlot;
         static Texture2D texWhite;
         static float uiScale = 1;
@@ -22,7 +23,12 @@ namespace VoxelForge
         // recipe book
         static bool recipeBookOpen = false, recipeBookAvailableOnly = true; static string recipeBookSearch = "";
         // slot drag state
-        static Stack[] dragArr; static int dragIdx = -1; static Vector2 dragStart; static bool dragMoved; static SlotOpts dragOpts;
+        static Stack[] dragArr; static int dragIdx = -1; static Vector2 dragStart; static bool dragMoved, dragDouble; static SlotOpts dragOpts;
+        // input layering: only the top-most open layer takes input (DOM z-order / native confirm()); lower layers still repaint
+        static bool uiInput = true, uiRepaint = false;
+        static void uiLayer(bool on) { uiInput = on || uiRepaint; GUI.enabled = uiInput; }
+        // text-field focus tracking (runtime IMGUI keeps TextField focus when passive controls are clicked)
+        static bool uiTextFieldDrawn = false, lastStartVisible = false; static Rect txtRectA, txtRectB, txtPrevA, txtPrevB;
 
         static Color C(int hex, float a = 1) { return new Color(((hex >> 16) & 255) / 255f, ((hex >> 8) & 255) / 255f, (hex & 255) / 255f, a); }
         static GUIStyle mkStyle(GUIStyle bse, int size, Color col, FontStyle fs = FontStyle.Normal, TextAnchor anchor = TextAnchor.UpperLeft)
@@ -36,8 +42,11 @@ namespace VoxelForge
             if (uiStylesReady) return;
             texWhite = Texture2D.whiteTexture;
             stLabel = mkStyle(GUI.skin.label, 14, C(0xe8eef4));
+            stPlainBold = mkStyle(GUI.skin.label, 14, C(0xe8eef4), FontStyle.Bold); stPlainBold.richText = false;
             stSmall = mkStyle(GUI.skin.label, 12, C(0xaab7c4)); stSmall.wordWrap = true;
             stWrap = mkStyle(GUI.skin.label, 13, C(0xd8e2ea)); stWrap.wordWrap = true;
+            stWrapPlain = new GUIStyle(stWrap) { richText = false };
+            stStatsR = mkStyle(GUI.skin.label, 11, C(0xdfe8ef), FontStyle.Normal, TextAnchor.UpperRight); stStatsR.wordWrap = false;
             stTitle = mkStyle(GUI.skin.label, 34, Color.white, FontStyle.Bold);
             stH2 = mkStyle(GUI.skin.label, 20, Color.white, FontStyle.Bold);
             stH3 = mkStyle(GUI.skin.label, 15, C(0xffe9a8), FontStyle.Bold);
@@ -92,17 +101,33 @@ namespace VoxelForge
             var m = GUI.matrix;
             GUI.matrix = Matrix4x4.Scale(new Vector3(uiScale, uiScale, 1));
             float W = Screen.width / uiScale, H = Screen.height / uiScale;
-            uiTextFocused = GUIUtility.keyboardControl != 0 && (startScreenVisible || (uiOpen && recipeBookOpen));
-            if (startScreenVisible) drawStartScreen(W, H);
+            GUI.enabled = true; uiInput = true;
+            var ev = Event.current;
+            uiRepaint = ev.type == EventType.Repaint;
+            // touchInv/touchPause pointerdown preventDefault(): the opening tap must not reach the UI it just showed
+            if (touchSwallowGUI && (ev.type == EventType.MouseDown || ev.type == EventType.MouseUp || ev.type == EventType.MouseDrag)) ev.Use();
+            // a click outside the text fields blurs them (DOM focus semantics)
+            if (ev.type == EventType.MouseDown && !txtPrevA.Contains(ev.mousePosition) && !txtPrevB.Contains(ev.mousePosition)) GUIUtility.keyboardControl = 0;
+            if (startScreenVisible != lastStartVisible) { lastStartVisible = startScreenVisible; GUIUtility.keyboardControl = 0; }
+            if (!startScreenVisible) worldListCache = null;
+            uiTextFieldDrawn = false; txtRectA = txtRectB = new Rect();
+            // DOM stacking: HUD 5 < touch 12 < pause 15 < start 20 < gameUI/settings/mods/death 30 < sleep 12000 < confirm()
+            bool dlg = dialogText != null, slp = dlg || sleepOverlayState != 0, top30 = slp || deathUIVisible, mods = top30 || modsOpen, sett = mods || settingsOpen, gui = sett || uiOpen;
+            if (startScreenVisible) { uiLayer(!gui); drawStartScreen(W, H); }
+            uiLayer(!(gui || pauseOpen || startScreenVisible));
             if (hudVisible && started) drawHUD(W, H);
             if (touchActive) drawTouchControls(W, H);
-            if (sleepOverlayState != 0) drawSleepOverlay(W, H);
-            if (pauseOpen) drawPause(W, H);
-            if (uiOpen) drawGameUI(W, H);
-            if (settingsOpen) drawSettings(W, H);
-            if (modsOpen) drawMods(W, H);
-            if (deathUIVisible) drawDeath(W, H);
-            if (dialogText != null) drawDialog(W, H);
+            if (sleepOverlayState != 0) { uiLayer(!dlg); drawSleepOverlay(W, H); }
+            if (pauseOpen) { uiLayer(!gui); drawPause(W, H); }
+            if (uiOpen) { uiLayer(!sett); drawGameUI(W, H); }
+            if (settingsOpen) { uiLayer(!mods); drawSettings(W, H); }
+            if (modsOpen) { uiLayer(!top30); drawMods(W, H); }
+            if (deathUIVisible) { uiLayer(!slp); drawDeath(W, H); }
+            uiLayer(true);
+            if (dlg) drawDialog(W, H);
+            GUI.enabled = true; uiInput = true;
+            txtPrevA = txtRectA; txtPrevB = txtRectB;
+            uiTextFocused = uiTextFieldDrawn && GUIUtility.keyboardControl != 0;
             GUI.matrix = m;
         }
         static void confirm(string text, Action yes) { dialogText = text; dialogYes = yes; dialogIsAlert = false; }
@@ -112,7 +137,7 @@ namespace VoxelForge
             fill(new Rect(0, 0, W, H), new Color(0, 0, 0, 0.55f));
             var r = new Rect(W / 2 - 220, H / 2 - 80, 440, 160);
             fill(r, C(0x111a22, 0.97f)); frame(r, C(0xffffff, 0.25f));
-            GUI.Label(new Rect(r.x + 18, r.y + 16, r.width - 36, 80), dialogText, stWrap);
+            GUI.Label(new Rect(r.x + 18, r.y + 16, r.width - 36, 80), dialogText, stWrapPlain);
             if (dialogIsAlert) { if (GUI.Button(new Rect(r.xMax - 118, r.yMax - 48, 100, 32), "OK", stButton)) dialogText = null; return; }
             if (GUI.Button(new Rect(r.xMax - 228, r.yMax - 48, 100, 32), "OK", stButton)) { var y = dialogYes; dialogText = null; if (y != null) y(); }
             if (GUI.Button(new Rect(r.xMax - 118, r.yMax - 48, 100, 32), "Отмена", stButton)) dialogText = null;
@@ -120,6 +145,7 @@ namespace VoxelForge
 
         // ---------------- start screen / world list ----------------
         static readonly string[] FEATURES = { "чанковый мир 16×16", "greedy meshing + voxel light", "животные и враждебные мобы", "крафт, печь и контейнеры", "3D density -64…320 и sparse-секции", "несколько именованных миров" };
+        static List<KeyValuePair<WorldRecord, string>> worldListCache;
         static void drawStartScreen(float W, float H)
         {
             fill(new Rect(0, 0, W, H), C(0x0b1218));
@@ -139,7 +165,18 @@ namespace VoxelForge
             y += 34;
             GUI.Label(new Rect(x, y, 80, 22), "<b>Миры</b>", stLabel);
             GUI.Label(new Rect(x + 60, y + 2, w - 60, 20), "Создавай несколько Creator/Survival миров; каждый имеет свой seed и сохранение.", stSmall); y += 26;
-            var list = ensureLegacyWorldIndex().OrderByDescending(q => q.updatedAt).ToList();
+            // renderWorldList(): rebuilt only when the list changes (start screen shown, copy, delete)
+            if (worldListCache == null)
+            {
+                worldListCache = new List<KeyValuePair<WorldRecord, string>>();
+                foreach (var q in ensureLegacyWorldIndex().OrderByDescending(o => o.updatedAt))
+                {
+                    var sp = q.spawn;
+                    worldListCache.Add(new KeyValuePair<WorldRecord, string>(q, (q.mode == "creative" ? "Creator" : "Survival") + " · " + (q.seed.HasValue && JS.isFinite(q.seed.Value) ? "seed " + JS.toInt32(q.seed.Value) + " · " : "")
+                        + (sp != null ? "spawn " + string.Join(" ", sp.Select(v => JS.ToStr(JS.round(v * 10) / 10))) + " · " : "") + formatWorldTime(q.updatedAt != 0 ? q.updatedAt : q.createdAt)));
+                }
+            }
+            var list = worldListCache;
             float listH = ch - (y - card.y) - 190;
             var outer = new Rect(x, y, w, listH);
             fill(outer, C(0x0c151d));
@@ -147,36 +184,36 @@ namespace VoxelForge
             worldScroll = GUI.BeginScrollView(outer, worldScroll, new Rect(0, 0, w - 20, innerH));
             if (list.Count == 0) GUI.Label(new Rect(10, 10, w - 40, 22), "Миров пока нет — создай первый.", stSmall);
             float ry = 4;
-            foreach (var wr in list)
+            foreach (var wkv in list)
             {
+                var wr = wkv.Key;
                 var row = new Rect(4, ry, w - 28, rowH); fill(row, C(0x15232f));
-                GUI.Label(new Rect(row.x + 10, row.y + 6, row.width - 300, 22), "<b>" + wr.name + "</b>", stLabel);
-                var sp = wr.spawn;
-                string meta = (wr.mode == "creative" ? "Creator" : "Survival") + " · " + (wr.seed.HasValue && JS.isFinite(wr.seed.Value) ? "seed " + JS.toInt32(wr.seed.Value) + " · " : "")
-                    + (sp != null ? "spawn " + string.Join(" ", sp.Select(v => JS.ToStr(JS.round(v * 10) / 10))) + " · " : "") + formatWorldTime(wr.updatedAt != 0 ? wr.updatedAt : wr.createdAt);
-                GUI.Label(new Rect(row.x + 10, row.y + 28, row.width - 300, 22), meta, stSmall);
-                GUI.enabled = !startButtonsDisabled;
+                GUI.Label(new Rect(row.x + 10, row.y + 6, row.width - 300, 22), wr.name, stPlainBold); // b.textContent = w.name (never markup)
+                GUI.Label(new Rect(row.x + 10, row.y + 28, row.width - 300, 22), wkv.Value, stSmall);
+                GUI.enabled = uiInput && !startButtonsDisabled;
                 var id = wr.id; var mode = wr.mode; var nm = wr.name;
-                if (GUI.Button(new Rect(row.xMax - 286, row.y + 11, 90, 32), "Играть", stButton)) startGame(mode, id);
+                if (GUI.Button(new Rect(row.xMax - 286, row.y + 11, 90, 32), "Играть", stButton)) { startGame(mode, id); worldListCache = null; }
                 if (GUI.Button(new Rect(row.xMax - 190, row.y + 11, 84, 32), "Копия", stButton))
                 {
                     var q = copyWorldRecord(id);
+                    if (q != null) worldListCache = null;
                     if (q != null) alert("Создана чистая копия «" + q.name + "». Перенесены только seed" + (q.spawn != null ? " и точка появления." : "."));
                 }
-                if (GUI.Button(new Rect(row.xMax - 100, row.y + 11, 92, 32), "Удалить", stDanger)) confirm("Удалить мир «" + nm + "»?", () => deleteWorldRecord(id));
-                GUI.enabled = true;
+                if (GUI.Button(new Rect(row.xMax - 100, row.y + 11, 92, 32), "Удалить", stDanger)) confirm("Удалить мир «" + nm + "»?", () => { deleteWorldRecord(id); worldListCache = null; });
+                GUI.enabled = uiInput;
                 ry += rowH + 6;
             }
             GUI.EndScrollView();
             y += listH + 12;
             GUI.SetNextControlName("worldName");
             worldNameInput = GUI.TextField(new Rect(x, y, w, 30), worldNameInput, 40, stInput);
+            uiTextFieldDrawn = true; txtRectA = new Rect(x, y, w, 30);
             if (string.IsNullOrEmpty(worldNameInput) && GUI.GetNameOfFocusedControl() != "worldName") GUI.Label(new Rect(x + 6, y + 6, w, 20), "Название нового мира", stSmall);
             y += 38;
-            GUI.enabled = !startButtonsDisabled;
-            if (GUI.Button(new Rect(x, y, w / 2 - 6, 64), "<b>Новый Creator</b>\n<size=12>Бесконечные блоки, мгновенная добыча, полёт.</size>", stButton)) { var n = worldNameInput; worldNameInput = ""; createAndStartWorld("creative", n); }
-            if (GUI.Button(new Rect(x + w / 2 + 6, y, w / 2 - 6, 64), "<b>Новый Survival</b>\n<size=12>HP, голод, инструменты, крафт и мобы.</size>", stButton)) { var n = worldNameInput; worldNameInput = ""; createAndStartWorld("survival", n); }
-            GUI.enabled = true;
+            GUI.enabled = uiInput && !startButtonsDisabled;
+            if (GUI.Button(new Rect(x, y, w / 2 - 6, 64), "<b>Новый Creator</b>\n<size=12>Бесконечные блоки, мгновенная добыча, полёт.</size>", stButton)) { var n = worldNameInput; worldNameInput = ""; createAndStartWorld("creative", n); worldListCache = null; }
+            if (GUI.Button(new Rect(x + w / 2 + 6, y, w / 2 - 6, 64), "<b>Новый Survival</b>\n<size=12>HP, голод, инструменты, крафт и мобы.</size>", stButton)) { var n = worldNameInput; worldNameInput = ""; createAndStartWorld("survival", n); worldListCache = null; }
+            GUI.enabled = uiInput;
             y += 72;
             GUI.Label(new Rect(x, y, w, 40), startNote, stSmall);
         }
@@ -186,22 +223,30 @@ namespace VoxelForge
         {
             // stats / mode
             GUI.Label(new Rect(10, 8, 900, 140), statsText, stStats);
-            GUI.Label(new Rect(10, 146, 900, 18), modeText, stStats);
-            if (!string.IsNullOrEmpty(resourceHUDText)) GUI.Label(new Rect(W - 330, 8, 320, 200), resourceHUDText, mkStyleCached(ref stResCache, () => mkStyle(GUI.skin.label, 12, C(0xe0e8ee), FontStyle.Normal, TextAnchor.UpperRight)));
-            if (xrayActive) { var r = new Rect(W / 2 - 50, 10, 100, 22); fill(r, C(0x6a1b9a, 0.8f)); GUI.Label(r, "X-RAY · X", stCenter); }
+            // #mode right:12 top:10; #resources right:12 top:42 (hidden at max-width:760px)
+            if (!string.IsNullOrEmpty(modeText)) { float mw = stStatsR.CalcSize(new GUIContent(modeText)).x + 18; var mr = new Rect(W - 12 - mw, 10, mw, 26); fill(mr, new Color(0, 0, 0, 0.33f)); GUI.Label(new Rect(mr.x, mr.y + 6, mw - 9, 18), modeText, stStatsR); }
+            if (!string.IsNullOrEmpty(resourceHUDText) && W > 760) GUI.Label(new Rect(W - 330, 42, 320, 200), resourceHUDText, mkStyleCached(ref stResCache, () => mkStyle(GUI.skin.label, 12, C(0xe0e8ee), FontStyle.Normal, TextAnchor.UpperRight)));
+            if (xrayActive) { var r = new Rect(W - 12 - 90, H - (W <= 760 ? 205 : 250) - 24, 90, 24); fill(r, C(0x25143d, 0.87f)); frame(r, C(0xc8a2ff, 0.53f)); GUI.Label(r, "<size=11>X-RAY · X</size>", stCenter); }
             if (minimapVisible && minimapTex != null)
             {
-                bool small = W <= 620; float sz = small ? 124 : 156, inner = small ? 112 : 144;
+                bool small = W <= 760; float sz = small ? 124 : 156, inner = small ? 112 : 144;
                 var wrap = new Rect(W - 12 - sz, H - (small ? 76 : 86) - sz, sz, sz);
                 fill(wrap, C(0x05090d, 0.8f)); frame(wrap, C(0xffffff, 0.27f));
                 GUI.DrawTexture(new Rect(wrap.x + (sz - inner) / 2, wrap.y + (sz - inner) / 2, inner, inner), minimapTex);
             }
-            if (!TOUCH_DEVICE) GUI.Label(new Rect(10, H - 26, W - 20, 20), "WASD · мышь · удерживай ЛКМ: добывать/атаковать · ПКМ использовать/ставить · E инвентарь · Q выбросить · 1–9/колесо · F полёт в Creator · [ ] дальность · Esc", stSmall);
+            // #tip: top-centred pill, hidden at max-width:700px or pointer:coarse
+            if (!TOUCH_DEVICE && W > 700)
+            {
+                const string tip = "WASD · мышь · удерживай ЛКМ: добывать/атаковать · ПКМ использовать/ставить · E инвентарь · Q выбросить · 1–9/колесо · F полёт в Creator · [ ] дальность · Esc";
+                var tst = mkStyleCached(ref stTipCache, () => { var q = mkStyle(GUI.skin.label, 12, C(0xffffff, 0.9f), FontStyle.Normal, TextAnchor.MiddleCenter); q.wordWrap = false; return q; });
+                float tw = Mathf.Min(W - 24, tst.CalcSize(new GUIContent(tip)).x + 20); var tr = new Rect(W / 2 - tw / 2, 14, tw, 26);
+                fill(tr, new Color(0, 0, 0, 0.4f)); GUI.Label(tr, tip, tst);
+            }
             // toast
             if (JS.now() < toastUntil + 300 && !string.IsNullOrEmpty(toastText))
             {
                 float a = JS.now() < toastUntil ? 1 : (float)Math.Max(0, 1 - (JS.now() - toastUntil) / 300);
-                var sz = stToast.CalcSize(new GUIContent(toastText)); var r = new Rect(W / 2 - sz.x / 2 - 12, H * 0.28f, sz.x + 24, 30);
+                var sz = stToast.CalcSize(new GUIContent(toastText)); var r = new Rect(W / 2 - sz.x / 2 - 12, 70, sz.x + 24, 30);
                 fill(r, new Color(0, 0, 0, 0.55f * a)); var oc = GUI.color; GUI.color = new Color(1, 1, 1, a); GUI.Label(r, toastText, stToast); GUI.color = oc;
             }
             // crosshair
@@ -224,7 +269,9 @@ namespace VoxelForge
                     string cnt = player.creative ? "∞" : st.count > 1 ? st.count.ToString() : idef(st.key).maxDur != 0 ? (st.dur != 0 ? st.dur : idef(st.key).maxDur).ToString() : "";
                     if (cnt.Length > 0) shadowLabel(new Rect(r.x, r.y, r.width - 3, r.height - 1), cnt, stCount);
                 }
-                if (TOUCH_DEVICE && Event.current.type == EventType.MouseDown && r.Contains(Event.current.mousePosition)) { cancelBowCharge(); selected = i; drawHotbar(); Event.current.Use(); }
+                // touch hotbar pointerdown: only reachable when no overlay is open, and not under #touchLookZone (left:38%) / the stick
+                if (TOUCH_DEVICE && uiInput && Event.current.type == EventType.MouseDown && r.Contains(Event.current.mousePosition)
+                    && !(touchActive && (Event.current.mousePosition.x >= W * 0.38f || touchStickRect.Contains(Event.current.mousePosition * uiScale)))) { cancelBowCharge(); selected = i; drawHotbar(); Event.current.Use(); }
             }
             var ss = selectedStack();
             string bn = ss != null ? idef(ss.key).name + (player.creative ? " · ∞" : ss.count > 1 ? " ×" + ss.count : "") : "Пустая рука";
@@ -238,14 +285,14 @@ namespace VoxelForge
                 if (player.air < 9.95) drawBar(new Rect(vx + (vw + 8) * 2, vy, vw - 30, 16), player.air / 10, C(0x3d8fd8), "Воздух " + Math.Ceiling(player.air));
             }
             // mining / bow bar
-            if (mineBarVisible) drawBar(new Rect(W / 2 - 80, H / 2 + 22, 160, 6), mineBarFrac, C(0xffffff), null);
+            if (mineBarVisible) drawBar(new Rect(W / 2 - 46, H / 2 + 22, 92, 7), mineBarFrac, C(0xffffff), null);
             if (attackMeterVisible && !player.creative)
             {
                 double f = Math.Min(1, (JS.now() - attackMeterStart) / 1000 / Math.Max(0.001, attackMeterDur));
-                drawBar(new Rect(W / 2 - 40, H / 2 + 32, 80, 4), f, C(0xffe36a), null);
+                drawBar(new Rect(W / 2 - 33, H / 2 + 35, 66, 4), f, C(0xe9eef3), null);
             }
         }
-        static GUIStyle stResCache;
+        static GUIStyle stResCache, stTipCache;
         static GUIStyle mkStyleCached(ref GUIStyle s, Func<GUIStyle> make) { return s ?? (s = make()); }
         static void drawBar(Rect r, double frac, Color c, string text)
         {
@@ -351,6 +398,8 @@ namespace VoxelForge
             {
                 bool on = modEnabled(mm.id);
                 bool non = GUI.Toggle(new Rect(4, y + 4, 24, 24), on, "");
+                // <label class=modRow> wraps the checkbox: clicking the name/description toggles too
+                if (GUI.Button(new Rect(30, y, inner.width - 54, rowH - 2), GUIContent.none, GUIStyle.none)) non = !on;
                 if (non != on) setMod(mm.id, non);
                 GUI.Label(new Rect(32, y, inner.width - 60, 22), "<b>" + mm.name + "</b>", stLabel);
                 GUI.Label(new Rect(32, y + 20, inner.width - 60, 36), mm.desc + (mm.id == "xray" ? " Горячая клавиша: X." : ""), stSmall);
@@ -429,7 +478,7 @@ namespace VoxelForge
             }
             if (over && s != null && uiCursor == null) GUI.Label(new Rect(r.x, r.y - 20, 300, 20), idef(s.key).name, stSmall);
             else if (over && s == null && opts.label != null && uiCursor == null) GUI.Label(new Rect(r.x, r.y - 20, 300, 20), opts.label, stSmall);
-            if (!over) return;
+            if (!over || !uiInput) return;
             if (e.type == EventType.MouseDown && e.button == 1)
             {
                 if (slotRightClick(arr, i, opts)) { inventoryDirty = true; saveGameSoon(); }
@@ -437,8 +486,8 @@ namespace VoxelForge
             }
             else if (e.type == EventType.MouseDown && e.button == 0)
             {
-                dragArr = arr; dragIdx = i; dragStart = e.mousePosition; dragMoved = false; dragOpts = opts;
-                if (e.clickCount == 2) { slotDoubleClick(arr, i); dragArr = null; }
+                // browser order for a double-click: click, click, dblclick -> second click runs on MouseUp, then dblclick
+                dragArr = arr; dragIdx = i; dragStart = e.mousePosition; dragMoved = false; dragOpts = opts; dragDouble = e.clickCount == 2;
                 e.Use();
             }
             else if (e.type == EventType.MouseDrag && dragArr != null)
@@ -447,19 +496,19 @@ namespace VoxelForge
             }
             else if (e.type == EventType.MouseUp && e.button == 0 && dragArr != null)
             {
-                if (dragArr == arr && dragIdx == i && !dragMoved) slotLeftClick(arr, i, opts, e.shift);
+                if (dragArr == arr && dragIdx == i && !dragMoved) { slotLeftClick(arr, i, opts, e.shift); if (dragDouble) slotDoubleClick(arr, i); }
                 else if (dragMoved && !opts.single && !dragOpts.single && !(dragArr == arr && dragIdx == i))
                 {
                     if (moveIntoSlot(dragArr, dragIdx, arr, i, opts.accept, opts.extractOnly)) { inventoryDirty = true; saveGameSoon(); }
                 }
-                dragArr = null; dragIdx = -1;
+                dragArr = null; dragIdx = -1; dragDouble = false;
                 e.Use();
             }
         }
         static void handleSlotDragEnd()
         {
             var e = Event.current;
-            if (e.type == EventType.MouseUp && dragArr != null) { dragArr = null; dragIdx = -1; }
+            if (e.type == EventType.MouseUp && dragArr != null) { dragArr = null; dragIdx = -1; dragDouble = false; }
             if (e.type == EventType.MouseDrag && dragArr != null && (e.mousePosition - dragStart).sqrMagnitude > 36) dragMoved = true;
         }
         static void drawInventoryPanel(Rect body, bool advanced)
@@ -493,14 +542,15 @@ namespace VoxelForge
                 var keysList = creativeKeys();
                 int cols = Math.Max(1, (int)((b.width - 36) / 40));
                 var view = new Rect(x, y, b.width - 20, b.yMax - y - 8);
+                bool inView = uiInput && view.Contains(Event.current.mousePosition); string hoverKey = null;
                 creativeScroll = GUI.BeginScrollView(view, creativeScroll, new Rect(0, 0, view.width - 20, ((keysList.Count + cols - 1) / cols) * 40));
                 for (int i = 0; i < keysList.Count; i++)
                 {
                     var k = keysList[i]; var rr = new Rect((i % cols) * 40, (i / cols) * 40, 36, 36);
                     fill(rr, C(0x0b1218)); drawItemIcon(new Rect(rr.x + 2, rr.y + 2, 32, 32), k);
-                    if (rr.Contains(Event.current.mousePosition))
+                    if (inView && rr.Contains(Event.current.mousePosition))
                     {
-                        frame(rr, C(0xffe36a, 0.8f));
+                        frame(rr, C(0xffe36a, 0.8f)); hoverKey = k;
                         if (Event.current.type == EventType.MouseDown && Event.current.button == 0)
                         {
                             var d = idef(k);
@@ -511,6 +561,7 @@ namespace VoxelForge
                     }
                 }
                 GUI.EndScrollView();
+                if (hoverKey != null) { var mp = Event.current.mousePosition; GUI.Label(new Rect(mp.x + 12, mp.y + 14, 300, 20), idef(hoverKey).name, stSmall); } // el.title = d.name
                 return;
             }
             GUI.Label(new Rect(x, y, b.width - 20, 22), advanced ? "Сетка 3×3 + книга рецептов" : "Сетка 2×2 + базовые рецепты", stH3); y += 30;
@@ -519,14 +570,14 @@ namespace VoxelForge
             float gx = x + size * (SLOT + 4) + 10;
             GUI.Label(new Rect(gx, y + size * (SLOT + 4) / 2 - 16, 30, 30), "<size=24>→</size>", stLabel);
             var rec = craftGridRecipe(arr, size);
-            GUI.enabled = rec != null;
+            GUI.enabled = uiInput && rec != null;
             if (GUI.Button(new Rect(gx + 34, y + size * (SLOT + 4) / 2 - 22, Mathf.Min(220, b.xMax - gx - 50), 44), rec != null ? rec.name : "Результат", stButton) && rec != null)
             {
                 int left = addItem(rec.outKey, rec.outCount);
                 if (left != 0) toast("Не хватает места");
                 else { consumeCraftGrid(arr, rec); saveGameSoon(); drawHotbar(); }
             }
-            GUI.enabled = true;
+            GUI.enabled = uiInput;
             y += size * (SLOT + 4) + 12;
             if (GUI.Button(new Rect(x, y, 240, 30), recipeBookOpen ? "Закрыть книгу рецептов" : "Книга рецептов", stButton)) recipeBookOpen = !recipeBookOpen;
             y += 36;
@@ -538,39 +589,48 @@ namespace VoxelForge
                 : k == "@red_dye_source" ? "Мак или красный тюльпан" : k == "@light_gray_dye_source" ? "Светло-серый цветок" : k == "@white_dye_source" ? "Костная мука или ландыш" : k == "wool" || k == "@wool" ? "Шерсть" : idef(k).name;
         }
         static string recipeNeedTextUI(Recipe rec) { return string.Join(", ", rec.need.Select(kv => recipeKeyLabel(kv.Key) + " ×" + kv.Value)); }
+        static readonly List<Recipe> rbShown = new List<Recipe>(); static readonly List<bool> rbOk = new List<bool>();
+        static readonly Dictionary<Recipe, string[]> rbText = new Dictionary<Recipe, string[]>(); static int rbFrame = -1; static string rbKey = null;
         static void drawRecipeBook(Rect area, bool advanced)
         {
             GUI.SetNextControlName("recipeSearch");
             recipeBookSearch = GUI.TextField(new Rect(area.x, area.y, area.width - 190, 28), recipeBookSearch, stInput);
+            uiTextFieldDrawn = true; txtRectB = new Rect(area.x, area.y, area.width - 190, 28);
             if (string.IsNullOrEmpty(recipeBookSearch) && GUI.GetNameOfFocusedControl() != "recipeSearch") GUI.Label(new Rect(area.x + 6, area.y + 5, 200, 20), "Поиск рецепта…", stSmall);
             if (GUI.Button(new Rect(area.xMax - 182, area.y, 182, 28), recipeBookAvailableOnly ? "Показаны: доступные" : "Показаны: все", stButton)) recipeBookAvailableOnly = !recipeBookAvailableOnly;
             var view = new Rect(area.x, area.y + 34, area.width, area.height - 34);
             string query = recipeBookSearch.Trim().ToLowerInvariant();
-            var shown = new List<Recipe>();
-            foreach (var rec in RECIPES)
+            // renderRecipeBook() is rebuilt on change in JS; here the filtered list + canCraft flags are recomputed at most once per frame
+            string ck = query + "\u0001" + advanced + recipeBookAvailableOnly + player.creative;
+            if (rbFrame != Time.frameCount || ck != rbKey)
             {
-                if (!advanced && !rec.basic) continue;
-                var d = idef(rec.outKey);
-                string hay = (rec.name + " " + d.name + " " + recipeNeedTextUI(rec)).ToLowerInvariant();
-                if (query.Length > 0 && !hay.Contains(query)) continue;
-                bool ok = canCraft(rec);
-                if (recipeBookAvailableOnly && !ok && !player.creative) continue;
-                shown.Add(rec);
+                rbFrame = Time.frameCount; rbKey = ck; rbShown.Clear(); rbOk.Clear();
+                foreach (var rec in RECIPES)
+                {
+                    if (!advanced && !rec.basic) continue;
+                    string[] tx;
+                    if (!rbText.TryGetValue(rec, out tx)) { tx = new string[2]; tx[1] = recipeNeedTextUI(rec); tx[0] = (rec.name + " " + idef(rec.outKey).name + " " + tx[1]).ToLowerInvariant(); rbText[rec] = tx; }
+                    if (query.Length > 0 && !tx[0].Contains(query)) continue;
+                    bool ok = canCraft(rec);
+                    if (recipeBookAvailableOnly && !ok && !player.creative) continue;
+                    rbShown.Add(rec); rbOk.Add(ok);
+                }
             }
+            var shown = rbShown;
             float rowH = 52;
             recipeScroll = GUI.BeginScrollView(view, recipeScroll, new Rect(0, 0, view.width - 20, Math.Max(1, shown.Count) * (rowH + 4)));
             if (shown.Count == 0) GUI.Label(new Rect(6, 6, view.width - 30, 22), "Нет подходящих рецептов", stSmall);
             float y = 0;
-            foreach (var rec in shown)
+            for (int ri = 0; ri < shown.Count; ri++)
             {
-                bool ok = canCraft(rec);
+                var rec = shown[ri]; bool ok = rbOk[ri];
                 var row = new Rect(0, y, view.width - 24, rowH); fill(row, ok || player.creative ? C(0x15232f) : C(0x12191f));
                 drawItemIcon(new Rect(row.x + 8, row.y + 10, 32, 32), rec.outKey);
                 GUI.Label(new Rect(row.x + 48, row.y + 4, row.width - 160, 22), "<b>" + rec.name + "</b>", stLabel);
-                GUI.Label(new Rect(row.x + 48, row.y + 24, row.width - 160, 26), recipeNeedTextUI(rec), stSmall);
-                GUI.enabled = ok || player.creative;
-                if (GUI.Button(new Rect(row.xMax - 100, row.y + 10, 92, 32), player.creative ? "Взять" : "Создать", stButton)) craft(rec);
-                GUI.enabled = true;
+                GUI.Label(new Rect(row.x + 48, row.y + 24, row.width - 160, 26), rbText[rec][1], stSmall);
+                GUI.enabled = uiInput && (ok || player.creative);
+                if (GUI.Button(new Rect(row.xMax - 100, row.y + 10, 92, 32), player.creative ? "Взять" : "Создать", stButton)) { craft(rec); rbFrame = -1; }
+                GUI.enabled = uiInput;
                 y += rowH + 4;
             }
             GUI.EndScrollView();

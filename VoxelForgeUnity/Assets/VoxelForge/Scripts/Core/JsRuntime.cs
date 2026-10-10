@@ -193,11 +193,136 @@ namespace VoxelForge
             if (v is double || v is int || v is float || v is long) return ToStr(Json.ToNum(v));
             return v.ToString();
         }
+        /// <summary>JS Number.prototype.toString() (shortest round-trip digits, JS fixed/exponent layout).</summary>
         public static string ToStr(double v)
         {
-            if (v == Math.Floor(v) && Math.Abs(v) < 1e15) return ((long)v).ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            if (v == Math.Floor(v) && Math.Abs(v) < 9007199254740992.0) return ((long)v).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (double.IsNaN(v)) return "NaN";
+            if (double.IsInfinity(v)) return v > 0 ? "Infinity" : "-Infinity";
+            if (v < 0) return "-" + ToStr(-v);
+            int exp; string s = shortestDigits(v, out exp);
+            int k = s.Length, n = exp + 1;
+            if (k <= n && n <= 21) return s + new string('0', n - k);
+            if (0 < n && n <= 21) return s.Substring(0, n) + "." + s.Substring(n);
+            if (-6 < n && n <= 0) return "0." + new string('0', -n) + s;
+            int e = n - 1; string es = (e < 0 ? "e-" : "e+") + Math.Abs(e).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return k == 1 ? s + es : s.Substring(0, 1) + "." + s.Substring(1) + es;
         }
-        public static string Fixed(double v, int digits) { return v.ToString("F" + digits, System.Globalization.CultureInfo.InvariantCulture); }
+        /// <summary>Shortest decimal digits (no leading/trailing zeros) that round-trip to v (v finite, &gt; 0); exp = decimal exponent of the first digit.
+        /// Exact: a candidate is accepted when it lies inside v's rounding interval (computed with big integers, no double.Parse).</summary>
+        static string shortestDigits(double v, out int exp)
+        {
+            if (v >= 2.2250738585072014e-308)
+            {
+                // fast path: the 15-digit rounding (trimmed) is the shortest form whenever it round-trips, and N * 10^q with
+                // N < 2^53, |q| <= 22 is a single correctly rounded IEEE operation, so the check below is exact.
+                var ci = System.Globalization.CultureInfo.InvariantCulture;
+                string str = v.ToString("E14", ci); int ei = str.IndexOf('E');
+                int e10 = int.Parse(str.Substring(ei + 1), ci);
+                var sb = new StringBuilder(16); long N = 0;
+                for (int i = 0; i < ei; i++) if (str[i] >= '0' && str[i] <= '9') sb.Append(str[i]);
+                int t = sb.Length; while (t > 1 && sb[t - 1] == '0') t--;
+                for (int i = 0; i < t; i++) N = N * 10 + (sb[i] - '0');
+                int q = e10 - (t - 1);
+                if (q >= -22 && q <= 22 && (q >= 0 ? N * POW10_22[q] : N / POW10_22[-q]) == v) { exp = e10; return sb.ToString(0, t); }
+            }
+            long bits = BitConverter.DoubleToInt64Bits(v); int be = (int)((bits >> 52) & 0x7FF); long mant = bits & 0xFFFFFFFFFFFFFL;
+            bool lowerCloser = mant == 0 && be > 1;
+            if (be == 0) be = 1; else mant |= 1L << 52;
+            bool even = (mant & 1) == 0;
+            int E = be - 1075 - 2, S = E < 0 ? -E : 0; // values below are in units of 2^E, scaled to integers in units of 10^-S
+            string H = bigDec(4 * mant + 2, E + S, S), V = bigDec(4 * mant, E + S, S), L = bigDec(lowerCloser ? 4 * mant - 1 : 4 * mant - 2, E + S, S);
+            int len = H.Length; V = V.PadLeft(len, '0'); L = L.PadLeft(len, '0');
+            int lead = 0; while (lead < len - 1 && V[lead] == '0') lead++;
+            for (int k = 1; ; k++)
+            {
+                int cut = lead + k; string D;
+                if (cut >= len) D = V;
+                else
+                {
+                    var c = V.Substring(0, cut).ToCharArray(); bool up = V[cut] > '5';
+                    if (V[cut] == '5') { up = false; for (int q = cut + 1; q < len; q++) if (V[q] != '0') { up = true; break; } if (!up) up = ((c[cut - 1] - '0') & 1) == 1; }
+                    string pre = new string(c);
+                    if (up) { int q = cut - 1; while (q >= 0 && c[q] == '9') { c[q] = '0'; q--; } if (q >= 0) { c[q]++; pre = new string(c); } else pre = "1" + new string(c); }
+                    D = pre + new string('0', len - cut);
+                }
+                int cl = bigCmp(L, D), ch = bigCmp(D, H);
+                if (cut >= len || ((even ? cl <= 0 : cl < 0) && (even ? ch <= 0 : ch < 0)))
+                {
+                    int dl = 0; while (dl < D.Length - 1 && D[dl] == '0') dl++;
+                    int end = D.Length; while (end > dl + 1 && D[end - 1] == '0') end--;
+                    exp = (D.Length - 1 - dl) - S;
+                    return D.Substring(dl, end - dl);
+                }
+            }
+        }
+        static int bigCmp(string a, string b)
+        {
+            int ia = 0, ib = 0; while (ia < a.Length - 1 && a[ia] == '0') ia++; while (ib < b.Length - 1 && b[ib] == '0') ib++;
+            int la = a.Length - ia, lb = b.Length - ib; if (la != lb) return la < lb ? -1 : 1;
+            return Math.Sign(string.CompareOrdinal(a, ia, b, ib, la));
+        }
+        /// <summary>m * 2^p2 * 5^p5 (m &gt;= 0, p2, p5 &gt;= 0) as a decimal integer string.</summary>
+        static string bigDec(long m, int p2, int p5)
+        {
+            var limbs = new List<uint> { (uint)(m % 1000000000L), (uint)(m / 1000000000L % 1000000000L), (uint)(m / 1000000000000000000L) };
+            for (int i = 0; i < p2; ) { int sh = Math.Min(29, p2 - i); bigMul(limbs, 1u << sh); i += sh; }
+            for (int i = 0; i < p5; ) { int c = Math.Min(13, p5 - i); uint f5 = 1; for (int j = 0; j < c; j++) f5 *= 5; bigMul(limbs, f5); i += c; }
+            var sb = new StringBuilder();
+            int top = limbs.Count - 1; while (top > 0 && limbs[top] == 0) top--;
+            sb.Append(limbs[top].ToString(System.Globalization.CultureInfo.InvariantCulture));
+            for (int i = top - 1; i >= 0; i--) sb.Append(limbs[i].ToString("D9", System.Globalization.CultureInfo.InvariantCulture));
+            return sb.ToString();
+        }
+        static readonly double[] POW10 = { 1, 10, 100, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10 };
+        static readonly double[] POW10_22 = { 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22 };
+        /// <summary>JS Number.prototype.toFixed(digits) (exact value, ties round up, keeps '-' for small negatives).</summary>
+        public static string Fixed(double v, int digits)
+        {
+            if (double.IsNaN(v)) return "NaN";
+            if (digits < 0) digits = 0; if (digits > 100) digits = 100;
+            if (Math.Abs(v) >= 1e21 || double.IsInfinity(v)) return ToStr(v);
+            bool neg = v < 0; double x = neg ? -v : v; string m = null;
+            if (digits <= 10)
+            {
+                double y = x * POW10[digits];
+                if (y < 1e9) { double fl = Math.Floor(y), fr = y - fl; if (Math.Abs(fr - 0.5) > 1e-6) m = ((long)(fr > 0.5 ? fl + 1 : fl)).ToString(System.Globalization.CultureInfo.InvariantCulture); }
+            }
+            if (m == null) m = exactRoundedDigits(x, digits);
+            if (digits != 0)
+            {
+                int k = m.Length;
+                if (k <= digits) { m = new string('0', digits + 1 - k) + m; k = digits + 1; }
+                m = m.Substring(0, k - digits) + "." + m.Substring(k - digits);
+            }
+            return neg ? "-" + m : m;
+        }
+        /// <summary>round-half-up(x * 10^f) as a decimal integer string, from the exact binary value of x (x finite, 0 &lt;= x &lt; 1e21).</summary>
+        static string exactRoundedDigits(double x, int f)
+        {
+            if (x == 0) return "0";
+            long bits = BitConverter.DoubleToInt64Bits(x); int be = (int)((bits >> 52) & 0x7FF); long mant = bits & 0xFFFFFFFFFFFFFL;
+            if (be == 0) be = 1; else mant |= 1L << 52;
+            int e = be - 1075; // x = mant * 2^e
+            int scale = e < 0 ? -e : 0;
+            string d = e < 0 ? bigDec(mant, 0, scale) : bigDec(mant, e, 0); // x = d * 10^-scale
+            if (scale <= f) return (d + new string('0', f - scale)).TrimStart('0').PadLeft(1, '0');
+            int keep = d.Length - (scale - f); // digits of the integer part of x*10^f
+            string ip = keep > 0 ? d.Substring(0, keep) : "0";
+            char next = keep >= 0 ? d[keep] : '0';
+            if (next >= '5')
+            {
+                var c = ip.ToCharArray(); int i = c.Length - 1;
+                while (i >= 0 && c[i] == '9') { c[i] = '0'; i--; }
+                if (i >= 0) { c[i]++; ip = new string(c); } else ip = "1" + new string(c);
+            }
+            ip = ip.TrimStart('0'); return ip.Length == 0 ? "0" : ip;
+        }
+        static void bigMul(List<uint> a, uint m)
+        {
+            ulong carry = 0;
+            for (int i = 0; i < a.Count; i++) { ulong p = (ulong)a[i] * m + carry; a[i] = (uint)(p % 1000000000UL); carry = p / 1000000000UL; }
+            while (carry > 0) { a.Add((uint)(carry % 1000000000UL)); carry /= 1000000000UL; }
+        }
     }
 }

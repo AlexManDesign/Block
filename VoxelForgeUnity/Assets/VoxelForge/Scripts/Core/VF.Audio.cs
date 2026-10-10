@@ -13,7 +13,8 @@ namespace VoxelForge
         static int audioRate = 44100;
         static bool audioInited = false;
 
-        public static bool audioPaused() { return !Application.isFocused && Application.runInBackground == false || pauseOpen || (player != null && player.sleeping); }
+        // document.hidden: runInBackground is forced on, so an unfocused (minimized / backgrounded) player window is the closest signal.
+        public static bool audioPaused() { return !Application.isFocused || pauseOpen || (player != null && player.sleeping); }
         public static bool initAudio()
         {
             if (audioInited || !gameSettings.sound) return audioInited;
@@ -48,10 +49,9 @@ namespace VoxelForge
         {
             if (verb > 0) applyReverbSend(buf, verb);
             // master: gain .85 -> lowpass 8500 Q.7 -> soft compressor
-            var lp = new Biquad(); float g = 0.85f;
+            var lp = new Biquad(); float g = 0.85f; lp.SetLowpass(8500, 0.7, audioRate);
             for (int i = 0; i < buf.Length; i++)
             {
-                if ((i & 31) == 0) lp.SetLowpass(8500, 0.7, audioRate);
                 float x = lp.Process(buf[i] * g);
                 // compressor approximation: threshold -12dB (≈0.25), ratio 6, soft knee
                 float ax = Math.Abs(x);
@@ -67,15 +67,44 @@ namespace VoxelForge
         static void applyReverbSend(float[] buf, float verb)
         {
             // Short room tail (≈0.45s decay), matching the convolver built from decaying noise.
-            int n = buf.Length; int[] d = { (int)(0.0297 * audioRate), (int)(0.0371 * audioRate), (int)(0.0411 * audioRate), (int)(0.0437 * audioRate) };
-            float fb = 0.62f;
-            var wet = new float[n];
-            foreach (int dl in d)
+            int n = buf.Length; float fb = 0.62f;
+            if (verbLines == null || verbRate != audioRate)
             {
-                var line = new float[Math.Max(1, dl)]; int p = 0;
-                for (int i = 0; i < n; i++) { float y = line[p]; line[p] = buf[i] + y * fb; p = (p + 1) % line.Length; wet[i] += y * 0.25f; }
+                verbRate = audioRate; var d = new[] { 0.0297, 0.0371, 0.0411, 0.0437 }; verbLines = new float[4][];
+                for (int k = 0; k < 4; k++) verbLines[k] = new float[Math.Max(1, (int)(d[k] * audioRate))];
+            }
+            if (verbWet.Length < n) verbWet = new float[n];
+            var wet = verbWet; Array.Clear(wet, 0, n);
+            foreach (var line in verbLines)
+            {
+                Array.Clear(line, 0, line.Length); int p = 0, ll = line.Length;
+                for (int i = 0; i < n; i++) { float y = line[p]; line[p] = buf[i] + y * fb; if (++p == ll) p = 0; wet[i] += y * 0.25f; }
             }
             for (int i = 0; i < n; i++) buf[i] += wet[i] * verb;
+        }
+
+        // scratch reverb buffers (sfx are synthesized on the main thread only)
+        static float[][] verbLines; static int verbRate; static float[] verbWet = new float[0];
+
+        /// <summary>expRamp evaluated at consecutive sample indices: one Math.Pow per segment entry, then a per-sample multiply.</summary>
+        sealed class XRamp
+        {
+            readonly double v0, v1, t0, t1, mul; readonly int rate; double cur; int last = int.MinValue;
+            public XRamp(double v0, double v1, double t0, double t1, int rate) { this.v0 = v0; this.v1 = v1; this.t0 = t0; this.t1 = t1; this.rate = rate; mul = Math.Pow(v1 / v0, 1.0 / ((t1 - t0) * rate)); }
+            public double At(int i)
+            {
+                double t = i / (double)rate;
+                if (t <= t0) return v0; if (t >= t1) return v1;
+                if (last == i - 1) cur *= mul; else cur = v0 * Math.Pow(v1 / v0, (t - t0) / (t1 - t0));
+                last = i; return cur;
+            }
+        }
+        /// <summary>envAt at consecutive sample indices.</summary>
+        sealed class XEnv
+        {
+            readonly XRamp a, d; readonly double attack; readonly int rate;
+            public XEnv(double vol, double attack, double dur, int rate) { this.attack = attack; this.rate = rate; a = new XRamp(1e-4, vol, 0, attack, rate); d = new XRamp(vol, 1e-4, attack, dur, rate); }
+            public double At(int i) { return i / (double)rate < attack ? a.At(i) : d.At(i); }
         }
 
         sealed class Biquad
@@ -106,13 +135,13 @@ namespace VoxelForge
                 int n = (int)((dur + 0.02 + 0.25) * audioRate); var buf = new float[n];
                 double rate = 0.85 + JS.random() * 0.3; var flt = new Biquad(); double phase = JS.random() * 0.5 * audioRate;
                 var rnd = new System.Random((int)(JS.random() * int.MaxValue));
-                int active = (int)((dur + 0.02) * audioRate);
+                int active = (int)((dur + 0.02) * audioRate); var env = new XEnv(vol, 0.004, dur, audioRate);
                 for (int i = 0; i < active; i++)
                 {
                     double t = i / (double)audioRate;
                     if ((i & 15) == 0) flt.Set(type, expRamp(f0, Math.Max(60, f1), t, 0, dur), q, audioRate);
                     phase += rate; float s = (float)(rnd.NextDouble() * 2 - 1);
-                    buf[i] = flt.Process(s) * (float)envAt(t, vol, 0.004, dur);
+                    buf[i] = flt.Process(s) * (float)env.At(i);
                 }
                 playSamples(buf, (float)verb);
             }
@@ -128,7 +157,8 @@ namespace VoxelForge
                 var flt = new Biquad(); double attack = Math.Min(0.014, dur * 0.3);
                 var ph = new double[3]; var det = new double[3];
                 for (int k = 0; k < 3; k++) det[k] = Math.Pow(2, ((JS.random() * 2 - 1) * 6) / 1200.0);
-                int active = (int)((dur + 0.02) * audioRate);
+                int active = (int)((dur + 0.02) * audioRate); var env = new XEnv(vol, attack, dur, audioRate);
+                var fr = new XRamp[3]; for (int k = 0; k < 3; k++) fr[k] = new XRamp(freq * parts[k].mul * 1.015, freq * parts[k].mul * 0.985, 0, dur, audioRate);
                 for (int i = 0; i < active; i++)
                 {
                     double t = i / (double)audioRate;
@@ -136,12 +166,12 @@ namespace VoxelForge
                     double s = 0;
                     for (int k = 0; k < 3; k++)
                     {
-                        double f = expRamp(freq * parts[k].mul * 1.015, freq * parts[k].mul * 0.985, t, 0, dur) * det[k];
+                        double f = fr[k].At(i) * det[k];
                         ph[k] += f / audioRate; ph[k] -= Math.Floor(ph[k]);
                         double w = parts[k].typ == "sine" ? Math.Sin(ph[k] * 2 * Math.PI) : 1 - 4 * Math.Abs(ph[k] - 0.5);
                         s += w * parts[k].gain;
                     }
-                    buf[i] = flt.Process((float)s) * (float)envAt(t, vol, attack, dur);
+                    buf[i] = flt.Process((float)s) * (float)env.At(i);
                 }
                 playSamples(buf, (float)verb);
             }
@@ -180,11 +210,12 @@ namespace VoxelForge
             try
             {
                 int n = (int)(1.2 * audioRate); var buf = new float[n]; double ph = 0;
+                var fr = new XRamp(95, 32, 0, 0.7, audioRate); var env = new XEnv(0.55, 0.01, 0.85, audioRate);
                 for (int i = 0; i < (int)(0.9 * audioRate); i++)
                 {
-                    double t = i / (double)audioRate, f = expRamp(95, 32, t, 0, 0.7);
+                    double f = fr.At(i);
                     ph += f / audioRate;
-                    buf[i] = (float)(Math.Sin(ph * 2 * Math.PI) * envAt(t, 0.55, 0.01, 0.85));
+                    buf[i] = (float)(Math.Sin(ph * 2 * Math.PI) * env.At(i));
                 }
                 playSamples(buf, 0.5f);
             }

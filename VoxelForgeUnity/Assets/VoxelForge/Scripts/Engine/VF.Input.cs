@@ -73,6 +73,7 @@ namespace VoxelForge
         {
             clearInputState();
             uiOpen = true; pauseOpen = false; uiMode = mode; uiKey = key;
+            GUIUtility.keyboardControl = 0; // rebuilt DOM: no input keeps focus
             releasePointerLock();
             syncTouchControls();
             renderCurrentUI();
@@ -85,7 +86,7 @@ namespace VoxelForge
                 if (left != 0) spawnWorldDrop(uiCursor.key, left, player.x, player.y + 1, player.z);
                 uiCursor = null;
             }
-            uiOpen = false;
+            uiOpen = false; GUIUtility.keyboardControl = 0;
             saveGameSoon();
             drawHotbar();
             if (started && !player.dead)
@@ -167,12 +168,16 @@ namespace VoxelForge
         public static void pollInput(bool textFieldFocused)
         {
             if (locked && Cursor.lockState != CursorLockMode.Locked) { locked = false; onPointerLockChange(); }
-            if (!textFieldFocused)
-                foreach (var kv in KEYMAP)
+            // While a text field has focus only typing is suppressed: keyup and Escape always reach the window handlers.
+            foreach (var kv in KEYMAP)
+            {
+                if (Input.GetKeyDown(kv.Key) && (!textFieldFocused || kv.Key == KeyCode.Escape))
                 {
-                    if (Input.GetKeyDown(kv.Key)) onKeyDown(kv.Value);
-                    if (Input.GetKeyUp(kv.Key)) onKeyUp(kv.Value);
+                    if (textFieldFocused) { GUIUtility.keyboardControl = 0; uiTextFocused = false; }
+                    onKeyDown(kv.Value);
                 }
+                if (Input.GetKeyUp(kv.Key)) onKeyUp(kv.Value);
+            }
             if (TOUCH_DEVICE) { pollTouch(); return; }
             if (locked && !player.sleeping)
             {
@@ -225,13 +230,14 @@ namespace VoxelForge
         static void resetTouchMove()
         {
             touchStickId = -1; touchStickX = touchStickY = 0;
-            if (!TOUCH_DEVICE) return;
             keys.Remove("KeyW"); keys.Remove("KeyA"); keys.Remove("KeyS"); keys.Remove("KeyD"); keys.Remove("Space"); keys.Remove("ShiftLeft");
             sprintLatch = false;
         }
         // Layout (screen pixels, y down): stick bottom-left, buttons bottom-right; computed by the UI.
         public static Rect touchStickRect, touchAttackRect, touchUseRect, touchJumpRect, touchSneakRect, touchInvRect, touchPauseRect, touchPrevRect, touchNextRect;
         static readonly Dictionary<int, string> touchHold = new Dictionary<int, string>();
+        // set when a touch opened the inventory/pause (pointerdown preventDefault): IMGUI drops the simulated mouse events until all touches end
+        public static bool touchSwallowGUI = false;
         static void setTouchStick(Vector2 p)
         {
             var r = touchStickRect; double cx = r.center.x, cy = r.center.y, rad = r.width * 0.38, dx = p.x - cx, dy = p.y - cy, d = JS.hypot(dx, dy); if (d == 0) d = 1;
@@ -243,6 +249,7 @@ namespace VoxelForge
         }
         static void pollTouch()
         {
+            if (Input.touchCount == 0) touchSwallowGUI = false;
             for (int ti = 0; ti < Input.touchCount; ti++)
             {
                 var t = Input.GetTouch(ti);
@@ -255,11 +262,11 @@ namespace VoxelForge
                     else if (touchUseRect.Contains(p)) withPlayerEdit(() => placeBlock());
                     else if (touchJumpRect.Contains(p)) { touchHold[t.fingerId] = "Space"; keys.Add("Space"); }
                     else if (touchSneakRect.Contains(p)) { touchHold[t.fingerId] = "ShiftLeft"; keys.Add("ShiftLeft"); }
-                    else if (touchInvRect.Contains(p)) { openGameUI("inventory"); syncTouchControls(); }
-                    else if (touchPauseRect.Contains(p)) { showPause(); syncTouchControls(); }
+                    else if (touchInvRect.Contains(p)) { touchSwallowGUI = true; openGameUI("inventory"); syncTouchControls(); }
+                    else if (touchPauseRect.Contains(p)) { touchSwallowGUI = true; showPause(); syncTouchControls(); }
                     else if (touchPrevRect.Contains(p)) { cancelBowCharge(); selected = (selected + 8) % 9; drawHotbar(); }
                     else if (touchNextRect.Contains(p)) { cancelBowCharge(); selected = (selected + 1) % 9; drawHotbar(); }
-                    else if (p.x > Screen.width * 0.35f) { touchLookId = t.fingerId; touchLookPos = p; }
+                    else if (p.x >= Screen.width * 0.38f) { touchLookId = t.fingerId; touchLookPos = p; }
                 }
                 else if (t.phase == TouchPhase.Moved || t.phase == TouchPhase.Stationary)
                 {
