@@ -201,6 +201,9 @@ static class Harness
     static void IdleRemeshProbe(string label, double seconds)
     {
         Soak(label);
+        // 1) live window: fluids keep flowing through generated caves for minutes (as in the reference: flowing water is
+        //    runtime state seeded by the gen worker), so revs here are informational; a fluid cell rewritten over and over
+        //    would be an oscillation -> see VF_TRACE_REV=1 for per-cell histories.
         long up0 = TerrainUploads(); string q0 = SimQueues();
         var rev0 = new Dictionary<string, int>(); foreach (var kv in VF.chunks) rev0[kv.Key] = kv.Value.meshRev;
 #if VF_TRACE_REV
@@ -210,12 +213,34 @@ static class Harness
         while (DateTime.UtcNow < end) { Frame(); n++; }
         var d = new List<KeyValuePair<string, int>>();
         foreach (var kv in VF.chunks) { int r0; if (rev0.TryGetValue(kv.Key, out r0) && kv.Value.meshRev - r0 > 0) d.Add(new KeyValuePair<string, int>(kv.Key, kv.Value.meshRev - r0)); }
-        d.Sort((a, b) => b.Value - a.Value);
-        Console.WriteLine("  idle probe[" + label + "] " + n + " frames: " + d.Count + " chunks remeshed; top: " + string.Join(", ", d.Take(8).Select(k => k.Key + "x" + k.Value)) + " (edits " + edits0 + " -> " + VF.edits.Count + "; terrain uploads +" + (TerrainUploads() - up0) + "; " + q0 + " -> " + SimQueues() + ")");
+        d.Sort((x, y) => y.Value - x.Value);
+        Console.WriteLine("  idle probe[" + label + "] live " + n + " frames: " + d.Count + " chunks remeshed; top: " + string.Join(", ", d.Take(8).Select(k => k.Key + "x" + k.Value)) + " (edits " + edits0 + " -> " + VF.edits.Count + "; terrain uploads +" + (TerrainUploads() - up0) + "; " + q0 + " -> " + SimQueues() + ")");
 #if VF_TRACE_REV
         VF.__traceOn = false; VF.__traceDump(d.Take(4).Select(k => k.Key));
 #endif
-        Check(d.Count == 0 || d[0].Value <= Math.Max(6, seconds * 1.5), label + ": no remesh loop (max " + (d.Count > 0 ? d[0].Value : 0) + " revs in " + seconds + "s)");
+        // 2) frozen fluids: with the water/lava solver paused nothing but sparse world ticks may change blocks; a chunk whose
+        //    mesh revision moves while neither it nor any 3x3 neighbour changed a block is a real remesh loop.
+        VF.waterSimAt = VF.lavaSimAt = double.PositiveInfinity;
+        Until(() => VF.meshPending.Count == 0 && VF.meshJobs.Count == 0, 20, label + ": mesh queue drained with fluids frozen");
+        Frames(60);
+        var map0 = new Dictionary<string, int>(); rev0.Clear(); up0 = TerrainUploads();
+        foreach (var kv in VF.chunks) { rev0[kv.Key] = kv.Value.meshRev; map0[kv.Key] = kv.Value.mapRev; }
+        end = DateTime.UtcNow.AddSeconds(seconds); n = 0;
+        while (DateTime.UtcNow < end) { Frame(); n++; }
+        var loops = new List<KeyValuePair<string, int>>(); int changedChunks = 0;
+        foreach (var kv in VF.chunks)
+        {
+            int r0, m0; if (!rev0.TryGetValue(kv.Key, out r0)) continue;
+            var c = kv.Value; if (map0.TryGetValue(kv.Key, out m0) && c.mapRev != m0) changedChunks++;
+            if (c.meshRev == r0) continue;
+            bool mapChanged = false;
+            for (int dx = -1; dx <= 1 && !mapChanged; dx++) for (int dz = -1; dz <= 1; dz++) { var nc = VF.chunkFastGet(c.cx + dx, c.cz + dz); if (nc != null && map0.TryGetValue(nc.key, out m0) && nc.mapRev != m0) { mapChanged = true; break; } }
+            if (!mapChanged) loops.Add(new KeyValuePair<string, int>(kv.Key, c.meshRev - r0));
+        }
+        loops.Sort((x, y) => y.Value - x.Value);
+        Console.WriteLine("  idle probe[" + label + "] frozen fluids " + n + " frames: " + changedChunks + " chunks changed blocks, terrain uploads +" + (TerrainUploads() - up0) + "; remeshed without any block change nearby: " + loops.Count + (loops.Count > 0 ? " (" + string.Join(", ", loops.Take(8).Select(k => k.Key + "x" + k.Value)) + ")" : ""));
+        VF.waterSimAt = VF.lavaSimAt = 0;
+        Check(loops.Count == 0 || loops[0].Value <= 2, label + ": no remesh loop without block changes (max " + (loops.Count > 0 ? loops[0].Value : 0) + " revs in " + seconds + "s)");
     }
     static void EnsureLocked()
     {

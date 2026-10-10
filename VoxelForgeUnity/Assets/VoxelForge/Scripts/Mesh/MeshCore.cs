@@ -794,7 +794,7 @@ namespace VoxelForge
             var hub = new int[size][]; var disc = new int[size][]; var grip = new int[size][];
             Func<double, double, bool> spoke = (x, y) =>
             {
-                for (int r = 0; r < 8; r++) { double a = (r * Math.PI) / 4, cs = Math.Cos(a), sn = Math.Sin(a); if (x * cs + y * sn > 0 && Math.Abs(y * cs - x * sn) <= 1.5) return true; }
+                for (int r = 0; r < 8; r++) { double a = (r * Math.PI) / 4, cs = JsMath.cos(a), sn = JsMath.sin(a); if (x * cs + y * sn > 0 && Math.Abs(y * cs - x * sn) <= 1.5) return true; }
                 return false;
             };
             for (int y = 0; y < size; y++)
