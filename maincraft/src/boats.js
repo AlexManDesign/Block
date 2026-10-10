@@ -4,7 +4,8 @@
 // Per game tick (20/s): the boat floats up by how deep it sits in water (0.0615 x depth / height)
 // against gravity 0.04, is slowed by 0.9 in water, by the block under it on land (0.6, ice 0.98)
 // and 0.45 under water; the rider turns it by 1 degree a tick and pushes it 0.04 forward
-// (0.005 back), so it tops out near 8 blocks a second on open water.
+// (0.005 back), so it tops out near 8 blocks a second on open water. Two paddles row as the rider
+// steers: both going forward, the outer one alone in a turn (Boat.setPaddleState).
 
 const BOAT_W = 1.375, BOAT_H = 0.5625;
 
@@ -16,7 +17,8 @@ class Boats {
     this.acc = 0;
   }
   place(x, y, z, yaw) {
-    const b = { pos: [x, y, z], prev: [x, y, z], vel: [0, 0, 0], yaw, pyaw: yaw, drot: 0, damage: 0, onGround: false, status: 'air', turned: 0, lastTurn: 0 };
+    const b = { pos: [x, y, z], prev: [x, y, z], vel: [0, 0, 0], yaw, pyaw: yaw, drot: 0, damage: 0, onGround: false, status: 'air', turned: 0, lastTurn: 0,
+      pad: [0, 0], padOn: [false, false] };
     this.list.push(b);
     return b;
   }
@@ -145,7 +147,14 @@ class Boats {
       for (const b of this.list) { b.prev = b.pos.slice(); b.pyaw = b.yaw; b.lastTurn = 0; this.tick(b, b === this.riding ? keys : null); }
     }
     if (n >= 10) this.acc = 0;
-    if (this.riding) { this.seat(); this.turnView(this.acc / 0.05); }
+    if (this.riding) { this.seat(); this.turnView(this.acc / 0.05); this.clampView(this.acc / 0.05); }
+  }
+  // Boat.clampRotation: the rider looks at most 105 degrees to either side of the bow
+  clampView(alpha) {
+    const b = this.riding, p = this.game.player, by = b.pyaw + (b.yaw - b.pyaw) * alpha, lim = 105 * Math.PI / 180;
+    let d = p.yaw - by;
+    d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI;
+    if (d > lim) p.yaw -= d - lim; else if (d < -lim) p.yaw -= d + lim;
   }
   tick(b, keys) {
     const w = this.game.world, P = b.pos, V = b.vel, hw = BOAT_W / 2;
@@ -193,6 +202,17 @@ class Boats {
       b.yaw += r;
       b.turned += r; b.lastTurn = r;
       V[0] += Math.sin(b.yaw) * f; V[2] -= Math.cos(b.yaw) * f;
+    }
+    // the paddles (Boat.setPaddleState / tick): the left one rows going forward or turning right,
+    // the right one going forward or turning left; a rowing paddle turns pi/8 a tick (a stroke in
+    // 16 ticks) and splashes (on land scrapes) once a stroke; an idle one rests at 0
+    const on = [!!keys && (keys.forward || (keys.right && !keys.left)), !!keys && (keys.forward || (keys.left && !keys.right))];
+    for (let i = 0; i < 2; i++) {
+      b.padOn[i] = on[i];
+      if (!on[i]) { b.pad[i] = 0; continue; }
+      const q = b.pad[i] % (2 * Math.PI);
+      if (q < Math.PI / 4 && q + Math.PI / 8 >= Math.PI / 4 && b.status !== 'air') Sfx.paddle(b.status !== 'land');
+      b.pad[i] += Math.PI / 8;
     }
     // Entity.move: Y first, then the larger of X and Z; a blocked axis moves up to the contact and
     // its velocity is cleared (no stepping up: a boat's step height is 0)
@@ -248,6 +268,7 @@ class Boats {
       C[0] = C[1] = C[2] = g.lightAt(x, y + 0.5, z, env);
       tmp.n = 0;
       for (const q of parts) g.pushBox(tmp, q[0], q[1], q[2], q[3], q[4], q[5], L, C, 0, null, ITEM_SHADE);
+      for (let i = 0; i < 2; i++) this.paddle(tmp, b, i, al, L, C);
       const T = tmp.a, n = tmp.n, o = v.n, a = v.reserve(n);
       for (let i = 0; i < n; i += 10) {
         const lx = T[i], ly = T[i + 1] - 0.375, lz0 = T[i + 2];
@@ -273,6 +294,34 @@ class Boats {
     gl.colorMask(false, false, false, false); gl.disable(gl.CULL_FACE);
     r.drawArr(v.view(), v.n / 10, env, 0.5);
     gl.colorMask(true, true, true, true); gl.enable(gl.CULL_FACE);
+  }
+
+  // a paddle in the hull's frame (own design: a square shaft through an oarlock on the side wall, a
+  // flat blade at the outer end). The stroke follows Minecraft's BoatModel.animatePaddle: with the
+  // rowing time t (the paddle's turn, between the last two ticks; 0 at rest) the blade dips
+  // 60..15 degrees as (sin(-t) + 1) / 2 and sweeps -45..45 degrees as (sin(1 - t) + 1) / 2, so it
+  // is deep while it sweeps toward the stern and comes back up toward the bow
+  paddle(out, b, side, al, L, C) {
+    const g = this.game, pv = this.pv || (this.pv = new VBuf());
+    const t = b.padOn[side] ? b.pad[side] - Math.PI / 8 * (1 - al) : 0;
+    const dip = (60 - 45 * (Math.sin(-t) + 1) / 2) * Math.PI / 180;
+    let sw = (-45 + 90 * (Math.sin(1 - t) + 1) / 2) * Math.PI / 180;
+    if (side === 0) sw = -sw;
+    pv.n = 0;
+    // u outward along the shaft, v up, w toward the stern
+    g.pushBox(pv, -0.3, -0.04, -0.04, 0.84, 0.04, 0.04, L, C, 0, null, ITEM_SHADE);
+    g.pushBox(pv, 0.54, -0.16, -0.025, 0.98, 0.16, 0.025, L, C, 0, null, ITEM_SHADE);
+    const cd = Math.cos(dip), sd = Math.sin(dip), cs = Math.cos(sw), ss = Math.sin(sw), m = side === 0 ? -1 : 1;
+    const A = pv.a, n = pv.n, o = out.n, a = out.reserve(n);
+    for (let i = 0; i < n; i += 10) {
+      const u = A[i], vv = A[i + 1], w = A[i + 2];
+      const x = u * cd + vv * sd, y = -u * sd + vv * cd;
+      const x2 = x * cs + w * ss, z2 = -x * ss + w * cs;
+      // the left paddle is the right one turned half round (the boxes are even in w, so no mirroring)
+      a[o + i] = m * (x2 + 0.6); a[o + i + 1] = y + 0.47; a[o + i + 2] = m * z2 - 0.05;
+      for (let j = 3; j < 10; j++) a[o + i + j] = A[i + j];
+    }
+    out.n = o + n;
   }
 
   // ---------------------------------------------------------------- saving

@@ -58,5 +58,12 @@ const Sfx = {
   fuse() { if (!this.enabled || !this.ctx) return; this.noise(this.ctx.currentTime, 1.4, 0.22, 'highpass', 3000, 5000, 0.7); },
   splash() { if (!this.enabled || !this.ctx) return; this.noise(this.ctx.currentTime, 0.35, 0.3, 'lowpass', 1500, 200, 0.6); },
   click() { if (!this.enabled || !this.ctx) return; this.tone(this.ctx.currentTime, 1200, 0.03, 0.08, 'square'); },
+  // a boat paddle's stroke (Boat.getPaddleSound): a splash in water, a scrape on land, pitch 0.8..1.2
+  paddle(water) {
+    if (!this.enabled || !this.ctx) return;
+    const t = this.ctx.currentTime, k = 0.8 + Math.random() * 0.4;
+    if (water) this.noise(t, 0.3, 0.22, 'lowpass', 1100 * k, 250 * k, 0.8);
+    else this.noise(t, 0.16, 0.25, 'bandpass', 650 * k, 300 * k, 1.5);
+  },
   door(open) { if (!this.enabled || !this.ctx) return; const t = this.ctx.currentTime; this.noise(t, 0.2, 0.35, 'bandpass', open ? 500 : 350, 200, 3); },
 };
