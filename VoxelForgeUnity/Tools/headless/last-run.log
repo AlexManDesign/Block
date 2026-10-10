@@ -1,0 +1,291 @@
+build: OK
+persistentDataPath = /tmp/tmp.tkxiODeAj4/vf-headless-827b6e59
+== boot (RuntimeInitializeOnLoadMethod -> Awake -> bootstrap)  (frame 0, exceptions 0, errors 0, problems 0)
+  ok   VoxelForgeGame created
+  ok   terrain atlas array built
+  ok   frame command buffer created
+  ok   start screen draws buttons (3)
+== creative world: create + start  (frame 10, exceptions 0, errors 0, problems 0)
+  ok   started
+  toast: Creator: бесконечные ресурсы и полёт · seed 739652482 · сухой spawn проверен
+  [creative: worldReady] after 3846 frames
+  [creative: chunks meshed and drawn] after 1 frames
+  [creative: streaming settled] after 4602 frames
+  state[creative]: chunks 225 meshed 169 geo 169 visible 50 draws 99 tris 360328 | player 0.50 65.05 0.50 ground False fly False hp 20 | mobs 107 fps 132 gen 0 mesh 0
+  ok   creative: player position/velocity finite
+  ok   creative: player above world bottom (y=65.05)
+  ok   creative: chunks meshed
+  ok   creative: frame draws geometry (99 draws, 360328 tris)
+  state[creative idle]: chunks 225 meshed 169 geo 169 visible 50 draws 99 tris 360406 | player 0.50 65.05 0.50 ground False fly False hp 20 | mobs 106 fps 130 gen 0 mesh 0
+  ok   creative idle: player position/velocity finite
+  ok   creative idle: player above world bottom (y=65.05)
+  ok   creative idle: chunks meshed
+  ok   creative idle: frame draws geometry (99 draws, 360406 tris)
+  idle probe[creative idle] 1083 frames: 69 chunks remeshed; top: -4,-2x285, 2,4x190, 5,3x183, 2,0x163, 4,2x149, 3,5x145, -3,-5x125, -6,-4x118 (edits 392 -> 435)
+  FAIL creative idle: no remesh loop (max 285 revs in 8s)
+== lock pointer, look around  (frame 9572, exceptions 0, errors 0, problems 0)
+  ok   pointer lock acquired by first click
+  ok   mouse look keeps finite angles
+== fly across chunk borders  (frame 9596, exceptions 0, errors 0, problems 0)
+  toast: Полёт включён
+  ok   flight toggled by F in creative
+  FAIL flew 11.2 blocks
+  ok   crossed a chunk border
+  [streaming after flight] after 7 frames
+  state[after flight]: chunks 240 meshed 182 geo 182 visible 50 draws 109 tris 353786 | player 0.50 65.00 -10.70 ground False fly True hp 20 | mobs 104 fps 143 gen 0 mesh 0
+  ok   after flight: player position/velocity finite
+  ok   after flight: player above world bottom (y=65.00)
+  ok   after flight: chunks meshed
+  ok   after flight: frame draws geometry (109 draws, 353786 tris)
+  [streaming after teleport] after 7754 frames
+  state[after teleport]: chunks 379 meshed 211 geo 211 visible 52 draws 58 tris 405042 | player 150.50 147.00 -100.70 ground False fly True hp 20 | mobs 102 fps 137 gen 0 mesh 0
+  ok   after teleport: player position/velocity finite
+  ok   after teleport: player above world bottom (y=147.00)
+  ok   after teleport: chunks meshed
+  ok   after teleport: frame draws geometry (58 draws, 405042 tris)
+  toast: Полёт выключен
+  ok   flight off
+  [landed] after 86 frames
+  state[landed]: chunks 379 meshed 211 geo 211 visible 52 draws 59 tris 405110 | player 150.50 141.00 -100.70 ground True fly False hp 20 | mobs 102 fps 114 gen 0 mesh 0
+  ok   landed: player position/velocity finite
+  ok   landed: player above world bottom (y=141.00)
+  ok   landed: chunks meshed
+  ok   landed: frame draws geometry (59 draws, 405110 tris)
+  ok   landed: player supported (block below Трава)
+== creative break + place  (frame 18228, exceptions 0, errors 0, problems 0)
+  ok   found ground ahead
+  FAIL raycast hits aimed block
+  FAIL creative click broke block (was 1)
+  toast: Поставлено: Камень
+  ok   right click placed stone
+  toast: Факелу нужна опора снизу или сбоку
+  FAIL placed torch (light source)
+  FAIL torch block light propagated (timeout 5s)
+  ok   torch light spreads (0 two blocks away)
+  state[after edits]: chunks 379 meshed 211 geo 211 visible 79 draws 80 tris 543728 | player 150.50 141.00 -100.70 ground True fly False hp 20 | mobs 102 fps 144 gen 0 mesh 0
+  ok   after edits: player position/velocity finite
+  ok   after edits: player above world bottom (y=141.00)
+  ok   after edits: chunks meshed
+  ok   after edits: frame draws geometry (80 draws, 543728 tris)
+== inventory open/close (creative palette)  (frame 18973, exceptions 0, errors 0, problems 0)
+  ok   E opens inventory
+  ok   inventory panel drawn
+  toast: Выбрано: Коричневая шерсть
+  toast: Кликни по миру, чтобы вернуть управление
+  ok   E closes inventory
+  ok   pointer lock acquired by first click
+== pause menu: mods (enable X-Ray) + settings  (frame 18993, exceptions 0, errors 0, problems 0)
+  ok   Esc opens pause
+  clicked UI button 'Моды'
+  ok   mods panel open
+  ok   mods list draws one toggle per mod (6)
+  ok   X-Ray mod enabled through the mods list
+  clicked UI button 'Закрыть'
+  clicked UI button 'Настройки'
+  ok   settings open
+  toast: Облака выключены
+  clicked UI button '[toggle]  Облака'
+  ok   clouds toggled off
+  toast: Облака включены
+  clicked UI button '[toggle]  Облака'
+  ok   clouds toggled on
+  clicked UI button 'Готово'
+  clicked UI button 'Продолжить'
+  ok   resume re-locks pointer
+== x-ray + camera modes  (frame 19018, exceptions 0, errors 0, problems 0)
+  toast: X-Ray включён
+  ok   x-ray on
+  ok   x-ray frame draws
+  toast: X-Ray выключен
+  ok   x-ray off
+  toast: Камера: сзади
+  ok   camera mode 1 renders
+  toast: Камера: спереди
+  ok   camera mode 2 renders
+  toast: Камера: от первого лица
+  ok   camera mode 0 renders
+  ok   camera cycled back to first person
+== mobs: spawn eggs + simulation  (frame 19093, exceptions 0, errors 0, problems 0)
+  toast: Призван: Яйцо призыва: свинья
+  toast: Призван: Яйцо призыва: корова
+  toast: Призван: Яйцо призыва: овца
+  toast: Призван: Яйцо призыва: курица
+  toast: Призван: Яйцо призыва: зомби
+  toast: Призван: Яйцо призыва: скелет
+  toast: Призван: Яйцо призыва: крипер
+  toast: Призван: Яйцо призыва: паук
+  ok   mobs spawned from eggs (102 -> 110)
+  state[mobs simulated]: chunks 379 meshed 211 geo 211 visible 53 draws 64 tris 340550 | player 150.50 141.00 -100.70 ground True fly False hp 20 | mobs 110 fps 146 gen 0 mesh 4
+  ok   mobs simulated: player position/velocity finite
+  ok   mobs simulated: player above world bottom (y=141.00)
+  ok   mobs simulated: chunks meshed
+  ok   mobs simulated: frame draws geometry (64 draws, 340550 tris)
+  ok   no mob fell out of the world
+== water bucket -> fluids  (frame 19449, exceptions 0, errors 0, problems 0)
+  ok   water source placed
+  ok   creative keeps the water bucket
+  ok   water spread (10 water cells)
+  state[after water]: chunks 379 meshed 211 geo 211 visible 5 draws 15 tris 36178 | player 150.50 141.00 -100.70 ground False fly False hp 20 | mobs 110 fps 110 gen 0 mesh 0
+  ok   after water: player position/velocity finite
+  ok   after water: player above world bottom (y=141.00)
+  ok   after water: chunks meshed
+  ok   after water: frame draws geometry (15 draws, 36178 tris)
+== vehicles: boat on the new pond, minecart on a rail  (frame 19695, exceptions 0, errors 0, problems 0)
+  toast: В руке нет блока
+  info boat use: vehicles 0 -> 0 (toast 'В руке нет блока')
+  toast: Этому блоку нужна опора снизу
+  info rail placement failed (toast 'Этому блоку нужна опора снизу')
+  toast: Удочка заброшена
+  toast: Клёва нет
+  ok   fishing cast/reel
+  ok   ender pearl throw/teleport (150.9,142.0,-100.3)
+  [settled after pearl] after 1 frames
+  state[after vehicles]: chunks 379 meshed 211 geo 211 visible 47 draws 56 tris 299436 | player 150.92 142.00 -100.34 ground True fly False hp 20 | mobs 110 fps 136 gen 0 mesh 3
+  ok   after vehicles: player position/velocity finite
+  ok   after vehicles: player above world bottom (y=142.00)
+  ok   after vehicles: chunks meshed
+  ok   after vehicles: frame draws geometry (56 draws, 299436 tris)
+== TNT explosion  (frame 19968, exceptions 0, errors 0, problems 0)
+  toast: Место занято
+  FAIL TNT placed
+  toast: В руке нет блока
+  ok   TNT ignited
+  [TNT exploded] after 1 frames
+  ok   explosion crater (10 cleared cells)
+  [remesh after explosion] after 1 frames
+  state[after TNT]: chunks 379 meshed 211 geo 211 visible 79 draws 127 tris 597312 | player 150.92 142.00 -100.34 ground False fly False hp 20 | mobs 110 fps 143 gen 0 mesh 0
+  ok   after TNT: player position/velocity finite
+  ok   after TNT: player above world bottom (y=142.00)
+  ok   after TNT: chunks meshed
+  ok   after TNT: frame draws geometry (127 draws, 597312 tris)
+== render distance switch  (frame 20042, exceptions 0, errors 0, problems 0)
+  toast: Дальность: 8 чанков
+  ok   ] raised render distance (6 -> 8)
+  [stream at larger RD] after 4453 frames
+  state[RD 8]: chunks 481 meshed 305 geo 305 visible 126 draws 219 tris 938670 | player 150.92 142.00 -100.34 ground False fly False hp 20 | mobs 111 fps 150 gen 0 mesh 0
+  ok   RD 8: player position/velocity finite
+  ok   RD 8: player above world bottom (y=142.00)
+  ok   RD 8: chunks meshed
+  ok   RD 8: frame draws geometry (219 draws, 938670 tris)
+  toast: Дальность: 6 чанков
+  toast: Дальность: 4 чанков
+  [stream at smaller RD] after 1 frames
+  state[RD 4]: chunks 481 meshed 305 geo 305 visible 40 draws 103 tris 332800 | player 150.92 142.00 -100.34 ground False fly False hp 20 | mobs 111 fps 146 gen 0 mesh 0
+  ok   RD 4: player position/velocity finite
+  ok   RD 4: player above world bottom (y=142.00)
+  ok   RD 4: chunks meshed
+  ok   RD 4: frame draws geometry (103 draws, 332800 tris)
+  toast: Дальность: 6 чанков
+== save, return to title, load  (frame 24548, exceptions 0, errors 0, problems 0)
+  ok   returned to title (chunks 0)
+  ok   world list shows Play buttons
+  clicked UI button 'Играть'
+  ok   world started again (load path)
+  toast: Creator: бесконечные ресурсы и полёт · seed 739652482 · spawn/позиция проверены
+  [reloaded: worldReady] after 4537 frames
+  [reloaded: chunks meshed and drawn] after 1 frames
+  [reloaded: streaming settled] after 5226 frames
+  state[reloaded]: chunks 225 meshed 169 geo 169 visible 5 draws 9 tris 37870 | player 150.50 141.05 -100.50 ground False fly False hp 20 | mobs 37 fps 135 gen 0 mesh 0
+  ok   reloaded: player position/velocity finite
+  ok   reloaded: player above world bottom (y=141.05)
+  ok   reloaded: chunks meshed
+  ok   reloaded: frame draws geometry (9 draws, 37870 tris)
+  ok   position restored (150.5,141.1,-100.5 vs 150.9,142.0,-100.3)
+  ok   pointer lock acquired by first click
+  state[reloaded idle]: chunks 225 meshed 169 geo 169 visible 5 draws 9 tris 37870 | player 150.50 141.00 -100.50 ground True fly False hp 20 | mobs 37 fps 141 gen 0 mesh 0
+  ok   reloaded idle: player position/velocity finite
+  ok   reloaded idle: player above world bottom (y=141.00)
+  ok   reloaded idle: chunks meshed
+  ok   reloaded idle: frame draws geometry (9 draws, 37870 tris)
+  idle probe[reloaded idle] 1047 frames: 26 chunks remeshed; top: 13,-2x512, 10,-11x373, 11,-11x331, 9,-9x272, 13,-1x244, 8,-9x169, 8,-6x143, 9,-5x130 (edits 876 -> 876)
+  FAIL reloaded idle: no remesh loop (max 512 revs in 8s)
+== survival world  (frame 35450, exceptions 0, errors 0, problems 0)
+  toast: Survival: добывайте ресурсы и выживайте · seed 450993223 · сухой spawn проверен
+  [survival: worldReady] after 3499 frames
+  [survival: chunks meshed and drawn] after 1 frames
+  [survival: streaming settled] after 4439 frames
+  state[survival]: chunks 225 meshed 169 geo 169 visible 48 draws 126 tris 193340 | player -17.50 64.05 -9.50 ground False fly False hp 20 | mobs 50 fps 146 gen 0 mesh 0
+  ok   survival: player position/velocity finite
+  ok   survival: player above world bottom (y=64.05)
+  ok   survival: chunks meshed
+  ok   survival: frame draws geometry (126 draws, 193340 tris)
+  ok   pointer lock acquired by first click
+  [survival: player lands] after 6 frames
+  state[survival idle]: chunks 225 meshed 169 geo 169 visible 48 draws 126 tris 193292 | player -17.50 64.00 -9.50 ground True fly False hp 20 | mobs 49 fps 149 gen 0 mesh 0
+  ok   survival idle: player position/velocity finite
+  ok   survival idle: player above world bottom (y=64.00)
+  ok   survival idle: chunks meshed
+  ok   survival idle: frame draws geometry (126 draws, 193292 tris)
+  ok   survival idle: player supported (block below Трава)
+  toast: Блок разрушен — дропа нет
+  [survival hand mining broke Листва] after 56 frames
+  ok   mined block dropped / collected
+  ok   survival inventory open
+  clicked UI button 'Доски ×4'
+  ok   crafted planks (0 -> 4)
+  clicked UI button 'Книга рецептов'
+  toast: Кликни по миру, чтобы вернуть управление
+  ok   Esc closes inventory
+  ok   pointer lock acquired by first click
+== survival: chest, furnace, food, bow, bed, death/respawn  (frame 43613, exceptions 0, errors 0, problems 0)
+  toast: Поставлено: Сундук
+  ok   chest placed
+  ok   right click opens chest UI
+  toast: Кликни по миру, чтобы вернуть управление
+  ok   pointer lock acquired by first click
+  toast: Поставлено: Печь
+  ok   right click opens furnace UI
+  [furnace smelts raw iron] after 1434 frames
+  toast: Кликни по миру, чтобы вернуть управление
+  ok   pointer lock acquired by first click
+  FAIL ate bread (hunger 10)
+  FAIL bow fired an arrow
+  info bed placement failed (toast 'Кликни по миру, чтобы вернуть управление')
+  toast: -100 HP · test
+  ok   death screen shown
+  clicked UI button 'Возродиться'
+  ok   respawned
+  [respawn settled] after 9 frames
+  ok   pointer lock acquired by first click
+  state[after respawn]: chunks 225 meshed 169 geo 169 visible 46 draws 137 tris 255186 | player -17.50 64.00 -9.50 ground True fly False hp 20 | mobs 52 fps 127 gen 0 mesh 5
+  ok   after respawn: player position/velocity finite
+  ok   after respawn: player above world bottom (y=64.00)
+  ok   after respawn: chunks meshed
+  ok   after respawn: frame draws geometry (137 draws, 255186 tris)
+  state[survival night]: chunks 225 meshed 169 geo 169 visible 46 draws 130 tris 255824 | player -17.50 64.00 -9.50 ground True fly False hp 20 | mobs 71 fps 134 gen 0 mesh 0
+  ok   survival night: player position/velocity finite
+  ok   survival night: player above world bottom (y=64.00)
+  ok   survival night: chunks meshed
+  ok   survival night: frame draws geometry (130 draws, 255824 tris)
+  ok   player hp sane (20)
+== pause + quit  (frame 45839, exceptions 0, errors 0, problems 0)
+  ok   Esc shows pause
+
+================ HEADLESS SMOKE TEST REPORT ================
+frames: 45857   checks: 147 (10 failed)
+exceptions: 0   errors: 0   problems: 0   warnings: 0
+mesh uploads: 198883 (9679 MiB vertex data)
+  uploads vf-terrain: 25992 calls, 7931 MiB
+  uploads vf-entities: 43553 calls, 1710 MiB
+  uploads vf-held-main: 43936 calls, 14 MiB
+  uploads vf-sky: 39136 calls, 8 MiB
+  uploads vf-line-sel: 27604 calls, 7 MiB
+  uploads vf-drop-block: 4829 calls, 4 MiB
+  uploads vf-mob-held: 10649 calls, 1 MiB
+  uploads vf-drop-item: 2769 calls, 0 MiB
+  uploads vf-particles: 176 calls, 0 MiB
+  uploads vf-crack: 55 calls, 0 MiB
+  uploads vf-line-fish: 92 calls, 0 MiB
+  uploads vf-active-terrain: 92 calls, 0 MiB
+  FAIL creative idle: no remesh loop (max 285 revs in 8s)
+  FAIL flew 11.2 blocks
+  FAIL raycast hits aimed block
+  FAIL creative click broke block (was 1)
+  FAIL placed torch (light source)
+  FAIL torch block light propagated (timeout 5s)
+  FAIL TNT placed
+  FAIL reloaded idle: no remesh loop (max 512 revs in 8s)
+  FAIL ate bread (hunger 10)
+  FAIL bow fired an arrow
+RESULT: FAIL
+exit 1
