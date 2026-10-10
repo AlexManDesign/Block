@@ -293,7 +293,7 @@ static class Harness
         P.yaw = 0; P.pitch = 0;
         HeadlessHost.PressKey(KeyCode.W); Frames(3); HeadlessHost.ReleaseKey(KeyCode.W); Frames(2); HeadlessHost.PressKey(KeyCode.W); // double tap = sprint latch
         var flyEnd = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < flyEnd) Frame();
+        { int fi = 0; while (DateTime.UtcNow < flyEnd) { Frame(); if (++fi % 60 == 0) Info("fly t" + fi + ": pos " + JS.Fixed(P.x, 2) + "," + JS.Fixed(P.y, 2) + "," + JS.Fixed(P.z, 2) + " v " + JS.Fixed(P.vx, 2) + "," + JS.Fixed(P.vy, 2) + "," + JS.Fixed(P.vz, 2) + " fly " + P.flying + " wall " + P.hitWall + " sprint " + P.sprinting + " dt " + JS.Fixed(Time.deltaTime, 4)); } }
         HeadlessHost.ReleaseKey(KeyCode.W); Frames(3);
         double moved = JS.hypot(P.x - sx, P.z - sz);
         Check(moved > 20, "flew " + JS.Fixed(moved, 1) + " blocks");
