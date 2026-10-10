@@ -241,66 +241,6 @@
      "id": "WORLD-1",
      "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.World.cs",
      "line": 199,
-     "jsRef": "clearRuntimeWorld / scheduleWorldSave / saveWorldNow (pretty.js 4406-4521)",
-     "severity": "major",
-     "category": "faithfulness",
-     "description": "In JS, leaving a world calls location.reload(), which also kills every pending setTimeout. The C# port uses returnToTitle() instead (VF.Frame.cs:197). That function calls saveGameNow(), which runs saveWorldNow() and saves correctly. It then calls clearRuntimeWorld(), which empties edits, editsByChunk and blockMeta, but nothing cancels the world-save timer that scheduleWorldSave() (line 287) set up. Timers.Tick() runs every Update even on the title screen, and SAVE_KEYS still points at the world just left. So 300 ms after the last edit, saveWorldNow() fires and writes {edits:[], meta:[]} to that world's save key, wiping every block edit and all block metadata (chest/furnace meta, signs, plate states, etc.). Repro: break or place a block (or let leaf decay, crops or fire make an edit, since each calls scheduleWorldSave), then within 300 ms open the pause menu and press 'return to title'. The world reloads with all edits gone. The light repair queue (lightDirtyQueue/lightDirtyKeys/lightDirtyHead in VF.Light.cs) also survives the reset, so the next world starts with stale repair work.",
-     "suggestedFix": "In clearRuntimeWorld() add `Timers.clearTimeout(saveTimer); saveTimer = 0;`. Also reset the light queue there, for example through a helper in VF.Light.cs: `lightDirtyQueue.Clear(); lightDirtyKeys.Clear(); lightDirtyHead = 0;`. The same leftover-timer problem applies to saveGameSoon's saveGameT (VF.Inventory.cs), which the inventory owner should cancel in returnToTitle."
-    },
-    {
-     "id": "WORLD-2",
-     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.WorldTick.cs",
-     "line": 588,
-     "jsRef": "tickPressurePlates (pretty.js 20498-20519): for (const q of worldDrops) ...",
-     "severity": "major",
-     "category": "crash",
-     "description": "tickPressurePlates walks worldDrops with a C# foreach over a List<WorldDrop>. touchPressurePlate can add to that list during the walk. When a dropped item lands on a wooden plate, primePlateTNT calls setBlock(TNT -> AIR). That runs validateAttachmentsAround, then detachUnsupportedAt for the plate sitting on the TNT, which removes the plate and calls spawnWorldDrop, which does worldDrops.Add. The next MoveNext throws InvalidOperationException ('Collection was modified'). JS for-of over an array allows push during iteration and simply visits the new element. In C# the exception escapes tickWorldDynamics, so the plate-expiry loop and everything after it in the frame are skipped (tickFurnaces, day advance, stream, render-region builds), and the error is logged. Repro (survival): put a wooden pressure plate on top of TNT and throw an item onto it.",
-     "suggestedFix": "Use an index loop, as JS effectively does: `for (int i = 0; i < worldDrops.Count; i++) { var q = worldDrops[i]; scanPlateUnderEntity(q.x, q.y, q.z, 0.1, false, now); }`. For safety, write the liveMobs loop as an index loop too."
-    },
-    {
-     "id": "WORLD-3",
-     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.WorldTick.cs",
-     "line": 407,
-     "jsRef": "tickFire / tickFurnaces (pretty.js 20311, 20533); JS snapshotSimMap reuses global scratch arrays",
-     "severity": "minor",
-     "category": "performance",
-     "description": "tickFire runs every frame and always calls snapshotSimMap(worldSim.fires), which allocates a new List plus an OrderedMap iterator even when there are no fires. tickFurnaces (line 617) likewise allocates `new List<KeyValuePair<string, Furnace>>(furnaces)` every frame. JS reuses the module-level simEntryKeys/simEntryVals scratch arrays, so it allocates nothing per frame. This is steady GC churn in the per-frame simulation path.",
-     "suggestedFix": "Return early when the map is empty (`if (worldSim.fires.Count == 0) return;`, `if (furnaces.Count == 0) { ...ui refresh...; return; }`). Have snapshotSimMap fill a reused static List per value type (or reused key/value scratch lists, as in JS) instead of allocating a new one each call."
-    }
-   ],
-   "coverageNotes": "I read all six owned files in full and compared each function line by line with its pretty.js counterpart.\n\n- **VF.World.cs:** hash2/noise2; the water/lava predicates (isWater, runtimeWater*, pointInWater, the waterSource/Replaceable/SolidSupport family, slope search, minecraftWaterSpreadMask, waterCanCreateSource, strongestHorizontalWater); ITEM_DEFS including the combat-stat override and the later Object.assign block; the edits/meta layers; loadWorldSave, saveWorldNow and serializeWorldEdits (JSON format: seed, edits as [x,y,z,id], meta as [[k,v]]); the chunk lookup cache; sections, chunkGet/chunkSet, buildInitialPackedLightDense, denseToSections; getBlock/getBlockMeta precedence; installGeneratedMeta; decodeSimKey; queueWater/queueLava caps; fluid mixing; flammability regexes; queueLeaf/queueAroundSimulation; leafConnectedToLog; sim seed install and boundary wake; setFluidBlock; the player-edit light/mesh flush; setBlock (dirty marking, light signature, sim wake order); markDirty*.\n- **VF.Light.cs:** everything, including propagate, the block/sky remove-and-increase passes, the processLightDirty budget and requeue, and stitchChunkLight. No divergences found.\n- **VF.LightRules.cs** and **VF.WorldGen.cs** (seed sync, floor semantics): no divergences found.\n- **VF.WorldTick.cs:** crops, the water and lava queues (batch sizes 128/400/+80 and 240/+40, work budgets 120/60, 200/500 ms rates), farmland, sapling tree builders, cactus growth, leaf decay, fire, falling blocks, pressure plates, furnaces. Apart from the findings above, all match JS.\n- **Types.cs:** checked.\n\nI also confirmed that OrderedMap/OrderedSet keep JS Map/Set insertion-order, set-existing and delete-during-iteration semantics. The offline compile check prints \"compile check: OK\". Worker threads don't touch the main-thread WORLDGEN or Unity APIs from these files.\n\nNot checked in depth: helpers owned by other subsystems that these files call (saplingSpeciesAt, topSupportAt, validateAttachmentsAround internals, hardenConcretePowderAt, waterVolumeAtCell, virtualDefFromMeta, processDirtyEditMeshes) and the WorldGenKernel internals."
-  },
-  {
-   "findings": [
-    {
-     "id": "WG-1",
-     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Gen/WorldGenKernel.Structures.cs",
-     "line": 31,
-     "jsRef": "SHIP_ALL / SHIP_BEACHABLE / weightedPrefix / SHIP_ALL_WEIGHT (pretty.js ~10620-10632), which are module constants built once when the kernel is created",
-     "severity": "minor",
-     "category": "threading",
-     "description": "ensureShipTables() fills static fields lazily without a lock or memory barrier. Several VF-Gen threads start at the same moment and reach structureCandidate() for their first chunks almost together. A thread can see SHIP_ALL as non-null and return early, even though another thread's earlier stores to SHIP_ALL_WEIGHT, SHIP_BEACH_WEIGHT and SHIP_BEACHABLE are not yet visible to it. Stores are reordered like this on ARM64 under IL2CPP and Mono (Android, iOS, Apple Silicon). weightedShip() then dereferences a null prefix array, throws NullReferenceException in GenWorker.Run, and failWorkerEngine stops all chunk generation. On x86 the window is harmless. In JS these tables are built once, synchronously.",
-     "suggestedFix": "Build the four tables in GenData.Build(), which runs on the main thread before any worker starts, and store them as static fields there. Or guard ensureShipTables with a lock or Volatile.Write and publish SHIP_ALL last with a release store. Then remove the lazy call from structureCandidate."
-    },
-    {
-     "id": "WG-2",
-     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Gen/WorldGenKernel.Core.cs",
-     "line": 812,
-     "jsRef": "ravinesForChunk / planRavine / structureCandidate / mineshaftsForChunk string keys (pretty.js ~9455-9475, ~10690, ~11143)",
-     "severity": "minor",
-     "category": "performance",
-     "description": "Hot cache lookups build a fresh string key on every call: `seed + \":\" + cx + \",\" + cz` boxes three ints and allocates the concatenated string. This happens in ravinesForChunk (reached from ravineContains2D for every landPlantInfoAt and featureKindAt that produces a feature), planRavine (169 times per ravinesForChunk miss), structureCandidate, mineshaftsForChunk and planMineshaft (361 times per miss). nearbyStructures also allocates a List on each call, and surfaceStructureReservedAt calls it 4 times per feature column. In generateDense this runs for 256 surface columns plus the 26x26 feature ring, so each chunk produces thousands of short-lived objects. The output matches JS. The problem is cost in Unity: its Boehm GC stops every thread, so garbage from the generator threads causes main-thread frame hitches while streaming.",
-     "suggestedFix": "Key these Dictionaries on a long built from the two ints, for example ((long)cx << 32) | (uint)cz. The seed prefix is unneeded because setSeed already clears every cache. Have nearbyStructures fill a reusable per-kernel List, or let surfaceStructureReservedAt test candidates inline. Lookup order and results stay the same."
-    }
-   ],
-   "coverageNotes": "I read all four files under review in full: WorldGenKernel.Core.cs, WorldGenKernel.Features.cs, WorldGenKernel.Structures.cs and GenWorker.cs. I compared them line by line with JS createWorldGenKernel (pretty.js 8274-12038), the JS worker GEN_WORKER_SOURCE (12160-12187), applyChunkDeltaDense, and how the worker gets its block config (workerBlockCfg at 14362).\n\nChecked and matching JS:\n- **Hashing and RNG:** hotSlot/hotSlot3, mix32, rng32 (the `|| 1` seed fallback), mainRng32, makePerm, makeMainPerm (`|0` vs Math.floor), and the oreRngMain/structRand/ravineRng/mineshaftRng/mineshaftHash constants. ToInt32 wrapping is correct for doubles above 2^31 (the `salt * 17.0` case), unsigned shifts are correct, and `(uint) % 100000` matches.\n- **hash2Main/hash3Main:** the multiply-add stays in double before ToInt32, as in JS. JS.toInt32 truncates and reduces modulo 2^32 correctly.\n- **Noise and terrain:** mainPerlin2, mainFbm2, valueNoise2/3Main, valueFbm4/3Main, curveSample and every curve table. terrainShapeMain, including the valley offsets and Math.round = floor(x+0.5).\n- **Climate and biomes:** climatePoint and the order of calls into columnInfo. Climate-tree build (stable OrderBy matches V8 TimSort, groupSize, leaf ordering), flattening, zero4/zero6, the branch-and-bound search with climateLastLeaf, and the 53 biome names. selectMainBiome, nearestMainBiome, mushroomStrength.\n- **Surface and caves:** heightAt, generatedSurfaceAt, caveKind, caveBiomeAt, baseStoneAt, bedrockAt, surfaceBlockForBiome, subsurfaceBlockForBiome (JS null mapped to -1), terrainBlock, postCarverSurfaceInfoAt.\n- **Ores and ravines:** ore table, the order of RNG calls in placeMainOres, ravine planning and carving.\n- **Plants and features:** every tree config, featureKindAt, featureInfoFromKind, landPlantInfoAt (all biome branches), aquatic and frozen decorators, featureVoxelAt and placeFeature for every tree kind, baseBlock.\n- **Structures:** STRUCT_CFG, structureCandidate (order of RNG draws and early exits), nearbyStructures, rotation and meta transforms, resolveMainBlock (I confirmed with a script that B.NAMES covers every ship, pyramid and outpost palette key), the build functions for pyramid, outpost, portal, ship and well, structureMetaForChunk, structureChestKindAt.\n- **Mineshafts:** plan and build pieces.\n- **Dense output:** sea-pickle and cave-vine meta encoding. Every stage of generateDense in order: lattice with float32 grid, surface stage, features, carvers, ravines, ocean flood, ice, ores, cave decorator, structures, mineshafts.\n- **GenWorker:** mixDenseFluids, lightDense (sim and boundary classification, flood order), pack, delta overlay with its dirty flag.\n\nsetSeed resets every cache on each job, exactly as JS does: JS `perms` is never filled because fbm2/fbm3 are never called. That reset keeps the climateLastLeaf tie-break deterministic per chunk, so it is not reported.\n\nThreading: GenData.Ensure runs on the main thread in initWorkerEngine before workers start, so Resources.Load is never called from a worker thread. Mesh code does not call into the kernel. The offline compile check passes (`compile check: OK`).\n\nNot verified:\n- Whether the JSON and .bytes resources are byte-identical to the data the JS embeds (the embedded data is stripped from pretty.js).\n- Bit-exactness of Math.Pow/Cos/Sin between .NET and V8 at the last ulp. Divergence there is a platform-libm risk, not a port defect.\n\nUnused helpers (fbm2/fbm3/perlin with per-call closures, hash3i, cactusSideClearAt) are dead code in both JS and C#, so they were not reported."
-  },
-  {
-   "findings": [
-    {
-     "id": "WORLD-1",
-     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/World/VF.World.cs",
-     "line": 199,
      "jsRef": "clearRuntimeWorld / scheduleWorldSave / saveWorldNow (pretty.js 4406-4434, 4507-4521); in JS the page reload kills any pending setTimeout",
      "severity": "critical",
      "category": "faithfulness",
@@ -339,6 +279,31 @@
     }
    ],
    "coverageNotes": "I read all six files in full: VF.World.cs, VF.Light.cs, VF.LightRules.cs, VF.WorldGen.cs, VF.WorldTick.cs and Types.cs. I compared each function line by line with its pretty.js counterpart.\n- Storage: hash2/noise2, the water helpers, ITEM_DEFS including both Object.assign blocks and the combat stats, edits/editsByChunk/blockMeta/metaByChunk/generatedMeta, loadWorldSave/addEditIndex/serializeWorldEdits/saveWorldNow/scheduleWorldSave, the chunk lookup cache, sections, chunkGet/Set, buildInitialPackedLightDense/denseToSections, getBlock/getBlockMeta/installGeneratedMeta.\n- Fluid rules: decodeSimKey, the water slope search and spread mask, source rules, queueWater/queueLava caps, fluid mixing, sim seeds and boundary wakes, setFluidBlock.\n- Player edits: the edit light/mesh flush and withPlayerEdit, setBlock including its dirty-section and edit marking order, markDirty*.\n- Light: the whole of VF.Light.cs (packed get/set, emission, BFS increase and removal for block and sky, processLightDirty batching and deadlines, stitchChunkLight) and the light predicates.\n- Worldgen wrappers.\n- Ticks: crops, the water queue (urgent/active/seed budgets, the submerged-source guard, falling state), the lava queue, farmland, saplings and every tree shape including dark oak 2x2 restore, cactus growth, leaf decay, fire, falling blocks, pressure plates, furnaces, and tick order/rates.\nApart from the findings above, everything I compared matches JS, including iteration order through OrderedMap/OrderedSet, which I checked for safe delete-during-iterate behaviour.\nAlso checked:\n- Save JSON shape and number formatting (Json.WriteNum).\n- Gen and mesh threads use isolated kernels and do not touch the VF statics.\n- Main-thread-only use of Timers and LocalStorage.\n- The offline compile check passes ('compile check: OK').\nLeft unverified:\n- Callee internals in other subsystems (saplingSpeciesAt, validateAttachmentsAround, topSupportAt, hardenConcretePowderAt, fuelValue, setInteractableOpenAt, the WorldGenKernel internals).\n- The lightDirtyQueue/lightDirtyKeys state that survives returnToTitle; I judged it harmless because stale entries just get re-solved against the current world.\n- Edge-case parsing of malformed saves."
+  },
+  {
+   "findings": [
+    {
+     "id": "WG-1",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Gen/WorldGenKernel.Structures.cs",
+     "line": 31,
+     "jsRef": "SHIP_ALL / SHIP_BEACHABLE / weightedPrefix / SHIP_ALL_WEIGHT (pretty.js ~10620-10632), which are module constants built once when the kernel is created",
+     "severity": "minor",
+     "category": "threading",
+     "description": "ensureShipTables() fills static fields lazily without a lock or memory barrier. Several VF-Gen threads start at the same moment and reach structureCandidate() for their first chunks almost together. A thread can see SHIP_ALL as non-null and return early, even though another thread's earlier stores to SHIP_ALL_WEIGHT, SHIP_BEACH_WEIGHT and SHIP_BEACHABLE are not yet visible to it. Stores are reordered like this on ARM64 under IL2CPP and Mono (Android, iOS, Apple Silicon). weightedShip() then dereferences a null prefix array, throws NullReferenceException in GenWorker.Run, and failWorkerEngine stops all chunk generation. On x86 the window is harmless. In JS these tables are built once, synchronously.",
+     "suggestedFix": "Build the four tables in GenData.Build(), which runs on the main thread before any worker starts, and store them as static fields there. Or guard ensureShipTables with a lock or Volatile.Write and publish SHIP_ALL last with a release store. Then remove the lazy call from structureCandidate."
+    },
+    {
+     "id": "WG-2",
+     "file": "/home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Gen/WorldGenKernel.Core.cs",
+     "line": 812,
+     "jsRef": "ravinesForChunk / planRavine / structureCandidate / mineshaftsForChunk string keys (pretty.js ~9455-9475, ~10690, ~11143)",
+     "severity": "minor",
+     "category": "performance",
+     "description": "Hot cache lookups build a fresh string key on every call: `seed + \":\" + cx + \",\" + cz` boxes three ints and allocates the concatenated string. This happens in ravinesForChunk (reached from ravineContains2D for every landPlantInfoAt and featureKindAt that produces a feature), planRavine (169 times per ravinesForChunk miss), structureCandidate, mineshaftsForChunk and planMineshaft (361 times per miss). nearbyStructures also allocates a List on each call, and surfaceStructureReservedAt calls it 4 times per feature column. In generateDense this runs for 256 surface columns plus the 26x26 feature ring, so each chunk produces thousands of short-lived objects. The output matches JS. The problem is cost in Unity: its Boehm GC stops every thread, so garbage from the generator threads causes main-thread frame hitches while streaming.",
+     "suggestedFix": "Key these Dictionaries on a long built from the two ints, for example ((long)cx << 32) | (uint)cz. The seed prefix is unneeded because setSeed already clears every cache. Have nearbyStructures fill a reusable per-kernel List, or let surfaceStructureReservedAt test candidates inline. Lookup order and results stay the same."
+    }
+   ],
+   "coverageNotes": "I read all four files under review in full: WorldGenKernel.Core.cs, WorldGenKernel.Features.cs, WorldGenKernel.Structures.cs and GenWorker.cs. I compared them line by line with JS createWorldGenKernel (pretty.js 8274-12038), the JS worker GEN_WORKER_SOURCE (12160-12187), applyChunkDeltaDense, and how the worker gets its block config (workerBlockCfg at 14362).\n\nChecked and matching JS:\n- **Hashing and RNG:** hotSlot/hotSlot3, mix32, rng32 (the `|| 1` seed fallback), mainRng32, makePerm, makeMainPerm (`|0` vs Math.floor), and the oreRngMain/structRand/ravineRng/mineshaftRng/mineshaftHash constants. ToInt32 wrapping is correct for doubles above 2^31 (the `salt * 17.0` case), unsigned shifts are correct, and `(uint) % 100000` matches.\n- **hash2Main/hash3Main:** the multiply-add stays in double before ToInt32, as in JS. JS.toInt32 truncates and reduces modulo 2^32 correctly.\n- **Noise and terrain:** mainPerlin2, mainFbm2, valueNoise2/3Main, valueFbm4/3Main, curveSample and every curve table. terrainShapeMain, including the valley offsets and Math.round = floor(x+0.5).\n- **Climate and biomes:** climatePoint and the order of calls into columnInfo. Climate-tree build (stable OrderBy matches V8 TimSort, groupSize, leaf ordering), flattening, zero4/zero6, the branch-and-bound search with climateLastLeaf, and the 53 biome names. selectMainBiome, nearestMainBiome, mushroomStrength.\n- **Surface and caves:** heightAt, generatedSurfaceAt, caveKind, caveBiomeAt, baseStoneAt, bedrockAt, surfaceBlockForBiome, subsurfaceBlockForBiome (JS null mapped to -1), terrainBlock, postCarverSurfaceInfoAt.\n- **Ores and ravines:** ore table, the order of RNG calls in placeMainOres, ravine planning and carving.\n- **Plants and features:** every tree config, featureKindAt, featureInfoFromKind, landPlantInfoAt (all biome branches), aquatic and frozen decorators, featureVoxelAt and placeFeature for every tree kind, baseBlock.\n- **Structures:** STRUCT_CFG, structureCandidate (order of RNG draws and early exits), nearbyStructures, rotation and meta transforms, resolveMainBlock (I confirmed with a script that B.NAMES covers every ship, pyramid and outpost palette key), the build functions for pyramid, outpost, portal, ship and well, structureMetaForChunk, structureChestKindAt.\n- **Mineshafts:** plan and build pieces.\n- **Dense output:** sea-pickle and cave-vine meta encoding. Every stage of generateDense in order: lattice with float32 grid, surface stage, features, carvers, ravines, ocean flood, ice, ores, cave decorator, structures, mineshafts.\n- **GenWorker:** mixDenseFluids, lightDense (sim and boundary classification, flood order), pack, delta overlay with its dirty flag.\n\nsetSeed resets every cache on each job, exactly as JS does: JS `perms` is never filled because fbm2/fbm3 are never called. That reset keeps the climateLastLeaf tie-break deterministic per chunk, so it is not reported.\n\nThreading: GenData.Ensure runs on the main thread in initWorkerEngine before workers start, so Resources.Load is never called from a worker thread. Mesh code does not call into the kernel. The offline compile check passes (`compile check: OK`).\n\nNot verified:\n- Whether the JSON and .bytes resources are byte-identical to the data the JS embeds (the embedded data is stripped from pretty.js).\n- Bit-exactness of Math.Pow/Cos/Sin between .NET and V8 at the last ulp. Divergence there is a platform-libm risk, not a port defect.\n\nUnused helpers (fbm2/fbm3/perlin with per-call closures, hash3i, cactusSideClearAt) are dead code in both JS and C#, so they were not reported."
   },
   {
    "findings": [
@@ -630,6 +595,38 @@
    ],
    "compileOk": true,
    "compileNotes": "TMPDIR=$(mktemp -d) sh Tools/compile-check/check.sh printed 'compile check: OK'. That check covers only C#. The shader edits are small ShaderLab/HLSL changes that this check cannot compile; a real Unity shader compile was not available offline."
+  },
+  {
+   "results": [
+    {
+     "id": "REND-1",
+     "verdict": "fixed",
+     "reason": "Confirmed. In JS, drawEntities calls gl.disable(DEPTH_TEST) in X-ray mode, and in GL that also stops depth writes. VFEntity.shader already has the _ZWrite property and uses ZWrite [_ZWrite], so no shader change was needed. matEntityXray now also calls m.SetFloat(\"_ZWrite\", 0) (VF.Renderer.cs initRenderer)."
+    },
+    {
+     "id": "REND-2",
+     "verdict": "fixed",
+     "reason": "Confirmed. chunkRenderRegionKey builds a string with int boxing for every visible chunk on every frame. Added a cached key on the Chunk (_rrKey, plus the cx/cz it was built from) and chunkRenderRegionKeyCached(c) in VF.ChunkRender.cs. buildOpaqueRenderList now uses the cache, so the hot path makes no allocations. The renderRegions dictionary is unchanged, so the Clear() in VF.Frame.cs stays consistent."
+    },
+    {
+     "id": "REND-3",
+     "verdict": "fixed",
+     "reason": "Confirmed. Ties in _renderDist2 are common: hd2 is the distance to the nearest edge, so mirrored left/right offsets give equal values. List.Sort is an unstable introsort, while JS Array.sort is stable. Replaced it with sortByRenderDist in VF.Renderer.cs: stable, no allocations, insertion-sorted runs of 16 followed by a bottom-up merge using static scratch arrays, which are cleared afterwards. The comparison matches JS, ascending by _renderDist2 with the left element kept first on ties."
+    },
+    {
+     "id": "REND-4",
+     "verdict": "fixed",
+     "reason": "Confirmed. SetVertexBufferParams and SetIndexBufferParams were called with exact counts on every frame, and the quad and sequential index patterns were re-uploaded every frame. DynMesh now grows its vertex and index capacity only when needed, by doubling. For quads the vertex capacity is at least quadIndexCap*4, so every resident index is in range. The static index pattern is uploaded only when its capacity grows (tracked by idxUploaded, which the explicit-index Upload resets). Vertices go up with a partial SetVertexBufferData, and SetSubMesh(0, ic, firstVertex 0, vertexCount vn) draws only the used range. A quad batch with fewer than 4 vertices now returns false instead of recording a 0-index draw; the visible result is the same."
+    },
+    {
+     "id": "REND-5",
+     "verdict": "fixed",
+     "reason": "Confirmed. recycleMesh pooled up to 256 meshes with their vertex and index buffers still allocated. Checked that clearing is safe: every freeMesh/freeRegionMesh call happens in frameSimulate (stream, pumpRenderRegionBuilds), which runs before renderWorld records frameCB, never between recording and the camera render. Shared-region views are guarded by ensureChunk*ViewCurrent, which checks r.mesh != null and the generation. recycleMesh now calls m.Clear() before pushing to the pool. writeTerrainMesh sets the buffer params, submeshes and bounds again on reuse."
+    }
+   ],
+   "crossFileIssues": [],
+   "compileOk": true,
+   "compileNotes": "TMPDIR=$(mktemp -d) sh /home/user/Block/VoxelForgeUnity/Tools/compile-check/check.sh printed \"compile check: OK\" after all edits. Edited files: /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.Renderer.cs, /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.ChunkRender.cs, /home/user/Block/VoxelForgeUnity/Assets/VoxelForge/Scripts/Render/VF.DynMesh.cs. The stubs did not need changes."
   }
  ]
 }
