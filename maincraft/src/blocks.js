@@ -343,6 +343,7 @@ ITEM_TABLE.push(['SPAWN_EGG_ENDERMAN', 'Enderman Spawn Egg', 'Яйцо приз�
 ITEM_TABLE.push(['SPAWN_EGG_SLIME', 'Slime Spawn Egg', 'Яйцо призыва слизня', 'item_spawn_egg_slime', 64, { mob: 'slime' }]);
 ITEM_TABLE.push(['SPAWN_EGG_SALMON', 'Salmon Spawn Egg', 'Яйцо призыва лосося', 'item_spawn_egg_salmon', 64, { mob: 'salmon' }]);
 ITEM_TABLE.push(['SPAWN_EGG_SHARK', 'Shark Spawn Egg', 'Яйцо призыва акулы', 'item_spawn_egg_shark', 64, { mob: 'shark' }]);
+ITEM_TABLE.push(['SPAWN_EGG_DROWNED', 'Drowned Spawn Egg', 'Яйцо призыва утопленника', 'item_spawn_egg_drowned', 64, { mob: 'drowned' }]);
 ITEM_TABLE.push(['BEETROOT', 'Beetroot', 'Свёкла', 'item_beetroot', 64, { food: 1 }]);
 ITEM_TABLE.push(['BEETROOT_SEEDS', 'Beetroot Seeds', 'Семена свёклы', 'item_beetroot_seeds', 64]);
 // the 16 dyes (Minecraft's colour order), nuggets, charcoal, paper, book

@@ -79,7 +79,45 @@ SPAWN_EGGS = [('pig', (240, 160, 156), (219, 99, 94)), ('cow', (68, 54, 37), (16
               ('zombie', (0, 175, 175), (121, 153, 80)), ('skeleton', (193, 193, 193), (73, 73, 73)),
               ('creeper', (13, 168, 12), (0, 0, 0)), ('spider', (52, 45, 39), (163, 0, 0)),
               ('enderman', (22, 22, 22), (0, 0, 0)), ('salmon', (160, 20, 20), (14, 143, 104)),
-              ('slime', (81, 160, 62), (126, 190, 110)), ('shark', (74, 86, 97), (200, 200, 200))]
+              ('slime', (81, 160, 62), (126, 190, 110)), ('shark', (74, 86, 97), (200, 200, 200)),
+              ('drowned', (143, 241, 215), (121, 101, 80))]
+
+
+def drowned_skin(img):
+    """The zombie's skin left in the sea (own recolour): the green skin a pale sea green, the clothes
+    faded to grey-blues, strands of dark kelp hanging down the body and the legs."""
+    import colorsys
+    import random
+    out = img.copy()
+    px = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            r, g, b, a = px[x, y]
+            if a == 0:
+                continue
+            h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+            if 0.17 < h < 0.42:            # green skin -> sea green, lighter
+                h, l, s = 0.45, min(0.75, l * 1.15 + 0.08), s * 0.75
+            elif 0.42 <= h < 0.6:          # the cyan shirt -> faded slate teal
+                h, l, s = 0.52, l * 0.7, s * 0.35
+            else:                          # the purple trousers -> dark grey-blue
+                h, l, s = 0.6, l * 0.85, s * 0.3
+            rr, gg, bb = colorsys.hls_to_rgb(h, l, s)
+            px[x, y] = (int(rr * 255), int(gg * 255), int(bb * 255), a)
+    rnd = random.Random(7)
+    # kelp strands down the body front/back (16..40, 20..32) and the legs (0..16, 20..32)
+    for x0, x1 in ((20, 28), (32, 40), (4, 8), (12, 16), (44, 48)):
+        for _ in range(2):
+            x = rnd.randrange(x0, x1)
+            y = 20 + rnd.randrange(0, 3)
+            for yy in range(y, 32):
+                if rnd.random() < 0.15:
+                    x = min(x1 - 1, max(x0, x + rnd.choice((-1, 1))))
+                r, g, b, a = px[x, yy]
+                if a:
+                    k = 0.8 + 0.2 * rnd.random()
+                    px[x, yy] = (int(46 * k), int(92 * k), int(48 * k), a)
+    return out
 
 
 def spawn_egg(egg, c1, c2):
@@ -472,6 +510,7 @@ def main():
             cp[xx, yy] = (int(18 + 60 * l), int(40 + 120 * l), int(48 + 128 * l), a)
     assets['entities']['cave_spider'] = b64png(cs)
     assets['entities']['cave_spider_eyes'] = b64png(load('entity_spider_eyes'))
+    assets['entities']['drowned'] = b64png(drowned_skin(load('entity_zombie').convert('RGBA')))
     html = open(os.path.join(SRC, 'index.html'), encoding='utf-8').read()
 
     def inc(m):

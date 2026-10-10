@@ -52,6 +52,7 @@ const MODELS = {
   // zombie: Minecraft's HumanoidModel, left limbs mirrored from the right ones (only the player's
   // model has separate left limbs on its skin)
   zombie: { tex: 'zombie', tw: 64, th: 64, parts: humanoid(4, false, true) },
+  drowned: { tex: 'drowned', tw: 64, th: 64, parts: humanoid(4, false, true) },
   skeleton: { tex: 'skeleton', tw: 64, th: 32, parts: humanoid(2, false), heldItem: 'item_bow' },
   player: { tex: 'player', tw: 64, th: 64, parts: humanoid(4, true, true) },
   creeper: { tex: 'creeper', tw: 64, th: 32, parts: [
@@ -152,6 +153,9 @@ const MOB_DEFS = {
   // zombie loot: 0-2 rotten flesh, and when the player killed it one in 40 an iron ingot, a carrot
   // or a potato (killed_by_player, random_chance 0.025)
   zombie: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true },
+  // drowned (Drowned, a zombie of the sea): the zombie's attributes; loot 0-2 rotten flesh and,
+  // killed by the player, a copper ingot one time in 9 (random_chance 0.11)
+  drowned: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.11 ? IT.COPPER_INGOT : 0, 1]], hostile: true, burns: true, sinks: true, drowned: true },
   skeleton: { w: 0.6, h: 1.99, eye: 1.74, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true },
   creeper: { w: 0.6, h: 1.7, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
   spider: { w: 1.4, h: 0.9, eye: 0.65, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
@@ -485,8 +489,8 @@ class Entities {
       const size = (opts && opts.size) || [1, 2, 4][Math.random() * 3 | 0], S = SLIME_SIZES[size];
       e.size = size; e.hp = S[0]; e.w = e.h = 0.52 * size; e.squish = 0; e.tsq = 0; e.hopT = 0;   // SlimeMoveControl: the first jump at once
     }
-    const g = this.game, ld = g.localDifficulty && (type === 'zombie' || type === 'spider') ? g.localDifficulty(Math.floor(x), Math.floor(z)) : null;
-    if (type === 'zombie' && ld) {
+    const g = this.game, ld = g.localDifficulty && (type === 'zombie' || type === 'drowned' || type === 'spider') ? g.localDifficulty(Math.floor(x), Math.floor(z)) : null;
+    if ((type === 'zombie' || type === 'drowned') && ld) {
       // Zombie.finalizeSpawn / handleAttributes, by the local difficulty's special part f: door
       // breaking for f / 10 of them (on hard only it is used), a follow range bonus, knockback
       // resistance 0..0.05, a reinforcement chance 0..0.1; a leader one time in 20 x f: 2..5 x the
@@ -494,8 +498,8 @@ class Entities {
       const f = ld.special;
       e.reinf = Math.random() * 0.1; e.kbRes = Math.random() * 0.05;
       const fb = Math.random() * 1.5 * f; if (fb > 1) e.followMul *= 1 + fb;
-      e.breakDoors = Math.random() < f * 0.1;
-      if (Math.random() < f * 0.05) { e.reinf += Math.random() * 0.25 + 0.5; e.hp = d.hp * (2 + Math.random() * 3); e.breakDoors = true; e.leader = true; }
+      e.breakDoors = Math.random() < f * 0.1 && type === 'zombie';
+      if (Math.random() < f * 0.05) { e.reinf += Math.random() * 0.25 + 0.5; e.hp = d.hp * (2 + Math.random() * 3); e.breakDoors = type === 'zombie'; e.leader = true; }
     }
     if (type === 'spider' && ld && g.difficulty === 'hard' && Math.random() < 0.1 * ld.special) {
       // Spider.finalizeSpawn on hard: one of speed (2 in 5), strength, regeneration, invisibility
@@ -625,7 +629,7 @@ class Entities {
   snapshot(e) {
     if (!e.pp) e.pp = [0, 0, 0];
     e.pp[0] = e.pos[0]; e.pp[1] = e.pos[1]; e.pp[2] = e.pos[2];
-    e.pyaw = e.bodyYaw; e.phead = e.headYaw; e.pwalk = e.walk; e.pitchP = e.swimPitch;
+    e.pyaw = e.bodyYaw; e.phead = e.headYaw; e.pwalk = e.walk; e.pitchP = e.swimPitch; e.pswim = e.swimAmt;
   }
 
   tickMobs(dt) {
@@ -635,6 +639,9 @@ class Entities {
     // darkening), for the undead burning in it
     const sd = g.skyDarken(), sunUp = sd < 4, sunL = (15 - sd) / 15, sunF = sunL / (4 - 3 * sunL);
     const ignite = Math.max(0, (sunF - 0.4) * 2 / 30);
+    // Drowned.okTarget: by day the drowned go only for a player in the water (one in a boat is not),
+    // at night for any
+    const huntWet = hunt && (!sunUp || (p.inWater && !(g.boats && g.boats.riding)));
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const e = this.mobs[i], d = MOB_DEFS[e.type];
       e.age += dt;
@@ -711,7 +718,14 @@ class Entities {
         e.burnT += dt;
         if (e.burnT >= 1) { e.burnT -= 1; this.damageMob(e, 1, null); if (e.hp <= 0) continue; }
       } else e.burnT = 0;
-      this.ai(e, d, dt, dx, dz, h, hunt);
+      // Zombie.tick: a zombie with its eyes under water for 600 ticks starts turning into a drowned
+      // (shaking); 300 ticks later it is one, a new drowned in its place at full health
+      if (e.type === 'zombie') {
+        if (e.convT > 0) { if ((e.convT -= dt) <= 0) { this.drownZombie(e, i); continue; } }
+        else if (isWaterId(w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])))) { if ((e.underT = (e.underT || 0) + dt) >= 30) e.convT = 15; }
+        else e.underT = 0;
+      }
+      this.ai(e, d, dt, dx, dz, h, d.drowned ? huntWet : hunt, inW);
       if (e.deathT > 0 || this.mobs[i] !== e) continue;
       // don't walk off cliffs (drops over 3 blocks) and keep animals out of water (a slime has no
       // path finding: it hops where it faces)
@@ -739,7 +753,9 @@ class Entities {
       const wl = Math.hypot(e.wish[0], e.wish[2]), ox = e.pos[0], oz = e.pos[2], wasGround = e.onGround;
       const fallStart = e.onGround ? e.pos[1] : e.fallY ?? e.pos[1];
       e.fallY = Math.max(fallStart, e.pos[1]);
-      this.walkPhysics(e, d, dt, inW);
+      if (d.drowned) this.swimPose(e, dt);
+      if (e.swim && isWaterId(w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])))) this.swimPhysics(e, d);
+      else this.walkPhysics(e, d, dt, inW);
       if (e.breakDoors || e.doorPos) this.breakDoor(e);
       if (d.slime && e.onGround && !wasGround) { e.tsq = -0.5; this.stop(e); }
       if (d.slime) { e.squish += (e.tsq - e.squish) * 0.5; e.tsq *= 0.6; }
@@ -765,7 +781,7 @@ class Entities {
   }
 
   // ------------------------------------------------------------------ land mob behaviour
-  ai(e, d, dt, dx, dz, h, hunt) {
+  ai(e, d, dt, dx, dz, h, hunt, inW) {
     // (speed I, a spider's on hard: x1.2 the attribute)
     const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? MOB_SPEED_K * S[2] * S[2] : d.speed * (e.effect === 'speed' ? 1.44 : 1);
     e.aiming = false; e.strafe = false;
@@ -790,6 +806,8 @@ class Entities {
       e.headYaw = e.bodyYaw;
       return;
     }
+    e.swim = null;
+    if (d.drowned && this.drownedGoals(e, d, dt, hunting, speed, inW, dx, dz)) return;
     if (e.fleeT > 0) {
       // PanicGoal: while hurt within the last 5 s, run to random spots up to 5 blocks away, a new one
       // each time the last is reached; spots farther from whoever hit it (getPosAway), so the
@@ -1223,8 +1241,10 @@ class Entities {
     const w = this.game.world, id = w.getBlock(x, y, z);
     return SHAPE[id] === SH.DOOR && !((w.getMeta(x, y, z) >> 3) & 1) && (id === B.IRON_DOOR || !this.pathBreaker);
   }
+  // a cell to stand in: a floor under it, room for the body, no hazard; for a drowned a cell of
+  // water will do as well (its water path malus is 0)
   standable(x, y, z) {
-    return this.solidIn(x, y - 1, z, 0.8) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
+    return (this.solidIn(x, y - 1, z, 0.8) || (this.pathSwim && isWaterId(this.game.world.getBlock(x, y, z)))) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
   }
   // walkable height in column x,z near y: one step up or a drop of up to 3
   standY(x, y, z) {
@@ -1236,6 +1256,7 @@ class Entities {
   // Returns waypoints to the goal, or to the closest reachable node when the goal is out of reach.
   findPath(e, tx, tz) {
     this.pathBreaker = !!e.breakDoors && this.game.difficulty === 'hard';
+    this.pathSwim = !!MOB_DEFS[e.type].drowned;
     const sx = Math.floor(e.pos[0]), sy = Math.floor(e.pos[1] + 0.1), sz = Math.floor(e.pos[2]);
     const gx = Math.floor(tx), gz = Math.floor(tz);
     if (sx === gx && sz === gz) return null;
@@ -1285,7 +1306,9 @@ class Entities {
     const l = Math.hypot(e.wish[0], e.wish[2]);
     if (l < 0.2) return false;
     const x = Math.floor(e.pos[0] + e.wish[0] / l * 0.8), z = Math.floor(e.pos[2] + e.wish[2] / l * 0.8), y = Math.floor(e.pos[1] + 0.1);
-    for (let a = 0; a <= 3; a++) if (this.solidIn(x, y - a - 1, z, 0.8)) return false;
+    // a drowned takes a drop into water as a way on (its water path malus is 0)
+    const wet = MOB_DEFS[e.type].drowned;
+    for (let a = 0; a <= 3; a++) if (this.solidIn(x, y - a - 1, z, 0.8) || (wet && isWaterId(this.game.world.getBlock(x, y - a - 1, z)))) return false;
     return true;
   }
   // water (or lava) right ahead, at feet level or just below
@@ -1670,6 +1693,15 @@ class Entities {
       const x = Math.floor(p.pos[0] + Math.cos(a) * r), z = Math.floor(p.pos[2] + Math.sin(a) * r);
       if (!w.isLoaded(x, z)) continue;
       let y = Math.floor(p.pos[1]) + Math.floor((Math.random() - 0.5) * 40), ok = false;
+      const bp = BPROP[w.biomeAt(x, z)], river = !!bp && (bp.base === BI.RIVER || bp.base === BI.FROZEN_RIVER);
+      // a column of sea or river water. Minecraft tries a random height of the column: on land only
+      // the one over the floor will do (found here by the floor search), in water every height of
+      // the water; so as many tries here as the water is deep, each at a random height in it
+      if (bp && (bp.ocean || river) && isWaterId(w.getBlock(x, SEA, z))) {
+        let fl = SEA; while (fl > WORLD_MIN_Y && isWaterId(w.getBlock(x, fl - 1, z))) fl--;
+        for (let k = fl; k < SEA; k++) this.spawnDrowned(x, fl + 1 + ((Math.random() * (SEA - fl)) | 0), z, river, bp.base === BI.FROZEN_RIVER);
+        return;
+      }
       for (let k = 0; k < 20; k++, y--) if (this.floorAt(x, y, z)) { ok = true; break; }
       if (!ok) continue;
       const k0 = Math.random() * 510;
@@ -1892,6 +1924,135 @@ class Entities {
     }
     return null;
   }
+  // ------------------------------------------------------------------ drowned
+  // The drowned's own goals (Drowned.registerGoals). By day, out of the water, it heads for water
+  // (DrownedGoToWaterGoal: 10 random spots up to 10 blocks off, 2 up to 5 down). Going for a player
+  // in the water it swims at them (wantsToSwim; the melee hit as a zombie's). At night in the water
+  // with no target it swims up while more than 2 under the sea level (DrownedSwimUpGoal) and near
+  // the surface makes for land within 8 blocks (DrownedGoToBeachGoal). True when it took the move.
+  drownedGoals(e, d, dt, hunting, speed, inW, dx, dz) {
+    const g = this.game, p = g.player, day = g.skyDarken() < 4;
+    e.searchLand = false;
+    if (day && !inW) {
+      e.beach = null;
+      if (!e.waterTgt || e.stuckT > 1) e.waterTgt = this.findWater(e);
+      if (!e.waterTgt) return false;
+      if (this.goTo(e, e.waterTgt[0], e.waterTgt[2], speed, dt)) e.waterTgt = null;
+      e.headYaw = e.bodyYaw;
+      return true;
+    }
+    e.waterTgt = null;
+    if (hunting) {
+      e.beach = null;
+      if (!inW || !p.inWater) return false;
+      e.swim = [p.pos[0], p.pos[1], p.pos[2]];
+      this.stop(e); e.headYaw = Math.atan2(dx, -dz);
+      if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+      return true;
+    }
+    if (day || (!inW && !e.beach)) { e.beach = null; return false; }
+    // once it has set off for the beach it keeps going (MoveToBlockGoal: up to 1200 ticks, while
+    // the spot stays good), down on the bottom if it sinks
+    if (e.beach) {
+      const w = this.game.world, [bx, by, bz] = e.beach;
+      if ((e.beachT2 = (e.beachT2 || 0) + dt) > 60 || !SOLID[w.getBlock(Math.floor(bx), by - 1, Math.floor(bz))]) { e.beach = null; return false; }
+      if (this.goTo(e, bx, bz, speed, dt) || Math.hypot(bx - e.pos[0], bz - e.pos[2]) < 0.7) { e.beach = null; return false; }
+      e.headYaw = e.bodyYaw;
+      return true;
+    }
+    if (!inW) return false;
+    if (e.pos[1] >= SEA - 2 && (e.beachT = (e.beachT || 0) - dt) <= 0) {
+      e.beachT = 1; e.beachT2 = 0; e.beach = this.findBeach(e);
+      if (e.beach) { this.goTo(e, e.beach[0], e.beach[2], speed, dt); e.headYaw = e.bodyYaw; return true; }
+    }
+    if (e.pos[1] < SEA - 1) {
+      e.searchLand = true;
+      if (!e.upTgt || e.pos[1] >= e.upTgt[1] - 0.5 || Math.random() < 0.02) e.upTgt = [e.pos[0] + (Math.random() - 0.5) * 8, SEA, e.pos[2] + (Math.random() - 0.5) * 8];
+      e.swim = e.upTgt; this.stop(e); e.headYaw = e.bodyYaw;
+      return true;
+    }
+    return false;
+  }
+  findWater(e) {
+    const w = this.game.world;
+    for (let k = 0; k < 10; k++) {
+      const x = Math.floor(e.pos[0]) + ((Math.random() * 20) | 0) - 10, y = Math.floor(e.pos[1]) + 2 - ((Math.random() * 8) | 0), z = Math.floor(e.pos[2]) + ((Math.random() * 20) | 0) - 10;
+      if (isWaterId(w.getBlock(x, y, z))) return [x + 0.5, y, z + 0.5];
+    }
+    return null;
+  }
+  // MoveToBlockGoal (range 8, 2 up or down), nearest first: a block one can stand on with two cells
+  // of air above it
+  findBeach(e) {
+    const w = this.game.world, x0 = Math.floor(e.pos[0]), y0 = Math.floor(e.pos[1]), z0 = Math.floor(e.pos[2]);
+    for (const dy of [0, 1, -1, 2, -2]) for (let r = 0; r <= 8; r++) for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) {
+      if (Math.max(Math.abs(a), Math.abs(b)) !== r) continue;
+      const x = x0 + a, y = y0 + dy, z = z0 + b, id = w.getBlock(x, y, z);
+      if (!SOLID[id] || isWaterId(id) || w.getBlock(x, y + 1, z) || w.getBlock(x, y + 2, z)) continue;
+      return [x + 0.5, y + 1, z + 0.5];
+    }
+    return null;
+  }
+  // Drowned.travel under water while it wants to swim: moveRelative(0.01 x speed) along its heading,
+  // move, x0.9 (no gravity). DrownedMoveControl adds 0.005 x speed x the way to the next node across
+  // (the water path skips ahead up to 6 blocks in a straight line) and 0.1 x speed x the up/down
+  // share of that way, 0.002 up while the target is above or it looks for land; the speed eases
+  // toward the attribute by 1/8 a tick and the heading turns up to 90 degrees a tick
+  swimPhysics(e, d) {
+    const T = e.swim, v = [e.vel[0] * 0.05, e.vel[1] * 0.05, e.vel[2] * 0.05];
+    const dx = T[0] - e.pos[0], dy = T[1] - e.pos[1], dz = T[2] - e.pos[2], L = Math.hypot(dx, dy, dz) || 1, hl = Math.hypot(dx, dz);
+    if (dy > 0 || e.searchLand) v[1] += 0.002;
+    if (hl > 0.05) {
+      let a = Math.atan2(dx, -dz) - e.bodyYaw;
+      while (a > Math.PI) a -= 6.2832; while (a < -Math.PI) a += 6.2832;
+      e.bodyYaw += Math.max(-Math.PI / 2, Math.min(Math.PI / 2, a));
+    }
+    e.swimSpd = (e.swimSpd || 0) + (d.attr - (e.swimSpd || 0)) * 0.125;
+    const s = e.swimSpd, k = hl > 6 ? 6 / hl : 1;
+    v[0] += s * dx * k * 0.005 + Math.sin(e.bodyYaw) * 0.01 * s;
+    v[2] += s * dz * k * 0.005 - Math.cos(e.bodyYaw) * 0.01 * s;
+    v[1] += s * dy / L * 0.1;
+    this.entStep(e, v, false);
+    e.vel[0] = v[0] * 0.9 * 20; e.vel[1] = v[1] * 0.9 * 20; e.vel[2] = v[2] * 0.9 * 20;
+  }
+  // swimming pose (LivingEntity.updateSwimAmount: 0.09 a tick toward 1 while swimming): the body
+  // tips forward by 90 degrees plus its pitch toward where it swims
+  swimPose(e) {
+    const on = !!e.swim && isWaterId(this.game.world.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])));
+    e.swimAmt = Math.max(0, Math.min(1, (e.swimAmt || 0) + (on ? 0.09 : -0.09)));
+    let lp = 0;
+    if (e.swim) { const ty = e.swim[1] - e.pos[1]; lp = -Math.atan2(ty, Math.hypot(e.swim[0] - e.pos[0], e.swim[2] - e.pos[2])); }
+    e.swimPitch = -e.swimAmt * (Math.PI / 2 + Math.max(-1, Math.min(1, lp)));
+  }
+  drownZombie(z, i) {
+    const n = this.spawnMob('drowned', z.pos[0], z.pos[1], z.pos[2]);
+    n.bodyYaw = n.headYaw = n.tgtYaw = z.bodyYaw; n.vel = z.vel.slice(); n.persist = z.persist;
+    this.endDoor(z);
+    this.mobs.splice(i, 1);
+  }
+  // NaturalSpawner at a spot in the water of an ocean or a river: only the drowned can be placed
+  // there (SpawnPlacementTypes.IN_WATER). Oceans list it in the zombie's place (95, packs of 4) and
+  // again at 5 (single), rivers at 100 (frozen rivers 1, single); Drowned.checkDrownedSpawnRules:
+  // dark enough, water at the spot and under it, then one try in 15 in a river, in an ocean one in
+  // 40 and at least 5 under the sea level
+  spawnDrowned(x, y, z, river, frozen) {
+    const w = this.game.world, k = Math.random() * (river ? 510 + (frozen ? 1 : 100) : 515);
+    let group;
+    if (river) { if (k < 510) return; group = 1; }
+    else if (k >= 100 && k < 200) group = 4; else if (k >= 510) group = 1; else return;
+    let cx = x, cz = z, made = 0;
+    for (let pk = 0; pk < 3 && made < group; pk++) {
+      const steps = 1 + (Math.random() * 4 | 0);
+      for (let st = 0; st < steps && made < group; st++) {
+        cx += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0); cz += ((Math.random() * 6) | 0) - ((Math.random() * 6) | 0);
+        if (!w.isLoaded(cx, cz) || !this.farEnough(cx, y, cz)) continue;
+        if (!isWaterId(w.getBlock(cx, y, cz)) || !isWaterId(w.getBlock(cx, y - 1, cz)) || OPAQUE[w.getBlock(cx, y + 1, cz)]) continue;
+        if (!this.darkEnough(cx, y, cz) || !(river ? Math.random() < 1 / 15 : Math.random() < 1 / 40 && y < SEA - 4)) continue;
+        if (entCollides(w, cx + 0.5, y, cz + 0.5, 0.6, 1.95)) continue;
+        this.spawnMob('drowned', cx + 0.5, y, cz + 0.5); made++;
+      }
+    }
+  }
   // BreakDoorGoal (a zombie able to, on hard): walking into a closed wooden door on its way, it
   // beats on the upper half for 240 ticks (the cracks grow, now and then a bang), then removes it;
   // the lower half, left without it, falls off and drops the door as with any lost support. It
@@ -1962,7 +2123,10 @@ class Entities {
         for (let k = 0; k < 3; k++) P[k] = e.pp[k] + (e.pos[k] - e.pp[k]) * al;
         e.ryaw = lerpA(e.pyaw, e.bodyYaw); e.rhead = lerpA(e.phead, e.headYaw); e.rwalk = e.pwalk + (e.walk - e.pwalk) * al;
         e.rpitch = e.pitchP !== undefined ? e.pitchP + ((e.swimPitch || 0) - e.pitchP) * al : e.swimPitch;
-      } else { P[0] = e.pos[0]; P[1] = e.pos[1]; P[2] = e.pos[2]; e.ryaw = e.bodyYaw; e.rhead = e.headYaw; e.rwalk = e.walk; e.rpitch = e.swimPitch; }
+        e.rswim = e.pswim !== undefined ? e.pswim + ((e.swimAmt || 0) - e.pswim) * al : e.swimAmt;
+      } else { P[0] = e.pos[0]; P[1] = e.pos[1]; P[2] = e.pos[2]; e.ryaw = e.bodyYaw; e.rhead = e.headYaw; e.rwalk = e.walk; e.rpitch = e.swimPitch; e.rswim = e.swimAmt; }
+      // a zombie turning into a drowned shakes (LivingEntityRenderer.isShaking: cos(ticks x 3.25) x 0.4 pi degrees)
+      if (e.convT > 0) e.ryaw += Math.cos(e.age * 65) * 0.0219;
       const dx = P[0] - cam[0], dz = P[2] - cam[2], rr = Math.max(2, e.w * 0.5 + 1);
       if (dx * dx + dz * dz > R2) continue;
       if (!r.boxVisible(dx - rr, P[1] - cam[1] - 0.5, dz - rr, dx + rr, P[1] - cam[1] + e.h + 0.5, dz + rr)) continue;
@@ -2056,6 +2220,7 @@ class Entities {
     // side (SalmonRenderer: 90 degrees about z)
     const death = e.deathT > 0 ? Math.min(1, e.deathT * 2.5) * Math.PI / 2 : e.inWater === false && m.pitchY ? Math.PI / 2 : 0;
     const t = performance.now() / 1000;
+    const zArms = e.type === 'zombie' || e.type === 'drowned', swA = e.type === 'drowned' ? e.rswim || 0 : 0;
     const pitch = e.pitch !== undefined ? e.pitch : 0;
     const sw = e.swing ? Math.sin((1 - e.swing) * Math.PI) : 0;
     const sneak = e.sneak ? 1 : 0;
@@ -2076,8 +2241,17 @@ class Entities {
       else if (an === 'legB') rx -= walkA;
       else if (an === 'armR' && e.aiming) { rx += -Math.PI / 2; ry += -0.1 + hy; }
       else if (an === 'armL' && e.aiming) { rx += -Math.PI / 2; ry += 0.1 + hy + 0.4; }
-      else if (an === 'armR') { rx += (e.type === 'zombie' ? -Math.PI / 2 : -walkA) - sw * 1.4; rz += Math.sin(t * 1.1) * 0.05 + 0.05; }
-      else if (an === 'armL') { rx += e.type === 'zombie' ? -Math.PI / 2 : walkA; rz -= Math.sin(t * 1.1) * 0.05 + 0.05; }
+      else if (an === 'armR') { rx += (zArms ? -Math.PI / 2 : -walkA) - sw * 1.4; rz += Math.sin(t * 1.1) * 0.05 + 0.05; }
+      else if (an === 'armL') { rx += zArms ? -Math.PI / 2 : walkA; rz -= Math.sin(t * 1.1) * 0.05 + 0.05; }
+      // DrownedModel.setupAnim: swimming, the arms reach over the head (-2.51) and stroke, the legs kick
+      if (swA > 0) {
+        const st = Math.sin(t * 2);
+        if (an === 'armR') { rx += (-2.5133 - rx) * swA + swA * 0.35 * st; rz += (-0.15 - rz) * swA; }
+        else if (an === 'armL') { rx += (-2.5133 - rx) * swA - swA * 0.35 * st; rz += (0.15 - rz) * swA; }
+        else if (an === 'legA') rx -= swA * 0.55 * st;
+        else if (an === 'legB') rx += swA * 0.55 * st;
+        else if (an === 'head') rx = 0;
+      }
       else if (an === 'wingR') rz += e.onGround === false ? Math.sin(t * 30) * 0.8 : 0;
       else if (an === 'wingL') rz -= e.onGround === false ? Math.sin(t * 30) * 0.8 : 0;
       else if (an === 'tail') ry += tail;
