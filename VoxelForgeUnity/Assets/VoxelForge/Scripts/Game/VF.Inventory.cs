@@ -239,6 +239,7 @@ namespace VoxelForge
         }
         public static void saveGameNow() { saveStateNow(); saveWorldNow(); saveKilledMobs(); }
         static int saveGameT = 0;
+        public static void cancelPendingStateSave() { Timers.clearTimeout(saveGameT); saveGameT = 0; }
         public static void saveGameSoon()
         {
             if (SAVE_KEYS.state == null) return;

@@ -119,7 +119,7 @@ namespace VoxelForge
         static void updateStats()
         {
             int mobs = 0; foreach (var m in liveMobs) if (!m.dead) mobs++;
-            int cb = caveBiomeAt(JS.floor(player.x), JS.floor(player.y), JS.floor(player.z));
+            int cb = caveBiomeAt(player.x, JS.floor(player.y), player.z);
             statsText = "FPS " + fps + "\n"
                 + "чанки " + chunks.Count + " · visible " + renderVisibleCount + " · RD " + renderDistance + " · SD " + activeSimulationDistance() + " · UW " + (renderUnderwater ? 1 : 0) + "\n"
                 + "gen " + genPending.Count + "/" + genJobs.Count + " · mesh " + meshPending.Count + "/" + meshJobs.Count + "/" + meshDoneCount() + " · light " + lightDirtyCount() + "\n"
@@ -201,6 +201,7 @@ namespace VoxelForge
         public static void returnToTitle()
         {
             if (started) saveGameNow();
+            cancelPendingStateSave();
             shutdownWorkerEngine();
             foreach (var c in chunks.Values.ToList()) releaseChunkGpu(c);
             foreach (var r in renderRegions.Values) { if (r.mesh != null) UnityEngine.Object.Destroy(r.mesh); }

@@ -29,6 +29,7 @@ namespace VoxelForge
         public static int heightAt(int x, int z) { return WG.heightAt(x, z); }
         public static int heightAt(double x, double z) { return WG.heightAt(JS.floor(x), JS.floor(z)); }
         public static int caveBiomeAt(int x, int y, int z, int? h = null) { return WG.caveBiomeAt(x, y, z, h); }
+        public static int caveBiomeAt(double x, int y, double z) { return WG.caveBiomeAt(x, y, z); }
         public static string effectiveBiomeAt(int x, int y, int z)
         {
             int cb = caveBiomeAt(x, y, z);

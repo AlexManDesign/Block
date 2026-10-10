@@ -699,6 +699,20 @@ namespace VoxelForge
             }
             return CAVE_NONE;
         }
+        /// <summary>Unfloored x/z variant (debug overlay calls caveBiomeAt(player.x, floor(y), player.z)); generatedSurfaceAt floors internally.</summary>
+        public int caveBiomeAt(double x, int y, double z)
+        {
+            int h = generatedSurfaceAt((int)Math.Floor(x), (int)Math.Floor(z)); double n = (h - y) / 128.0;
+            if (n < 0.2) return CAVE_NONE;
+            if (n > 0.9 && valueNoise3Main(x * 0.018 + 303.3, y * 0.02 - 44.4, z * 0.018 - 101.1) < 0.4) return CAVE_DEEP_DARK;
+            if (n <= 0.96)
+            {
+                double lush = valueNoise3Main(x * 0.011 + 700.5, y * 0.012 + 55.5, z * 0.011 - 200.2), drip = valueNoise3Main(x * 0.011 - 410.7, y * 0.012 - 66.6, z * 0.011 + 330.3);
+                if (lush > 0.64 && lush >= drip) return CAVE_LUSH;
+                if (drip > 0.64) return CAVE_DRIPSTONE;
+            }
+            return CAVE_NONE;
+        }
         public int baseStoneAt(int x, int y, int z)
         {
             if (y <= 0) return valueNoise3Main(x * 0.07 + 71.7, y * 0.07 - 51.5, z * 0.07 + 31.3) > 0.86 ? B.TUFF : B.DEEPSLATE;
