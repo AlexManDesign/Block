@@ -1,0 +1,56 @@
+# Headless runtime smoke test (Mono)
+
+Прогоняет **весь C#-порт игры без Unity**: настоящий `VoxelForgeGame` (`AutoCreate` → `Awake` → `VF.bootstrap()`,
+затем `Update()` и `OnGUI()` каждый кадр) поверх «живых» заглушек UnityEngine и сценария, который играет за игрока.
+
+## Запуск
+
+```sh
+cd VoxelForgeUnity
+sh Tools/headless/run.sh                 # ~10-15 минут реального времени
+sh Tools/headless/run.sh --frame-ms 6    # быстрее (кадр 6 мс вместо 16)
+```
+
+Опции харнесса (передаются после `run.sh`):
+
+| опция | смысл |
+|---|---|
+| `--frame-ms N` | минимальная длительность кадра (по умолчанию 16; игра идёт в реальном времени, `JS.now()` = Stopwatch) |
+| `--scale K` | множитель всех таймаутов ожидания (медленная машина → `--scale 2`) |
+| `--data DIR` | папка `Application.persistentDataPath` (по умолчанию новая временная → чистый запуск) |
+| `--verbose` | печатать и `Debug.Log` |
+
+Сборка кладётся в `$TMPDIR/vf-headless/`. Нужны только `mcs` и `mono` (C# 7.2, как в compile-check).
+Код игры (`Assets/VoxelForge/Scripts`) компилируется как есть; `pretty.js` для этого теста не нужен.
+
+Код возврата 0 и строка `RESULT: PASS` — ноль исключений, ноль `Debug.LogError`, ноль «problems» и все проверки сценария прошли.
+
+## Файлы
+
+* `HeadlessUnity.cs` — копия сигнатур `Tools/compile-check/UnityStubs.cs` (= реальный Unity 2022.3) с рабочими реализациями:
+  * `Resources.Load<TextAsset>("VoxelForge/x")` читает `Assets/VoxelForge/Resources/VoxelForge/x{.json,.bytes,.txt,…}`;
+  * `Texture2D`/`Texture2DArray` хранят пиксели (размеры, мипы, `isReadable`, проверки размеров массивов как в Unity),
+    `ImageConversion.LoadImage` — собственный PNG-декодер (DeflateStream, все фильтры, RGBA/RGB/палитра; строки снизу вверх как в Unity);
+  * `Mesh` хранит вершинный/индексный буферы и проверяет их как нативная сторона: порядок/размер атрибутов, выход за буфер
+    в `SetVertexBufferData`/`SetIndexBufferData`, диапазоны `SetSubMesh`, индексы за пределами `vertexCount`, NaN в позициях;
+  * `CommandBuffer` записывает `DrawMesh`, а «рендер» камеры каждый кадр проверяет записанные вызовы (удалённые меши, пустые буферы)
+    и считает draws/tris;
+  * `Shader.Find` возвращает шейдер только если он объявлен в `Resources/VoxelForge/Shaders/*.shader` (или встроенный);
+  * IMGUI: `Event.current`, `GUI.matrix`, scroll view/группы, `Button/Toggle/SelectionGrid/TextField/HorizontalSlider` реагируют
+    на скриптовые клики; на Repaint записывается список кнопок (`HeadlessHost.buttons`) — сценарий нажимает их по подписи;
+  * `Input` — скриптовые клавиши/кнопки мыши/оси (`HeadlessHost.PressKey/ReleaseKey/PressMouse/MouseMove`);
+  * `Screen` = 1280×720, `Application.persistentDataPath` = временная папка, `Time.frameCount` растёт;
+  * API, которые в Unity работают только в главном потоке (Resources, Texture, Mesh, Material, GameObject, Screen, Time,
+    `persistentDataPath`, GUI, Input), бросают `UnityException` из рабочих потоков и пишут «problem»;
+  * `Object.Destroy` откладывается до конца кадра, доступ к уничтоженному объекту → `MissingReferenceException`;
+    `==`/`bool` для уничтоженных объектов ведут себя как в Unity.
+  * `UnityEngine.HeadlessHost` — пульт управления для харнесса (игровой код его не использует; compile-check его не знает).
+* `Harness.cs` — сценарий: старт creative-мира, ожидание `worldReady`/мешей/стриминга, idle-проба на бесконечный ремеш,
+  захват мыши, полёт через границы чанков и телепорт (стриминг + перестройка регионов), ломание/установка блоков, факел и свет,
+  инвентарь и creative-палитра, пауза → моды (включить X-Ray) → настройки (облака), X-Ray, три режима камеры, яйца призыва и
+  симуляция мобов, ведро воды и растекание, лодка/вагонетка/удочка/жемчуг, TNT + огниво и воронка, смена дальности прорисовки,
+  сохранение → «Выбор режима» → загрузка через кнопку «Играть», survival-мир: добыча рукой, крафт досок кнопкой результата,
+  книга рецептов, сундук, печь (плавка), еда, лук, кровать, смерть → «Возродиться», ночь, пауза, выход (`OnApplicationQuit`).
+  После каждой фазы — проверки состояния (конечные координаты, игрок не провалился, есть меши и draw calls).
+  В конце — отчёт: сгруппированные исключения со стеком, `LogError`, problems, предупреждения, статистика загрузок мешей.
+* `run.sh` — сборка + запуск.

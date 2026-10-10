@@ -254,5 +254,35 @@ synthJobs("fuzz_weird", () => { const c = fuzzChunk(105, range(120, 136), 0.5, p
   runJob(j);
   const p = makeJob("payload_odd_part", chunks, 0, 0, [13, 12, 14], false); p.sections.forEach((s, n) => { if (n % 3 === 0) s.light = null; }); runJob(p);
 })();
+// systematic shape grids: every rail neighbour mask (flat + sloped), stair corner configurations, connection masks, pot keys
+synthJobs("grid_shapes", () => {
+  const c = emptyChunk(), rng = rngOf(13); let k = 0;
+  const cell = () => { const x = (k % 4) * 4 + 1, z = (Math.floor(k / 4) % 4) * 4 + 1, y = 2 + Math.floor(k / 16) * 3; k++; return [x, y, z]; };
+  const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (let mask = 0; mask < 16; mask++) for (let slope = 0; slope < 3; slope++) {
+    const [x, y, z] = cell(); setB(c, x + 1, y, z + 1, B.RAIL, 0xf0); setM(c, x + 1, y, z + 1, { axis: mask & 1 ? "x" : "z" });
+    N4.forEach((d, n) => { if (mask & (1 << n)) setB(c, x + 1 + d[0], y + (slope && (n === slope - 1 || n === slope + 1) ? 1 : 0), z + 1 + d[1], B.RAIL, 0xf0); });
+  }
+  const F = ["south", "west", "north", "east"], SD = [[0, 1], [-1, 0], [0, -1], [1, 0]];
+  for (let f = 0; f < 4; f++) for (let up = 0; up < 2; up++) for (let side = 0; side < 2; side++) for (let nf = 0; nf < 4; nf++) for (let nup = 0; nup < 2; nup++) {
+    const [x, y, z] = cell(), cx = x + 1, cz = z + 1, d = SD[side ? (f + 2) & 3 : f];
+    setB(c, cx, y, cz, B.OAK_STAIRS, 0xf0); setM(c, cx, y, cz, { facing: F[f], upper: !!up });
+    setB(c, cx + d[0], y, cz + d[1], pick(rng, [B.STONE_STAIRS, B.OAK_STAIRS]), 0xf0); setM(c, cx + d[0], y, cz + d[1], { facing: F[nf], upper: !!nup });
+    if (rng() < 0.5) { const g = SD[Math.floor(rng() * 4)]; if (g[0] !== d[0] || g[1] !== d[1]) { setB(c, cx + g[0], y, cz + g[1], B.DARK_STAIRS, 0xf0); setM(c, cx + g[0], y, cz + g[1], { facing: F[Math.floor(rng() * 4)], upper: !!up }); } }
+  }
+  const CONN = [B.STONE, B.OAK_FENCE, B.COBBLE_WALL, B.GLASS_PANE, B.OAK_GATE, B.GLASS, B.WATER, B.POPPY, B.LEAVES, B.LAVA, B.VIRTUAL_OPAQUE, B.VIRTUAL_CUTOUT];
+  for (const id of [B.OAK_FENCE, B.COBBLE_WALL, B.GLASS_PANE, B.VIRTUAL_OPAQUE]) for (let mask = 0; mask < 16; mask++) {
+    const [x, y, z] = cell(), cx = x + 1, cz = z + 1; setB(c, cx, y, cz, id, 0xf0);
+    if (id === B.VIRTUAL_OPAQUE) setM(c, cx, y, cz, { v: pick(rng, VKEYS.filter((q) => ["fence", "wall", "pane", "gate"].includes(VB[q].shape))) });
+    N4.forEach((d, n) => { if (!(mask & (1 << n))) return; const q = pick(rng, CONN); setB(c, cx + d[0], y, cz + d[1], q, 0xf0); if (VIRT.includes(q)) setM(c, cx + d[0], y, cz + d[1], { v: pick(rng, VKEYS) }); });
+  }
+  for (const pk of ["b:" + B.POPPY, "b:" + B.SUNFLOWER, "b:" + B.CACTUS, "b:0", "b:", "b:abc", "b:" + B.STONE, "b:999", "x", "", "v:NOPE", 5, true, " b:28", "b:28.0", "b:0x1c", "b:1e1", ...VKEYS.filter((q) => VB[q].plant || VB[q].shape === "cross" || VB[q].shape === "tallplant").map((q) => "v:" + q)]) {
+    const [x, y, z] = cell(); setB(c, x + 1, y, z + 1, B.FLOWER_POT, 0xf0); setM(c, x + 1, y, z + 1, { potKey: pk });
+  }
+  for (const key of VKEYS.filter((q) => VB[q].shape === "trapdoor" || VB[q].shape === "door" || VB[q].shape === "gate")) for (const m of [{ open: true }, { open: true, facing: "east" }, { part: "top" }, {}]) {
+    const [x, y, z] = cell(); setB(c, x + 1, y, z + 1, VB[key].transparent ? B.VIRTUAL_TRANSPARENT : B.VIRTUAL_CUTOUT, 0xf0); setM(c, x + 1, y, z + 1, Object.assign({ v: key }, m));
+  }
+  return c;
+}, () => null, [["_full", "all", true]]);
 synthJobs("empty", () => emptyChunk(), () => null, [["_full", "all", true], ["_none", [], false], ["_oob", [-1, 24, 99], false]]);
 console.log("jobs:", jobCount);

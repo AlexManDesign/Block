@@ -754,6 +754,7 @@ namespace UnityEngine
             switch (f) { case Rendering.VertexAttributeFormat.Float32: case Rendering.VertexAttributeFormat.UInt32: case Rendering.VertexAttributeFormat.SInt32: return 4; case Rendering.VertexAttributeFormat.Float16: case Rendering.VertexAttributeFormat.UNorm16: case Rendering.VertexAttributeFormat.SNorm16: case Rendering.VertexAttributeFormat.UInt16: case Rendering.VertexAttributeFormat.SInt16: return 2; default: return 1; }
         }
         public static long totalUploads, totalVertexBytes;
+        public static readonly Dictionary<string, long[]> byName = new Dictionary<string, long[]>();
     }
     public sealed class Mesh : Object
     {
@@ -858,6 +859,7 @@ namespace UnityEngine
             if (meshBufferStart < 0 || end > size) throw new ArgumentOutOfRangeException("meshBufferStart", "Mesh '" + name + "' " + api + ": data range (" + meshBufferStart + "+" + count + ")*" + esize + " bytes exceeds the vertex buffer size " + size);
             Buffer.BlockCopy(bytes, 0, vdata[stream], meshBufferStart * esize, bytes.Length);
             HeadlessMesh.totalUploads++; HeadlessMesh.totalVertexBytes += bytes.Length;
+            long[] bn; if (!HeadlessMesh.byName.TryGetValue(name ?? "", out bn)) HeadlessMesh.byName[name ?? ""] = bn = new long[2]; bn[0]++; bn[1] += bytes.Length;
             if (stream == 0) CheckPositions(api);
         }
         void CheckPositions(string api)

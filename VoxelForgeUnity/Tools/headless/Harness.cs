@@ -74,6 +74,7 @@ static class Harness
         Console.WriteLine((ok ? "  ok   " : "  FAIL ") + what);
         if (!ok) failedChecks++;
     }
+    static void Info(string what) { Console.WriteLine("  info " + what); }
     static void Phase(string name) { Console.WriteLine("== " + name + "  (frame " + Time.frameCount + ", exceptions " + HeadlessHost.exceptions.Count + ", errors " + HeadlessHost.errors.Count + ", problems " + HeadlessHost.problems.Count + ")"); }
 
     // ---------------- reflection access to VF internals ----------------
@@ -167,6 +168,18 @@ static class Harness
         Check(false, "UI button '" + what + "' present (buttons: " + string.Join(" | ", HeadlessHost.buttons.Select(x => x.text).Take(40)) + ")");
         return false;
     }
+    /// <summary>Runs an idle window and reports chunks whose mesh revision keeps changing without edits (remesh loops).</summary>
+    static void IdleRemeshProbe(string label, double seconds)
+    {
+        var rev0 = new Dictionary<string, int>(); foreach (var kv in VF.chunks) rev0[kv.Key] = kv.Value.meshRev;
+        int edits0 = VF.edits.Count; var end = DateTime.UtcNow.AddSeconds(seconds); int n = 0;
+        while (DateTime.UtcNow < end) { Frame(); n++; }
+        var d = new List<KeyValuePair<string, int>>();
+        foreach (var kv in VF.chunks) { int r0; if (rev0.TryGetValue(kv.Key, out r0) && kv.Value.meshRev - r0 > 0) d.Add(new KeyValuePair<string, int>(kv.Key, kv.Value.meshRev - r0)); }
+        d.Sort((a, b) => b.Value - a.Value);
+        Console.WriteLine("  idle probe[" + label + "] " + n + " frames: " + d.Count + " chunks remeshed; top: " + string.Join(", ", d.Take(8).Select(k => k.Key + "x" + k.Value)) + " (edits " + edits0 + " -> " + VF.edits.Count + ")");
+        Check(d.Count == 0 || d[0].Value <= Math.Max(6, seconds * 1.5), label + ": no remesh loop (max " + (d.Count > 0 ? d[0].Value : 0) + " revs in " + seconds + "s)");
+    }
     static void EnsureLocked()
     {
         if (!VF.locked) { ClickMouse(0); Frames(2); }
@@ -199,6 +212,7 @@ static class Harness
         Frames(30);
         StateCheck("creative idle");
 
+        IdleRemeshProbe("creative idle", 8);
         Phase("lock pointer, look around");
         EnsureLocked();
         for (int i = 0; i < 20; i++) { HeadlessHost.MouseMove(1.5f, i < 10 ? 0.4f : -0.4f); Frame(); }
@@ -326,6 +340,45 @@ static class Harness
             for (int dx = -4; dx <= 4; dx++) for (int dz = -4; dz <= 4; dz++) for (int dy = -2; dy <= 2; dy++) if (VF.isWater(VF.getBlock(g[0] + dx, g[1] + 1 + dy, g[2] + dz))) wet++;
             Check(wet > 1, "water spread (" + wet + " water cells)");
             StateCheck("after water");
+            Phase("vehicles: boat on the new pond, minecart on a rail");
+            Give(6, "boat", 1);
+            Aim(wc[0] + 0.5, wc[1] + 0.9, wc[2] + 0.5); Frame();
+            int veh0 = VF.vehicles.Count;
+            ClickMouse(1); Frames(5);
+            Info("boat use: vehicles " + veh0 + " -> " + VF.vehicles.Count + " (toast '" + VF.toastText + "')");
+            if (VF.vehicles.Count > veh0)
+            {
+                var v = VF.vehicles[VF.vehicles.Count - 1];
+                Aim(v.x, v.y + 0.3, v.z); Frame(); ClickMouse(1); Frames(5);
+                Check(P.riding != null, "mounted the boat");
+                HeadlessHost.PressKey(KeyCode.W); Frames(60); HeadlessHost.ReleaseKey(KeyCode.W);
+                Check(PlayerFinite() && JS.isFinite(v.x + v.y + v.z), "boat ride keeps finite positions");
+                Tap(KeyCode.LeftShift, 4); Frames(10);
+                Check(P.riding == null, "Shift dismounts");
+            }
+            g = GroundAhead(3);
+            if (g != null)
+            {
+                Give(6, VF.BK(B.RAIL), 8);
+                var rc = UseOn(g);
+                if (rc != null && VF.getBlock(rc[0], rc[1], rc[2]) == B.RAIL)
+                {
+                    Give(6, "minecart", 1);
+                    Aim(rc[0] + 0.5, rc[1] + 0.05, rc[2] + 0.5); Frame();
+                    int v0 = VF.vehicles.Count; ClickMouse(1); Frames(5);
+                    Check(VF.vehicles.Count > v0, "minecart placed on rail");
+                    Frames(60);
+                }
+                else Info("rail placement failed (toast '" + VF.toastText + "')");
+            }
+            Give(6, "fishing_rod", 1);
+            Aim(wc[0] + 0.5, wc[1] + 0.5, wc[2] + 0.5); Frame(); ClickMouse(1); Frames(90); ClickMouse(1); Frames(10);
+            Check(PlayerFinite(), "fishing cast/reel");
+            Give(6, "ender_pearl", 4);
+            P.yaw += 0.5; P.pitch = -0.3; Frame(); ClickMouse(1); Frames(150);
+            Check(PlayerFinite() && P.y > VF.WORLD_MIN_Y, "ender pearl throw/teleport (" + JS.Fixed(P.x, 1) + "," + JS.Fixed(P.y, 1) + "," + JS.Fixed(P.z, 1) + ")");
+            Until(() => P.onGround || P.inWater || P.flying, 20, "settled after pearl");
+            StateCheck("after vehicles");
         }
 
         Phase("TNT explosion");
@@ -380,6 +433,7 @@ static class Harness
         Frames(60);
         StateCheck("reloaded idle");
 
+        IdleRemeshProbe("reloaded idle", 8);
         Phase("survival world");
         VF.returnToTitle(); Frames(10);
         VF.createAndStartWorld("survival", "test2");
@@ -416,6 +470,72 @@ static class Harness
         Tap(KeyCode.Escape);
         Check(!VF.uiOpen, "Esc closes inventory");
         EnsureLocked();
+        Phase("survival: chest, furnace, food, bow, bed, death/respawn");
+        g = GroundAhead(3);
+        if (g != null)
+        {
+            Give(1, VF.BK(B.CHEST), 1);
+            var cc = UseOn(g);
+            Check(cc != null && VF.getBlock(cc[0], cc[1], cc[2]) == B.CHEST, "chest placed");
+            if (cc != null && VF.getBlock(cc[0], cc[1], cc[2]) == B.CHEST)
+            {
+                Aim(cc[0] + 0.5, cc[1] + 0.5, cc[2] + 0.5); Frame(); ClickMouse(1); Frames(5);
+                Check(VF.uiOpen && VF.uiMode == "chest", "right click opens chest UI");
+                Frames(5); Tap(KeyCode.E); EnsureLocked();
+            }
+        }
+        g = GroundAhead(4);
+        if (g != null)
+        {
+            Give(1, VF.BK(B.FURNACE), 1);
+            var fc = UseOn(g);
+            if (fc != null && VF.getBlock(fc[0], fc[1], fc[2]) == B.FURNACE)
+            {
+                Aim(fc[0] + 0.5, fc[1] + 0.5, fc[2] + 0.5); Frame(); ClickMouse(1); Frames(5);
+                Check(VF.uiOpen && VF.uiMode == "furnace", "right click opens furnace UI");
+                var fu = VF.getFurnace(VF.uiKey);
+                if (fu != null)
+                {
+                    fu.input = new Stack { key = "raw_iron", count = 2 }; fu.fuel = new Stack { key = "coal", count = 1 };
+                    Until(() => fu.output != null && fu.output.key == "iron_ingot", 30, "furnace smelts raw iron");
+                }
+                Tap(KeyCode.E); EnsureLocked();
+            }
+            else Check(false, "furnace placed (toast '" + VF.toastText + "')");
+        }
+        P.hunger = 10; Give(2, "bread", 3);
+        ClickMouse(1); Frames(5);
+        Check(P.hunger > 10, "ate bread (hunger " + P.hunger + ")");
+        Give(3, "bow", 1); VF.inventory[4] = new Stack { key = "arrow", count = 16 };
+        VF.selected = 3; VF.drawHotbar(); P.pitch = -0.2;
+        int proj0 = VF.projectiles.Count;
+        HeadlessHost.PressMouse(0); var bowEnd = DateTime.UtcNow.AddSeconds(1.2); while (DateTime.UtcNow < bowEnd) Frame(); HeadlessHost.ReleaseMouse(0); Frames(3);
+        Check(VF.projectiles.Count > proj0 || VF.inventory[4] == null || VF.inventory[4].count < 16, "bow fired an arrow");
+        Frames(120);
+        VF.day = 0.6; Frames(5);
+        g = GroundAhead(3);
+        if (g != null)
+        {
+            Give(5, VF.BK(B.BED), 1);
+            var bc = UseOn(g);
+            if (bc != null && VF.getBlock(bc[0], bc[1], bc[2]) == B.BED)
+            {
+                Aim(bc[0] + 0.5, bc[1] + 0.3, bc[2] + 0.5); Frame(); ClickMouse(1); Frames(5);
+                Info("bed use: sleeping " + P.sleeping + " (toast '" + VF.toastText + "')");
+                if (P.sleeping) Until(() => !P.sleeping, 20, "woke up after sleeping");
+                EnsureLocked();
+            }
+            else Info("bed placement failed (toast '" + VF.toastText + "')");
+        }
+        VF.addItem(VF.BK(B.DIRT), 10);
+        VF.damagePlayer(100, "test");
+        Frames(5);
+        Check(P.dead && VF.deathUIVisible, "death screen shown");
+        ClickButton(t => t == "Возродиться", "Возродиться");
+        Check(!P.dead, "respawned");
+        Until(() => VF.worldReady && (P.onGround || P.inWater), 60, "respawn settled");
+        EnsureLocked();
+        StateCheck("after respawn");
         // night: hostile spawns + survival ticks
         VF.day = 0.55;
         Frames(400);
@@ -439,6 +559,7 @@ static class Harness
         Console.WriteLine("frames: " + Time.frameCount + "   checks: " + checks.Count + " (" + failedChecks + " failed)");
         Console.WriteLine("exceptions: " + HeadlessHost.exceptions.Count + "   errors: " + HeadlessHost.errors.Count + "   problems: " + HeadlessHost.problems.Count + "   warnings: " + HeadlessHost.warnings.Count);
         Console.WriteLine("mesh uploads: " + HeadlessMesh.totalUploads + " (" + (HeadlessMesh.totalVertexBytes >> 20) + " MiB vertex data)");
+        foreach (var kv in HeadlessMesh.byName.OrderByDescending(k => k.Value[1]).Take(12)) Console.WriteLine("  uploads " + kv.Key + ": " + kv.Value[0] + " calls, " + (kv.Value[1] >> 20) + " MiB");
         foreach (var c in checks) if (c.StartsWith("FAIL")) Console.WriteLine("  " + c);
         var groups = HeadlessHost.exceptions.GroupBy(e => { var s = e.Substring(e.IndexOf(']') + 1).Trim(); int nl = s.IndexOf('\n'); return nl > 0 ? s.Substring(0, Math.Min(nl, 400)) : s; });
         foreach (var gr in groups) { Console.WriteLine("--- exception x" + gr.Count() + ":"); Console.WriteLine(gr.First()); }

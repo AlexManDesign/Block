@@ -42,6 +42,7 @@ function load(prettyPath, resDir) {
   const out = {};
   // Run the whole top level; a late browser-only failure is tolerated as long as the block tables are complete.
   const body = "with(__sb){try{" + src + tail + "}catch(e){__out.err=e;try{" + tail + "}catch(e2){}}}";
+  if (process.env.JSENV_DUMP) fs.writeFileSync(process.env.JSENV_DUMP, JSON.stringify({ body, meshFn: fnSrc("createSharedMeshCore"), meshLine: lines.findIndex((l) => l.startsWith("function createSharedMeshCore(")) + 1 }));
   new Function("__sb", "__out", body)(sandbox, out);
   if (!out.blocks) throw out.err || new Error("pretty.js did not initialize");
   // initWorkerEngine(): workerBlockCfg mapping.
