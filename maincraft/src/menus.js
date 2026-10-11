@@ -492,7 +492,7 @@ const UI = {
         looks.delete(t.identifier);
         if (L.held) { g.mouse.l = false; continue; }
         if (!L.moved && performance.now() - L.t < 300) {
-          if (this.touchBreak) { g.mouse.l = true; g.mouse.lT = 0; setTimeout(() => { if (g.mode === 'creative') g.mouse.l = false; }, 60); if (g.mode !== 'creative') setTimeout(() => g.mouse.l = false, 60); }
+          if (this.touchBreak) { g.leftClick(); setTimeout(() => g.mouse.l = false, 60); }   // a tap: the left button (hit, start breaking, or swing at the air)
           else { g.mouse.r = true; g.mouse.rFirst = true; setTimeout(() => g.mouse.r = false, 60); }
         }
       }

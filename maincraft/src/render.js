@@ -641,6 +641,13 @@ class Renderer {
       const t = this.tmpM || (this.tmpM = new Float32Array(16));
       M4.mul(t, B, this.view); this.view.set(t);
     }
+    // hurt: the view leans across the way the blow came from (GameRenderer.bobHurt, before the bob)
+    const ht = this.hurtTilt;
+    if (ht) {
+      const Hm = this.hurtM || (this.hurtM = new Float64Array(16)), t = this.tmpM || (this.tmpM = new Float32Array(16));
+      pmId(Hm); pmY(Hm, -ht[0]); pmZ(Hm, ht[1]); pmY(Hm, ht[0]);
+      M4.mul(t, Hm, this.view); this.view.set(t);
+    }
     M4.mul(this.vp, this.proj, this.view);
     M4.invert(this.invVP, this.vp);
     // frustum planes from vp (camera relative)

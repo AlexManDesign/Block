@@ -132,7 +132,7 @@ function humanoid(armW, wide, hat) {
   const leg = a4 ? [-2, 0, -2, 4, 12, 4] : [-1, 0, -1, 2, 12, 2];
   const parts = [
     { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0, 0], uv: [0, 0], anim: 'head' },
-    { box: [-4, 0, -2, 8, 12, 4], pivot: [0, 0, 0], uv: [16, 16] },
+    { box: [-4, 0, -2, 8, 12, 4], pivot: [0, 0, 0], uv: [16, 16], anim: 'body' },
     { box: arm, pivot: [-5, 2, 0], uv: [40, 16], anim: 'armR' },
     { box: armL, pivot: [5, 2, 0], uv: wide ? [32, 48] : [40, 16], mirror: !wide, anim: 'armL' },
     { box: leg, pivot: [-1.9, 12, 0], uv: [0, 16], anim: 'legA' },
@@ -654,7 +654,7 @@ class Entities {
         if (a.hostile && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
           if (hb && hb.t <= 1 && hb.t < bt && !a.bounced) {
-            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
             // AbstractArrow.onHitEntity: a hit that does no harm (creative, or just hurt) turns the
             // arrow back at a tenth of its speed
             a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
@@ -1223,7 +1223,7 @@ class Entities {
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
-    if (!g.hurt(dmg, true)) return false;
+    if (!g.hurt(dmg, true, e.pos)) return false;
     // LivingEntity.knockback(0.4) on the player
     p.vel[0] = p.vel[0] / 2 + dx / l * 8; p.vel[2] = p.vel[2] / 2 + dz / l * 8;
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
@@ -2373,8 +2373,8 @@ class Entities {
     }
     if (g.camMode) {
       const p = g.player;
-      const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, swing: g.swingT };
-      this.buildModel(vb('player', byTex), MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null);
+      const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, attack: g.swingAnim(), held: g.inv[g.sel] || null };
+      this.buildModel(vb('player', byTex), MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null, null, fireV);
       if (g.mode === 'survival' && g.surv.fire > 0) this.flame(fireV, e.pos, PLAYER_W, p.h, cam);
     }
     const gl = r.gl;
@@ -2426,8 +2426,10 @@ class Entities {
     let hy = (e.rhead !== undefined ? e.rhead : e.headYaw !== undefined ? e.headYaw : by) - by;
     while (hy > Math.PI) hy -= 6.2832; while (hy < -Math.PI) hy += 6.2832;
     hy = Math.max(-1.2, Math.min(1.2, hy));
-    let walkA = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 0.6662) * 1.4 * e.walkAmt;
-    if (m.halfSwing) walkA = Math.max(-0.4, Math.min(0.4, walkA * 0.5));
+    // HumanoidModel.setupAnim: legs swing 1.4 x the limb swing amount, arms 1.0 (the other way)
+    const ws = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 0.6662) * e.walkAmt;
+    let walkA = ws * 1.4, armA = ws;
+    if (m.halfSwing) { walkA = Math.max(-0.4, Math.min(0.4, walkA * 0.5)); armA = Math.max(-0.4, Math.min(0.4, armA * 0.5)); }
     // model scale: fixed per model, slime size with MC's squish (wide on landing, tall when jumping)
     let S = (m.scale || 1) * (e.size ? e.size * 0.999 : 1) * (e.baby ? 0.5 : 1) * (e.dispScale || 1), sxz = 1, syy = 1;
     if (e.size) { const f = (e.squish || 0) / (e.size * 0.5 + 1), f1 = 1 / (f + 1); sxz = f1; syy = 1 / f1; }
@@ -2442,7 +2444,9 @@ class Entities {
     const t = performance.now() / 1000;
     const zArms = e.type === 'zombie' || e.type === 'drowned', swA = e.type === 'drowned' ? e.rswim || 0 : 0;
     const pitch = e.pitch !== undefined ? e.pitch : 0;
-    const sw = e.swing ? Math.sin((1 - e.swing) * Math.PI) : 0;
+    // HumanoidModel.setupAttackAnimation (the player's swing, attackTime 0..1): the body twists
+    // sin(sqrt(f) 2 pi) x 0.2 and the shoulders go round with it; the right arm swings down
+    const at = e.attack || 0, bodyY = at > 0 ? Math.sin(Math.sqrt(at) * Math.PI * 2) * 0.2 : 0;
     const sneak = e.sneak ? 1 : 0;
     // CreeperRenderer.scale: swelling f (0..1 over the 1.5 s fuse), f^4 grows the body x1.4 across
     // and x1.1 up, with a slight wobble
@@ -2461,8 +2465,19 @@ class Entities {
       else if (an === 'legB') rx -= walkA;
       else if (an === 'armR' && e.aiming) { rx += -Math.PI / 2; ry += -0.1 + hy; }
       else if (an === 'armL' && e.aiming) { rx += -Math.PI / 2; ry += 0.1 + hy + 0.4; }
-      else if (an === 'armR') { rx += (zArms ? -Math.PI / 2 : -walkA) - sw * 1.4; rz += Math.sin(t * 1.1) * 0.05 + 0.05; }
-      else if (an === 'armL') { rx += zArms ? -Math.PI / 2 : walkA; rz -= Math.sin(t * 1.1) * 0.05 + 0.05; }
+      else if (an === 'armR') {
+        rx += zArms ? -Math.PI / 2 : -armA;
+        // poseRightArm, ArmPose.ITEM: an item in the hand raises it a little
+        if (e.held) { rx = rx * 0.5 - Math.PI / 10; ry = 0; }
+        if (at > 0) {
+          ry += bodyY;
+          const f = 1 - (1 - at) ** 4, f2 = Math.sin(at * Math.PI) * -(-pitch - 0.7) * 0.75;
+          rx -= Math.sin(f * Math.PI) * 1.2 + f2; ry += bodyY * 2; rz += Math.sin(at * Math.PI) * -0.4;
+        }
+        rz += Math.sin(t * 1.1) * 0.05 + 0.05;
+      }
+      else if (an === 'armL') { rx += zArms ? -Math.PI / 2 : armA; if (at > 0) { ry += bodyY; rx += bodyY; } rz -= Math.sin(t * 1.1) * 0.05 + 0.05; }
+      else if (an === 'body') ry += bodyY;
       // DrownedModel.setupAnim: swimming, the arms reach over the head (-2.51) and stroke, the legs kick
       if (swA > 0) {
         const st = Math.sin(t * 2);
@@ -2482,7 +2497,10 @@ class Entities {
       let x0 = -(bx + bw) - inf, x1 = -bx + inf, y0 = -(byy + bh) - inf, y1 = -byy + inf, z0 = bz - inf, z1 = bz + bd + inf;
       // babies: half-size body with a relatively big head (the head grows around its pivot)
       if (e.baby && an === 'head') { x0 *= 1.5; x1 *= 1.5; y0 *= 1.5; y1 *= 1.5; z0 *= 1.5; z1 *= 1.5; }
-      const px = -part.pivot[0], py = -(part.pivot[1] - (part.creepy && e.aggro ? 5 : 0)), pz = part.pivot[2];
+      let px = -part.pivot[0], pz = part.pivot[2];
+      const py = -(part.pivot[1] - (part.creepy && e.aggro ? 5 : 0));
+      // (the attack's twist carries the shoulders round: x -cos, z sin of it, x 5 pixels out)
+      if (at > 0 && (an === 'armR' || an === 'armL')) { const sd = an === 'armR' ? 1 : -1; px = sd * Math.cos(bodyY) * 5; pz = sd * Math.sin(bodyY) * 5; }
       const crx = Math.cos(-rx), srx = Math.sin(-rx), cry = Math.cos(-ry), sry = Math.sin(-ry), crz = Math.cos(rz), srz = Math.sin(rz);
       const sneakBody = sneak && m === MODELS.player;
       // the part's transform parameters for modelXform (one reused buffer, no closure per part)
@@ -2501,6 +2519,39 @@ class Entities {
         const c = tint ? [li * tint[0], li * tint[1], li * tint[2]] : [li, li, li];
         for (const k of [0, 1, 2, 0, 2, 3]) heldOut.push(q[k][0][0], q[k][0][1], q[k][0][2], q[k][1], q[k][2], layer, c[0], c[1], c[2], 1);
       }
+      if (heldOut && an === 'armR' && e.type === 'player' && e.held) this.heldItem3p(heldOut, this.xp, e.held, li);
+    }
+  }
+  // ItemInHandLayer: the player's item at its right hand (translateToHand: the arm's own pose; then
+  // -90 degrees about x, 180 about y, 1/16 out, 0.125 down, 0.625 on), by the thirdperson_righthand
+  // display: a block (block.json) 75 and 45 degrees at 0.375, 2.5 pixels up; a tool (handheld.json)
+  // -90 and 55 degrees at 0.85, (0, 4, 0.5) pixels; another flat item at 0.55, (0, 3, 1) pixels
+  heldItem3p(out, XP, held, li) {
+    const g = this.game, id = held.id, boxes = isItem(id) ? null : handBlockBoxes(id);
+    const M = this.tpM || (this.tpM = new Float64Array(16)), q = this.tpQ || (this.tpQ = new Float64Array(3)), o = this.tpO || (this.tpO = new Float64Array(3));
+    pmId(M); pmX(M, -90 * DEG); pmY(M, 180 * DEG); pmT(M, 1 / 16, 0.125, -0.625);
+    if (boxes) { pmT(M, 0, 2.5 / 16, 0); pmX(M, 75 * DEG); pmY(M, 45 * DEG); pmS(M, 0.375, 0.375, 0.375); }
+    else if (toolInfo(held) || id === IT.STICK || id === IT.BONE) { pmT(M, 0, 4 / 16, 0.5 / 16); pmY(M, -90 * DEG); pmZ(M, 55 * DEG); pmS(M, 0.85, 0.85, 0.85); }
+    else { pmT(M, 0, 3 / 16, 1 / 16); pmS(M, 0.55, 0.55, 0.55); }
+    pmT(M, -0.5, -0.5, -0.5);
+    // a model point -> the arm's model space (blocks, y down) -> ours (pixels, x and y the other way)
+    const put = (x, y, z, u, v, layer, c) => {
+      pmApply(M, x, y, z, q);
+      modelXform(XP, -q[0] * 16, -q[1] * 16, q[2] * 16, o);
+      out.push(o[0], o[1], o[2], u, v, layer, c, c, c, 1);
+    };
+    if (boxes) {
+      const L = this.tpL || (this.tpL = new Uint16Array(6)), C = this.tpC || (this.tpC = new Float64Array(4)), T = this.tpTmp || (this.tpTmp = new VBuf());
+      for (let k = 0; k < 6; k++) L[k] = FTEX[id * 6 + k];
+      if (FLAGS[id] & BF_FACING) L[4] = FRONT[id];
+      C[0] = C[1] = C[2] = 1; C[3] = 1; T.n = 0;
+      for (const b of boxes) g.pushBox(T, b[0], b[1], b[2], b[3], b[4], b[5], 0, C, 0, L, ITEM_SHADE, null);
+      const A = T.a;
+      for (let i = 0; i < T.n; i += 10) put(A[i], A[i + 1], A[i + 2], A[i + 3], A[i + 4], A[i + 5], li * A[i + 6]);
+    } else {
+      const layer = isItem(id) ? g.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? g.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
+      const G = g.spriteModel(layer);
+      for (let k = 0; k < G.length; k += 6) put(G[k], G[k + 1], G[k + 2], G[k + 3], G[k + 4], layer, li * G[k + 5]);
     }
   }
   renderItems(env, cam) {

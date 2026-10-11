@@ -13740,6 +13740,13 @@ class Renderer {
       const t = this.tmpM || (this.tmpM = new Float32Array(16));
       M4.mul(t, B, this.view); this.view.set(t);
     }
+    // hurt: the view leans across the way the blow came from (GameRenderer.bobHurt, before the bob)
+    const ht = this.hurtTilt;
+    if (ht) {
+      const Hm = this.hurtM || (this.hurtM = new Float64Array(16)), t = this.tmpM || (this.tmpM = new Float32Array(16));
+      pmId(Hm); pmY(Hm, -ht[0]); pmZ(Hm, ht[1]); pmY(Hm, ht[0]);
+      M4.mul(t, Hm, this.view); this.view.set(t);
+    }
     M4.mul(this.vp, this.proj, this.view);
     M4.invert(this.invVP, this.vp);
     // frustum planes from vp (camera relative)
@@ -15305,7 +15312,7 @@ function humanoid(armW, wide, hat) {
   const leg = a4 ? [-2, 0, -2, 4, 12, 4] : [-1, 0, -1, 2, 12, 2];
   const parts = [
     { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0, 0], uv: [0, 0], anim: 'head' },
-    { box: [-4, 0, -2, 8, 12, 4], pivot: [0, 0, 0], uv: [16, 16] },
+    { box: [-4, 0, -2, 8, 12, 4], pivot: [0, 0, 0], uv: [16, 16], anim: 'body' },
     { box: arm, pivot: [-5, 2, 0], uv: [40, 16], anim: 'armR' },
     { box: armL, pivot: [5, 2, 0], uv: wide ? [32, 48] : [40, 16], mirror: !wide, anim: 'armL' },
     { box: leg, pivot: [-1.9, 12, 0], uv: [0, 16], anim: 'legA' },
@@ -15827,7 +15834,7 @@ class Entities {
         if (a.hostile && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
           if (hb && hb.t <= 1 && hb.t < bt && !a.bounced) {
-            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
             // AbstractArrow.onHitEntity: a hit that does no harm (creative, or just hurt) turns the
             // arrow back at a tenth of its speed
             a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
@@ -16396,7 +16403,7 @@ class Entities {
   }
   hitPlayer(e, dmg, dx, dz) {
     const g = this.game, p = g.player, l = Math.hypot(dx, dz) || 1;
-    if (!g.hurt(dmg, true)) return false;
+    if (!g.hurt(dmg, true, e.pos)) return false;
     // LivingEntity.knockback(0.4) on the player
     p.vel[0] = p.vel[0] / 2 + dx / l * 8; p.vel[2] = p.vel[2] / 2 + dz / l * 8;
     if (p.onGround) p.vel[1] = Math.min(8, p.vel[1] / 2 + 8);
@@ -17546,8 +17553,8 @@ class Entities {
     }
     if (g.camMode) {
       const p = g.player;
-      const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, swing: g.swingT };
-      this.buildModel(vb('player', byTex), MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null);
+      const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, attack: g.swingAnim(), held: g.inv[g.sel] || null };
+      this.buildModel(vb('player', byTex), MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null, null, fireV);
       if (g.mode === 'survival' && g.surv.fire > 0) this.flame(fireV, e.pos, PLAYER_W, p.h, cam);
     }
     const gl = r.gl;
@@ -17599,8 +17606,10 @@ class Entities {
     let hy = (e.rhead !== undefined ? e.rhead : e.headYaw !== undefined ? e.headYaw : by) - by;
     while (hy > Math.PI) hy -= 6.2832; while (hy < -Math.PI) hy += 6.2832;
     hy = Math.max(-1.2, Math.min(1.2, hy));
-    let walkA = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 0.6662) * 1.4 * e.walkAmt;
-    if (m.halfSwing) walkA = Math.max(-0.4, Math.min(0.4, walkA * 0.5));
+    // HumanoidModel.setupAnim: legs swing 1.4 x the limb swing amount, arms 1.0 (the other way)
+    const ws = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 0.6662) * e.walkAmt;
+    let walkA = ws * 1.4, armA = ws;
+    if (m.halfSwing) { walkA = Math.max(-0.4, Math.min(0.4, walkA * 0.5)); armA = Math.max(-0.4, Math.min(0.4, armA * 0.5)); }
     // model scale: fixed per model, slime size with MC's squish (wide on landing, tall when jumping)
     let S = (m.scale || 1) * (e.size ? e.size * 0.999 : 1) * (e.baby ? 0.5 : 1) * (e.dispScale || 1), sxz = 1, syy = 1;
     if (e.size) { const f = (e.squish || 0) / (e.size * 0.5 + 1), f1 = 1 / (f + 1); sxz = f1; syy = 1 / f1; }
@@ -17615,7 +17624,9 @@ class Entities {
     const t = performance.now() / 1000;
     const zArms = e.type === 'zombie' || e.type === 'drowned', swA = e.type === 'drowned' ? e.rswim || 0 : 0;
     const pitch = e.pitch !== undefined ? e.pitch : 0;
-    const sw = e.swing ? Math.sin((1 - e.swing) * Math.PI) : 0;
+    // HumanoidModel.setupAttackAnimation (the player's swing, attackTime 0..1): the body twists
+    // sin(sqrt(f) 2 pi) x 0.2 and the shoulders go round with it; the right arm swings down
+    const at = e.attack || 0, bodyY = at > 0 ? Math.sin(Math.sqrt(at) * Math.PI * 2) * 0.2 : 0;
     const sneak = e.sneak ? 1 : 0;
     // CreeperRenderer.scale: swelling f (0..1 over the 1.5 s fuse), f^4 grows the body x1.4 across
     // and x1.1 up, with a slight wobble
@@ -17634,8 +17645,19 @@ class Entities {
       else if (an === 'legB') rx -= walkA;
       else if (an === 'armR' && e.aiming) { rx += -Math.PI / 2; ry += -0.1 + hy; }
       else if (an === 'armL' && e.aiming) { rx += -Math.PI / 2; ry += 0.1 + hy + 0.4; }
-      else if (an === 'armR') { rx += (zArms ? -Math.PI / 2 : -walkA) - sw * 1.4; rz += Math.sin(t * 1.1) * 0.05 + 0.05; }
-      else if (an === 'armL') { rx += zArms ? -Math.PI / 2 : walkA; rz -= Math.sin(t * 1.1) * 0.05 + 0.05; }
+      else if (an === 'armR') {
+        rx += zArms ? -Math.PI / 2 : -armA;
+        // poseRightArm, ArmPose.ITEM: an item in the hand raises it a little
+        if (e.held) { rx = rx * 0.5 - Math.PI / 10; ry = 0; }
+        if (at > 0) {
+          ry += bodyY;
+          const f = 1 - (1 - at) ** 4, f2 = Math.sin(at * Math.PI) * -(-pitch - 0.7) * 0.75;
+          rx -= Math.sin(f * Math.PI) * 1.2 + f2; ry += bodyY * 2; rz += Math.sin(at * Math.PI) * -0.4;
+        }
+        rz += Math.sin(t * 1.1) * 0.05 + 0.05;
+      }
+      else if (an === 'armL') { rx += zArms ? -Math.PI / 2 : armA; if (at > 0) { ry += bodyY; rx += bodyY; } rz -= Math.sin(t * 1.1) * 0.05 + 0.05; }
+      else if (an === 'body') ry += bodyY;
       // DrownedModel.setupAnim: swimming, the arms reach over the head (-2.51) and stroke, the legs kick
       if (swA > 0) {
         const st = Math.sin(t * 2);
@@ -17655,7 +17677,10 @@ class Entities {
       let x0 = -(bx + bw) - inf, x1 = -bx + inf, y0 = -(byy + bh) - inf, y1 = -byy + inf, z0 = bz - inf, z1 = bz + bd + inf;
       // babies: half-size body with a relatively big head (the head grows around its pivot)
       if (e.baby && an === 'head') { x0 *= 1.5; x1 *= 1.5; y0 *= 1.5; y1 *= 1.5; z0 *= 1.5; z1 *= 1.5; }
-      const px = -part.pivot[0], py = -(part.pivot[1] - (part.creepy && e.aggro ? 5 : 0)), pz = part.pivot[2];
+      let px = -part.pivot[0], pz = part.pivot[2];
+      const py = -(part.pivot[1] - (part.creepy && e.aggro ? 5 : 0));
+      // (the attack's twist carries the shoulders round: x -cos, z sin of it, x 5 pixels out)
+      if (at > 0 && (an === 'armR' || an === 'armL')) { const sd = an === 'armR' ? 1 : -1; px = sd * Math.cos(bodyY) * 5; pz = sd * Math.sin(bodyY) * 5; }
       const crx = Math.cos(-rx), srx = Math.sin(-rx), cry = Math.cos(-ry), sry = Math.sin(-ry), crz = Math.cos(rz), srz = Math.sin(rz);
       const sneakBody = sneak && m === MODELS.player;
       // the part's transform parameters for modelXform (one reused buffer, no closure per part)
@@ -17674,6 +17699,39 @@ class Entities {
         const c = tint ? [li * tint[0], li * tint[1], li * tint[2]] : [li, li, li];
         for (const k of [0, 1, 2, 0, 2, 3]) heldOut.push(q[k][0][0], q[k][0][1], q[k][0][2], q[k][1], q[k][2], layer, c[0], c[1], c[2], 1);
       }
+      if (heldOut && an === 'armR' && e.type === 'player' && e.held) this.heldItem3p(heldOut, this.xp, e.held, li);
+    }
+  }
+  // ItemInHandLayer: the player's item at its right hand (translateToHand: the arm's own pose; then
+  // -90 degrees about x, 180 about y, 1/16 out, 0.125 down, 0.625 on), by the thirdperson_righthand
+  // display: a block (block.json) 75 and 45 degrees at 0.375, 2.5 pixels up; a tool (handheld.json)
+  // -90 and 55 degrees at 0.85, (0, 4, 0.5) pixels; another flat item at 0.55, (0, 3, 1) pixels
+  heldItem3p(out, XP, held, li) {
+    const g = this.game, id = held.id, boxes = isItem(id) ? null : handBlockBoxes(id);
+    const M = this.tpM || (this.tpM = new Float64Array(16)), q = this.tpQ || (this.tpQ = new Float64Array(3)), o = this.tpO || (this.tpO = new Float64Array(3));
+    pmId(M); pmX(M, -90 * DEG); pmY(M, 180 * DEG); pmT(M, 1 / 16, 0.125, -0.625);
+    if (boxes) { pmT(M, 0, 2.5 / 16, 0); pmX(M, 75 * DEG); pmY(M, 45 * DEG); pmS(M, 0.375, 0.375, 0.375); }
+    else if (toolInfo(held) || id === IT.STICK || id === IT.BONE) { pmT(M, 0, 4 / 16, 0.5 / 16); pmY(M, -90 * DEG); pmZ(M, 55 * DEG); pmS(M, 0.85, 0.85, 0.85); }
+    else { pmT(M, 0, 3 / 16, 1 / 16); pmS(M, 0.55, 0.55, 0.55); }
+    pmT(M, -0.5, -0.5, -0.5);
+    // a model point -> the arm's model space (blocks, y down) -> ours (pixels, x and y the other way)
+    const put = (x, y, z, u, v, layer, c) => {
+      pmApply(M, x, y, z, q);
+      modelXform(XP, -q[0] * 16, -q[1] * 16, q[2] * 16, o);
+      out.push(o[0], o[1], o[2], u, v, layer, c, c, c, 1);
+    };
+    if (boxes) {
+      const L = this.tpL || (this.tpL = new Uint16Array(6)), C = this.tpC || (this.tpC = new Float64Array(4)), T = this.tpTmp || (this.tpTmp = new VBuf());
+      for (let k = 0; k < 6; k++) L[k] = FTEX[id * 6 + k];
+      if (FLAGS[id] & BF_FACING) L[4] = FRONT[id];
+      C[0] = C[1] = C[2] = 1; C[3] = 1; T.n = 0;
+      for (const b of boxes) g.pushBox(T, b[0], b[1], b[2], b[3], b[4], b[5], 0, C, 0, L, ITEM_SHADE, null);
+      const A = T.a;
+      for (let i = 0; i < T.n; i += 10) put(A[i], A[i + 1], A[i + 2], A[i + 3], A[i + 4], A[i + 5], li * A[i + 6]);
+    } else {
+      const layer = isItem(id) ? g.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? g.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
+      const G = g.spriteModel(layer);
+      for (let k = 0; k < G.length; k += 6) put(G[k], G[k + 1], G[k + 2], G[k + 3], G[k + 4], layer, li * G[k + 5]);
     }
   }
   renderItems(env, cam) {
@@ -18698,20 +18756,34 @@ const DAY_LEN = 1200;
 // Minecraft's difficulties (Difficulty.getId: peaceful 0 .. hard 3); a world starts on normal
 const DIFFICULTIES = ['peaceful', 'easy', 'normal', 'hard'];
 // water fog colours of the biomes (Minecraft's water_fog_color); the rest use 0x050533
-// the empty hand's arm, local -> view: rotate around x by -60 deg minus the swing, around y by
-// 20 deg, translate (P: [swing, view bob x, view bob y])
-function handXform(P, x, y, z, o) {
-  const sw2 = P[0], ax = -1.05 - sw2 * 0.5, ay = 0.45 + sw2 * 0.3;
-  let y1 = y * Math.cos(ax) - z * Math.sin(ax), z1 = y * Math.sin(ax) + z * Math.cos(ax);
-  let x2 = x * Math.cos(ay) + z1 * Math.sin(ay), z2 = -x * Math.sin(ay) + z1 * Math.cos(ay);
-  o[0] = x2 + 0.56 + P[1] - sw2 * 0.2; o[1] = y1 - 0.62 + P[2] + sw2 * 0.15; o[2] = z2 - 0.72 - sw2 * 0.15;
+// Minecraft's PoseStack as one 4x4 matrix (column-major), each step multiplied on the right
+function pmId(m) { m.fill(0); m[0] = m[5] = m[10] = m[15] = 1; return m; }
+function pmT(m, x, y, z) { for (let i = 0; i < 4; i++) m[12 + i] += m[i] * x + m[4 + i] * y + m[8 + i] * z; }
+function pmS(m, x, y, z) { for (let i = 0; i < 4; i++) { m[i] *= x; m[4 + i] *= y; m[8 + i] *= z; } }
+function pmX(m, a) { if (!a) return; const c = Math.cos(a), s = Math.sin(a); for (let i = 0; i < 4; i++) { const y = m[4 + i], z = m[8 + i]; m[4 + i] = y * c + z * s; m[8 + i] = z * c - y * s; } }
+function pmY(m, a) { if (!a) return; const c = Math.cos(a), s = Math.sin(a); for (let i = 0; i < 4; i++) { const x = m[i], z = m[8 + i]; m[i] = x * c - z * s; m[8 + i] = x * s + z * c; } }
+function pmZ(m, a) { if (!a) return; const c = Math.cos(a), s = Math.sin(a); for (let i = 0; i < 4; i++) { const x = m[i], y = m[4 + i]; m[i] = x * c + y * s; m[4 + i] = y * c - x * s; } }
+// a point through the pose P (in the form pushModelBox takes a transform)
+function pmApply(P, x, y, z, o) {
+  o[0] = P[0] * x + P[4] * y + P[8] * z + P[12]; o[1] = P[1] * x + P[5] * y + P[9] * z + P[13]; o[2] = P[2] * x + P[6] * y + P[10] * z + P[14];
 }
-// a held item, local -> view: rotate around y by 0.78 and around x by 0.32, translate by P
-const HELD_CY = Math.cos(0.78), HELD_SY = Math.sin(0.78), HELD_CX = Math.cos(0.32), HELD_SX = Math.sin(0.32);
-function heldXform(P, x, y, z, o) {
-  const x1 = x * HELD_CY + z * HELD_SY, z0 = -x * HELD_SY + z * HELD_CY;
-  const y1 = y * HELD_CX - z0 * HELD_SX, z1 = y * HELD_SX + z0 * HELD_CX;
-  o[0] = x1 + P[0]; o[1] = y1 + P[1]; o[2] = z1 + P[2];
+const DEG = Math.PI / 180;
+// ItemStack.matches: the same item and count (the shown item stays, no re-equip)
+function sameStack(a, b) { return a === b || (!!a && !!b && a.id === b.id && a.count === b.count); }
+// the block items held as models (the rest are flat sprites): the block's own shape (stairs as
+// block/stairs.json, the step to the east), fences and walls as their inventory models
+const HAND_BOXES = new Map();
+function handBlockBoxes(id) {
+  if (HAND_BOXES.has(id)) return HAND_BOXES.get(id);
+  const sh = SHAPE[id];
+  let bx = null;
+  if (sh === SH.CUBE) bx = FULL_BOX;
+  else if (sh === SH.SLAB || sh === SH.CHEST || sh === SH.CACTUS || sh === SH.FARMLAND || sh === SH.TRAPDOOR || sh === SH.CARPET || sh === SH.PLATE || sh === SH.SNOWLAYER) bx = blockBoxes(null, id, 0, 0, 0, 0);
+  else if (sh === SH.STAIRS) for (let f = 0; f < 4 && !bx; f++) { const b = blockBoxes(null, id, f, 0, 0, 0); if (b[1][0] === 0.5 && b[1][3] === 1) bx = b; }
+  else if (sh === SH.FENCE) bx = [[6 / 16, 0, 0, 10 / 16, 1, 4 / 16], [6 / 16, 0, 12 / 16, 10 / 16, 1, 1], [7 / 16, 13 / 16, -2 / 16, 9 / 16, 15 / 16, 18 / 16], [7 / 16, 5 / 16, -2 / 16, 9 / 16, 7 / 16, 18 / 16]];
+  else if (sh === SH.WALL) bx = [[4 / 16, 0, 4 / 16, 12 / 16, 1, 12 / 16], [5 / 16, 0, 0, 11 / 16, 13 / 16, 1]];
+  HAND_BOXES.set(id, bx);
+  return bx;
 }
 // leaf mesh modes (mesher: 0 fast, 1 optimized, 2 fancy, 3 shell) from coarse to fine
 const LEAF_RANK = new Uint8Array([0, 2, 3, 1]);
@@ -18724,7 +18796,7 @@ function leafLod(d2, cur) {
   if (cur === 1 && t === 3 && d2 <= 49) return 1;
   return t;
 }
-const BUILD_ID = 'af8689c';   // filled in by build.py
+const BUILD_ID = 'd7f0f43';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -18779,7 +18851,8 @@ class Game {
     this.debug = false;
     this.hideHud = false;
     this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, fire: -20, invT: 0, lastHurt: 0, poisonT: 0, poisonAcc: 0 };
-    this.atkT = 10; this.atkBarV = -1; this.lastHeld = null;
+    this.atkT = 10; this.atkBarV = -1; this.lastHeld = null; this.missT = 0; this.breakDelay = 0;
+    this.hand = { swinging: false, swingTime: 0, anim: 0, oAnim: 0, height: 0, oHeight: 0, item: null, xBob: null, yBob: 0, oxBob: 0, oyBob: 0, acc: 0, alpha: 0, hurtTime: 0, hurtDir: 0 };
     // column offsets around the player, nearest first: [dx, dz, dx² + dz²], integers only (an array
     // holding a fraction would hand out dx and dz as doubles)
     this.spiral = [];
@@ -19464,6 +19537,9 @@ class Game {
     B[0] = Math.sin(f * Math.PI) * a * 0.5; B[1] = -Math.abs(Math.cos(f * Math.PI) * a);
     B[2] = Math.sin(f * Math.PI) * a * 3 * Math.PI / 180; B[3] = Math.abs(Math.cos(f * Math.PI - 0.2) * a) * 5 * Math.PI / 180;
     this.r.bob = B;
+    // GameRenderer.bobHurt on the view too
+    const H = this.hand, hf = (H.hurtTime - H.alpha) / 10;
+    this.r.hurtTilt = hf > 0 ? [H.hurtDir, -Math.sin(hf * hf * hf * hf * Math.PI) * 14 * DEG] : null;
     if (this.camMode) {
       const l = p.look(), s = this.camMode === 1 ? -1 : 1;
       let d = 4;
@@ -19484,16 +19560,19 @@ class Game {
     const fluids = hid === IT.BUCKET;
     this.target = this.pointerFree() ? null : raycast(w, eye[0], eye[1], eye[2], l[0], l[1], l[2], reach, { fluids });
     const now = performance.now();
-    // breaking
+    // breaking (MultiPlayerGameMode.continueDestroyBlock, and Minecraft.continueAttack swinging the
+    // arm every tick it goes on): in creative a block every 5 ticks, in survival after a block
+    // breaks 5 ticks before the next one starts
+    if (this.breakDelay > 0) this.breakDelay -= dt;
     if (this.mouse.l && this.target) {
       const tg = this.target;
+      this.swing();
       if (this.mode === 'creative') {
-        if (now - this.mouse.lT > 220) {
+        if (now - this.mouse.lT >= 250) {
           this.mouse.lT = now;
           if (!(held && toolInfo(held) && toolInfo(held).tool === 'sword')) this.doBreak(tg.x, tg.y, tg.z);
-          this.swing();
         }
-      } else {
+      } else if (this.breakDelay <= 0) {
         const b = this.breaking;
         if (!b || b.x !== tg.x || b.y !== tg.y || b.z !== tg.z || b.id !== tg.id) {
           this.breaking = { x: tg.x, y: tg.y, z: tg.z, id: tg.id, p: 0, time: breakTime(tg.id, held), snd: 0 };
@@ -19507,8 +19586,7 @@ class Game {
         // a crack particle every game tick while hitting, on the face being mined
         bb.pt = (bb.pt || 0) + dt;
         while (bb.pt >= 0.05) { bb.pt -= 0.05; this.crackParticle(bb.x, bb.y, bb.z, bb.id, tg.face); }
-        this.swingT = Math.max(this.swingT || 0, 0.001);
-        if (bb.p >= 1) { this.doBreak(bb.x, bb.y, bb.z); this.breaking = null; this.mouse.lT = now; this.damageTool(); }
+        if (bb.p >= 1) { this.doBreak(bb.x, bb.y, bb.z); this.breaking = null; this.mouse.lT = now; this.breakDelay = 0.25; this.damageTool(); }
       }
     } else this.breaking = null;
     // placing / using
@@ -19516,8 +19594,12 @@ class Game {
       this.mouse.rT = now; this.mouse.rFirst = false;
       this.use();
     }
-    if (this.swingT > 0) this.swingT = Math.max(0, this.swingT - dt * 3.3);
     this.atkT += dt;
+    // the hand's own clock (game ticks), drawn between its last two
+    const H = this.hand;
+    H.acc = Math.min(H.acc + dt, 0.5);
+    while (H.acc >= 0.05) { H.acc -= 0.05; this.handTick(); }
+    H.alpha = H.acc / 0.05;
     this.updateAttackBar();
     // eating
     if (this.eating) {
@@ -19567,7 +19649,47 @@ class Game {
   }
   // Player.getAttackStrengthScale(0.5): ticks since the last attack over the item's cooldown
   attackStrength(speed) { return Math.min(1, (this.atkT * 20 + 0.5) / (20 / speed)); }
-  swing() { this.swingT = 1; }
+  // LivingEntity.swing: a new swing, unless one is under way and not yet half done (so holding the
+  // button on a block keeps chopping through the first half)
+  swing() { const H = this.hand; if (!H.swinging || H.swingTime >= 3 || H.swingTime < 0) { H.swingTime = -1; H.swinging = true; } }
+  // the swing's progress 0..1 between ticks (LivingEntity.getAttackAnim)
+  swingAnim() { const H = this.hand; let d = H.anim - H.oAnim; if (d < 0) d += 1; return H.oAnim + d * H.alpha; }
+  // Minecraft.startAttack on the left button: a mob (or boat) is hit; a block starts breaking; at
+  // the air the arm swings and the attack strength starts over, and in survival the button does
+  // nothing for 10 ticks after (missTime)
+  leftClick() {
+    if (this.missT > 0) return;
+    if (this.attack()) return;
+    this.mouse.l = true; this.mouse.lT = 0;
+    if (this.pointerFree()) return;
+    this.swing();
+    if (!this.target) { this.atkT = 0; if (this.mode !== 'creative') this.missT = 10; }
+  }
+  // one client tick of the first-person hand: LivingEntity.updateSwingTime (a swing lasts 6
+  // ticks); ItemInHandRenderer.tick (another item taken: the shown one lowers out of view, at most
+  // 0.4 a tick, before the new one comes up; it stands at the cube of the attack strength, so it dips
+  // after a blow and rises as that recharges; down while the hands paddle a boat); LocalPlayer
+  // xBob / yBob easing half way to the view each tick; the hurt tilt's clock (10 ticks)
+  handTick() {
+    const H = this.hand, p = this.player, cur = this.inv[this.sel] || null;
+    H.oAnim = H.anim;
+    if (H.swinging) { if (++H.swingTime >= 6) { H.swingTime = 0; H.swinging = false; } } else H.swingTime = 0;
+    H.anim = H.swingTime / 6;
+    H.oHeight = H.height;
+    if (H.item !== cur && sameStack(H.item, cur)) H.item = cur;
+    const k = this.input.keys;
+    if (this.boats && this.boats.riding && (k.forward || k.back || k.left || k.right)) H.height = Math.max(0, H.height - 0.4);
+    else {
+      const f = Math.min(1, (this.atkT * 20 + 1) / (20 / attackStats(cur).speed));
+      H.height += Math.max(-0.4, Math.min(0.4, (H.item === cur ? f * f * f : 0) - H.height));
+    }
+    if (H.height < 0.1) H.item = cur;
+    if (H.xBob === null) { H.xBob = -p.pitch; H.yBob = p.yaw; }
+    H.oxBob = H.xBob; H.oyBob = H.yBob;
+    H.xBob += (-p.pitch - H.xBob) * 0.5; H.yBob += (p.yaw - H.yBob) * 0.5;
+    if (H.hurtTime > 0) H.hurtTime--;
+    if (this.missT > 0) this.missT--;
+  }
 
   doBreak(x, y, z) {
     const w = this.world;
@@ -19894,7 +20016,7 @@ class Game {
     {
       const f = impact(p.pos, PLAYER_W, p.h);
       if (f >= 0) {
-        if (this.mode === 'survival') this.hurt(Math.floor((f * f + f) / 2 * 7 * q + 1), byMob);
+        if (this.mode === 'survival') this.hurt(Math.floor((f * f + f) / 2 * 7 * q + 1), byMob, [cx, cy, cz]);
         if (!(this.mode !== 'survival' && p.flying)) push(p.vel, p.pos, p.h * 0.9, f);
       }
     }
@@ -20099,7 +20221,7 @@ class Game {
   // LivingEntity.hurt: 20 ticks of invulnerability; in the first 10 only a bigger hit lands, by the
   // difference. byMob: damage a mob (not the player) caused, which Player.hurt scales by the
   // difficulty: none on peaceful, half + 1 on easy (at most the whole), x1.5 on hard
-  hurt(n, byMob) {
+  hurt(n, byMob, from) {
     const s = this.surv;
     if (byMob) {
       const d = this.difficulty;
@@ -20115,6 +20237,10 @@ class Game {
       return false;
     }
     s.lastHurt = n; s.invT = 1;
+    // the hurt tilt (LivingEntity.animateHurt): 10 ticks, leaning from where the blow came (the
+    // source's direction against the facing; none known: 0)
+    const H = this.hand, P = this.player.pos;
+    H.hurtTime = 10; H.hurtDir = from ? Math.atan2(from[2] - P[2], from[0] - P[0]) - (this.player.yaw + Math.PI) : 0;
     s.exh += 0.1;                                  // Player.actuallyHurt: the damage source's food exhaustion
     if (this.sleeping) this.wake();                // LivingEntity.hurt: a hit wakes the sleeper
     s.hp = Math.max(0, s.hp - n);
@@ -20610,69 +20736,143 @@ class Game {
     r.gl.enable(r.gl.CULL_FACE);
   }
 
+  // the pose the view and the hand share (GameRenderer.bobHurt, bobView): hurt, the view leans
+  // up to 14 degrees across the way the blow came from (sin(f^4 pi), f the hurt time left of 10
+  // ticks); walking, it bobs (the camera gets the same from updateCamera / setCamera)
+  viewPose(M) {
+    pmId(M);
+    const H = this.hand, f = (H.hurtTime - H.alpha) / 10;
+    if (f > 0) { const t = Math.sin(f * f * f * f * Math.PI); pmY(M, -H.hurtDir); pmZ(M, -t * 14 * DEG); pmY(M, H.hurtDir); }
+    const B = this.bobView;
+    if (B) { pmT(M, B[0], B[1], 0); pmZ(M, B[2]); pmX(M, B[3]); }
+    return M;
+  }
+  // the first-person hand (GameRenderer.renderItemInHand, ItemInHandRenderer.renderHandsWithItems):
+  // on the view's pose, turned a tenth of the way the view runs ahead of xBob / yBob; the empty
+  // right arm (renderPlayerArm) or the shown item (renderArmWithItem), moved by the swing and
+  // lowered 0.6 by the equip progress
   drawHand(env, dt) {
-    const r = this.r, gl = r.gl, p = this.player;
-    const held = this.inv[this.sel];
+    const r = this.r, gl = r.gl, p = this.player, H = this.hand, held = H.item;
     const li = this.lightAt(p.pos[0], p.pos[1] + 1.2, p.pos[2], env);
-    // view-space projection
     const proj = this.handProj || (this.handProj = new Float32Array(16));
-    M4.persp(proj, 70 * Math.PI / 180, r.canvas.width / r.canvas.height, 0.05, 10);
-    const sw = this.swingT || 0, swingA = Math.sin((1 - sw) * Math.PI) * (sw > 0 ? 1 : 0);
-    // the hand follows the same view bobbing
-    const BV = this.bobView || [0, 0, 0, 0], bx = BV[0], by = BV[1];
-    const v = this.heldVB || (this.heldVB = new VBuf());
-    v.n = 0;
+    M4.persp(proj, 70 * DEG, r.canvas.width / r.canvas.height, 0.05, 10);
+    const sw = this.swingAnim(), equip = 1 - (H.oHeight + (H.height - H.oHeight) * H.alpha);
+    const M = this.viewPose(this.handM || (this.handM = new Float64Array(16)));
+    const xb = H.oxBob + (H.xBob - H.oxBob) * H.alpha, yb = H.oyBob + (H.yBob - H.oyBob) * H.alpha;
+    pmX(M, (-p.pitch - xb) * 0.1); pmY(M, (p.yaw - yb) * 0.1);
     gl.clear(gl.DEPTH_BUFFER_BIT);
     if (!held) {
-      // arm from the player skin
+      // renderPlayerArm (the right arm): out with the swing and round, then the model's arm
       const tex = r.entityTexture('player');
       if (!tex) return;
+      const f1 = Math.sqrt(sw);
+      pmT(M, -0.3 * Math.sin(f1 * Math.PI) + 0.64000005, 0.4 * Math.sin(f1 * Math.PI * 2) - 0.6 - equip * 0.6, -0.4 * Math.sin(sw * Math.PI) - 0.71999997);
+      pmY(M, 45 * DEG);
+      pmY(M, Math.sin(f1 * Math.PI) * 70 * DEG); pmZ(M, Math.sin(sw * sw * Math.PI) * -20 * DEG);
+      pmT(M, -1, 3.6, 3.5); pmZ(M, 120 * DEG); pmX(M, 200 * DEG); pmY(M, -135 * DEG); pmT(M, 5.6, 0, 0);
+      // PlayerModel's right arm at (-5, 2, 0) pixels, its idle bob at age 0 turning it 0.1 about z;
+      // the box from the model's space (y down) into pushModelBox's (x and y the other way)
+      pmT(M, -5 / 16, 2 / 16, 0); pmZ(M, 0.1); pmS(M, -1, -1, 1);
       const ev = this.handVB || (this.handVB = new VBuf());
       ev.n = 0;
-      const HP = this.handXP || (this.handXP = new Float64Array(3));
-      HP[0] = swingA; HP[1] = bx; HP[2] = by;
-      this.pushModelBox(ev, handXform, HP, -0.1, -0.6, -0.1, 0.1, 0.0, 0.1, 40, 16, 4, 12, 4, 64, 64, li);
+      this.pushModelBox(ev, pmApply, M, -1 / 16, -10 / 16, -2 / 16, 3 / 16, 2 / 16, 2 / 16, 40, 16, 4, 12, 4, 64, 64, li);
       gl.enable(gl.CULL_FACE);
       const saveVP = r.vp; r.vp = proj;
       r.drawEnt(ev.view(), ev.n / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });
       r.vp = saveVP;
       return;
     }
-    const id = held.id;
-    const cube = !isItem(id) && (SHAPE[id] === SH.CUBE || SHAPE[id] === SH.SLAB || SHAPE[id] === SH.STAIRS || SHAPE[id] === SH.CHEST || SHAPE[id] === SH.CACTUS || SHAPE[id] === SH.FARMLAND || SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL);
-    // held item local -> view (heldXform), offset by the swing, the view bobbing and eating
-    const HP = this.heldXP || (this.heldXP = new Float64Array(3)), q = this.heldTQ || (this.heldTQ = new Float64Array(3));
-    HP[0] = 0.56 + bx - swingA * 0.25; HP[1] = -0.52 + by + swingA * 0.12 - (this.eating ? Math.abs(Math.sin(this.eating.t * 18)) * 0.03 : 0); HP[2] = -1.0 - swingA * 0.2;
-    if (cube) {
-      const s = 0.105;
-      const h = SHAPE[id] === SH.SLAB ? 0 : s;
+    if (this.eating) {
+      // applyEatTransform: to the mouth, bobbing while the last 80% of the 32 ticks run
+      const f = 32 - this.eating.t * 20, f1 = f / 32;
+      if (f1 < 0.8) pmT(M, 0, Math.abs(Math.cos(f / 4 * Math.PI) * 0.1), 0);
+      const f3 = 1 - Math.pow(Math.max(0, f1), 27);
+      pmT(M, f3 * 0.6, f3 * -0.5, 0); pmY(M, f3 * 90 * DEG); pmX(M, f3 * 10 * DEG); pmZ(M, f3 * 30 * DEG);
+      pmT(M, 0.56, -0.52 - equip * 0.6, -0.72);
+    } else {
+      // the swing's offset, applyItemArmTransform, applyItemArmAttackTransform
+      const q = Math.sqrt(sw);
+      pmT(M, -0.4 * Math.sin(q * Math.PI), 0.2 * Math.sin(q * Math.PI * 2), -0.2 * Math.sin(sw * Math.PI));
+      pmT(M, 0.56, -0.52 - equip * 0.6, -0.72);
+      pmY(M, (45 - Math.sin(sw * sw * Math.PI) * 20) * DEG);
+      const g = Math.sin(q * Math.PI);
+      pmZ(M, g * -20 * DEG); pmX(M, g * -80 * DEG); pmY(M, -45 * DEG);
+    }
+    const id = held.id, boxes = isItem(id) ? null : handBlockBoxes(id);
+    // the item's firstperson_righthand display: a block (block.json) turned 45 degrees at 0.4; a
+    // flat item (generated.json) turned -90 and 25 degrees, moved (1.13, 3.2, 1.13) pixels, at
+    // 0.68; then the model about its centre (ItemRenderer)
+    if (boxes) { pmY(M, 45 * DEG); pmS(M, 0.4, 0.4, 0.4); }
+    else { pmT(M, 1.13 / 16, 3.2 / 16, 1.13 / 16); pmY(M, -90 * DEG); pmZ(M, 25 * DEG); pmS(M, 0.68, 0.68, 0.68); }
+    pmT(M, -0.5, -0.5, -0.5);
+    const v = this.heldVB || (this.heldVB = new VBuf()), q3 = this.heldQ || (this.heldQ = new Float64Array(3));
+    v.n = 0;
+    if (boxes) {
       const L = this.heldL || (this.heldL = new Uint16Array(6)), C = this.heldC || (this.heldC = new Float64Array(4));
       for (let k = 0; k < 6; k++) L[k] = FTEX[id * 6 + k];
       if (FLAGS[id] & BF_FACING) L[4] = FRONT[id];
       C[0] = C[1] = C[2] = li; C[3] = 1;
       const tmp = this.heldTmp || (this.heldTmp = new VBuf());
       tmp.n = 0;
-      this.pushBox(tmp, -s, -s, -s, s, h, s, 0, C, 0, L, ITEM_SHADE, null);
-      const T = tmp.a, n = tmp.n, a = v.reserve(n);
+      for (const b of boxes) this.pushBox(tmp, b[0], b[1], b[2], b[3], b[4], b[5], 0, C, 0, L, ITEM_SHADE, null);
+      const T = tmp.a, n = tmp.n, out = v.reserve(n);
       for (let i = 0; i < n; i += 10) {
-        heldXform(HP, T[i], T[i + 1], T[i + 2], q);
-        a[i] = q[0]; a[i + 1] = q[1]; a[i + 2] = q[2];
-        for (let k = 3; k < 10; k++) a[i + k] = T[i + k];
+        // the texture where the box face lies in the block (a model element's default uv)
+        const f = ((i / 60) | 0) % 6, x = T[i], y = T[i + 1], z = T[i + 2];
+        if (boxes !== FULL_BOX) {
+          T[i + 3] = f < 2 ? (f === 0 ? 1 - z : z) : f < 4 ? x : f === 4 ? x : 1 - x;
+          T[i + 4] = f === 2 ? z : f === 3 ? 1 - z : 1 - y;
+        }
+        pmApply(M, x, y, z, q3);
+        out[i] = q3[0]; out[i + 1] = q3[1]; out[i + 2] = q3[2];
+        for (let k = 3; k < 10; k++) out[i + k] = T[i + k];
       }
       v.n = n;
     } else {
-      // flat item sprite (double sided), turned by -0.6 around y
+      // ItemModelGenerator: the sprite as a layer 1 pixel thick (front and back), with a side face
+      // on every edge of its opaque pixels
       const layer = isItem(id) ? this.assets.layers[itemDef(id)[3]] : (SHAPE[id] === SH.TALL || SHAPE[id] === SH.DOOR ? this.assets.layers[TEXNAMES[id][0]] : FTEX[id * 6 + 2]);
-      const s = 0.25, ca = Math.cos(-0.6), sa = Math.sin(-0.6);
-      for (let k = 0; k < 6; k++) {
-        const i = BOX_TRI[k], x = i === 1 || i === 2 ? s : -s, y = i >= 2 ? s : -s;
-        heldXform(HP, x * ca + 0.05, y + 0.08, x * sa, q);
-        v.push(q[0], q[1], q[2], BOX_U[i], BOX_V[i], layer, li, li, li, 1);
+      const G = this.spriteModel(layer), n = G.length / 6, out = v.reserve(n * 10);
+      for (let k = 0, o = 0; k < G.length; k += 6, o += 10) {
+        pmApply(M, G[k], G[k + 1], G[k + 2], q3);
+        const sh = li * G[k + 5];
+        out[o] = q3[0]; out[o + 1] = q3[1]; out[o + 2] = q3[2]; out[o + 3] = G[k + 3]; out[o + 4] = G[k + 4];
+        out[o + 5] = layer; out[o + 6] = sh; out[o + 7] = sh; out[o + 8] = sh; out[o + 9] = 1;
       }
+      v.n = n * 10;
     }
     gl.disable(gl.CULL_FACE);
     r.drawArr(v.view(), v.n / 10, null, 0.5, proj);
     gl.enable(gl.CULL_FACE);
+  }
+  // a flat item's model from the alpha of its texture (cached per layer): [x, y, z, u, v, shade]
+  // per vertex in the 0..1 model cube, the sprite at z 7.5..8.5 pixels
+  spriteModel(layer) {
+    const cache = this.spriteCache || (this.spriteCache = new Map());
+    let G = cache.get(layer);
+    if (G) return G;
+    const A = this.assets, px = A.atlasPixels, W = A.atlasImage.width, cols = A.cols || 32;
+    const ox = (layer % cols) * 16, oy = ((layer / cols) | 0) * 16;
+    const op = (x, y) => x >= 0 && x < 16 && y >= 0 && y < 16 && px[((oy + y) * W + ox + x) * 4 + 3] > 0;
+    const out = [], z0 = 7.5 / 16, z1 = 8.5 / 16;
+    const quad = (P, U, sh) => { for (const k of [0, 1, 2, 0, 2, 3]) out.push(P[k][0], P[k][1], P[k][2], U[k][0], U[k][1], sh); };
+    // front (south, +z) and back (north, mirrored)
+    quad([[0, 0, z1], [1, 0, z1], [1, 1, z1], [0, 1, z1]], [[0, 1], [1, 1], [1, 0], [0, 0]], ITEM_SHADE[4]);
+    quad([[1, 0, z0], [0, 0, z0], [0, 1, z0], [1, 1, z0]], [[1, 1], [0, 1], [0, 0], [1, 0]], ITEM_SHADE[5]);
+    const e = 0.01;
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      if (!op(x, y)) continue;
+      const X0 = x / 16, X1 = (x + 1) / 16, Y0 = (15 - y) / 16, Y1 = (16 - y) / 16;
+      const u0 = (x + e) / 16, u1 = (x + 1 - e) / 16, v0 = (y + e) / 16, v1 = (y + 1 - e) / 16;
+      const U = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+      if (!op(x - 1, y)) quad([[X0, Y0, z0], [X0, Y0, z1], [X0, Y1, z1], [X0, Y1, z0]], U, ITEM_SHADE[1]);
+      if (!op(x + 1, y)) quad([[X1, Y0, z1], [X1, Y0, z0], [X1, Y1, z0], [X1, Y1, z1]], U, ITEM_SHADE[0]);
+      if (!op(x, y - 1)) quad([[X0, Y1, z1], [X1, Y1, z1], [X1, Y1, z0], [X0, Y1, z0]], U, ITEM_SHADE[2]);
+      if (!op(x, y + 1)) quad([[X0, Y0, z0], [X1, Y0, z0], [X1, Y0, z1], [X0, Y0, z1]], U, ITEM_SHADE[3]);
+    }
+    G = new Float32Array(out);
+    cache.set(layer, G);
+    return G;
   }
 
   // MC-style box with standard skin unwrap. M(MP, x, y, z, o) maps local coords to camera relative
@@ -20709,7 +20909,12 @@ class Game {
   }
 
   // ------------------------------------------------------------------ HUD
-  updateHotbar() { if (this.inv[this.sel] !== this.lastHeld) { this.lastHeld = this.inv[this.sel]; this.atkT = 0; } UI.updateHotbar(); }
+  // Player.tick: the attack strength starts over when another kind of item is taken
+  updateHotbar() {
+    const cur = this.inv[this.sel] || null, last = this.lastHeld;
+    if (cur !== last) { if ((cur ? cur.id : 0) !== (last ? last.id : 0)) this.atkT = 0; this.lastHeld = cur; }
+    UI.updateHotbar();
+  }
   // attack indicator under the crosshair (shown while the weapon recharges)
   updateAttackBar() {
     const f = this.attackStrength(attackStats(this.inv[this.sel]).speed);
@@ -20814,7 +21019,7 @@ class Game {
       Sfx.init(); Sfx.resume();
       if (!this.playing || this.loadingWorld) return;
       if (document.pointerLockElement !== cv) { if (!UI.invOpen && !this.surv.dead) { cv.requestPointerLock(); } return; }
-      if (e.button === 0) { if (!this.attack()) { this.mouse.l = true; this.mouse.lT = 0; } }
+      if (e.button === 0) this.leftClick();
       if (e.button === 2) { this.mouse.r = true; this.mouse.rFirst = true; }
       if (e.button === 1) { e.preventDefault(); this.pickBlock(); }
     });
@@ -21372,7 +21577,7 @@ const UI = {
         looks.delete(t.identifier);
         if (L.held) { g.mouse.l = false; continue; }
         if (!L.moved && performance.now() - L.t < 300) {
-          if (this.touchBreak) { g.mouse.l = true; g.mouse.lT = 0; setTimeout(() => { if (g.mode === 'creative') g.mouse.l = false; }, 60); if (g.mode !== 'creative') setTimeout(() => g.mouse.l = false, 60); }
+          if (this.touchBreak) { g.leftClick(); setTimeout(() => g.mouse.l = false, 60); }   // a tap: the left button (hit, start breaking, or swing at the air)
           else { g.mouse.r = true; g.mouse.rFirst = true; setTimeout(() => g.mouse.r = false, 60); }
         }
       }
