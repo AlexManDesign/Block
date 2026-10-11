@@ -253,7 +253,10 @@ static class Harness
         // 2) frozen fluids: with the water/lava solver paused nothing but sparse world ticks may change blocks; a chunk whose
         //    mesh revision moves while neither it nor any 3x3 neighbour changed a block is a real remesh loop.
         VF.waterSimAt = VF.lavaSimAt = double.PositiveInfinity;
-        Until(() => VF.meshPending.Count == 0 && VF.meshJobs.Count == 0, 20, label + ": mesh queue drained with fluids frozen");
+        // Light from fluid moves made before the freeze is relit incrementally under a per-frame budget (processLightDirty,
+        // as in the reference) and re-dirties meshes; drain it too, otherwise those remeshes look like a loop.
+        int light0 = VF.lightDirtyCount();
+        Until(() => VF.meshPending.Count == 0 && VF.meshJobs.Count == 0 && VF.lightDirtyCount() == 0 && !VF.chunks.Values.Any(c => c.dirty), 30, label + ": mesh + light queues drained with fluids frozen (light queue was " + light0 + ")");
         Frames(60);
         var map0 = new Dictionary<string, int>(); rev0.Clear(); up0 = TerrainUploads();
         foreach (var kv in VF.chunks) { rev0[kv.Key] = kv.Value.meshRev; map0[kv.Key] = kv.Value.mapRev; }
@@ -547,8 +550,8 @@ static class Harness
         double px = P.x, py = P.y, pz = P.z;
         // Reference resume rule (finishInitialSpawnIfReady): a saved position that is not a valid standing cell
         // (e.g. feet over air at the block edge) is relocated with resolveInitialSpawnLoaded(floor x, floor z).
-        bool savedValid = VF.startupPositionValidLoaded(px, py, pz, false);
-        double[] relocated = savedValid ? null : VF.resolveInitialSpawnLoaded(Math.Floor(px), Math.Floor(pz));
+        // Persistent edits (solver-only fluid states are transient in the reference and are not saved).
+        var editsBefore = VF.edits.Where(kv => !VF.transientFluidEditId(kv.Value)).ToDictionary(kv => kv.Key, kv => kv.Value);
         VF.saveGameNow();
         Frames(5);
         VF.returnToTitle();
@@ -560,6 +563,12 @@ static class Harness
         if (!VF.started) VF.startGame("creative", creativeId);
         Check(VF.started, "world started again (load path)");
         WaitWorld("reloaded");
+        int lost = 0, changed = 0;
+        foreach (var kv in editsBefore) { int v; if (!VF.edits.TryGetValue(kv.Key, out v)) lost++; else if (v != kv.Value && !VF.isWater(v) && !VF.isWater(kv.Value) && v != B.LAVA && kv.Value != B.LAVA) changed++; }
+        Check(lost == 0 && changed == 0, "persistent edits survive save/load (" + editsBefore.Count + " saved, lost " + lost + ", changed " + changed + ")");
+        // The reference validates the saved position against the RELOADED world (finishInitialSpawnIfReady).
+        bool savedValid = VF.startupPositionValidLoaded(px, py, pz, false);
+        double[] relocated = savedValid ? null : VF.resolveInitialSpawnLoaded(Math.Floor(px), Math.Floor(pz));
         if (savedValid || relocated == null)
             Check(JS.hypot(P.x - px, P.z - pz) < 2 && Math.Abs(P.y - py) < 3, "position restored (" + JS.Fixed(P.x, 1) + "," + JS.Fixed(P.y, 1) + "," + JS.Fixed(P.z, 1) + " vs " + JS.Fixed(px, 1) + "," + JS.Fixed(py, 1) + "," + JS.Fixed(pz, 1) + ")");
         else
