@@ -27,7 +27,7 @@ REFS=""; for f in "$CACHE"/ue/lib/net45/*.dll; do REFS="$REFS -r:$f"; done
 find "$PROJ/Assets/VoxelForge/Scripts" -name '*.cs' > "$CACHE/files.rsp"
 mono "$CACHE/roslyn/tasks/net472/csc.exe" -nologo -noconfig -langversion:9.0 -target:library -nostdlib \
   -r:"$M/mscorlib.dll" -r:"$M/System.dll" -r:"$M/System.Core.dll" -r:"$M/Facades/netstandard.dll" $REFS \
-  -nowarn:0162,0168,0219,0414,0649,0169,0067,0618 -out:"$CACHE/Assembly-CSharp.dll" @"$CACHE/files.rsp"
+  -nowarn:1701,1702 -out:"$CACHE/Assembly-CSharp.dll" @"$CACHE/files.rsp"
 echo "runtime scripts (Roslyn C# 9 + UnityEngine 2021.3 modules): OK"
 mono "$CACHE/roslyn/tasks/net472/csc.exe" -nologo -noconfig -langversion:9.0 -target:library -nostdlib \
   -r:"$M/mscorlib.dll" -r:"$M/System.dll" -r:"$M/System.Core.dll" -r:"$M/Facades/netstandard.dll" $REFS \

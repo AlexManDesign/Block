@@ -128,7 +128,7 @@ namespace VoxelForge
         }
         public static bool simulationChunkActive(int cx, int cz) { return Math.Abs(cx - simulationCenterCX) <= simulationRadiusNow && Math.Abs(cz - simulationCenterCZ) <= simulationRadiusNow; }
         public static bool simulationBlockActive(double x, double z) { return Math.Abs(x - player.x) <= simulationBlockRadiusNow && Math.Abs(z - player.z) <= simulationBlockRadiusNow; }
-        static int streamLeadChunks = 1, streamCleanupTick = 0;
+        static int streamCleanupTick = 0; // (reference streamLeadChunks is assigned but never read)
         public static double avgGenIntegrateMs = 5, avgMeshIntegrateMs = 0.8, avgMeshQueueMs = 0.45, avgForegroundCpuMs = 6, lastBackgroundCpuMs = 0, lastFrameCpuMs = 0;
         public static bool renderChunkTargeted(int cx, int cz, int pcx, int pcz, int extra = 0) { return Math.Max(Math.Abs(cx - pcx), Math.Abs(cz - pcz)) <= renderDistance + extra; }
         static bool genChunkTargeted(int cx, int cz, int pcx, int pcz, int extra = 0) { return Math.Max(Math.Abs(cx - pcx), Math.Abs(cz - pcz)) <= renderDistance + 1 + extra; }
@@ -227,7 +227,6 @@ namespace VoxelForge
             prioritizeWorkerQueues(pcx, pcz);
             if (force || pcx != lastStreamCx || pcz != lastStreamCz || queue.Count == 0) { lastStreamCx = pcx; lastStreamCz = pcz; rebuildGenQueue(pcx, pcz); }
             else { var s = queue.OrderBy(a => streamPriority(a[0], a[1], pcx, pcz)).ToList(); queue.Clear(); queue.AddRange(s); }
-            streamLeadChunks = 1;
         }
         static IEnumerator<Chunk> streamCleanupIter = null;
         static void cleanupStreamCache(int pcx, int pcz, double deadline = double.PositiveInfinity, int maxItems = 48)
@@ -259,7 +258,7 @@ namespace VoxelForge
             double t0 = JS.now();
             int pcx = JS.floor(player.x / CHUNK), pcz = JS.floor(player.z / CHUNK);
             if (workerEngineFailed) refreshQueue();
-            else { lastStreamCx = pcx; lastStreamCz = pcz; streamLeadChunks = 1; prioritizeWorkerQueues(pcx, pcz); }
+            else { lastStreamCx = pcx; lastStreamCz = pcz; prioritizeWorkerQueues(pcx, pcz); }
             double deadline = JS.isFinite(frameDeadline) ? frameDeadline : t0 + 5;
             bool startup = !worldReady || initialSpawnPending || resumeLoadPending;
             int integrated = 0, maxGen = startup ? 2 : interactionHot ? 1 : 2;

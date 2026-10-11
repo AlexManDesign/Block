@@ -17,7 +17,7 @@ namespace VoxelForge
         static float uiScale = 1;
         public static bool uiTextFocused = false;
         static string worldNameInput = "";
-        static Vector2 worldScroll, uiScroll, recipeScroll, creativeScroll, modsScroll;
+        static Vector2 worldScroll, recipeScroll, creativeScroll, modsScroll;
         // confirm / alert dialog
         static string dialogText = null; static Action dialogYes = null; static bool dialogIsAlert = false;
         // recipe book

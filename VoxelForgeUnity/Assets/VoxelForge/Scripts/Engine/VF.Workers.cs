@@ -33,7 +33,6 @@ namespace VoxelForge
     public static partial class VF
     {
         static bool workerEngineStarted = false, workerEngineFailed = false;
-        static volatile bool workerShutdown = false;
         static int genJobSeq = 1, meshJobSeq = 1;
         static readonly List<GenSlot> genSlots = new List<GenSlot>();
         static readonly List<MeshSlot> meshSlots = new List<MeshSlot>();
@@ -156,7 +155,7 @@ namespace VoxelForge
         public static void initWorkerEngine()
         {
             if (workerEngineStarted) return;
-            workerEngineStarted = true; workerShutdown = false;
+            workerEngineStarted = true;
             buildMesherConfig();
             mainMeshCore = new MeshCore(workerBlockCfg, workerVirtualCfg);
             GenData.Ensure();
@@ -182,7 +181,6 @@ namespace VoxelForge
         }
         public static void shutdownWorkerEngine()
         {
-            workerShutdown = true;
             foreach (var s in genSlots) { s.stop = true; s.ev.Set(); }
             foreach (var s in meshSlots) { s.stop = true; s.ev.Set(); }
             genSlots.Clear(); meshSlots.Clear();
