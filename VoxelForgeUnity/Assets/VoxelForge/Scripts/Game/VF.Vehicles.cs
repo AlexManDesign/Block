@@ -96,7 +96,7 @@ namespace VoxelForge
             if (fx == 0 && fz == 0)
             {
                 double sp = JS.hypot(v.vx, v.vz);
-                if (sp > 0.05) { fx = v.vx / sp; fz = v.vz / sp; } else { fx = Math.Sin(v.yaw); fz = -Math.Cos(v.yaw); }
+                if (sp > 0.05) { fx = v.vx / sp; fz = v.vz / sp; } else { fx = JsMath.sin(v.yaw); fz = -JsMath.cos(v.yaw); }
             }
             var best = con[0]; double score = -9;
             foreach (var q in con)
@@ -112,7 +112,7 @@ namespace VoxelForge
         {
             if (v.kind == "boat")
             {
-                double sy = Math.Sin(v.yaw), cy = Math.Cos(v.yaw), fx = sy, fz = -cy, rx = cy, rz = sy;
+                double sy = JsMath.sin(v.yaw), cy = JsMath.cos(v.yaw), fx = sy, fz = -cy, rx = cy, rz = sy;
                 foreach (var fw in BOAT_BLOCK_FW)
                     foreach (var side in BOAT_BLOCK_SIDE)
                     {
@@ -144,9 +144,9 @@ namespace VoxelForge
             if (mounted)
             {
                 int f = (keyDown("KeyW") || keyDown("ArrowUp") ? 1 : 0) - (keyDown("KeyS") || keyDown("ArrowDown") ? 1 : 0);
-                if (f != 0) v.speed += f * CART_ACCEL * dt; else v.speed *= Math.Pow(0.35, dt);
+                if (f != 0) v.speed += f * CART_ACCEL * dt; else v.speed *= JsMath.pow(0.35, dt);
             }
-            else v.speed *= Math.Pow(0.7, dt);
+            else v.speed *= JsMath.pow(0.7, dt);
             if (v.railDY != 0) v.speed += -v.railDY * CART_SLOPE_G * dt;
             v.speed = Math.Max(-CART_MAX, Math.Min(CART_MAX, v.speed));
             if (Math.Abs(v.speed) < 0.01) v.speed = 0;
@@ -163,7 +163,7 @@ namespace VoxelForge
             v.y = ry + CART_RAIL_Y + dy * Math.Min(0.5, along);
             v.vy = 0;
             v.pitch = dy != 0 ? -Math.Sign((v.speed != 0 ? v.speed : 1) * dy) * Math.PI / 4 : 0;
-            if (JS.hypot(v.vx, v.vz) > 0.05) v.yaw = Math.Atan2(v.vx, -v.vz);
+            if (JS.hypot(v.vx, v.vz) > 0.05) v.yaw = JsMath.atan2(v.vx, -v.vz);
         }
         static int waterSurfaceY(double x, double z, double y)
         {
@@ -197,7 +197,7 @@ namespace VoxelForge
                 turn = (keyDown("KeyD") || keyDown("ArrowRight") ? 1 : 0) - (keyDown("KeyA") || keyDown("ArrowLeft") ? 1 : 0);
                 drive = (keyDown("KeyW") || keyDown("ArrowUp") ? 1 : 0) - (keyDown("KeyS") || keyDown("ArrowDown") ? 1 : 0);
                 if (turn != 0) v.vyaw += turn * c.turnAcc * dt;
-                double sx = Math.Sin(v.yaw), sz = -Math.Cos(v.yaw), along = v.vx * sx + v.vz * sz, acc = c.acc * (drive >= 0 ? drive : -drive * 0.125);
+                double sx = JsMath.sin(v.yaw), sz = -JsMath.cos(v.yaw), along = v.vx * sx + v.vz * sz, acc = c.acc * (drive >= 0 ? drive : -drive * 0.125);
                 if (drive > 0 && along < c.max) { v.vx += sx * acc * dt; v.vz += sz * acc * dt; }
                 else if (drive < 0 && along > -c.max * 0.125) { v.vx -= sx * acc * dt; v.vz -= sz * acc * dt; }
             }
@@ -460,12 +460,12 @@ namespace VoxelForge
                 if (q.biteWin > 0)
                 {
                     q.biteWin -= dt;
-                    q.y = q.surfY - 0.22 + Math.Sin(q.bobT * 16) * 0.03;
+                    q.y = q.surfY - 0.22 + JsMath.sin(q.bobT * 16) * 0.03;
                     if (q.biteWin <= 0) q.biteT = 4 + JS.random() * 10;
                 }
                 else
                 {
-                    q.y = q.surfY + Math.Sin(q.bobT * 2.3) * 0.04;
+                    q.y = q.surfY + JsMath.sin(q.bobT * 2.3) * 0.04;
                     q.biteT -= dt;
                     if (q.biteT <= 0) { q.biteWin = 1.4; toast("Клюёт!"); }
                 }
@@ -515,7 +515,7 @@ namespace VoxelForge
                 p.age += dt; p.spin += dt * 6;
                 if (p.age > 20 || p.y < WORLD_MIN_Y) { pearlProjectiles.RemoveAt(i); continue; }
                 p.vy -= 12 * dt;
-                double drag = Math.Pow(isWater(getBlock(p.x, p.y, p.z)) ? 0.0115 : 0.818, dt);
+                double drag = JsMath.pow(isWater(getBlock(p.x, p.y, p.z)) ? 0.0115 : 0.818, dt);
                 p.vx *= drag; p.vy *= drag; p.vz *= drag;
                 double speed = JS.hypot(p.vx, p.vy, p.vz); int steps = Math.Max(1, (int)Math.Ceiling(speed * dt / 0.3)); double sd = dt / steps;
                 double[] hit = null; var dir = new double[] { 0, -1, 0 };

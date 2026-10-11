@@ -258,8 +258,8 @@ namespace VoxelForge
         }
 
         // ---------------- light / sight ----------------
-        static bool mobDaylight() { return Math.Sin(day * Math.PI * 2) > 0.05; }
-        static bool mobNight() { return Math.Sin(day * Math.PI * 2) < -0.17; }
+        static bool mobDaylight() { return JsMath.sin(day * Math.PI * 2) > 0.05; }
+        static bool mobNight() { return JsMath.sin(day * Math.PI * 2) < -0.17; }
         static double mobCombinedLightLevel(Mob m)
         {
             var l = getWorldLight(m.x, m.y + 0.5, m.z);
@@ -317,7 +317,7 @@ namespace VoxelForge
         {
             if (armor[0] != null) { var ai = idef(armor[0].key).armor; if (ai != null && ai.vision == "pumpkin") return false; }
             if (dist > 64 || dist < 0.5) return false;
-            double ex = player.x, ey = player.y + 1.62, ez = player.z, cp = Math.Cos(player.pitch), vx = Math.Sin(player.yaw) * cp, vy = -Math.Sin(player.pitch), vz = -Math.Cos(player.yaw) * cp;
+            double ex = player.x, ey = player.y + 1.62, ez = player.z, cp = JsMath.cos(player.pitch), vx = JsMath.sin(player.yaw) * cp, vy = -JsMath.sin(player.pitch), vz = -JsMath.cos(player.yaw) * cp;
             double tx = m.x, ty = m.y + mobHeight(m) * 0.9, tz = m.z, dx = tx - ex, dy = ty - ey, dz = tz - ez, d = JS.hypot(dx, dy, dz);
             if (d == 0) d = 1;
             double dot = (dx * vx + dy * vy + dz * vz) / d, r = mobWidth(m) * 1.2 / d, threshold = Math.Min(0.999, 1 - r * r * 0.5);
@@ -397,8 +397,8 @@ namespace VoxelForge
                 for (int i = 0; i < count; i++)
                 {
                     double a = i * Math.PI * 2 / count + JS.random() * 0.5;
-                    var child = makeMob(inf.splits, m.x + Math.Cos(a) * mobWidth(m) * 0.8, m.y + 0.1, m.z + Math.Sin(a) * mobWidth(m) * 0.8, new MobOpts { dynamicHostile = true });
-                    if (child != null) { child.vx = Math.Cos(a) * 2.5; child.vz = Math.Sin(a) * 2.5; child.vy = 3; child.angryT = m.angryT; queueMobAdd(child); }
+                    var child = makeMob(inf.splits, m.x + JsMath.cos(a) * mobWidth(m) * 0.8, m.y + 0.1, m.z + JsMath.sin(a) * mobWidth(m) * 0.8, new MobOpts { dynamicHostile = true });
+                    if (child != null) { child.vx = JsMath.cos(a) * 2.5; child.vz = JsMath.sin(a) * 2.5; child.vy = 3; child.angryT = m.angryT; queueMobAdd(child); }
                 }
             }
             string loot = "";
@@ -492,7 +492,7 @@ namespace VoxelForge
                 double dx = 0, dy = 0, dz = 0; bool ok = false;
                 for (int k = 0; k < 8; k++)
                 {
-                    double a = k * Math.PI / 4, nx = m.x + Math.Cos(a) * r, nz = m.z + Math.Sin(a) * r;
+                    double a = k * Math.PI / 4, nx = m.x + JsMath.cos(a) * r, nz = m.z + JsMath.sin(a) * r;
                     if (mobSpaceClear(nx, m.y, nz, m)) { dx = nx - m.x; dz = nz - m.z; ok = true; break; }
                 }
                 if (!ok && mobSpaceClear(m.x, m.y + r, m.z, m)) { dy = r; ok = true; }
@@ -816,7 +816,7 @@ namespace VoxelForge
             double accel = m.kbT > 0 ? 1.5 : m.onGround || wet ? 10 : 2.5;
             m.vx += (m.wishX - m.vx) * Math.Min(1, dt * accel);
             m.vz += (m.wishZ - m.vz) * Math.Min(1, dt * accel);
-            if (JS.hypot(m.wishX, m.wishZ) > 0.2) m.targetAngle = Math.Atan2(m.wishX, -m.wishZ);
+            if (JS.hypot(m.wishX, m.wishZ) > 0.2) m.targetAngle = JsMath.atan2(m.wishX, -m.wishZ);
             turnToward(m, dt * 8);
             double dy = m.vy * dt; int vs = Math.Max(1, (int)Math.Ceiling(Math.Abs(dy) / 0.4)); double vstep = dy / vs;
             bool landed = false;
@@ -879,7 +879,7 @@ namespace VoxelForge
                 double near = pass == 0 ? 6 : 2, far = pass == 0 ? 16 : 6;
                 for (int k = 0; k < 12; k++)
                 {
-                    double a = JS.random() * Math.PI * 2, d = near + JS.random() * (far - near), x = m.x + Math.Cos(a) * d, z = m.z + Math.Sin(a) * d, y = m.y + (JS.random() - 0.5) * 4;
+                    double a = JS.random() * Math.PI * 2, d = near + JS.random() * (far - near), x = m.x + JsMath.cos(a) * d, z = m.z + JsMath.sin(a) * d, y = m.y + (JS.random() - 0.5) * 4;
                     if (!mobWaterLike(mobLoadedBlock(x, y, z))) continue;
                     double gain = JS.hypot(x - px, z - pz) - bse;
                     if (gain <= 0) continue;
@@ -897,7 +897,7 @@ namespace VoxelForge
             double[] fallback = null; double sc = 0;
             for (int i = 0; i < 16; i++)
             {
-                double a = i * Math.PI / 8, dx = Math.Cos(a), dz = Math.Sin(a);
+                double a = i * Math.PI / 8, dx = JsMath.cos(a), dz = JsMath.sin(a);
                 int reach = 0;
                 for (int d = 1; d <= 8 && mobWaterLike(mobLoadedBlock(m.x + dx * d, m.y + 0.2, m.z + dz * d)); d++) reach = d;
                 if (reach != 0 && dx * ax + dz * az >= -0.15)
@@ -934,8 +934,8 @@ namespace VoxelForge
             double speed = JS.hypot(m.vx, m.vy, m.vz);
             if (speed > 0.15)
             {
-                m.targetAngle = Math.Atan2(m.vx, -m.vz);
-                double pitch = -Math.Atan2(m.vy, JS.hypot(m.vx, m.vz));
+                m.targetAngle = JsMath.atan2(m.vx, -m.vz);
+                double pitch = -JsMath.atan2(m.vy, JS.hypot(m.vx, m.vz));
                 m.pitch += (pitch - m.pitch) * Math.Min(1, dt * 4);
             }
             turnToward(m, dt * 4);
@@ -991,8 +991,8 @@ namespace VoxelForge
                 {
                     m.hopT = 0.5 + JS.random() * 0.5;
                     double a = JS.random() * Math.PI * 2;
-                    m.vy = 2.6; m.vx = Math.Cos(a) * 0.7; m.vz = Math.Sin(a) * 0.7;
-                    m.angle = Math.Atan2(m.vx, -m.vz); m.targetAngle = m.angle;
+                    m.vy = 2.6; m.vx = JsMath.cos(a) * 0.7; m.vz = JsMath.sin(a) * 0.7;
+                    m.angle = JsMath.atan2(m.vx, -m.vz); m.targetAngle = m.angle;
                 }
                 m.wishX = m.wishY = m.wishZ = 0;
                 mobSwimPhysics(m, dt);
@@ -1063,13 +1063,13 @@ namespace VoxelForge
                 m.swimT = 2.5 + JS.random() * 2.5;
                 if (JS.random() < 0.35)
                 {
-                    double cur = JS.hypot(m.wishX, m.wishZ), a = cur > 0.01 ? Math.Atan2(m.wishX, m.wishZ) : JS.random() * Math.PI * 2;
-                    m.wishX = Math.Sin(a) * inf.speed * 0.2; m.wishZ = Math.Cos(a) * inf.speed * 0.2; m.wishY = 0;
+                    double cur = JS.hypot(m.wishX, m.wishZ), a = cur > 0.01 ? JsMath.atan2(m.wishX, m.wishZ) : JS.random() * Math.PI * 2;
+                    m.wishX = JsMath.sin(a) * inf.speed * 0.2; m.wishZ = JsMath.cos(a) * inf.speed * 0.2; m.wishY = 0;
                 }
                 else
                 {
                     double a = JS.random() * Math.PI * 2;
-                    m.wishX = Math.Cos(a) * inf.speed; m.wishZ = Math.Sin(a) * inf.speed; m.wishY = (JS.random() - 0.5) * inf.speed * 0.2;
+                    m.wishX = JsMath.cos(a) * inf.speed; m.wishZ = JsMath.sin(a) * inf.speed; m.wishY = (JS.random() - 0.5) * inf.speed * 0.2;
                     double sx = 0, sz = 0, rx = 0, rz = 0; int n = 0;
                     foreach (var o in liveMobs)
                     {
@@ -1095,8 +1095,8 @@ namespace VoxelForge
         }
         static double[] sourceSkeletonHand(Mob m)
         {
-            double walk = m.moving ? Math.Sin(m.walkPhase * 3) * 0.6 : 0, arm = -1.25 + walk * 0.08, s = 1 / 16.0, w = 5, l = 13, p = 24, c = Math.Cos(arm), sn = Math.Sin(arm), q = l - p,
-                hy = q * c + p, hz = q * sn, D = -Math.Cos(m.angle), T = Math.Sin(m.angle);
+            double walk = m.moving ? JsMath.sin(m.walkPhase * 3) * 0.6 : 0, arm = -1.25 + walk * 0.08, s = 1 / 16.0, w = 5, l = 13, p = 24, c = JsMath.cos(arm), sn = JsMath.sin(arm), q = l - p,
+                hy = q * c + p, hz = q * sn, D = -JsMath.cos(m.angle), T = JsMath.sin(m.angle);
             return new[] { m.x + (w * D + hz * T) * s + T * 0.1, m.y + hy * s, m.z + (-w * T + hz * D) * s + D * 0.1 };
         }
         static void sourceShootArrow(Mob m)
@@ -1202,7 +1202,7 @@ namespace VoxelForge
                             {
                                 m.hopT = 0.6 + JS.random() * 0.6;
                                 double dx = tx - m.x, dz = tz - m.z, d = JS.hypot(dx, dz); if (d == 0) d = 1;
-                                m.targetAngle = Math.Atan2(dx, -dz);
+                                m.targetAngle = JsMath.atan2(dx, -dz);
                                 m.wishX = dx / d * inf.speed; m.wishZ = dz / d * inf.speed;
                                 m.vx = m.wishX; m.vz = m.wishZ; m.vy = 7.4; m.kbT = 0.4; m.sqY = 1.25;
                             }
@@ -1214,12 +1214,12 @@ namespace VoxelForge
                     else if (inf.teleports)
                     {
                         if (tdist > 3) mobFollowPath(m, tx, tz, inf.speed * 1.25, dt, ty);
-                        else { mobStop(m); m.targetAngle = Math.Atan2(tx - m.x, -(tz - m.z)); }
+                        else { mobStop(m); m.targetAngle = JsMath.atan2(tx - m.x, -(tz - m.z)); }
                         if (visible && m.tpT <= 0 && dist > 6 && dist < 32)
                         {
                             m.tpT = 2 + JS.random() * 2;
                             double a = JS.random() * Math.PI * 2;
-                            teleportMobSource(m, player.x + Math.Cos(a) * 3, player.z + Math.Sin(a) * 3, 2);
+                            teleportMobSource(m, player.x + JsMath.cos(a) * 3, player.z + JsMath.sin(a) * 3, 2);
                         }
                         m.atkT += dt;
                         if (visible && dist < 2.2 && Math.Abs(player.y - m.y) < 3 && m.atkT > 1) { m.atkT = 0; damagePlayer(inf.melee != 0 ? inf.melee : 7, "эндермен"); }
@@ -1228,7 +1228,7 @@ namespace VoxelForge
                     {
                         if (tdist > 9) mobFollowPath(m, tx, tz, inf.speed, dt, ty);
                         else if (visible && dist < 5) mobFollowPath(m, m.x + (m.x - player.x) * 2, m.z + (m.z - player.z) * 2, inf.speed, dt, m.y);
-                        else { mobStop(m); m.targetAngle = Math.Atan2(tx - m.x, -(tz - m.z)); }
+                        else { mobStop(m); m.targetAngle = JsMath.atan2(tx - m.x, -(tz - m.z)); }
                         m.shootT += dt;
                         if (visible && m.shootT > 2 && dist < 12) { m.shootT = 0; sourceShootArrow(m); }
                     }
@@ -1264,7 +1264,7 @@ namespace VoxelForge
                                 double dx = m.tgtX - m.x, dz = m.tgtZ - m.z, d = JS.hypot(dx, dz);
                                 if (d > 0.5)
                                 {
-                                    m.targetAngle = Math.Atan2(dx, -dz);
+                                    m.targetAngle = JsMath.atan2(dx, -dz);
                                     m.wishX = dx / d * inf.speed * 0.8; m.wishZ = dz / d * inf.speed * 0.8;
                                     m.vx = m.wishX; m.vz = m.wishZ; m.vy = 7.4; m.kbT = 0.4; m.sqY = 1.25;
                                 }
@@ -1589,7 +1589,7 @@ namespace VoxelForge
                     for (int i = 0; i < 6; i++)
                     {
                         double a = JS.random() * Math.PI * 2, d = 18 + JS.random() * 30;
-                        if (spawnSharkAt(JS.floor(player.x + Math.Cos(a) * d), JS.floor(player.z + Math.Sin(a) * d))) break;
+                        if (spawnSharkAt(JS.floor(player.x + JsMath.cos(a) * d), JS.floor(player.z + JsMath.sin(a) * d))) break;
                     }
             }
             if (fishSpawnT <= 0)
@@ -1599,7 +1599,7 @@ namespace VoxelForge
                 for (int i = 0; i < 10 && aquatic < 40; i++)
                 {
                     double a = JS.random() * Math.PI * 2, d = 10 + JS.random() * 30;
-                    aquatic += spawnFishGroup(JS.floor(player.x + Math.Cos(a) * d), JS.floor(player.z + Math.Sin(a) * d), 40 - aquatic);
+                    aquatic += spawnFishGroup(JS.floor(player.x + JsMath.cos(a) * d), JS.floor(player.z + JsMath.sin(a) * d), 40 - aquatic);
                 }
             }
             if (hostileSpawnT <= 0)
@@ -1608,14 +1608,14 @@ namespace VoxelForge
                 if (hostile < cap)
                 {
                     double a = JS.random() * Math.PI * 2, d = 24 + JS.random() * Math.Max(1, mobSpawnFar() - 24);
-                    hostile += spawnHostileGroup("slime_big", JS.floor(player.x + Math.Cos(a) * d), JS.floor(player.z + Math.Sin(a) * d), Math.Min(2, cap - hostile), true);
+                    hostile += spawnHostileGroup("slime_big", JS.floor(player.x + JsMath.cos(a) * d), JS.floor(player.z + JsMath.sin(a) * d), Math.Min(2, cap - hostile), true);
                 }
                 hostileSpawnT = 2;
                 if (hostile < cap)
                     for (int g = 0; g < 4 && hostile < cap; g++)
                     {
                         double a = JS.random() * Math.PI * 2, d = 24 + JS.random() * Math.Max(1, mobSpawnFar() - 24);
-                        int x = JS.floor(player.x + Math.Cos(a) * d), z = JS.floor(player.z + Math.Sin(a) * d);
+                        int x = JS.floor(player.x + JsMath.cos(a) * d), z = JS.floor(player.z + JsMath.sin(a) * d);
                         var type = HOSTILE_TYPES[(int)Math.Floor(JS.random() * HOSTILE_TYPES.Length)];
                         hostile += spawnHostileGroup(type, x, z, cap - hostile, true);
                     }
@@ -1630,7 +1630,7 @@ namespace VoxelForge
                     {
                         double a = JS.random() * Math.PI * 2, d = 24 + JS.random() * Math.Max(1, mobSpawnFar() - 24);
                         var type = PASSIVE_TYPES[(int)Math.Floor(JS.random() * PASSIVE_TYPES.Length)];
-                        spawnHostileGroup(type, JS.floor(player.x + Math.Cos(a) * d), JS.floor(player.z + Math.Sin(a) * d), cap - passive, false);
+                        spawnHostileGroup(type, JS.floor(player.x + JsMath.cos(a) * d), JS.floor(player.z + JsMath.sin(a) * d), cap - passive, false);
                     }
                 }
             }
@@ -1662,7 +1662,7 @@ namespace VoxelForge
             for (int a = 0; a < target * 4 && made < target; a++)
             {
                 double ang = JS.random() * Math.PI * 2, d = 2 + JS.random() * 7;
-                int px = (int)JS.round(x + Math.Cos(ang) * d), pz = (int)JS.round(z + Math.Sin(ang) * d);
+                int px = (int)JS.round(x + JsMath.cos(ang) * d), pz = (int)JS.round(z + JsMath.sin(ang) * d);
                 if (spawnSalmonAt(px, pz)) made++;
             }
             return made;

@@ -83,7 +83,7 @@ namespace VoxelForge
             chunkFastSet(c);
             lpStitchSw.Start(); stitchChunkLight(c); lpStitchSw.Stop();
             // installMetadataSimulationSeeds: light part, same iteration as the port
-            Dictionary<int, JObj> mm;
+            OrderedMap<int, JObj> mm;
             if (metaByChunk.TryGetValue(c.key, out mm) && mm.Count > 0)
                 foreach (var kv in mm.ToList())
                 {
@@ -104,11 +104,11 @@ namespace VoxelForge
             if (!yInWorld(y) || y == WORLD_MIN_Y) return;
             int oldId = getBlock(x, y, z); var k = key3(x, y, z); var oldMeta = getBlockMeta(x, y, z); int oldLightSig = lightSignatureState(oldId, oldMeta);
             int cx = x >> 4, cz = z >> 4; var mk = ckey(cx, cz);
-            Dictionary<int, JObj> mm; metaByChunk.TryGetValue(mk, out mm);
+            OrderedMap<int, JObj> mm; metaByChunk.TryGetValue(mk, out mm);
             if (meta != null)
             {
                 var mv = meta.Clone(); blockMeta.Set(k, mv);
-                if (mm == null) metaByChunk[mk] = mm = new Dictionary<int, JObj>();
+                if (mm == null) metaByChunk[mk] = mm = new OrderedMap<int, JObj>();
                 mm[metaLocalKey(x, y, z)] = mv;
             }
             else { blockMeta.Delete(k); if (mm != null) { mm.Remove(metaLocalKey(x, y, z)); if (mm.Count == 0) metaByChunk.Remove(mk); } }

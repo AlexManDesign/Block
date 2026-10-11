@@ -332,7 +332,7 @@ namespace VoxelForge
             {
                 var cc = chunkFastGet(cx, cz);
                 var ck = cc != null ? cc.key : ckey(cx, cz);
-                Dictionary<int, JObj> gm, mm; generatedMetaByChunk.TryGetValue(ck, out gm); metaByChunk.TryGetValue(ck, out mm);
+                OrderedMap<int, JObj> gm, mm; generatedMetaByChunk.TryGetValue(ck, out gm); metaByChunk.TryGetValue(ck, out mm);
                 var em = editsByChunk.Get(ck);
                 if (gm != null)
                     foreach (var kv in gm)

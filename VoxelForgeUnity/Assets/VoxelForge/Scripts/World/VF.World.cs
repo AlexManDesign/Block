@@ -191,8 +191,8 @@ namespace VoxelForge
         public static readonly Dictionary<string, int> edits = new Dictionary<string, int>();
         public static readonly OrderedMap<string, OrderedMap<int, int[]>> editsByChunk = new OrderedMap<string, OrderedMap<int, int[]>>();
         public static readonly OrderedMap<string, JObj> blockMeta = new OrderedMap<string, JObj>();
-        public static readonly Dictionary<string, Dictionary<int, JObj>> metaByChunk = new Dictionary<string, Dictionary<int, JObj>>();
-        public static readonly Dictionary<string, Dictionary<int, JObj>> generatedMetaByChunk = new Dictionary<string, Dictionary<int, JObj>>();
+        public static readonly Dictionary<string, OrderedMap<int, JObj>> metaByChunk = new Dictionary<string, OrderedMap<int, JObj>>(); // inner maps keep JS Map insertion order
+        public static readonly Dictionary<string, OrderedMap<int, JObj>> generatedMetaByChunk = new Dictionary<string, OrderedMap<int, JObj>>();
         public static string key3(int x, int y, int z) { return x + "," + y + "," + z; }
         public static string ckey(int cx, int cz) { return cx + "," + cz; }
         public static int metaLocalKey(int x, int y, int z) { return ((y - WORLD_MIN_Y) << 8) | ((z & 15) << 4) | (x & 15); }
@@ -244,8 +244,8 @@ namespace VoxelForge
                     {
                         int x = (int)Json.ToNum(p[0]), y = (int)Json.ToNum(p[1]), z = (int)Json.ToNum(p[2]);
                         var mk = ckey(JS.floor(x / (double)CHUNK), JS.floor(z / (double)CHUNK));
-                        Dictionary<int, JObj> mm;
-                        if (!metaByChunk.TryGetValue(mk, out mm)) metaByChunk[mk] = mm = new Dictionary<int, JObj>();
+                        OrderedMap<int, JObj> mm;
+                        if (!metaByChunk.TryGetValue(mk, out mm)) metaByChunk[mk] = mm = new OrderedMap<int, JObj>();
                         mm[metaLocalKey(x, y, z)] = v;
                     }
                 }
@@ -485,7 +485,7 @@ namespace VoxelForge
             var c = chunkFastGet(cx, cz);
             var ck = c != null ? c.key : ckey(cx, cz);
             int lk = metaLocalKey(x, y, z);
-            Dictionary<int, JObj> mm, gm; OrderedMap<int, int[]> em; JObj v;
+            OrderedMap<int, JObj> mm, gm; OrderedMap<int, int[]> em; JObj v;
             metaByChunk.TryGetValue(ck, out mm);
             em = editsByChunk.Get(ck);
             if (em != null && em.Has(lk)) return mm != null && mm.TryGetValue(lk, out v) ? v : null;
@@ -497,7 +497,7 @@ namespace VoxelForge
         {
             var ck = ckey(cx, cz);
             if (entries == null || entries.Count == 0) { generatedMetaByChunk.Remove(ck); return; }
-            var gm = new Dictionary<int, JObj>();
+            var gm = new OrderedMap<int, JObj>();
             foreach (var q in entries)
             {
                 if (q.lx < 0 || q.lx >= CHUNK || q.lz < 0 || q.lz >= CHUNK || q.iy < 0 || q.iy >= WORLD_H || q.m == null) continue;
@@ -818,7 +818,7 @@ namespace VoxelForge
         }
         public static void installMetadataSimulationSeeds(Chunk c)
         {
-            Dictionary<int, JObj> mm;
+            OrderedMap<int, JObj> mm;
             if (!metaByChunk.TryGetValue(c.key, out mm) || mm.Count == 0) return;
             foreach (var kv in mm.ToList())
             {
@@ -951,12 +951,12 @@ namespace VoxelForge
             int oldLightSig = lightSignatureState(oldId, oldMeta); bool oldTreeLog = isTreeLogState(oldId, oldMeta);
             int cx = x >> 4, cz = z >> 4;
             var mk = ckey(cx, cz);
-            Dictionary<int, JObj> mm; metaByChunk.TryGetValue(mk, out mm);
+            OrderedMap<int, JObj> mm; metaByChunk.TryGetValue(mk, out mm);
             if (meta != null)
             {
                 var mv = meta.Clone();
                 blockMeta.Set(k, mv);
-                if (mm == null) metaByChunk[mk] = mm = new Dictionary<int, JObj>();
+                if (mm == null) metaByChunk[mk] = mm = new OrderedMap<int, JObj>();
                 mm[metaLocalKey(x, y, z)] = mv;
             }
             else
