@@ -1902,6 +1902,7 @@ class Game {
     this.perfT('rParticles', performance.now() - t);
     t = performance.now(); r.gpuBegin('entities');
     if (this.ents) this.ents.render(env, cam);
+    if (this.boats) this.boats.renderMask(cam, env);
     this.perfT('rEntities', performance.now() - t);
     t = performance.now();
     r.renderTranslucent(cam, env, time, tick);

@@ -281,8 +281,13 @@ class Boats {
       v.n = o + n;
     }
     r.drawArr(v.view(), v.n / 10, env, 0.5);
-    // Minecraft's water mask: a depth-only patch over the inside of the hull, so the water surface
-    // drawn later does not show inside the boat
+  }
+  // Minecraft's water mask: a depth-only patch over the inside of the hull, so the water surface
+  // drawn later does not show inside the boat. It goes after the entities (RenderType.waterMask is
+  // flushed after them), else it would hide what sits in the hull, such as the rider's legs
+  renderMask(cam, env) {
+    if (!this.list.length) return;
+    const g = this.game, r = g.r, al = this.acc / 0.05, v = this.vb;
     v.n = 0;
     const W = g.assets.layers.white;
     for (const b of this.list) {

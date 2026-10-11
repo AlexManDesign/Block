@@ -14828,8 +14828,13 @@ class Boats {
       v.n = o + n;
     }
     r.drawArr(v.view(), v.n / 10, env, 0.5);
-    // Minecraft's water mask: a depth-only patch over the inside of the hull, so the water surface
-    // drawn later does not show inside the boat
+  }
+  // Minecraft's water mask: a depth-only patch over the inside of the hull, so the water surface
+  // drawn later does not show inside the boat. It goes after the entities (RenderType.waterMask is
+  // flushed after them), else it would hide what sits in the hull, such as the rider's legs
+  renderMask(cam, env) {
+    if (!this.list.length) return;
+    const g = this.game, r = g.r, al = this.acc / 0.05, v = this.vb;
     v.n = 0;
     const W = g.assets.layers.white;
     for (const b of this.list) {
@@ -18991,7 +18996,7 @@ function leafLod(d2, cur) {
   if (cur === 1 && t === 3 && d2 <= 49) return 1;
   return t;
 }
-const BUILD_ID = '6139409';   // filled in by build.py
+const BUILD_ID = '05abf47';   // filled in by build.py
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -20826,6 +20831,7 @@ class Game {
     this.perfT('rParticles', performance.now() - t);
     t = performance.now(); r.gpuBegin('entities');
     if (this.ents) this.ents.render(env, cam);
+    if (this.boats) this.boats.renderMask(cam, env);
     this.perfT('rEntities', performance.now() - t);
     t = performance.now();
     r.renderTranslucent(cam, env, time, tick);
