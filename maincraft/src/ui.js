@@ -195,7 +195,6 @@ function creativeCatalog() {
     if (k === 'CAVE_VINES' || k === 'WEEPING_VINES' || k === 'TWISTING_VINES') { tabs.n.push(id); continue; }
     tabs[TABS[TAB[id]] || 'b'].push(id);
   }
-  tabs.n.push(B.WATER, B.LAVA);
   for (let i = 0; i < ITEM_TABLE.length; i++) tabs.t.push(ITEM_BASE + i);
   return tabs;
 }

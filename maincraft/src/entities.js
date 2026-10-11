@@ -326,7 +326,13 @@ function entMove(world, e, dt) {
   else e.onGround = entCollides(world, e.pos[0], e.pos[1] - 0.03, e.pos[2], e.w, e.h) && e.vel[1] <= 0;
 }
 
-const MOB_DT = 0.05;   // mob simulation step (20 Hz, as in the original)
+const MOB_DT = 0.05;
+// a - b wrapped into -pi..pi
+function angDiff(a, b) { let d = (a - b) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; else if (d < -Math.PI) d += Math.PI * 2; return d; }
+// from a toward b by at most step (LookControl.rotateTowards)
+function turnTo(a, b, step) { const d = angDiff(b, a); return a + Math.max(-step, Math.min(step, d)); }
+// a kept within max of b (Mth.rotateIfNecessary)
+function keepWithin(a, b, max) { return b + Math.max(-max, Math.min(max, angDiff(a, b))); }   // mob simulation step (20 Hz, as in the original)
 const PATH_NODES = 1024, PATH_RANGE = 31;
 const NB8 = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
 // binary heap on node.f for A*
@@ -852,6 +858,7 @@ class Entities {
           e.detX = e.pos[0] + e.wish[2] / wl * 5 * sgn; e.detZ = e.pos[2] - e.wish[0] / wl * 5 * sgn;
         }
       } else e.stuckT = 0;
+      if (!d.aquatic && !d.slime) this.bodyFollowsHead(e, Math.hypot(e.pos[0] - ox, e.pos[2] - oz) > 0.0005);
       // limb swing (LivingEntity.calculateEntityAnimation): amount eases 0.4 a tick toward
       // min(4 x distance moved, 1), the swing position advances by the amount
       e.walkAmt += (Math.min(1, Math.hypot(e.pos[0] - ox, e.pos[2] - oz) * 4) - e.walkAmt) * 0.4;
@@ -1149,14 +1156,23 @@ class Entities {
   // try, every other tick; looking at the player 40..79 ticks, around 20..39 goal ticks = 2..4 s)
   look(e, dt, dx, dz, h, R) {
     const chance = 1 - Math.pow(0.98, dt * 10);
+    let tgt = null;
     if (e.lookT > 0) {
       e.lookT -= dt;
-      e.headYaw = e.lookP ? (h < R ? Math.atan2(dx, -dz) : e.bodyYaw) : e.lookYaw;
-      return;
-    }
-    e.headYaw = e.bodyYaw;
-    if (h < R && Math.random() < chance) { e.lookP = true; e.lookT = 2 + Math.random() * 2; }
-    else if (Math.random() < chance) { e.lookP = false; e.lookT = 2 + Math.random() * 2; e.lookYaw = e.bodyYaw + (Math.random() - 0.5) * 3; }
+      if (e.lookP && h >= R) e.lookT = 0; else tgt = e.lookP ? Math.atan2(dx, -dz) : e.lookYaw;
+    } else if (h < R && Math.random() < chance) { e.lookP = true; e.lookT = (40 + Math.random() * 40) / 20; tgt = Math.atan2(dx, -dz); }
+    else if (Math.random() < chance) { e.lookP = false; e.lookT = (20 + Math.random() * 20) / 20; e.lookYaw = Math.random() * Math.PI * 2; tgt = e.lookYaw; }
+    // LookControl: the head turns at most 10 degrees a tick, back to the body with nothing to see
+    e.headYaw = turnTo(e.headYaw, tgt ?? e.bodyYaw, 10 * Math.PI / 180 * dt * 20);
+  }
+  // BodyRotationControl: walking, the body faces the way (walkPhysics); standing, a head turned more
+  // than 15 degrees keeps the body within 75 of it, and once the head has been still 10 ticks the
+  // body comes round to it over the next 10
+  bodyFollowsHead(e, moved) {
+    if (moved) { e.headStable = 0; e.lastStableHead = e.headYaw; return; }
+    const D = Math.PI / 180;
+    if (Math.abs(angDiff(e.headYaw, e.lastStableHead ?? e.headYaw)) > 15 * D) { e.headStable = 0; e.lastStableHead = e.headYaw; e.bodyYaw = keepWithin(e.bodyYaw, e.headYaw, 75 * D); }
+    else if (++e.headStable > 10) e.bodyYaw = keepWithin(e.bodyYaw, e.headYaw, 75 * D * (1 - Math.min(1, (e.headStable - 10) / 10)));
   }
   // animal goals by Minecraft's priorities: breed > tempt > follow parent > eat grass; true = busy
   animalGoals(e, d, dt, dx, dz, h, speed) {
@@ -1220,7 +1236,7 @@ class Entities {
         }
         return true;
       }
-      if (e.onGround && Math.random() < 1 - Math.pow(1 - (e.baby ? 1 / 50 : 1 / 1000), dt * 20)) {
+      if (e.onGround && Math.random() < 1 - Math.pow(1 - (e.baby ? 1 / 50 : 1 / 1000), dt * 10)) {   // (EatBlockGoal: 1 in 1000, 50 a lamb, at each goal tick: every other tick)
         const w = g.world, x = Math.floor(e.pos[0]), y = Math.floor(e.pos[1]), z = Math.floor(e.pos[2]);
         if (w.getBlock(x, y, z) === B.TALL_GRASS || w.getBlock(x, y - 1, z) === B.GRASS) { e.eatT = 2; this.stop(e); return true; }
       }

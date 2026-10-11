@@ -155,7 +155,9 @@ class Game {
     this.inhabited = new Map();
     if (meta.inhab && meta.inhab.length) for (let i = 0; i + 1 < meta.inhab.length; i += 2) this.inhabited.set(meta.inhab[i], meta.inhab[i + 1]);
     this.time = typeof meta.time === 'number' ? meta.time : 0.25;
-    this.inv = Array.isArray(meta.inv) && meta.inv.length === 36 ? meta.inv.map(s => s && s.id ? s : null) : this.defaultInv();
+    // (water and lava are carried in buckets only: a block of either left in a saved inventory turns into one)
+    const fluidItem = (s) => s.id === B.WATER ? { id: IT.WATER_BUCKET, count: 1 } : s.id === B.LAVA ? { id: IT.LAVA_BUCKET, count: 1 } : s;
+    this.inv = Array.isArray(meta.inv) && meta.inv.length === 36 ? meta.inv.map(s => s && s.id ? fluidItem(s) : null) : this.defaultInv();
     this.sel = meta.sel | 0;
     Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false }, meta.surv || {});
     show('title', false); show('loading', true);
