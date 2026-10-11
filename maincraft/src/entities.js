@@ -1483,6 +1483,28 @@ class Entities {
     }
     return best;
   }
+  // WalkNodeEvaluator.getStart: the cell a path starts from. A mob that floats, in the water: the
+  // top water cell; on the ground: where it stands; else (one that sinks, mid-water, or in the air)
+  // the cell over the first floor below, through air and water, so a zombie rising off the bottom
+  // or still sinking plans from the bottom, never from up where it happens to be. A drowned
+  // (AmphibiousNodeEvaluator) in the water: where it is
+  pathStartY(e, sx, sz) {
+    const w = this.game.world;
+    let y = Math.floor(e.pos[1] + 0.1);
+    if (this.pathSwim && isWaterId(w.getBlock(sx, Math.floor(e.pos[1] + 0.5), sz))) return Math.floor(e.pos[1] + 0.5);
+    if (this.pathFloat && isWaterId(w.getBlock(sx, y, sz))) {
+      for (let k = 0; k < 16 && isWaterId(w.getBlock(sx, y + 1, sz)); k++) y++;
+      return y;
+    }
+    if (e.onGround) return y;
+    y = Math.floor(e.pos[1] + 1);
+    for (let k = 0; k < 64 && y > WORLD_MIN_Y; k++, y--) {
+      // (Block.isPathfindable LAND: anything but a full collision cube and lava is gone through)
+      const id = w.getBlock(sx, y - 1, sz);
+      if (id === B.LAVA || (SOLID[id] && SHAPE[id] === SH.CUBE)) break;
+    }
+    return y;
+  }
   // A* over block columns (8 directions, no corner cutting), as Minecraft's PathFinder: at most
   // follow range x 16 nodes visited (a zombie 560, most mobs 256), none walked farther than the
   // follow range from the start; each node costs its distance plus its path malus. Returns
@@ -1492,7 +1514,7 @@ class Entities {
     const md = MOB_DEFS[e.type];
     this.pathSwim = !!md.drowned; this.pathDry = e.type === 'enderman';
     this.pathSink = !!md.sinks && !md.drowned; this.pathFloat = !md.sinks && !this.pathDry;
-    const sx = Math.floor(e.pos[0]), sy = Math.floor(e.pos[1] + 0.1), sz = Math.floor(e.pos[2]);
+    const sx = Math.floor(e.pos[0]), sz = Math.floor(e.pos[2]), sy = this.pathStartY(e, sx, sz);
     const gx = Math.floor(tx), gz = Math.floor(tz);
     if (sx === gx && sz === gz) return null;
     if (++PS.gen > 0x3fffffff) { PS.gen = 1; PS.stamp.fill(0); PS.mStamp.fill(0); PS.dStamp.fill(0); PS.nStamp.fill(0); }
@@ -1598,17 +1620,22 @@ class Entities {
     // (lava: LivingEntity.travel's lava branch, FloatGoal rising in it as in water)
     const lava = inW ? 0 : this.lavaDepth(e), thr = this.eyeH(e) < 0.4 ? 0 : 0.4;
     const depth = inW ? e.wDepth : lava, deep = inW ? depth > thr : lava > 0 && (!e.onGround || lava > thr);
+    // (LivingEntity.aiStep: from the ground, or in water up to the threshold, a jump; deeper a swim
+    // up; the 10-tick pause between jumps only while it keeps wanting to jump)
     if (deep && (e.wantJump || (!d.sinks && Math.random() < 0.8))) v[1] += 0.04;
-    else if (e.wantJump && e.onGround && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
+    else if (e.wantJump && (e.onGround || (inW && depth > 0)) && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
+    if (!e.wantJump) e.noJump = 0;
     e.wantJump = false;
     if (e.type === 'chicken' && !e.onGround && v[1] < 0) v[1] *= 0.6;   // Chicken.aiStep: flaps down
     const wasGround = e.onGround, climb = d.climber && e.hitWall && !inW;
     if (inW) {
+      // (jumpOutOfFluid: against a wall, with room 0.6 above where it was before the move, 0.3 up)
+      const y0 = e.pos[1];
       v[0] += fx * input * 0.02; v[2] += fz * input * 0.02;
       this.entStep(e, v, wasGround);
       if (d.climber && e.hitWall) v[1] = 0.2;          // a spider climbs a wall under water too
       v[0] *= 0.8; v[1] *= 0.8; v[2] *= 0.8; v[1] -= 0.005;
-      if (e.hitWall && !entCollides(w, e.pos[0] + v[0], e.pos[1] + 0.6 + v[1], e.pos[2] + v[2], e.w, e.h)) v[1] = 0.3;
+      if (e.hitWall && !entCollides(w, e.pos[0] + v[0], y0 + 0.6 + v[1], e.pos[2] + v[2], e.w, e.h)) v[1] = 0.3;
     } else if (lava > 0) {
       // in lava: acceleration 0.02 x input, drag 0.5 (shallow: 0.5 across, 0.8 up and down), a
       // quarter of gravity, the same hop at a wall
