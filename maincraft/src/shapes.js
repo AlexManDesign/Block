@@ -115,6 +115,24 @@ function collisionBoxes(world, id, m, x, y, z) {
   return blockBoxes(world, id, m, x, y, z);
 }
 
+// Entity.getOnPos (Level.findSupportingBlock): of the blocks whose collision meets the thin slab
+// just under the feet of a body bw wide, the one with its centre nearest the position; the block
+// 0.2 under the feet in that column (with none under the body, in the position's column)
+function onPosBlock(world, x, y, z, bw) {
+  const r = bw / 2, by = Math.floor(y - 1e-6);
+  let bx = Math.floor(x), bz = Math.floor(z), best = Infinity;
+  for (let cx = Math.floor(x - r); cx <= Math.floor(x + r - 1e-9); cx++) for (let cz = Math.floor(z - r); cz <= Math.floor(z + r - 1e-9); cz++) {
+    const id = world.getBlock(cx, by, cz), bs = id ? collisionBoxes(world, id, world.getMeta(cx, by, cz), cx, by, cz) : null;
+    if (!bs) continue;
+    let hit = false;
+    for (const b of bs) if (by + b[1] < y && by + b[4] > y - 1e-6 && cx + b[0] < x + r && cx + b[3] > x - r && cz + b[2] < z + r && cz + b[5] > z - r) { hit = true; break; }
+    if (!hit) continue;
+    const d = (cx + 0.5 - x) ** 2 + (by + 0.5 - y) ** 2 + (cz + 0.5 - z) ** 2;
+    if (d < best) { best = d; bx = cx; bz = cz; }
+  }
+  return world.getBlock(bx, Math.floor(y - 0.2), bz);
+}
+
 // Outline of a shape made of boxes, as Minecraft draws it (VoxelShape.forAllEdges): the boxes'
 // bounds cut the block into a grid of cells, a cell is full when a box covers it, and a grid line
 // along an axis is an edge where the four cells around it make a crease (one or three full, or two

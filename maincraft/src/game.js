@@ -99,7 +99,7 @@ class Game {
     this.camMode = 0;
     this.debug = false;
     this.hideHud = false;
-    this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, lavaT: 0, invT: 0, lastHurt: 0, poisonT: 0, poisonAcc: 0 };
+    this.surv = { hp: 20, food: 20, sat: 5, air: 300, exh: 0, regenT: 0, starveT: 0, dead: false, hurtT: 0, fire: -20, invT: 0, lastHurt: 0, poisonT: 0, poisonAcc: 0 };
     this.atkT = 10; this.atkBarV = -1; this.lastHeld = null;
     // column offsets around the player, nearest first: [dx, dz, dx² + dz²], integers only (an array
     // holding a fraction would hand out dx and dz as doubles)
@@ -1328,9 +1328,6 @@ class Game {
     // air
     if (p.headInWater) { s.air -= dt * 20; if (s.air <= -20) { s.air = 0; this.hurt(2); } }
     else s.air = Math.min(300, s.air + dt * 100);
-    if (p.inLava) { s.lavaT -= dt; if (s.lavaT <= 0) { s.lavaT = 0.5; this.hurt(4); } }
-    const fb = this.world.getBlock(Math.floor(p.pos[0]), Math.floor(p.pos[1] + 0.2), Math.floor(p.pos[2]));
-    if (fb === B.FIRE || fb === B.MAGMA_BLOCK || fb === B.CACTUS) { s.lavaT -= dt; if (s.lavaT <= 0) { s.lavaT = 0.5; this.hurt(1); } }
     if (p.pos[1] < WORLD_MIN_Y - 40) this.hurt(4);
     // LivingEntity.baseTick: 1 damage while the eyes are inside a suffocating block (isInWall)
     if (eyeInWall(this.world, p.pos[0], p.pos[1] + (this.sleeping ? 0.2 : p.poseEye()), p.pos[2], PLAYER_W)) this.hurt(1);
@@ -1339,7 +1336,7 @@ class Game {
     s.exh += dt * (p.sprinting ? 0.1 * hs : p.swimming ? 0.01 * hs : 0);
     if (p.jumped) { s.exh += p.jumped === 2 ? 0.2 : 0.05; p.jumped = 0; }
     s.tickAcc = (s.tickAcc || 0) + dt;
-    while (s.tickAcc >= 0.05) { s.tickAcc -= 0.05; this.foodTick(); }
+    while (s.tickAcc >= 0.05) { s.tickAcc -= 0.05; this.hazardTick(); this.foodTick(); }
     if (s.hurtT > 0) s.hurtT -= dt;
     if (s.invT > 0) s.invT -= dt;
     // MobEffects.POISON (level I): 1 damage every 25 ticks while health is above 1
@@ -1348,6 +1345,34 @@ class Game {
       if (s.poisonAcc >= 1.25) { s.poisonAcc -= 1.25; if (s.hp > 1) this.hurt(1); }
     }
     this.updateSurvivalHud();
+  }
+  // fire and hot blocks, one game tick. Entity.baseTick: burning (remainingFireTicks) hurts 1 every
+  // 20 ticks, but not in lava; lava (LivingEntity.lavaHurt) sets the player alight for 15 s and
+  // hurts 4. Entity.checkInsideBlocks (the body's box): a fire block adds a tick of fire (from -20,
+  // Player.getFireImmuneTicks: alight for 8 s once that reaches 0) and hurts 1, a lit campfire and
+  // a cactus hurt 1. MagmaBlock.stepOn: 1 from the block it stands on (Entity.getOnPos) unless the
+  // sneak key is held. Away from fire and lava the count rests at -20, and water puts the fire out. A hurt
+  // within the 10 invulnerable ticks of the last counts only by what it adds to it (hurt)
+  hazardTick() {
+    const p = this.player, s = this.surv, w = this.world, P = p.pos, r = PLAYER_W / 2;
+    let fire = false, camp = false, cactus = false, lava = false;
+    for (let x = Math.floor(P[0] - r + 1e-7); x <= Math.floor(P[0] + r - 1e-7); x++)
+      for (let y = Math.floor(P[1] + 1e-7); y <= Math.floor(P[1] + p.h - 1e-7); y++)
+        for (let z = Math.floor(P[2] - r + 1e-7); z <= Math.floor(P[2] + r - 1e-7); z++) {
+          const id = w.getBlock(x, y, z);
+          if (id === B.FIRE) fire = true;
+          else if (id === B.CACTUS) cactus = true;
+          else if (id === B.LAVA) lava = true;
+          else if (id === B.CAMPFIRE && !(w.getMeta(x, y, z) & 4)) camp = true;
+        }
+    if (s.fire === undefined) s.fire = -20;
+    if (s.fire > 0) { if (s.fire % 20 === 0 && !p.inLava) this.hurt(1); s.fire--; }
+    if (p.inLava) { s.fire = Math.max(s.fire, 300); this.hurt(4); }
+    if (fire) { if (++s.fire === 0) s.fire = 160; this.hurt(1); }
+    if (camp || cactus) this.hurt(1);
+    if (p.onGround && !this.input.keys.sneak && !p.flying && onPosBlock(w, P[0], P[1], P[2], PLAYER_W) === B.MAGMA_BLOCK) this.hurt(1);   // (isSteppingCarefully: the sneak key held)
+    if (!fire && !lava && s.fire <= 0) s.fire = -20;
+    if (s.fire > 0 && p.inWater) s.fire = -20;
   }
   // FoodData.tick and Player.aiStep's peaceful regeneration, one game tick
   foodTick() {
@@ -1539,7 +1564,7 @@ class Game {
   }
   respawn() {
     const p = this.player;
-    Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false, poisonT: 0 });
+    Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false, poisonT: 0, fire: -20 });
     this.inv = this.inv.map(() => null);
     if (this.sleeping) { this.sleeping = null; p.eyeOffset = EYE; }
     // ServerPlayer respawn: at the bed when it is still there and has room beside it, else at the
@@ -1769,6 +1794,7 @@ class Game {
     // hand
     if (!this.camMode && !this.hideHud && !this.sleeping) this.drawHand(env, dt);   // no hand in bed (GameRenderer.renderItemInHand)
     this.drawInWall();
+    this.drawFire();
     r.gpuEnd();
     this.perfT('rHand', performance.now() - t);
     this.perfT('rVis', r.cpuVis || 0); this.perfT('rTerrain', r.cpuTerrain || 0); this.perfT('rSort', r.cpuSort || 0);
@@ -1793,6 +1819,30 @@ class Game {
     gl.disable(gl.DEPTH_TEST);
     this.r.drawArr(v, 6, null, 0, I);
     gl.enable(gl.DEPTH_TEST);
+  }
+  // ScreenEffectRenderer.renderFire: while the player burns, two fire sprites at 0.9 opacity low in
+  // the view, 0.24 out to either side and turned 10 degrees, over everything (the hand's 70 degree
+  // projection)
+  drawFire() {
+    if (this.camMode || this.sleeping || this.mode !== 'survival' || !(this.surv.fire > 0)) return;
+    const r = this.r, gl = r.gl, L = this.assets.layers.fire;
+    const proj = this.fireProj || (this.fireProj = new Float32Array(16));
+    M4.persp(proj, 70 * Math.PI / 180, r.canvas.width / r.canvas.height, 0.05, 10);
+    const v = this.fireOV || (this.fireOV = new Float32Array(120));
+    let n = 0;
+    for (let i = 0; i < 2; i++) {
+      const sd = i * 2 - 1, tx = -sd * 0.24, a = sd * 10 * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+      // corners (-0.5, -0.5) .. (0.5, 0.5) at z -0.5, the sprite mirrored left to right
+      for (const k of [0, 1, 2, 0, 2, 3]) {
+        const x = k === 1 || k === 2 ? 0.5 : -0.5, y = k >= 2 ? 0.5 : -0.5, z = -0.5;
+        v[n++] = x * ca + z * sa + tx; v[n++] = y - 0.3; v[n++] = -x * sa + z * ca;
+        v[n++] = x < 0 ? 1 : 0; v[n++] = y < 0 ? 1 : 0; v[n++] = L; v[n++] = 1; v[n++] = 1; v[n++] = 1; v[n++] = 0.9;
+      }
+    }
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    r.drawArr(v, 12, null, 0.01, proj);
+    gl.disable(gl.BLEND); gl.enable(gl.CULL_FACE); gl.enable(gl.DEPTH_TEST);
   }
   drawSelection(env) {
     const r = this.r, gl = r.gl, t = this.target, cam = this.cam;

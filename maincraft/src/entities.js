@@ -718,12 +718,13 @@ class Entities {
       if (e.effect === 'regeneration' && (e.regT = (e.regT || 0) + dt) >= 2.5) { e.regT = 0; e.hp = Math.min(d.hp, e.hp + 1); }
       if (e.breedCd > 0) e.breedCd -= dt;
       // lava and fire
-      if (e.lavaT > 0) e.lavaT -= dt;
-      else {
-        const fb = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2]));
-        // Entity.lavaHurt: 4 damage and 15 s of fire; a fire block 1 damage and 8 s (hurt every 10 ticks)
-        if (fb === B.LAVA || fb === B.FIRE) { e.lavaT = 0.5; e.fire = Math.max(e.fire, fb === B.LAVA ? 15 : 8); this.damageMob(e, fb === B.LAVA ? 4 : 1, null, null, true); if (e.hp <= 0) continue; }
-      }
+      // Entity.lavaHurt: 15 s of fire every tick in lava and 4 damage; a fire block 8 s and 1 damage
+      // (a hurt every 10 ticks); MagmaBlock.stepOn: 1 from the block it stands on (Entity.getOnPos)
+      const fb = w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + 0.3), Math.floor(e.pos[2]));
+      if (fb === B.LAVA || fb === B.FIRE) e.fire = Math.max(e.fire, fb === B.LAVA ? 15 : 8);
+      if (e.lavaT > 1e-6) e.lavaT -= dt;   // (10 ticks, whatever the rounding of the steps)
+      else if (fb === B.LAVA || fb === B.FIRE) { e.lavaT = 0.5; this.damageMob(e, fb === B.LAVA ? 4 : 1, null, null, true); if (e.hp <= 0) continue; }
+      else if (e.onGround && !d.aquatic && onPosBlock(w, e.pos[0], e.pos[1], e.pos[2], e.w) === B.MAGMA_BLOCK) { e.lavaT = 0.5; this.damageMob(e, 1, null, null, true); if (e.hp <= 0) continue; }
       if (e.fire > 0) e.fire -= dt;
       // LivingEntity.baseTick: 1 damage while the eyes are inside a suffocating block (isInWall)
       if (eyeInWall(w, e.pos[0], e.pos[1] + this.eyeH(e), e.pos[2], e.w)) { this.damageMob(e, 1, null, null, false, true); if (e.hp <= 0) continue; }
@@ -2255,6 +2256,7 @@ class Entities {
       const p = g.player;
       const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, swing: g.swingT };
       this.buildModel(vb('player', byTex), MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null);
+      if (g.mode === 'survival' && g.surv.fire > 0) this.flame(fireV, e.pos, PLAYER_W, p.h, cam);
     }
     const gl = r.gl;
     const flush = (map) => {
