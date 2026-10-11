@@ -545,6 +545,10 @@ static class Harness
         {
         Phase("save, return to title, load");
         double px = P.x, py = P.y, pz = P.z;
+        // Reference resume rule (finishInitialSpawnIfReady): a saved position that is not a valid standing cell
+        // (e.g. feet over air at the block edge) is relocated with resolveInitialSpawnLoaded(floor x, floor z).
+        bool savedValid = VF.startupPositionValidLoaded(px, py, pz, false);
+        double[] relocated = savedValid ? null : VF.resolveInitialSpawnLoaded(Math.Floor(px), Math.Floor(pz));
         VF.saveGameNow();
         Frames(5);
         VF.returnToTitle();
@@ -556,7 +560,10 @@ static class Harness
         if (!VF.started) VF.startGame("creative", creativeId);
         Check(VF.started, "world started again (load path)");
         WaitWorld("reloaded");
-        Check(JS.hypot(P.x - px, P.z - pz) < 2 && Math.Abs(P.y - py) < 3, "position restored (" + JS.Fixed(P.x, 1) + "," + JS.Fixed(P.y, 1) + "," + JS.Fixed(P.z, 1) + " vs " + JS.Fixed(px, 1) + "," + JS.Fixed(py, 1) + "," + JS.Fixed(pz, 1) + ")");
+        if (savedValid || relocated == null)
+            Check(JS.hypot(P.x - px, P.z - pz) < 2 && Math.Abs(P.y - py) < 3, "position restored (" + JS.Fixed(P.x, 1) + "," + JS.Fixed(P.y, 1) + "," + JS.Fixed(P.z, 1) + " vs " + JS.Fixed(px, 1) + "," + JS.Fixed(py, 1) + "," + JS.Fixed(pz, 1) + ")");
+        else
+            Check(Math.Abs(P.x - relocated[0]) < 0.01 && Math.Abs(P.y - relocated[1]) < 0.06 && Math.Abs(P.z - relocated[2]) < 0.01, "invalid saved position relocated like the reference (" + JS.Fixed(P.x, 2) + "," + JS.Fixed(P.y, 2) + "," + JS.Fixed(P.z, 2) + " vs resolveInitialSpawnLoaded " + JS.Fixed(relocated[0], 2) + "," + JS.Fixed(relocated[1], 2) + "," + JS.Fixed(relocated[2], 2) + ")");
         EnsureLocked();
         Frames(60);
         StateCheck("reloaded idle");
