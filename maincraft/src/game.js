@@ -31,6 +31,14 @@ function pmApply(P, x, y, z, o) {
   o[0] = P[0] * x + P[4] * y + P[8] * z + P[12]; o[1] = P[1] * x + P[5] * y + P[9] * z + P[13]; o[2] = P[2] * x + P[6] * y + P[10] * z + P[14];
 }
 const DEG = Math.PI / 180;
+// the trident's sprite as the long model a trident is held and thrown as: the sprite's diagonal
+// (butt at (1/16, 1/16), prongs at (15/16, 15/16)) becomes a shaft 31 pixels long standing up,
+// prongs 4 pixels over the model's origin (TridentModel after the item renderer's flip); then the
+// item renderer's -0.5 offset. o: blocks
+function tridentPoint(x, y, z, o) {
+  const k = (31 / 16) / (0.875 * Math.SQRT2), a = ((x - 0.0625) + (y - 0.0625)) * Math.SQRT1_2, b = (y - x) * Math.SQRT1_2;
+  o[0] = b * k - 0.5; o[1] = -27 / 16 + a * k - 0.5; o[2] = (z - 0.5) * k - 0.5;
+}
 // ItemStack.matches: the same item and count (the shown item stays, no re-equip)
 function sameStack(a, b) { return a === b || (!!a && !!b && a.id === b.id && a.count === b.count); }
 // the block items held as models (the rest are flat sprites): the block's own shape (stairs as
@@ -714,6 +722,7 @@ class Game {
     inp.keys.sprint = k.ControlLeft || k.ControlRight || (this.touch && this.touch.sprint);
     inp.joy = this.touch && this.touch.joy ? this.touch.joy : null;
     inp.hunger = this.surv.food;
+    inp.using = !!(this.eating || this.charging);
     if (!inp.keys.forward && !(inp.joy && inp.joy[1] < -0.2)) p.sprintLatch = false;
     // only simulate when the column under the player is present
     if (!w.isLoaded(Math.floor(p.pos[0]), Math.floor(p.pos[2]))) return;
@@ -827,13 +836,13 @@ class Game {
     // arm every tick it goes on): in creative a block every 5 ticks, in survival after a block
     // breaks 5 ticks before the next one starts
     if (this.breakDelay > 0) this.breakDelay -= dt;
-    if (this.mouse.l && this.target) {
+    if (this.mouse.l && this.target && !this.eating && !this.charging) {
       const tg = this.target;
       this.swing();
       if (this.mode === 'creative') {
         if (now - this.mouse.lT >= 250) {
           this.mouse.lT = now;
-          if (!(held && toolInfo(held) && toolInfo(held).tool === 'sword')) this.doBreak(tg.x, tg.y, tg.z);
+          if (!(held && toolInfo(held) && (toolInfo(held).tool === 'sword' || toolInfo(held).tool === 'trident'))) this.doBreak(tg.x, tg.y, tg.z);
         }
       } else if (this.breakDelay <= 0) {
         const b = this.breaking;
@@ -849,7 +858,7 @@ class Game {
         // a crack particle every game tick while hitting, on the face being mined
         bb.pt = (bb.pt || 0) + dt;
         while (bb.pt >= 0.05) { bb.pt -= 0.05; this.crackParticle(bb.x, bb.y, bb.z, bb.id, tg.face); }
-        if (bb.p >= 1) { this.doBreak(bb.x, bb.y, bb.z); this.breaking = null; this.mouse.lT = now; this.breakDelay = 0.25; this.damageTool(); }
+        if (bb.p >= 1) { const hard = HARD[bb.id]; this.doBreak(bb.x, bb.y, bb.z); this.breaking = null; this.mouse.lT = now; this.breakDelay = 0.25; if (hard !== 0) { const tt = toolInfo(held); this.damageTool(tt && (tt.tool === 'sword' || tt.tool === 'trident') ? 2 : 1); } }
       }
     } else this.breaking = null;
     // placing / using
@@ -870,6 +879,29 @@ class Game {
       if (!this.mouse.r) this.eating = null;
       else if (this.eating.t > 1.6) { this.eatNow(); this.eating = null; }
     }
+    // a trident drawn back: let go after 10 ticks or more, it is thrown
+    if (this.charging) {
+      const s = this.inv[this.sel];
+      if (!s || s.id !== IT.TRIDENT || this.sel !== this.charging.slot) this.charging = null;
+      else {
+        this.charging.t += dt;
+        if (!this.mouse.r) { if (this.charging.t >= 0.5) this.throwTrident(); this.charging = null; }
+      }
+    }
+  }
+  // TridentItem.releaseUsing: thrown along the look (spread 1) at 2.5 blocks a tick with the
+  // thrower's own motion (its rise and fall only off the ground), from 0.1 under the eyes; it costs
+  // a use and leaves the hand (in creative a copy flies that only a creative player picks up)
+  throwTrident() {
+    const p = this.player, s = this.inv[this.sel], l = p.look(), e = p.eye();
+    if (this.mode === 'survival') { if (s.dur === undefined) { s.maxDur = 250; s.dur = 250; } s.dur--; }
+    const gauss = () => { let u = 0; for (let k = 0; k < 6; k++) u += Math.random(); return (u - 3) / Math.sqrt(0.5); };
+    const v = [l[0] + gauss() * 0.0075, l[1] + gauss() * 0.0075, l[2] + gauss() * 0.0075], n = Math.hypot(v[0], v[1], v[2]) || 1;
+    this.ents.arrows.push({ pos: [e[0], e[1] - 0.1, e[2]], vel: [v[0] / n * 50 + p.vel[0], v[1] / n * 50 + (p.onGround ? 0 : p.vel[1]), v[2] / n * 50 + p.vel[2]], age: 0,
+      trident: true, byPlayer: true, item: { id: IT.TRIDENT, count: 1, dur: s.dur, maxDur: s.maxDur }, creativeOnly: this.mode !== 'survival' });
+    if (this.mode === 'survival') this.inv[this.sel] = null;
+    Sfx.trident('throw');
+    this.updateHotbar();
   }
   pointerFree() { return this.paused || UI.invOpen; }
   // melee attack on a mob under the crosshair; returns true when a mob was hit
@@ -906,7 +938,7 @@ class Game {
     if (crit) this.spawnParticles(hit.e.pos[0] - 0.5, hit.e.pos[1] + hit.e.h * 0.5, hit.e.pos[2] - 0.5, B.WOOL_WHITE, 8);
     this.atkT = 0;
     this.swing();
-    this.damageTool();
+    { const tt = toolInfo(this.inv[this.sel]); this.damageTool(tt && /pickaxe|axe|shovel|hoe/.test(tt.tool) ? 2 : 1); }   // (DiggerItem.hurtEnemy: 2)
     this.surv.exh += 0.1;
     return true;
   }
@@ -921,7 +953,7 @@ class Game {
   // the air the arm swings and the attack strength starts over, and in survival the button does
   // nothing for 10 ticks after (missTime)
   leftClick() {
-    if (this.missT > 0) return;
+    if (this.missT > 0 || this.eating || this.charging) return;   // (the attack key does nothing while an item is in use)
     if (this.attack()) return;
     this.mouse.l = true; this.mouse.lT = 0;
     if (this.pointerFree()) return;
@@ -1062,7 +1094,8 @@ class Game {
     const edef = isItem(hid) ? itemDef(hid)[5] : null;
     if (edef && edef.mob) {
       const n = FACE_N[tg.face];
-      this.ents.spawnMob(edef.mob, tg.x + n[0] + 0.5, tg.y + n[1] + (n[1] < 0 ? -1 : 0), tg.z + n[2] + 0.5);
+      const m = this.ents.spawnMob(edef.mob, tg.x + n[0] + 0.5, tg.y + n[1] + (n[1] < 0 ? -1 : 0), tg.z + n[2] + 0.5);
+      if (edef.mob === 'drowned') this.ents.drownedGear(m);
       this.consumeHeld(); this.swing(); return true;
     }
     // buckets
@@ -1146,6 +1179,12 @@ class Game {
     const def = isItem(hid) ? itemDef(hid)[5] : null;
     if (def && def.food && this.mode === 'survival' && this.surv.food < 20) {
       if (!this.eating) this.eating = { t: 0 };
+      return;
+    }
+    // TridentItem.use: held to draw it back (not with a single use left)
+    if (hid === IT.TRIDENT) {
+      const s = this.inv[this.sel];
+      if (!this.charging && (s.dur === undefined || s.dur > 1)) this.charging = { t: 0, slot: this.sel };
       return;
     }
     if (hid === IT.BOAT && this.boats) {
@@ -1330,15 +1369,22 @@ class Game {
     else this.inv[this.sel] = { id, count: 1 };
     this.updateHotbar();
   }
-  damageTool() {
+  damageTool(n = 1) {
     if (this.mode !== 'survival') return;
     const s = this.inv[this.sel], t = toolInfo(s);
     if (!t) return;
-    if (s.dur === undefined) { s.maxDur = [0, 59, 131, 250, 32, 1561][t.tier] || 100; s.dur = s.maxDur; }
-    if (--s.dur <= 0) { this.inv[this.sel] = null; Sfx.block(B.GLASS, 'break'); }
+    if (s.dur === undefined) { s.maxDur = t.dur || [0, 59, 131, 250, 32, 1561][t.tier] || 100; s.dur = s.maxDur; }
+    if ((s.dur -= n) <= 0) { this.inv[this.sel] = null; Sfx.block(B.GLASS, 'break'); }
     this.updateHotbar();
   }
-  giveItem(id, count) {
+  giveItem(id, count, dur, maxDur) {
+    // a worn item keeps its wear, alone in a slot
+    if (dur !== undefined) {
+      const i = this.inv.findIndex((q, k) => k < 36 && !q);
+      if (i < 0) return count;
+      this.inv[i] = { id, count: 1, dur, maxDur }; Sfx.pop(); this.updateHotbar(); if (UI.invOpen) UI.refreshInventory();
+      return count - 1;
+    }
     const ms = maxStack(id);
     for (let i = 0; i < 36 && count > 0; i++) {
       const s = this.inv[i];
@@ -2052,6 +2098,13 @@ class Game {
       const f3 = 1 - Math.pow(Math.max(0, f1), 27);
       pmT(M, f3 * 0.6, f3 * -0.5, 0); pmY(M, f3 * 90 * DEG); pmX(M, f3 * 10 * DEG); pmZ(M, f3 * 30 * DEG);
       pmT(M, 0.56, -0.52 - equip * 0.6, -0.72);
+    } else if (this.charging) {
+      // UseAnim.SPEAR: raised back over the shoulder, drawn further over the first 10 ticks
+      pmT(M, 0.56, -0.52 - equip * 0.6, -0.72);
+      pmT(M, -0.5, 0.7, 0.1); pmX(M, -55 * DEG); pmY(M, 35.3 * DEG); pmZ(M, -9.785 * DEG);
+      const f7 = this.charging.t * 20, f11 = Math.min(1, f7 / 10);
+      if (f11 > 0.1) pmT(M, 0, Math.sin((f7 - 0.1) * 1.3) * (f11 - 0.1) * 0.004, 0);
+      pmT(M, 0, 0, f11 * 0.2); pmS(M, 1, 1, 1 + f11 * 0.2); pmY(M, -45 * DEG);
     } else {
       // the swing's offset, applyItemArmTransform, applyItemArmAttackTransform
       const q = Math.sqrt(sw);
@@ -2062,6 +2115,21 @@ class Game {
       pmZ(M, g * -20 * DEG); pmX(M, g * -80 * DEG); pmY(M, -45 * DEG);
     }
     const id = held.id, boxes = isItem(id) ? null : handBlockBoxes(id);
+    if (id === IT.TRIDENT) {
+      // trident_in_hand's firstperson_righthand: (-3, 17, 1) pixels, turned -90 and 25 degrees
+      pmT(M, -3 / 16, 17 / 16, 1 / 16); pmY(M, -90 * DEG); pmZ(M, 25 * DEG);
+      const layer = this.assets.layers.item_trident, G = this.spriteModel(layer), q3 = this.heldQ || (this.heldQ = new Float64Array(3)), t3 = this.heldT3 || (this.heldT3 = new Float64Array(3));
+      const v = this.heldVB || (this.heldVB = new VBuf()); v.n = 0;
+      const out = v.reserve(G.length / 6 * 10);
+      for (let k = 0, o = 0; k < G.length; k += 6, o += 10) {
+        tridentPoint(G[k], G[k + 1], G[k + 2], t3); pmApply(M, t3[0], t3[1], t3[2], q3);
+        const sh = li * G[k + 5];
+        out[o] = q3[0]; out[o + 1] = q3[1]; out[o + 2] = q3[2]; out[o + 3] = G[k + 3]; out[o + 4] = G[k + 4]; out[o + 5] = layer; out[o + 6] = sh; out[o + 7] = sh; out[o + 8] = sh; out[o + 9] = 1;
+      }
+      v.n = G.length / 6 * 10;
+      gl.disable(gl.CULL_FACE); r.drawArr(v.view(), v.n / 10, null, 0.5, proj); gl.enable(gl.CULL_FACE);
+      return;
+    }
     // the item's firstperson_righthand display: a block (block.json) turned 45 degrees at 0.4; a
     // flat item (generated.json) turned -90 and 25 degrees, moved (1.13, 3.2, 1.13) pixels, at
     // 0.68; then the model about its centre (ItemRenderer)
@@ -2340,7 +2408,7 @@ class Game {
     const one = { ...s, count: 1 };
     if (this.mode === 'survival') { if (--s.count <= 0) this.inv[this.sel] = null; }
     else this.inv[this.sel] = null;
-    this.ents.dropItem(one.id, this.mode === 'survival' ? 1 : s.count, e[0] + l[0] * 0.4, e[1] - 0.3, e[2] + l[2] * 0.4, [l[0] * 6, l[1] * 6 + 2, l[2] * 6]);
+    this.ents.dropItem(one.id, this.mode === 'survival' ? 1 : s.count, e[0] + l[0] * 0.4, e[1] - 0.3, e[2] + l[2] * 0.4, [l[0] * 6, l[1] * 6 + 2, l[2] * 6], one.dur, one.maxDur);
     this.updateHotbar();
   }
 }

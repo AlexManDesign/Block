@@ -558,9 +558,9 @@ class Entities {
     this.mobs.push(e);
     return e;
   }
-  dropItem(id, count, x, y, z, vel) {
+  dropItem(id, count, x, y, z, vel, dur, maxDur) {
     if (!id || count <= 0) return;
-    this.items.push({ id, count, pos: [x, y, z], vel: vel || [(Math.random() - 0.5) * 2, 3, (Math.random() - 0.5) * 2], age: 0, w: 0.25, h: 0.25, onGround: false });
+    this.items.push({ id, count, pos: [x, y, z], vel: vel || [(Math.random() - 0.5) * 2, 3, (Math.random() - 0.5) * 2], age: 0, w: 0.25, h: 0.25, onGround: false, dur, maxDur });
   }
 
   update(dt) {
@@ -610,7 +610,7 @@ class Entities {
       const d2 = dx * dx + dy * dy + dz * dz;
       if (it.age > 0.6 && d2 < 9 && !g.surv.dead) {
         if (d2 < 1.6) {
-          const rest = g.giveItem(it.id, it.count);
+          const rest = g.giveItem(it.id, it.count, it.dur, it.maxDur);
           if (rest > 0) it.count = rest; else { this.items.splice(i, 1); continue; }
         } else { const f = 12 / Math.sqrt(d2); it.vel[0] = dx * f * 0.3; it.vel[1] = dy * f * 0.3; it.vel[2] = dz * f * 0.3; }
       }
@@ -633,17 +633,20 @@ class Entities {
       const a = this.arrows[i];
       a.age += dt;
       if (a.stuck) {
-        // stuck arrows can be picked up (as in the original); they vanish after a minute
-        if (!g.surv.dead && Math.hypot(p.pos[0] - a.pos[0], p.pos[1] + 0.9 - a.pos[1], p.pos[2] - a.pos[2]) < 1.5 && g.giveItem(IT.ARROW, 1) === 0) {
-          this.arrows.splice(i, 1); Sfx.pop(); continue;
+        // AbstractArrow.playerTouch: only what the player threw or shot can be picked up (a
+        // creative player's trident by a creative player, for nothing); a minute in the ground and
+        // it is gone (tickDespawn)
+        if (a.byPlayer && !g.surv.dead && Math.hypot(p.pos[0] - a.pos[0], p.pos[1] + 0.9 - a.pos[1], p.pos[2] - a.pos[2]) < 1.5) {
+          if (a.creativeOnly) { if (g.mode !== 'survival') { this.arrows.splice(i, 1); continue; } }
+          else if (a.item ? g.giveItem(a.item.id, 1, a.item.dur, a.item.maxDur) === 0 : g.giveItem(IT.ARROW, 1) === 0) { this.arrows.splice(i, 1); Sfx.pop(); continue; }
         }
         if (a.age > 60) this.arrows.splice(i, 1);
         continue;
       }
       if (a.age > 8) { this.arrows.splice(i, 1); continue; }
       a.vel[1] -= 20 * dt;
-      // AbstractArrow.tick: x0.99 a tick in the air, x0.6 in water (getWaterInertia)
-      { const dr = Math.pow(isWaterId(w.getBlock(Math.floor(a.pos[0]), Math.floor(a.pos[1]), Math.floor(a.pos[2]))) ? 0.6 : 0.99, dt * 20); a.vel[0] *= dr; a.vel[1] *= dr; a.vel[2] *= dr; }
+      // AbstractArrow.tick: x0.99 a tick in the air, x0.6 in water (getWaterInertia; a trident 0.99)
+      { const dr = Math.pow(isWaterId(w.getBlock(Math.floor(a.pos[0]), Math.floor(a.pos[1]), Math.floor(a.pos[2]))) && !a.trident ? 0.6 : 0.99, dt * 20); a.vel[0] *= dr; a.vel[1] *= dr; a.vel[2] *= dr; }
       const n = Math.max(1, Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) * dt / 0.3)), s = dt / n;
       for (let k = 0; k < n; k++) {
         const ox = a.pos[0], oy = a.pos[1], oz = a.pos[2], mx = a.vel[0] * s, my = a.vel[1] * s, mz = a.vel[2] * s;
@@ -651,7 +654,26 @@ class Entities {
         // or a door stops it), then the entity on the clipped path
         const ml = Math.hypot(mx, my, mz), bh = ml > 0 ? raycast(w, ox, oy, oz, mx / ml, my / ml, mz / ml, ml, { collider: true }) : null;
         const bt = bh ? bh.t / ml : 2;
-        if (a.hostile && !g.surv.dead) {
+        // ThrownTrident.onHitEntity: 8 damage, then it falls back (x -0.01 across, x -0.1 up and
+        // down) and harms nothing more
+        if (a.trident && !a.dealt) {
+          let hit = null, ht = bt;
+          if (a.hostile && !g.surv.dead) { const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3); if (hb && hb.t <= 1 && hb.t < ht) { hit = p; ht = hb.t; } }
+          if (!a.hostile) for (const m of this.mobs) {
+            if (m.deathT > 0) continue;
+            const r = m.w / 2, hb = rayBox(ox, oy, oz, mx, my, mz, m.pos[0] - r, m.pos[1], m.pos[2] - r, m.pos[0] + r, m.pos[1] + m.h, m.pos[2] + r);
+            if (hb && hb.t <= 1 && hb.t < ht) { hit = m; ht = hb.t; }
+          }
+          if (hit) {
+            a.pos = [ox + mx * ht, oy + my * ht, oz + mz * ht];
+            if (hit === p) { if (g.hurt(8, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } }
+            else this.damageMob(hit, 8, a.pos);
+            a.vel[0] *= -0.01; a.vel[1] *= -0.1; a.vel[2] *= -0.01; a.dealt = true;
+            Sfx.trident('hit');
+            break;
+          }
+        }
+        if (a.hostile && !a.trident && !g.surv.dead) {
           const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
           if (hb && hb.t <= 1 && hb.t < bt && !a.bounced) {
             if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
@@ -666,6 +688,7 @@ class Entities {
           a.dir = [a.vel[0] / l, a.vel[1] / l, a.vel[2] / l];
           a.pos = [bh.px + a.dir[0] * 0.05, bh.py + a.dir[1] * 0.05, bh.pz + a.dir[2] * 0.05];
           a.vel = [0, 0, 0]; a.stuck = true; a.age = 0;
+          if (a.trident) Sfx.trident('ground');
           break;
         }
         a.pos = [ox + mx, oy + my, oz + mz];
@@ -2194,6 +2217,7 @@ class Entities {
   // the surface makes for land within 8 blocks (DrownedGoToBeachGoal). True when it took the move.
   drownedGoals(e, d, dt, hunting, speed, inW, dx, dz) {
     const g = this.game, p = g.player, day = g.skyDarken() < 4;
+    e.spear = false; if (!hunting) { e.throwTk = -1; e.seeTk = 0; }   // (RangedAttackGoal.stop)
     e.searchLand = false;
     if (day && !inW) {
       e.beach = null;
@@ -2204,6 +2228,7 @@ class Entities {
       return true;
     }
     e.waterTgt = null;
+    if (hunting && e.held && e.held.id === IT.TRIDENT) { e.beach = null; return this.tridentGoal(e, dt, speed, inW, dx, dz); }
     if (hunting) {
       e.beach = null;
       if (!inW || !p.inWater) return false;
@@ -2297,6 +2322,40 @@ class Entities {
   // again at 5 (single), rivers at 100 (frozen rivers 1, single); Drowned.checkDrownedSpawnRules:
   // dark enough, water at the spot and under it, then one try in 15 in a river, in an ocean one in
   // 40 and at least 5 under the sea level
+  // Drowned.populateDefaultEquipmentSlots: 1 in 10 gets something, 10 in 16 of those a trident (the
+  // rest a fishing rod, which there is not here); not one turned from a zombie
+  drownedGear(e) {
+    if (Math.random() > 0.9 && ((Math.random() * 16) | 0) < 10) e.held = { id: IT.TRIDENT, count: 1 };
+    return e;
+  }
+  // Drowned.performRangedAttack: a trident from 0.1 under the eyes at a third of the player's
+  // height, aimed 0.2 a block of distance higher, 1.6 blocks a tick, spread 14 - 4 x difficulty
+  throwTridentAt(e) {
+    const g = this.game, p = g.player, src = [e.pos[0], e.pos[1] + this.eyeH(e) - 0.1, e.pos[2]];
+    const dx = p.pos[0] - src[0], dy = p.pos[1] + p.h / 3 - src[1], dz = p.pos[2] - src[2], hd = Math.hypot(dx, dz);
+    const v = [dx, dy + hd * 0.2, dz], l = Math.hypot(v[0], v[1], v[2]) || 1, id = Math.max(1, DIFFICULTIES.indexOf(g.difficulty));
+    const gauss = () => { let u = 0; for (let k = 0; k < 6; k++) u += Math.random(); return (u - 3) / Math.sqrt(0.5); };
+    for (let k = 0; k < 3; k++) v[k] = v[k] / l + gauss() * 0.0075 * (14 - id * 4);
+    this.arrows.push({ pos: src, vel: [v[0] * 32, v[1] * 32, v[2] * 32], age: 0, hostile: true, trident: true });
+    Sfx.trident('throw');
+  }
+  // DrownedTridentAttackGoal (RangedAttackGoal: speed 1, every 40 ticks, 10 blocks), before the
+  // melee goal so a drowned with a trident only throws: once it has seen the player 5 ticks within
+  // 10 blocks it stands, else it closes in; the trident raised the while (aggressive: THROW_SPEAR);
+  // at each 40th tick it throws if it sees the player (else it waits another 40)
+  tridentGoal(e, dt, speed, inW, dx, dz) {
+    const p = this.game.player, h = Math.hypot(dx, p.pos[1] - e.pos[1], dz);
+    e.spear = true;
+    e.seeTk = e.sees ? (e.seeTk || 0) + 1 : 0;
+    if (h <= 10 && e.seeTk >= 5) { this.stop(e); e.path = null; }
+    else if (inW && p.inWater) { e.swim = [p.pos[0], p.pos[1], p.pos[2]]; this.stop(e); }
+    else this.goTo(e, p.pos[0], p.pos[2], speed, dt);
+    e.headYaw = Math.atan2(dx, -dz);
+    e.throwTk = (e.throwTk ?? -1) - 1;
+    if (e.throwTk === 0) { if (e.sees) { this.throwTridentAt(e); e.throwTk = 40; } }
+    else if (e.throwTk < 0) e.throwTk = 40;
+    return true;
+  }
   spawnDrowned(x, y, z, river, frozen) {
     const w = this.game.world, k = Math.random() * (river ? 510 + (frozen ? 1 : 100) : 515);
     let group;
@@ -2311,7 +2370,7 @@ class Entities {
         if (!isWaterId(w.getBlock(cx, y, cz)) || !isWaterId(w.getBlock(cx, y - 1, cz)) || OPAQUE[w.getBlock(cx, y + 1, cz)]) continue;
         if (!this.darkEnough(cx, y, cz) || !(river ? Math.random() < 1 / 15 : Math.random() < 1 / 40 && y < SEA - 4)) continue;
         if (entCollides(w, cx + 0.5, y, cz + 0.5, 0.6, 1.95)) continue;
-        this.spawnMob('drowned', cx + 0.5, y, cz + 0.5); made++;
+        this.drownedGear(this.spawnMob('drowned', cx + 0.5, y, cz + 0.5)); made++;
       }
     }
   }
@@ -2356,6 +2415,12 @@ class Entities {
       this.endDoor(e);
       e.byPlayer = e.playerHitAge !== undefined && e.age - e.playerHitAge < 5;
       for (const [id, n] of d.drops(e)) if (id && n > 0) this.dropItem(id, n, e.pos[0], e.pos[1] + 0.5, e.pos[2]);
+      // Mob.dropCustomDeathLoot: what it holds, 8.5% when the player killed it, worn down
+      // (left: a random 0 .. random 0 .. max - 3 uses)
+      if (e.held && e.byPlayer && Math.random() < 0.085) {
+        const max = itemDef(e.held.id)[5].dur, left = (Math.random() * (1 + ((Math.random() * (max - 3)) | 0))) | 0;
+        this.dropItem(e.held.id, 1, e.pos[0], e.pos[1] + 0.5, e.pos[2], null, Math.max(1, left), max);
+      }
       if (e.type === 'slime' && e.size > 1) {
         const n = 2 + (Math.random() * 3 | 0), r = e.w * 0.4;
         for (let k = 0; k < n; k++) {
@@ -2516,7 +2581,8 @@ class Entities {
       else if (an === 'armR') {
         rx += zArms ? -Math.PI / 2 : -armA;
         // poseRightArm, ArmPose.ITEM: an item in the hand raises it a little
-        if (e.held) { rx = rx * 0.5 - Math.PI / 10; ry = 0; }
+        if (e.spear) { rx = rx * 0.5 - Math.PI; ry = 0; }                       // ArmPose.THROW_SPEAR
+        else if (e.held && e.type === 'player') { rx = rx * 0.5 - Math.PI / 10; ry = 0; }
         if (at > 0) {
           ry += bodyY;
           const f = 1 - (1 - at) ** 4, f2 = Math.sin(at * Math.PI) * -(-pitch - 0.7) * 0.75;
@@ -2567,7 +2633,7 @@ class Entities {
         const c = tint ? [li * tint[0], li * tint[1], li * tint[2]] : [li, li, li];
         for (const k of [0, 1, 2, 0, 2, 3]) heldOut.push(q[k][0][0], q[k][0][1], q[k][0][2], q[k][1], q[k][2], layer, c[0], c[1], c[2], 1);
       }
-      if (heldOut && an === 'armR' && e.type === 'player' && e.held) this.heldItem3p(heldOut, this.xp, e.held, li);
+      if (heldOut && an === 'armR' && e.held) this.heldItem3p(heldOut, this.xp, e.held, li);
     }
   }
   // ItemInHandLayer: the player's item at its right hand (translateToHand: the arm's own pose; then
@@ -2578,6 +2644,18 @@ class Entities {
     const g = this.game, id = held.id, boxes = isItem(id) ? null : handBlockBoxes(id);
     const M = this.tpM || (this.tpM = new Float64Array(16)), q = this.tpQ || (this.tpQ = new Float64Array(3)), o = this.tpO || (this.tpO = new Float64Array(3));
     pmId(M); pmX(M, -90 * DEG); pmY(M, 180 * DEG); pmT(M, 1 / 16, 0.125, -0.625);
+    if (id === IT.TRIDENT) {
+      // trident_in_hand's thirdperson_righthand: (11, 17, -2) pixels, turned 60 degrees
+      pmT(M, 11 / 16, 17 / 16, -2 / 16); pmY(M, 60 * DEG);
+      const layer = g.assets.layers.item_trident, G = g.spriteModel(layer), t3 = this.tpT3 || (this.tpT3 = new Float64Array(3));
+      for (let k = 0; k < G.length; k += 6) {
+        tridentPoint(G[k], G[k + 1], G[k + 2], t3); pmApply(M, t3[0], t3[1], t3[2], q);
+        modelXform(XP, -q[0] * 16, -q[1] * 16, q[2] * 16, o);
+        const c = li * G[k + 5];
+        out.push(o[0], o[1], o[2], G[k + 3], G[k + 4], layer, c, c, c, 1);
+      }
+      return;
+    }
     if (boxes) { pmT(M, 0, 2.5 / 16, 0); pmX(M, 75 * DEG); pmY(M, 45 * DEG); pmS(M, 0.375, 0.375, 0.375); }
     else if (toolInfo(held) || id === IT.STICK || id === IT.BONE) { pmT(M, 0, 4 / 16, 0.5 / 16); pmY(M, -90 * DEG); pmZ(M, 55 * DEG); pmS(M, 0.85, 0.85, 0.85); }
     else { pmT(M, 0, 3 / 16, 1 / 16); pmS(M, 0.55, 0.55, 0.55); }
@@ -2602,6 +2680,26 @@ class Entities {
       for (let k = 0; k < G.length; k += 6) put(G[k], G[k + 1], G[k + 2], G[k + 3], G[k + 4], layer, li * G[k + 5]);
     }
   }
+  // a thrown trident: the item's model (two crossed, so it has body from any side) along its flight,
+  // the prongs at its position and about 1.9 blocks long
+  drawTrident(v, a, li, cam) {
+    const g = this.game, layer = g.assets.layers.item_trident, G = g.spriteModel(layer);
+    const d = a.stuck && a.dir ? a.dir : a.vel, l = Math.hypot(d[0], d[1], d[2]) || 1, f = [d[0] / l, d[1] / l, d[2] / l];
+    let u = [-f[0] * f[1], 1 - f[1] * f[1], -f[2] * f[1]], ul = Math.hypot(u[0], u[1], u[2]);
+    if (ul < 1e-3) { u = [1, 0, 0]; ul = 1; }
+    u = [u[0] / ul, u[1] / ul, u[2] / ul];
+    const r = [f[1] * u[2] - f[2] * u[1], f[2] * u[0] - f[0] * u[2], f[0] * u[1] - f[1] * u[0]];
+    const S = 1.5, k = Math.SQRT1_2, ox = a.pos[0] - cam[0], oy = a.pos[1] - cam[1], oz = a.pos[2] - cam[2];
+    for (const [U, R] of [[u, r], [r, u]]) {
+      for (let i = 0; i < G.length; i += 6) {
+        // the sprite's diagonal (to its prongs, at about (0.9, 0.9)) along the flight
+        const px = G[i] - 0.9, py = G[i + 1] - 0.9, pz = G[i + 2] - 0.5;
+        const a1 = (px + py) * k * S, a2 = (py - px) * k * S, a3 = pz * S;
+        const c = li * G[i + 5];
+        v.push(ox + f[0] * a1 + U[0] * a2 + R[0] * a3, oy + f[1] * a1 + U[1] * a2 + R[1] * a3, oz + f[2] * a1 + U[2] * a2 + R[2] * a3, G[i + 3], G[i + 4], layer, c, c, c, 1);
+      }
+    }
+  }
   renderItems(env, cam) {
     const g = this.game, r = g.r;
     if (!this.items.length && !this.arrows.length && !this.falling.length) return;
@@ -2619,6 +2717,7 @@ class Entities {
     }
     for (const a of this.arrows) {
       C[0] = C[1] = C[2] = g.lightAt(a.pos[0], a.pos[1] + 0.2, a.pos[2], env);
+      if (a.trident) { this.drawTrident(v, a, C[0], cam); continue; }
       const d = a.stuck && a.dir ? a.dir : a.vel, l = (Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) || 1) * 2;
       const dx = d[0] / l, dz = d[2] / l;
       const x = a.pos[0] - cam[0], y = a.pos[1] - cam[1], z = a.pos[2] - cam[2];

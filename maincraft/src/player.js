@@ -96,6 +96,8 @@ class Player {
     if (input.joy) { fx += input.joy[0]; fz += input.joy[1]; }
     const len = Math.hypot(fx, fz);
     if (len > 1) { fx /= len; fz /= len; }
+    // LocalPlayer.aiStep: using an item (eating, drawing back a trident) slows the walk to a fifth
+    if (input.using) { fx *= 0.2; fz *= 0.2; }
     const jump = !!k.jump, shift = !!k.sneak;
     // ---- fluids and blocks around the body
     const fluid = this.fluidDepth(world);

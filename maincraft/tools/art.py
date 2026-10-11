@@ -465,7 +465,38 @@ def small_items(load):
     for (x, y) in ((3, 5), (8, 3), (5, 9), (10, 8)):
         rect(beans, x, y, x + 2, y + 3, (110, 62, 32)); rect(beans, x + 1, y, x + 1, y + 3, (78, 42, 22)); rect(beans, x, y, x, y, (150, 92, 52))
     out['item_cocoa_beans'] = beans
+    out['item_trident'] = trident()
     return out
+
+
+def trident():
+    # own drawing: a sea-green shaft from the lower left, a cross piece, three pale prongs to the
+    # upper right, a grip wound at the butt
+    im = new()
+    dark, mid, light = (30, 92, 98), (52, 134, 136), (96, 186, 178)
+    pale, tip = (168, 226, 214), (226, 252, 244)
+    grip, grip2 = (70, 58, 44), (104, 88, 64)
+    for i in range(1, 10):                       # the shaft along the diagonal, lit on its upper side
+        x, y = i, 15 - i
+        rect(im, x, y, x, y, mid)
+        rect(im, x + 1, y, x + 1, y, light if i % 3 else mid)
+        rect(im, x, y + 1, x, y + 1, dark)
+    for i in range(1, 4):                        # the grip
+        rect(im, i, 15 - i, i, 15 - i, grip if i % 2 else grip2)
+        rect(im, i + 1, 15 - i, i + 1, 15 - i, grip2)
+    for (x, y) in ((8, 4), (9, 5), (10, 6), (11, 7), (7, 3)):   # cross piece
+        rect(im, x, y, x, y, mid)
+    rect(im, 7, 3, 7, 3, dark); rect(im, 11, 7, 11, 7, dark)
+    for (x, y) in ((10, 4), (11, 3), (12, 2), (13, 1)):         # middle prong
+        rect(im, x, y, x, y, pale)
+    rect(im, 14, 0, 14, 0, tip); rect(im, 13, 0, 13, 0, pale)
+    for (x, y) in ((7, 2), (7, 1)):                             # the side prongs, up and out
+        rect(im, x, y, x, y, pale)
+    rect(im, 8, 0, 8, 0, tip)
+    for (x, y) in ((12, 7), (13, 7)):
+        rect(im, x, y, x, y, pale)
+    rect(im, 14, 6, 14, 6, tip)
+    return im
 
 
 # ------------------------------------------------------------------ redstone

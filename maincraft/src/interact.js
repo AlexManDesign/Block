@@ -154,6 +154,7 @@ const ATK_TABLE = {
 };
 function attackStats(item) {
   const t = toolInfo(item), e = t && ATK_TABLE[t.tool];
+  if (t && t.tool === 'trident') return { dmg: 9, speed: 1.1 };
   if (!e) return { dmg: 1, speed: 4 };
   const i = Math.min(4, Math.max(0, t.tier - 1));
   return { dmg: e[0][i], speed: e[1][i] };

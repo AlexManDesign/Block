@@ -57,6 +57,14 @@ const Sfx = {
   hurt() { if (!this.enabled || !this.ctx) return; const t = this.ctx.currentTime; this.noise(t, 0.18, 0.4, 'bandpass', 500, 200, 1); this.tone(t, 180, 0.15, 0.2, 'square'); },
   fuse() { if (!this.enabled || !this.ctx) return; this.noise(this.ctx.currentTime, 1.4, 0.22, 'highpass', 3000, 5000, 0.7); },
   splash() { if (!this.enabled || !this.ctx) return; this.noise(this.ctx.currentTime, 0.35, 0.3, 'lowpass', 1500, 200, 0.6); },
+  // a trident: thrown (a whoosh), striking a body, sticking in the ground
+  trident(kind) {
+    if (!this.enabled || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (kind === 'throw') this.noise(t, 0.3, 0.3, 'bandpass', 1800, 600, 1.2);
+    else if (kind === 'hit') { this.noise(t, 0.12, 0.4, 'lowpass', 900, 300, 1); this.tone(t, 140, 0.1, 0.18, 'square'); }
+    else { this.noise(t, 0.15, 0.35, 'bandpass', 700, 250, 2); this.tone(t, 220, 0.06, 0.1, 'triangle'); }
+  },
   click() { if (!this.enabled || !this.ctx) return; this.tone(this.ctx.currentTime, 1200, 0.03, 0.08, 'square'); },
   // a boat paddle's stroke (Boat.getPaddleSound): a splash in water, a scrape on land, pitch 0.8..1.2
   paddle(water) {
