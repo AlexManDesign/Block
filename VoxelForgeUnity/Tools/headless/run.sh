@@ -16,7 +16,7 @@ if [ -n "$VF_TRACE_REV" ]; then
   EXTRA="-define:VF_TRACE_REV $HERE/TraceRev.cs"
 fi
 find "$SRC" -name '*.cs' > "$OUT/files.rsp"
-mcs -langversion:7.2 -debug -unsafe -nowarn:0162,0168,0219,0414,0649,0169,0067,0618,0660,0661 \
+mcs -langversion:7.2 -debug -unsafe -define:VF_PERF_ALLOC -nowarn:0162,0168,0219,0414,0649,0169,0067,0618,0660,0661 \
     -r:System.Core.dll -out:"$OUT/vf-headless.exe" $EXTRA "$HERE/HeadlessUnity.cs" "$HERE/Harness.cs" @"$OUT/files.rsp"
 echo "build: OK"
 exec mono --debug "$OUT/vf-headless.exe" --project "$PROJ" "$@"

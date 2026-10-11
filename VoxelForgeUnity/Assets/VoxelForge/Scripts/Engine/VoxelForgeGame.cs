@@ -51,6 +51,7 @@ namespace VoxelForge
         bool cbAttached;
         const int VF_EMPTY_LAYER = 31;
         int cameraRenders = 0, diagStage = 0; double startedAt = -1;
+        bool perfOpen; double perfUpdateMs;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void AutoCreate()
@@ -135,21 +136,29 @@ namespace VoxelForge
         void Update()
         {
             double now = JS.now();
+            // close the previous frame (Update + OnGUI) before starting this one
+            if (perfOpen) VF.perfEndFrame(now, perfUpdateMs + VF.perfFrame[VF.PERF_GUI]);
+            VF.perfBeginFrame(); perfOpen = true;
             try
             {
                 Timers.Tick();
                 VF.tickPeriodicSave();
+                var td = VF.perfMark();
                 VF.drainWorkerMessages();
+                VF.perfEnd(VF.PERF_DRAIN, td);
                 VF.pollInput(VF.uiTextFocused);
                 double dt;
                 double frameStart = VF.frameSimulate(now, out dt);
                 int w, h;
                 configureTarget(out w, out h);
+                var trw = VF.perfMark();
                 VF.renderWorld(cam, now, dt, w, h);
+                VF.perfEnd(VF.PERF_RENDER, trw);
                 VF.frameFinish(now, frameStart);
                 diagnostics(now);
             }
             catch (Exception e) { Debug.LogException(e); }
+            perfUpdateMs = JS.now() - now;
         }
 
         /// <summary>resize(): backing size = screen × min(dpr, DPR_CAP)/dpr × renderScale.</summary>
@@ -183,8 +192,10 @@ namespace VoxelForge
 
         void OnGUI()
         {
+            var tg = VF.perfMark();
             try { VF.drawUI(); }
             catch (Exception e) { Debug.LogException(e); }
+            VF.perfEnd(VF.PERF_GUI, tg);
         }
 
         // window "blur" -> clearInputState; the browser also drops pointer lock, which raises pointerlockchange.

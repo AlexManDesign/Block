@@ -200,7 +200,7 @@ namespace VoxelForge
         {
             // JS leaves a world via page reload, which kills any pending scheduleWorldSave timer; never let it fire against an emptied world.
             Timers.clearTimeout(saveTimer); saveTimer = 0;
-            edits.Clear(); editsByChunk.Clear(); blockMeta.Clear(); metaByChunk.Clear(); generatedMetaByChunk.Clear();
+            edits.Clear(); editsVersion++; editsByChunk.Clear(); blockMeta.Clear(); metaByChunk.Clear(); generatedMetaByChunk.Clear();
             killedMobs.Clear(); liveMobs.Clear();
             clearVehicles();
             foreach (var c in chunks.Values) if (c.mobs != null) c.mobs.Clear();
@@ -253,7 +253,7 @@ namespace VoxelForge
         public static void addEditIndex(int x, int y, int z, int id, bool save = true)
         {
             var k = key3(x, y, z);
-            edits[k] = id;
+            edits[k] = id; editsVersion++;
             var ck = ckey(JS.floor(x / (double)CHUNK), JS.floor(z / (double)CHUNK));
             var m = editsByChunk.Get(ck);
             if (m == null) editsByChunk.Set(ck, m = new OrderedMap<int, int[]>());
@@ -466,6 +466,13 @@ namespace VoxelForge
             if (lx >= 0 && lx < CHUNK && lz >= 0 && lz < CHUNK && yInWorld(y)) { int ii = worldIndex(lx, y, lz); if (data[ii] == B.WATER) data[ii] = (byte)id; }
         }
         public static int getBlock(double x, double y, double z) { return getBlock(JS.floor(x), JS.floor(y), JS.floor(z)); }
+        // Unloaded cells: the reference answers from the edit map or by re-running the world generator on every query, and
+        // dropped items / mobs left in unloaded chunks query the same few cells every frame (a string key plus a full
+        // generator sample each time). The answer only depends on the seed and the edit map, so it is memoized per cell
+        // and invalidated by any edit-map change (editsVersion).
+        const int UNLOADED_CACHE = 4096;
+        static readonly int[] ulX = new int[UNLOADED_CACHE], ulY = new int[UNLOADED_CACHE], ulZ = new int[UNLOADED_CACHE], ulId = new int[UNLOADED_CACHE], ulVer = new int[UNLOADED_CACHE];
+        static int editsVersion = 1;
         public static int getBlock(int x, int y, int z)
         {
             if (y < WORLD_MIN_Y) return B.BEDROCK;
@@ -473,9 +480,11 @@ namespace VoxelForge
             int cx = x >> 4, cz = z >> 4;
             var c = chunkFastGet(cx, cz);
             if (c != null) return chunkGet(c, x - cx * CHUNK, y, z - cz * CHUNK);
-            int ed;
-            if (edits.TryGetValue(key3(x, y, z), out ed)) return ed;
-            return baseBlock(x, y, z);
+            int slot = (int)((uint)(JS.imul(x, 73856093) ^ JS.imul(y, 19349663) ^ JS.imul(z, 83492791)) & (UNLOADED_CACHE - 1));
+            if (ulVer[slot] == editsVersion && ulX[slot] == x && ulY[slot] == y && ulZ[slot] == z) return ulId[slot];
+            int ed, id = edits.TryGetValue(key3(x, y, z), out ed) ? ed : baseBlock(x, y, z);
+            ulX[slot] = x; ulY[slot] = y; ulZ[slot] = z; ulId[slot] = id; ulVer[slot] = editsVersion;
+            return id;
         }
         public static JObj getBlockMeta(double x, double y, double z) { return getBlockMeta(JS.floor(x), JS.floor(y), JS.floor(z)); }
         public static JObj getBlockMeta(int x, int y, int z)

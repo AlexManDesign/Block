@@ -44,33 +44,39 @@ namespace VoxelForge
             worldRunningNow = worldRunning;
             if (control)
             {
+                var tc = perfMark();
                 int moveSteps = dt > 0.025 ? 2 : 1;
                 for (int i = 0; i < moveSteps; i++) movePlayer(dt / moveSteps);
                 processMining(dt);
+                perfEnd(PERF_CONTROL, tc);
             }
             bool interactionHot = frameInteractionHot(control);
             // main.js order: simulation (including fluid ticks) happens before chunk/light/mesh scheduling.
             if (worldRunning)
             {
-                refreshSimulationBounds();
-                updateVehicles(dt);
-                updateFishing(dt);
-                updatePearls(dt);
-                survivalTick(dt);
-                tickMobSimulation(dt, now);
-                tickHostileSpawns(dt);
-                tickTNT(dt);
-                updateWorldDrops(dt);
-                updateBreakParticles(dt);
-                tickWorldDynamics(dt, now);
-                tickFurnaces(dt);
+                var ts = perfMark();
+                { var pm = perfMark(); refreshSimulationBounds(); perfSub(0, pm); }
+                { var pm = perfMark(); updateVehicles(dt); perfSub(1, pm); }
+                { var pm = perfMark(); updateFishing(dt); perfSub(2, pm); }
+                { var pm = perfMark(); updatePearls(dt); perfSub(3, pm); }
+                { var pm = perfMark(); survivalTick(dt); perfSub(4, pm); }
+                { var pm = perfMark(); tickMobSimulation(dt, now); perfSub(5, pm); }
+                { var pm = perfMark(); tickHostileSpawns(dt); perfSub(6, pm); }
+                { var pm = perfMark(); tickTNT(dt); perfSub(7, pm); }
+                { var pm = perfMark(); updateWorldDrops(dt); perfSub(8, pm); }
+                { var pm = perfMark(); updateBreakParticles(dt); perfSub(9, pm); }
+                { var pm = perfMark(); tickWorldDynamics(dt, now); perfSub(10, pm); }
+                { var pm = perfMark(); tickFurnaces(dt); perfSub(11, pm); }
                 day = (day + dt / 360) % 1;
+                perfEnd(PERF_SIM, ts);
             }
             if (started)
             {
                 double bgStart = JS.now(), bgBudget = worldReady ? frameBackgroundBudget(interactionHot) : 10, bgDeadline = bgStart + bgBudget;
                 stream(bgDeadline, interactionHot);
+                var tr = perfMark();
                 pumpRenderRegionBuilds(bgDeadline, worldReady ? (interactionHot ? 1 : 3) : 3);
+                perfEnd(PERF_REGION, tr);
                 lastBackgroundCpuMs = JS.now() - bgStart;
             }
             else lastBackgroundCpuMs = 0;
@@ -125,6 +131,7 @@ namespace VoxelForge
                 + "gen " + genPending.Count + "/" + genJobs.Count + " · mesh " + meshPending.Count + "/" + meshJobs.Count + "/" + meshDoneCount() + " · light " + lightDirtyCount() + "\n"
                 + "мобы " + mobs + " · edits " + edits.Count + " · draw " + drawCalls + " · tris " + JS.round(triangles / 1000.0) + "k · O/C/W/T " + opaqueDraws + "/" + cutoutDraws + "/" + waterDraws + "/" + transDraws + "\n"
                 + "CPU render " + JS.Fixed(avgRenderCpuMs, 1) + " · res ×" + JS.ToStr(renderScale) + " · vis " + JS.Fixed(avgRenderVisMs, 1) + " · bg " + JS.Fixed(lastBackgroundCpuMs, 1) + "\n"
+                + perfPeakLine() + "\n"
                 + "XYZ " + JS.Fixed(player.x, 1) + " " + JS.Fixed(player.y, 1) + " " + JS.Fixed(player.z, 1) + "\n"
                 + "биом " + biomeAt(player.x, player.z) + (cb != 0 ? " · cave " + new[] { "", "LUSH", "DRIPSTONE", "DEEP_DARK" }[cb] : "");
             modeText = "v" + GAME_VERSION + " · " + ENGINE_BUILD + " · SAVE S" + SAVE_SCHEMA_VERSION + "/W" + SAVE_WORLD_VERSION + " · " + (player.creative ? "CREATOR" : "SURVIVAL") + (player.flying ? " · ПОЛЁТ" : "") + (xrayActive ? " · X-RAY" : "");

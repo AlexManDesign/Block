@@ -28,6 +28,8 @@ namespace UnityEngine
         public static readonly List<string> exceptions = new List<string>(), errors = new List<string>(), problems = new List<string>(), warnings = new List<string>();
         public static bool verboseLog = false;
         public static TextWriter log = Console.Out;
+        /// <summary>--perf: skip per-index validation in SetSubMesh so frame timings are not dominated by the harness.</summary>
+        public static bool fastMeshes = false;
         public static void Problem(string msg)
         {
             lock (logLock)
@@ -853,7 +855,8 @@ namespace UnityEngine
             }
             if (!seen.Contains(Rendering.VertexAttribute.Position)) throw new ArgumentException("Mesh vertex layout must contain a Position attribute");
             layout = (Rendering.VertexAttributeDescriptor[])attributes.Clone(); strides = st; vcount = vertexCount;
-            vdata = new byte[4][]; for (int s = 0; s < 4; s++) if (st[s] > 0) vdata[s] = new byte[st[s] * vertexCount];
+            if (HeadlessHost.fastMeshes) { for (int s = 0; s < 4; s++) if (st[s] > 0 && (vdata[s] == null || vdata[s].Length < st[s] * vertexCount)) vdata[s] = new byte[st[s] * vertexCount]; }
+            else { vdata = new byte[4][]; for (int s = 0; s < 4; s++) if (st[s] > 0) vdata[s] = new byte[st[s] * vertexCount]; }
             legacyVerts = null;
         }
         void SetV(byte[] bytes, int esize, int meshBufferStart, int count, int stream, string api)
@@ -882,7 +885,16 @@ namespace UnityEngine
             if (dataStart < 0 || count < 0 || (long)dataStart + count > len) throw new ArgumentOutOfRangeException("dataStart", "Bad start/count arguments (dataStart:" + dataStart + " count:" + count + " length:" + len + ")");
         }
         public void SetVertexBufferData<T>(T[] data, int dataStart, int meshBufferStart, int count, int stream = 0, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) where T : struct
-        { M("SetVertexBufferData"); if (data == null) throw new ArgumentNullException("data"); RangeArgs(data.Length, dataStart, count); SetV(HeadlessMesh.ToBytes(data, dataStart, count), Marshal.SizeOf(typeof(T)), meshBufferStart, count, stream, "SetVertexBufferData"); }
+        {
+            M("SetVertexBufferData"); if (data == null) throw new ArgumentNullException("data"); RangeArgs(data.Length, dataStart, count);
+            if (HeadlessHost.fastMeshes)
+            {   // --perf: range checks and statistics only, no copy (keeps the harness out of the game's allocation numbers)
+                int es = Marshal.SizeOf(typeof(T)); long end = ((long)meshBufferStart + count) * es, size = (long)strides[stream] * vcount;
+                if (meshBufferStart < 0 || end > size) throw new ArgumentOutOfRangeException("meshBufferStart", "Mesh '" + name + "' SetVertexBufferData: data range exceeds the vertex buffer size");
+                HeadlessMesh.totalUploads++; HeadlessMesh.totalVertexBytes += (long)count * es; return;
+            }
+            SetV(HeadlessMesh.ToBytes(data, dataStart, count), Marshal.SizeOf(typeof(T)), meshBufferStart, count, stream, "SetVertexBufferData");
+        }
         public void SetVertexBufferData<T>(List<T> data, int dataStart, int meshBufferStart, int count, int stream = 0, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) where T : struct
         { SetVertexBufferData(data.ToArray(), dataStart, meshBufferStart, count, stream, flags); }
         public void SetVertexBufferData<T>(Unity.Collections.NativeArray<T> data, int dataStart, int meshBufferStart, int count, int stream = 0, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) where T : struct
@@ -891,7 +903,8 @@ namespace UnityEngine
         {
             M("SetIndexBufferParams");
             if (indexCount < 0) throw new ArgumentOutOfRangeException("indexCount");
-            icount = indexCount; ifmt = format; idata = new byte[indexCount * (format == Rendering.IndexFormat.UInt16 ? 2 : 4)];
+            int ib = indexCount * (format == Rendering.IndexFormat.UInt16 ? 2 : 4);
+            icount = indexCount; ifmt = format; if (!HeadlessHost.fastMeshes || idata.Length < ib) idata = new byte[ib];
         }
         void SetI(byte[] bytes, int esize, int meshBufferStart, int count)
         {
@@ -900,7 +913,11 @@ namespace UnityEngine
             Buffer.BlockCopy(bytes, 0, idata, meshBufferStart * esize, bytes.Length);
         }
         public void SetIndexBufferData<T>(T[] data, int dataStart, int meshBufferStart, int count, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) where T : struct
-        { M("SetIndexBufferData"); if (data == null) throw new ArgumentNullException("data"); RangeArgs(data.Length, dataStart, count); SetI(HeadlessMesh.ToBytes(data, dataStart, count), Marshal.SizeOf(typeof(T)), meshBufferStart, count); }
+        {
+            M("SetIndexBufferData"); if (data == null) throw new ArgumentNullException("data"); RangeArgs(data.Length, dataStart, count);
+            if (HeadlessHost.fastMeshes) { long end = ((long)meshBufferStart + count) * Marshal.SizeOf(typeof(T)); if (meshBufferStart < 0 || end > (long)icount * (ifmt == Rendering.IndexFormat.UInt16 ? 2 : 4)) throw new ArgumentOutOfRangeException("meshBufferStart", "Mesh '" + name + "' SetIndexBufferData: data range exceeds the index buffer size"); return; }
+            SetI(HeadlessMesh.ToBytes(data, dataStart, count), Marshal.SizeOf(typeof(T)), meshBufferStart, count);
+        }
         public void SetIndexBufferData<T>(List<T> data, int dataStart, int meshBufferStart, int count, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) where T : struct
         { SetIndexBufferData(data.ToArray(), dataStart, meshBufferStart, count, flags); }
         public void SetIndexBufferData<T>(Unity.Collections.NativeArray<T> data, int dataStart, int meshBufferStart, int count, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) where T : struct
@@ -910,6 +927,7 @@ namespace UnityEngine
             M("SetSubMesh");
             if (index < 0 || index >= subs.Count) throw new ArgumentOutOfRangeException("index", "Mesh '" + name + "': specified sub mesh " + index + " is out of range. Must be less than subMeshCount (" + subs.Count + ").");
             if (desc.indexStart < 0 || desc.indexCount < 0 || (long)desc.indexStart + desc.indexCount > icount) throw new ArgumentException("Mesh '" + name + "': bad submesh index range (" + desc.indexStart + "+" + desc.indexCount + " > index count " + icount + ")");
+            if (!HeadlessHost.fastMeshes)
             {
                 // native side only validates without DontValidateIndices; the harness always checks (out-of-range indices = GPU garbage)
                 var ix = GetIdx(desc.indexStart, desc.indexCount);

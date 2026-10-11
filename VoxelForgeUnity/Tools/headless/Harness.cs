@@ -29,6 +29,7 @@ static class Harness
             else if (args[i] == "--seed" && i + 1 < args.Length) seedArg = args[++i];
             else if (args[i] == "--soak" && i + 1 < args.Length) soakSeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--only" && i + 1 < args.Length) only = new HashSet<string>(args[++i].Split(','));
+            else if (args[i] == "--perf") { perfMode = true; HeadlessHost.fastMeshes = true; }
             else if (args[i] == "--idle-seconds" && i + 1 < args.Length) idleSeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--scale" && i + 1 < args.Length) scale = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
         }
@@ -55,6 +56,7 @@ static class Harness
     }
     static double timeScale = 1, idleSeconds = 8, soakSeconds = 0;
     static HashSet<string> only;
+    static bool perfMode;
     static string seedArg;
     /// <summary>createAndStartWorld, but with --seed "a" or "a,b" the creative/survival worlds get fixed seeds (reproducible runs).</summary>
     static void CreateWorld(string mode, string name, int which)
@@ -277,6 +279,47 @@ static class Harness
         VF.waterSimAt = VF.lavaSimAt = 0;
         Check(loops.Count == 0 || loops[0].Value <= 2, label + ": no remesh loop without block changes (max " + (loops.Count > 0 ? loops[0].Value : 0) + " revs in " + seconds + "s)");
     }
+    /// <summary>--perf: straight sprint-flight at render distance rd for `seconds`; per-frame main-thread phase timings
+    /// (VF.perfFrame), GC count; prints percentiles and the slowest frames with their phase breakdown.</summary>
+    static void PerfFlight(int rd, int seconds)
+    {
+        Phase("perf: sprint-flight at RD " + rd + " for " + seconds + " s");
+        VF.applyRenderDistanceSetting(rd, false);
+        Until(() => VF.genPending.Count == 0 && VF.meshPending.Count == 0 && VF.genJobs.Count == 0 && VF.meshJobs.Count == 0, 240, "perf: streaming settled at RD " + rd);
+        EnsureLocked();
+        if (!P.flying) Tap(KeyCode.F);
+        P.pitch = 0; P.yaw = 0.35;
+        { int top = 0; for (int k = -8; k <= 8; k++) top = Math.Max(top, VF.heightAt(JS.floor(P.x) + k, JS.floor(P.z) + k)); P.y = Math.Max(P.y, top + 24); }
+        HeadlessHost.PressKey(KeyCode.W); Frames(2); HeadlessHost.ReleaseKey(KeyCode.W); Frames(2); HeadlessHost.PressKey(KeyCode.W);
+        Array.Clear(VF.perfSimMs, 0, 12); Array.Clear(VF.perfSimAlloc, 0, 12);
+        var rows = new List<double[]>(); var end = DateTime.UtcNow.AddSeconds(seconds); double x0 = P.x, z0 = P.z; int gc0 = GC.CollectionCount(0);
+        while (DateTime.UtcNow < end)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew(); HeadlessHost.Frame(); double wall = sw.Elapsed.TotalMilliseconds;
+            var r = new double[VF.PERF_COUNT * 2 + 2]; Array.Copy(VF.perfFrame, r, VF.PERF_COUNT); r[VF.PERF_COUNT] = wall; r[VF.PERF_COUNT + 1] = VF.perfGcCount;
+            for (int i = 0; i < VF.PERF_COUNT; i++) r[VF.PERF_COUNT + 2 + i] = VF.perfAllocFrame[i];
+            if (wall < frameMs) Thread.Sleep((int)(frameMs - wall));
+            if (rows.Count % 400 == 0) Console.WriteLine("    t" + rows.Count + " " + VF.worldDiagnostics(0) + " · genDone " + VF.genDoneCount() + " meshDone " + VF.meshDoneCount());
+            rows.Add(r);
+        }
+        HeadlessHost.ReleaseKey(KeyCode.W); Frames(3);
+        var tot = rows.Select(r => r[VF.PERF_COUNT]).OrderBy(v => v).ToArray();
+        Func<double, double> pct = q => tot.Length == 0 ? 0 : tot[Math.Min(tot.Length - 1, (int)(q * tot.Length))];
+        Console.WriteLine("  perf RD " + rd + ": " + rows.Count + " samples, flew " + JS.Fixed(JS.hypot(P.x - x0, P.z - z0), 0) + " blocks, GCs " + (GC.CollectionCount(0) - gc0)
+            + " · main-thread ms p50 " + JS.Fixed(pct(0.5), 1) + " p95 " + JS.Fixed(pct(0.95), 1) + " p99 " + JS.Fixed(pct(0.99), 1) + " max " + JS.Fixed(tot.Length > 0 ? tot[tot.Length - 1] : 0, 1)
+            + " · >33ms " + tot.Count(v => v > 33) + " · >100ms " + tot.Count(v => v > 100));
+        string[] names = { "drain", "ctl", "sim", "gen", "light", "mesh", "edit", "submit", "cleanup", "region", "render", "gui" };
+        var avg = new double[VF.PERF_COUNT]; foreach (var r in rows) for (int i = 0; i < VF.PERF_COUNT; i++) avg[i] += r[i] / Math.Max(1, rows.Count);
+        Console.WriteLine("  perf RD " + rd + " avg: " + string.Join(" ", Enumerable.Range(0, VF.PERF_COUNT).Select(i => names[i] + " " + JS.Fixed(avg[i], 2))));
+        var aavg = new double[VF.PERF_COUNT]; foreach (var r in rows) for (int i = 0; i < VF.PERF_COUNT; i++) aavg[i] += r[VF.PERF_COUNT + 2 + i] / 1024.0 / Math.Max(1, rows.Count);
+        Console.WriteLine("  perf RD " + rd + " main-thread KB allocated per frame: " + string.Join(" ", Enumerable.Range(0, VF.PERF_COUNT).Select(i => names[i] + " " + JS.Fixed(aavg[i], 1))) + " · total " + JS.Fixed(aavg.Sum(), 1));
+        { string[] sn = { "bounds", "vehicles", "fishing", "pearls", "survival", "mobs", "spawns", "tnt", "drops", "particles", "worldTick", "furnaces" };
+          Console.WriteLine("  perf RD " + rd + " sim breakdown (total over run): " + string.Join(" ", Enumerable.Range(0, 12).Select(i => sn[i] + " " + JS.Fixed(VF.perfSimMs[i], 0) + "ms/" + JS.Fixed(VF.perfSimAlloc[i] / 1048576.0, 0) + "MB")));
+          Array.Clear(VF.perfSimMs, 0, 12); Array.Clear(VF.perfSimAlloc, 0, 12); }
+        foreach (var r in rows.OrderByDescending(r => r[VF.PERF_COUNT]).Take(8))
+            Console.WriteLine("    slow " + JS.Fixed(r[VF.PERF_COUNT], 1) + " ms: " + string.Join(" ", Enumerable.Range(0, VF.PERF_COUNT).Where(i => r[i] >= 0.5).OrderByDescending(i => r[i]).Select(i => names[i] + " " + JS.Fixed(r[i], 1))));
+        StateCheck("perf RD " + rd);
+    }
     static void EnsureLocked()
     {
         if (!VF.locked) { ClickMouse(0); Frames(2); }
@@ -310,6 +353,7 @@ static class Harness
         Frames(30);
         StateCheck("creative idle");
 
+        if (perfMode) { PerfFlight(12, 30); PerfFlight(8, 20); }
         if (Do("idle")) IdleRemeshProbe("creative idle", idleSeconds);
         if (Do("look"))
         {

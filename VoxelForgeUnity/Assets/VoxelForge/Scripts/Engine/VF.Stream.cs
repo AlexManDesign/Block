@@ -262,6 +262,7 @@ namespace VoxelForge
             double deadline = JS.isFinite(frameDeadline) ? frameDeadline : t0 + 5;
             bool startup = !worldReady || initialSpawnPending || resumeLoadPending;
             int integrated = 0, maxGen = startup ? 2 : interactionHot ? 1 : 2;
+            var tp = perfMark();
             while (genDoneCount() > 0 && integrated < maxGen)
             {
                 double est = integrated > 0 ? Math.Max(0.3, avgGenIntegrateMs * 1.15) : 0;
@@ -274,10 +275,13 @@ namespace VoxelForge
                 integrated++;
             }
             if (initialSpawnPending || resumeLoadPending) finishInitialSpawnIfReady();
+            perfEnd(PERF_GEN, tp); tp = perfMark();
             if (!workerEngineStarted) initWorkerEngine();
             if (!workerEngineFailed && JS.now() < deadline - 0.35) fillGenJobsMain(pcx, pcz, deadline);
             // Leave part of the budget for mesh uploads/submits.
+            perfEnd(PERF_SUBMIT, tp); tp = perfMark();
             processLightDirty(startup ? deadline : deadline - Math.Min(3, Math.Max(0, deadline - JS.now()) * 0.4));
+            perfEnd(PERF_LIGHT, tp); tp = perfMark();
             int uploaded = 0, maxUploads = startup ? 6 : interactionHot ? 1 : 3;
             while (meshDoneCount() > 0 && uploaded < maxUploads)
             {
@@ -290,7 +294,9 @@ namespace VoxelForge
                 avgMeshIntegrateMs += (JS.now() - ts - avgMeshIntegrateMs) * 0.2;
                 uploaded++;
             }
+            perfEnd(PERF_MESH, tp); tp = perfMark();
             if (dirtyEditChunks.Count > 0 && JS.now() < deadline - 0.25) processDirtyEditMeshes(pcx, pcz, deadline, startup ? 6 : 4);
+            perfEnd(PERF_EDIT, tp); tp = perfMark();
             if (JS.now() < deadline - 0.25)
             {
                 prioritizeWorkerQueues(pcx, pcz);
@@ -320,7 +326,9 @@ namespace VoxelForge
                 sortMeshJobsByPriority(pcx, pcz);
                 pumpMeshWorkers();
             }
+            perfEnd(PERF_SUBMIT, tp); tp = perfMark();
             cleanupStreamCache(pcx, pcz, deadline, interactionHot ? 12 : 48);
+            perfEnd(PERF_CLEANUP, tp);
             lastStreamCost = JS.now() - t0;
         }
 
