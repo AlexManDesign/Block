@@ -1467,8 +1467,11 @@ class Game {
   // within the 10 invulnerable ticks of the last counts only by what it adds to it (hurt)
   hazardTick() {
     const p = this.player, s = this.surv, w = this.world, P = p.pos, r = PLAYER_W / 2;
+    // a boat's passenger is moved by the boat, not by Entity.move: no blocks touched (checkInsideBlocks)
+    // and none stepped on (its feet hang 0.4125 below the boat's bottom)
+    const riding = !!(this.boats && this.boats.riding);
     let fire = false, camp = false, cactus = false, lava = false;
-    for (let x = Math.floor(P[0] - r + 1e-7); x <= Math.floor(P[0] + r - 1e-7); x++)
+    if (!riding) for (let x = Math.floor(P[0] - r + 1e-7); x <= Math.floor(P[0] + r - 1e-7); x++)
       for (let y = Math.floor(P[1] + 1e-7); y <= Math.floor(P[1] + p.h - 1e-7); y++)
         for (let z = Math.floor(P[2] - r + 1e-7); z <= Math.floor(P[2] + r - 1e-7); z++) {
           const id = w.getBlock(x, y, z);
@@ -1482,7 +1485,7 @@ class Game {
     if (p.inLava) { s.fire = Math.max(s.fire, 300); this.hurt(4); }
     if (fire) { if (++s.fire === 0) s.fire = 160; this.hurt(1); }
     if (camp || cactus) this.hurt(1);
-    if (p.onGround && !this.input.keys.sneak && !p.flying && onPosBlock(w, P[0], P[1], P[2], PLAYER_W) === B.MAGMA_BLOCK) this.hurt(1);   // (isSteppingCarefully: the sneak key held)
+    if (p.onGround && !riding && !this.input.keys.sneak && !p.flying && onPosBlock(w, P[0], P[1], P[2], PLAYER_W) === B.MAGMA_BLOCK) this.hurt(1);   // (isSteppingCarefully: the sneak key held)
     if (!fire && !lava && s.fire <= 0) s.fire = -20;
     if (s.fire > 0 && p.inWater) s.fire = -20;
   }

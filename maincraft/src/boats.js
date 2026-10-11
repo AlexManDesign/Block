@@ -119,10 +119,12 @@ class Boats {
   // the rider sits in the middle, a little down into the hull. Like the boat, the rider is drawn
   // between the last two ticks (Minecraft moves the passenger with its vehicle every tick and the
   // camera interpolates both), so p.prev follows the boat's previous tick.
+  // (seated: the boat's passenger point a third of its 0.5625 height up, the player's own riding
+  // point 0.6 over its feet, so the feet sit 0.4125 under the boat's bottom: legs out in the hull)
   seat() {
     const b = this.riding, p = this.game.player;
-    p.pos[0] = b.pos[0]; p.pos[1] = b.pos[1] - 0.25; p.pos[2] = b.pos[2];
-    p.prev = [b.prev[0], b.prev[1] - 0.25, b.prev[2]]; p.prevOf = p.pos;
+    p.pos[0] = b.pos[0]; p.pos[1] = b.pos[1] - 0.4125; p.pos[2] = b.pos[2];
+    p.prev = [b.prev[0], b.prev[1] - 0.4125, b.prev[2]]; p.prevOf = p.pos;
     p.eyePrev = p.eyeOffset;
     p.vel[0] = p.vel[1] = p.vel[2] = 0; p.onGround = true; p.inWater = false; p.fallDist = 0;
   }

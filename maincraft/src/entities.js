@@ -1198,14 +1198,15 @@ class Entities {
       }
     }
     e.breedT = 0;
-    // TemptGoal: drawn by its food in the player's hand within 10 blocks, it comes up to 2.5; once the
-    // player lets it go it ignores the food for 100 ticks
-    const held = g.inv[g.sel];
+    // TemptGoal: drawn by its food in the player's hand within 10 blocks (TargetingConditions: the
+    // squared distance feet to feet up to 100, inclusive), it comes up to 2.5; once the player lets
+    // it go it ignores the food for 100 ticks
+    const held = g.inv[g.sel], ds = dx * dx + dz * dz + (p.pos[1] - e.pos[1]) ** 2;
     if (e.temptCd > 0) e.temptCd -= dt;
-    else if (d.food && held && d.food.includes(held.id) && h < 10 && !g.surv.dead) {
+    else if (d.food && held && d.food.includes(held.id) && ds <= 100 && !g.surv.dead) {
       e.tempted = true;
       e.headYaw = Math.atan2(dx, -dz);
-      if (h > 2.5) this.goTo(e, p.pos[0], p.pos[2], goalSpeed(speed, d.tempt || 1), dt); else { this.stop(e); e.path = null; }
+      if (ds >= 6.25) this.goTo(e, p.pos[0], p.pos[2], goalSpeed(speed, d.tempt || 1), dt); else { this.stop(e); e.path = null; }
       return true;
     }
     if (e.tempted) { e.tempted = false; e.temptCd = 5; this.stop(e); }
@@ -2502,7 +2503,10 @@ class Entities {
     }
     if (g.camMode) {
       const p = g.player;
-      const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: p.bobAmt, sneak: p.sneaking, attack: g.swingAnim(), held: g.inv[g.sel] || null };
+      // in a boat the body faces the bow (Boat.clampRotation sets the rider's body yaw to the boat's),
+      // the head the view, kept within 105 degrees of it
+      const bt = g.boats && g.boats.riding, ba = bt ? g.boats.acc / 0.05 : 0, riding = !!bt;
+      const e = { type: 'player', pos: p.rpos || p.pos, bodyYaw: bt ? bt.pyaw + (bt.yaw - bt.pyaw) * ba : p.yaw, headYaw: p.yaw, pitch: p.pitch, walk: p.rlimb ?? p.bob, walkAmt: riding ? 0 : p.bobAmt, sneak: p.sneaking, attack: g.swingAnim(), held: g.inv[g.sel] || null, riding };
       this.buildModel(vb('player', byTex), MODELS.player, e, cam, g.lightAt(p.pos[0], p.pos[1] + 1, p.pos[2], env), null, null, fireV);
       if (g.mode === 'survival' && g.surv.fire > 0) this.flame(fireV, e.pos, PLAYER_W, p.h, cam);
     }
@@ -2608,6 +2612,12 @@ class Entities {
       }
       else if (an === 'armL') { rx += zArms ? -Math.PI / 2 : armA; if (at > 0) { ry += bodyY; rx += bodyY; } rz -= Math.sin(t * 1.1) * 0.05 + 0.05; }
       else if (an === 'body') ry += bodyY;
+      // HumanoidModel.riding: seated, the legs straight out (-81 degrees, 18 apart), the arms forward
+      if (e.riding) {
+        if (an === 'legA') { rx = -1.4137167; ry = 0.31415927; rz = 0.07853982; }
+        else if (an === 'legB') { rx = -1.4137167; ry = -0.31415927; rz = -0.07853982; }
+        else if (an === 'armR' || an === 'armL') rx -= 0.62831855;
+      }
       // DrownedModel.setupAnim: swimming, the arms reach over the head (-2.51) and stroke, the legs kick
       if (swA > 0) {
         const st = Math.sin(t * 2);
