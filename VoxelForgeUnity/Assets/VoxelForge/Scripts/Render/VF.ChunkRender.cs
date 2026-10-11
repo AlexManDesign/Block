@@ -91,8 +91,9 @@ namespace VoxelForge
                 var s = idx16Scratch; for (int i = 0; i < inN; i++) s[i] = (ushort)idx[i];
                 mesh.SetIndexBufferData(s, 0, 0, inN, MUF);
             }
-            mesh.subMeshCount = subs.Count;
-            for (int i = 0; i < subs.Count; i++) { var d = subs[i]; d.bounds = b; d.firstVertex = 0; d.vertexCount = vn; mesh.SetSubMesh(i, d, MUF); }
+            // SetSubMeshes replaces the whole set at once, so ranges are never compared against stale submeshes of a reused mesh.
+            for (int i = 0; i < subs.Count; i++) { var d = subs[i]; d.bounds = b; d.firstVertex = 0; d.vertexCount = vn; subs[i] = d; }
+            mesh.SetSubMeshes(subs, 0, subs.Count, MUF);
             mesh.bounds = b;
             return wide;
         }
@@ -355,12 +356,16 @@ namespace VoxelForge
                 var c = chunks.Get(k);
                 if (c != null && c.cutout != null && c.cutout.sharedRegion == r) c.cutout = standaloneCutout(c);
             }
-            int tvn = vn + cvn, tin = inN + cin;
+            // Index buffer layout. GL draws the whole region and single members from OVERLAPPING ranges of one index
+            // buffer; Unity treats overlapping submesh ranges as undefined (and deprecated), so the "all" ranges are
+            // separate copies of the member indices (vertices stay shared):
+            //   [opaque members | opaque all (copy) | cutout members | cutout all (copy)]
+            int tvn = vn + cvn, tin = 2 * (inN + cin);
             if (regionScratchV.Length < tvn) { int n = regionScratchV.Length; while (n < tvn) n *= 2; regionScratchV = new TVert[n]; }
             if (regionScratchI.Length < tin) { int n = regionScratchI.Length; while (n < tin) n *= 2; regionScratchI = new int[n]; }
             int vo = 0, io = 0;
             subScratch.Clear();
-            subScratch.Add(new SubMeshDescriptor(0, inN, MeshTopology.Triangles));
+            subScratch.Add(new SubMeshDescriptor(inN, inN, MeshTopology.Triangles));
             var opRanges = new int[regionMembers.Count * 2];
             for (int mi = 0; mi < regionMembers.Count; mi++)
             {
@@ -371,11 +376,13 @@ namespace VoxelForge
                 opRanges[mi * 2] = start; opRanges[mi * 2 + 1] = gi.Length;
                 subScratch.Add(new SubMeshDescriptor(start, gi.Length, MeshTopology.Triangles));
             }
+            Array.Copy(regionScratchI, 0, regionScratchI, inN, inN); io += inN;
             int cutAllSub = -1; int[] cutRanges = null;
             if (batchCut)
             {
+                int cutBase = io;
                 cutAllSub = subScratch.Count;
-                subScratch.Add(new SubMeshDescriptor(inN, cin, MeshTopology.Triangles));
+                subScratch.Add(new SubMeshDescriptor(cutBase + cin, cin, MeshTopology.Triangles));
                 cutRanges = new int[regionCutMembers.Count];
                 for (int mi = 0; mi < regionCutMembers.Count; mi++)
                 {
@@ -386,6 +393,7 @@ namespace VoxelForge
                     cutRanges[mi] = subScratch.Count;
                     subScratch.Add(new SubMeshDescriptor(start, gi.Length, MeshTopology.Triangles));
                 }
+                Array.Copy(regionScratchI, cutBase, regionScratchI, cutBase + cin, cin); io += cin;
             }
             if (double.IsInfinity(lo)) lo = WORLD_MIN_Y; if (double.IsInfinity(hi)) hi = WORLD_MAX_Y;
             var bb = new Bounds(); float bx = cx0 * CHUNK, bz = cz0 * CHUNK, bs = RENDER_REGION_SIZE * CHUNK;

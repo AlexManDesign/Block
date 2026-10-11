@@ -919,10 +919,18 @@ namespace UnityEngine
                 int mod = desc.topology == MeshTopology.Triangles ? 3 : desc.topology == MeshTopology.Lines ? 2 : desc.topology == MeshTopology.Quads ? 4 : 1;
                 if (desc.indexCount % mod != 0) HeadlessHost.Problem("Mesh '" + name + "': submesh " + index + " index count " + desc.indexCount + " not a multiple of " + mod + " for " + desc.topology);
             }
+            // Unity 2022.3 warns (and plans to forbid) submeshes whose index ranges overlap another submesh's range.
+            if (desc.indexCount > 0)
+                for (int j = 0; j < subs.Count; j++)
+                {
+                    if (j == index) continue; var o = subs[j];
+                    if (o.indexCount > 0 && desc.indexStart < o.indexStart + o.indexCount && o.indexStart < desc.indexStart + desc.indexCount)
+                    { HeadlessHost.Problem("SetSubMesh #" + index + " shares part of its index buffer with SubMesh #" + j + " (mesh '" + name + "')"); break; }
+                }
             subs[index] = desc;
         }
-        public void SetSubMeshes(Rendering.SubMeshDescriptor[] desc, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) { subMeshCount = desc.Length; for (int i = 0; i < desc.Length; i++) SetSubMesh(i, desc[i], flags); }
-        public void SetSubMeshes(Rendering.SubMeshDescriptor[] desc, int start, int count, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) { subMeshCount = count; for (int i = 0; i < count; i++) SetSubMesh(i, desc[start + i], flags); }
+        public void SetSubMeshes(Rendering.SubMeshDescriptor[] desc, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) { SetSubMeshes(desc, 0, desc.Length, flags); }
+        public void SetSubMeshes(Rendering.SubMeshDescriptor[] desc, int start, int count, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) { subMeshCount = 0; subMeshCount = count; for (int i = 0; i < count; i++) SetSubMesh(i, desc[start + i], flags); } // replaces the whole set (no stale ranges)
         public void SetSubMeshes(List<Rendering.SubMeshDescriptor> desc, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) { SetSubMeshes(desc.ToArray(), flags); }
         public void SetSubMeshes(List<Rendering.SubMeshDescriptor> desc, int start, int count, Rendering.MeshUpdateFlags flags = Rendering.MeshUpdateFlags.Default) { SetSubMeshes(desc.ToArray(), start, count, flags); }
         public Rendering.SubMeshDescriptor GetSubMesh(int index) { M("GetSubMesh"); if (index < 0 || index >= subs.Count) throw new IndexOutOfRangeException("Specified sub mesh is out of range. Must be less than subMeshCount."); return subs[index]; }
