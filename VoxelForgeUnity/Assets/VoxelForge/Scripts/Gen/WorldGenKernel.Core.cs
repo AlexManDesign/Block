@@ -225,6 +225,7 @@ namespace VoxelForge
         {
             if (v == seed && perms.Count > 0 && Array.Exists(mainClimatePerms, q => q != null)) return;
             seed = v;
+            Array.Clear(ncValid, 0, ncValid.Length);
             perms = new List<byte[]>();
             Array.Clear(mainClimatePerms, 0, mainClimatePerms.Length);
             climateLastLeaf = -1;
@@ -592,6 +593,32 @@ namespace VoxelForge
                 xa = a + (b - a) * u, xb = c + (d - c) * u, xc = e + (f - e) * u, xd = g + (h - g) * u, ya = xa + (xb - xa) * v;
             return ya + (xc + (xd - xc) * v - ya) * w;
         }
+        // Per-call-site cache of the 8 lattice-corner hashes of the last cell. Columns are walked bottom-up, so
+        // consecutive samples of one noise field stay in the same lattice cell for ~1/frequency blocks; results are
+        // bit-identical to valueNoise3Main. One kernel per worker thread, so no locking is needed.
+        const int NOISE_SLOTS = 32;
+        readonly int[] ncX = new int[NOISE_SLOTS], ncY = new int[NOISE_SLOTS], ncZ = new int[NOISE_SLOTS];
+        readonly bool[] ncValid = new bool[NOISE_SLOTS];
+        readonly double[] ncH = new double[NOISE_SLOTS * 8];
+        void noiseCell(int slot, int ix, int iy, int iz)
+        {
+            if (ncValid[slot] && ncX[slot] == ix && ncY[slot] == iy && ncZ[slot] == iz) return;
+            ncValid[slot] = true; ncX[slot] = ix; ncY[slot] = iy; ncZ[slot] = iz;
+            var H = ncH; int o = slot << 3;
+            int x0i = unchecked(ix + seed), x1i = unchecked(x0i + 1), y1 = iy + 1, z0i = unchecked(iz - seed), z1i = unchecked(z0i + 1);
+            H[o] = hash3MainI(x0i, iy, z0i); H[o + 1] = hash3MainI(x1i, iy, z0i); H[o + 2] = hash3MainI(x0i, y1, z0i); H[o + 3] = hash3MainI(x1i, y1, z0i);
+            H[o + 4] = hash3MainI(x0i, iy, z1i); H[o + 5] = hash3MainI(x1i, iy, z1i); H[o + 6] = hash3MainI(x0i, y1, z1i); H[o + 7] = hash3MainI(x1i, y1, z1i);
+        }
+        double valueNoise3C(int slot, double x, double y, double z)
+        {
+            int ix = ffloor(x), iy = ffloor(y), iz = ffloor(z), o = slot << 3;
+            var H = ncH;
+            noiseCell(slot, ix, iy, iz);
+            double fx = x - ix, fy = y - iy, fz = z - iz, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), w = fz * fz * (3 - 2 * fz),
+                a = H[o], b = H[o + 1], c = H[o + 2], d = H[o + 3], e = H[o + 4], f = H[o + 5], g = H[o + 6], h = H[o + 7],
+                xa = a + (b - a) * u, xb = c + (d - c) * u, xc = e + (f - e) * u, xd = g + (h - g) * u, ya = xa + (xb - xa) * v;
+            return ya + (xc + (xd - xc) * v - ya) * w;
+        }
         double valueFbm3Main(double x, double y, double z)
         {
             double sum = 0, amp = 0.5, f = 1, norm = 0;
@@ -654,27 +681,27 @@ namespace VoxelForge
             double edge = depth < 8 ? depth / 8.0 : 1;
             if (y < WORLD_MIN_Y + 14) edge = Math.Min(edge, (y - (WORLD_MIN_Y + 5)) / 9.0);
             if (edge <= 0) return 0;
-            double width = 1 + signed(valueNoise3Main(x * 0.09 + 2.2, y * 0.09 - 4.4, z * 0.09 + 6.6)) * 0.85;
+            double width = 1 + signed(valueNoise3C(0, x * 0.09 + 2.2, y * 0.09 - 4.4, z * 0.09 + 6.6)) * 0.85;
             int kind = 0;
             if (y < 110)
             {
-                double cheese = signed(valueNoise3Main(x * 0.012 + 11.1, y * 0.018 - 7.7, z * 0.012 + 4.4));
+                double cheese = signed(valueNoise3C(1, x * 0.012 + 11.1, y * 0.018 - 7.7, z * 0.012 + 4.4));
                 if (cheese * cheese < 0.026 * 0.026 * edge * edge * width) kind = 1;
             }
             if (kind == 0)
             {
-                double f = 0.045, wx = x + signed(valueNoise3Main(x * f + 61.1, y * f - 22.2, z * f + 13.3)) * 15,
-                    wy = y + signed(valueNoise3Main(x * f + 9.9, y * f + 2.2, z * f - 51.1)) * 10,
-                    wz = z + signed(valueNoise3Main(x * f - 31.7, y * f + 44.4, z * f - 8.8)) * 15;
-                double n = valueNoise3Main(x * 0.02 + 5.5, y * 0.02 - 3.3, z * 0.02 + 7.7), radius = (0.3 + 1.8 * n * n) * width;
+                double f = 0.045, wx = x + signed(valueNoise3C(2, x * f + 61.1, y * f - 22.2, z * f + 13.3)) * 15,
+                    wy = y + signed(valueNoise3C(3, x * f + 9.9, y * f + 2.2, z * f - 51.1)) * 10,
+                    wz = z + signed(valueNoise3C(4, x * f - 31.7, y * f + 44.4, z * f - 8.8)) * 15;
+                double n = valueNoise3C(5, x * 0.02 + 5.5, y * 0.02 - 3.3, z * 0.02 + 7.7), radius = (0.3 + 1.8 * n * n) * width;
                 if (y < 90)
                 {
-                    double a = signed(valueNoise3Main(wx * 0.022 + 12.3, wy * 0.022 - 7.7, wz * 0.022 + 4.1)), b = signed(valueNoise3Main(wx * 0.022 - 41.9, wy * 0.022 + 23.3, wz * 0.022 - 9.5));
+                    double a = signed(valueNoise3C(6, wx * 0.022 + 12.3, wy * 0.022 - 7.7, wz * 0.022 + 4.1)), b = signed(valueNoise3C(7, wx * 0.022 - 41.9, wy * 0.022 + 23.3, wz * 0.022 - 9.5));
                     if (a * a + b * b < 0.016 * edge * radius) kind = 2;
                 }
-                if (kind == 0 && valueNoise3Main(x * 0.006 + 90.1, y * 0.006 + 5.5, z * 0.006 - 30.2) > 0.5)
+                if (kind == 0 && valueNoise3C(8, x * 0.006 + 90.1, y * 0.006 + 5.5, z * 0.006 - 30.2) > 0.5)
                 {
-                    double a = signed(valueNoise3Main(wx * 0.04 + 5.1, wy * 0.04 - 8.2, wz * 0.04 + 3.3)), b = signed(valueNoise3Main(wx * 0.04 - 7.7, wy * 0.04 + 9.9, wz * 0.04 - 2.1));
+                    double a = signed(valueNoise3C(9, wx * 0.04 + 5.1, wy * 0.04 - 8.2, wz * 0.04 + 3.3)), b = signed(valueNoise3C(10, wx * 0.04 - 7.7, wy * 0.04 + 9.9, wz * 0.04 - 2.1));
                     if (a * a + b * b < 0.009 * edge * radius) kind = 3;
                 }
             }
@@ -683,10 +710,10 @@ namespace VoxelForge
             if (y <= WORLD_MIN_Y + 12) return 3;
             if (depth > 12)
             {
-                double flooded = valueNoise3Main(x * 0.012 + 401.1, y * 0.005 - 77.7, z * 0.012 + 220.2);
+                double flooded = valueNoise3C(11, x * 0.012 + 401.1, y * 0.005 - 77.7, z * 0.012 + 220.2);
                 if (flooded > 0.52)
                 {
-                    double q = valueNoise3Main(x * 0.013 + 11.3, 0.5, z * 0.013 - 9.9);
+                    double q = valueNoise3C(12, x * 0.013 + 11.3, 0.5, z * 0.013 - 9.9);
                     double level = Math.Min(SEA, Math.Floor(-14 + (q - 0.5) * 44));
                     if (y <= level) return 2;
                 }
@@ -723,13 +750,13 @@ namespace VoxelForge
         }
         public int baseStoneAt(int x, int y, int z)
         {
-            if (y <= 0) return valueNoise3Main(x * 0.07 + 71.7, y * 0.07 - 51.5, z * 0.07 + 31.3) > 0.86 ? B.TUFF : B.DEEPSLATE;
+            if (y <= 0) return valueNoise3C(13, x * 0.07 + 71.7, y * 0.07 - 51.5, z * 0.07 + 31.3) > 0.86 ? B.TUFF : B.DEEPSLATE;
             if (y < 8 && hash3Main(x + 7, y - 3, z + 5) < (8 - y) / 8.0) return B.DEEPSLATE;
             if (y < 84)
             {
-                if (valueNoise3Main(x * 0.085 + 5.1, y * 0.085 - 3.3, z * 0.085 + 9.7) > 0.85) return B.GRANITE;
-                if (valueNoise3Main(x * 0.085 - 8.8, y * 0.085 + 6.6, z * 0.085 - 2.2) > 0.85) return B.DIORITE;
-                if (valueNoise3Main(x * 0.085 + 14.4, y * 0.085 + 11.1, z * 0.085 + 4.4) > 0.85) return B.ANDESITE;
+                if (valueNoise3C(14, x * 0.085 + 5.1, y * 0.085 - 3.3, z * 0.085 + 9.7) > 0.85) return B.GRANITE;
+                if (valueNoise3C(15, x * 0.085 - 8.8, y * 0.085 + 6.6, z * 0.085 - 2.2) > 0.85) return B.DIORITE;
+                if (valueNoise3C(16, x * 0.085 + 14.4, y * 0.085 + 11.1, z * 0.085 + 4.4) > 0.85) return B.ANDESITE;
             }
             return B.STONE;
         }
