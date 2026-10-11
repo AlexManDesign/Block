@@ -327,7 +327,7 @@ function entMove(world, e, dt) {
 }
 
 const MOB_DT = 0.05;   // mob simulation step (20 Hz, as in the original)
-const PATH_NODES = 900, PATH_RANGE = 28;
+const PATH_NODES = 1024, PATH_RANGE = 31;
 const NB8 = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
 // binary heap on node.f for A*
 // A* state in reused typed arrays over the columns within PATH_RANGE of the start (index
@@ -335,8 +335,11 @@ const NB8 = [1, 0, -1, 0, 0, 1, 0, -1, 1, 1, 1, -1, -1, 1, -1, -1];
 const PG = 64, PO = 32, PSZ = PG * PG, PNONE = -2147483648;
 const PS = {
   gen: 0, stamp: new Uint32Array(PSZ), g: new Float64Array(PSZ), f: new Float64Array(PSZ), y: new Int32Array(PSZ),
-  from: new Int32Array(PSZ), done: new Uint8Array(PSZ),
+  from: new Int32Array(PSZ), done: new Uint8Array(PSZ), wd: new Float64Array(PSZ),
   mStamp: new Uint32Array(PSZ), mY: new Int32Array(PSZ), mV: new Int32Array(PSZ),   // last standY query per column
+  mM: new Float64Array(PSZ),                                                        // and the path malus of the cell it found
+  dStamp: new Uint32Array(PSZ * 32), dVal: new Uint8Array(PSZ * 32),               // dangerAt, per cell
+  nStamp: new Uint32Array(PSZ * 32), nVal: new Uint8Array(PSZ * 32),               // dangerNear, per cell
   heap: new Int32Array(PATH_NODES * 8 + 8), hn: 0,
 };
 // binary heap of cell indices ordered by f (an entry is pushed again when its cost drops; stale
@@ -696,6 +699,8 @@ class Entities {
       // animals out of reach wait with their column (and come back with it)
       if (this.keeps(e)) {
         if (dist > 140 || !w.isLoaded(Math.floor(e.pos[0]), Math.floor(e.pos[2]))) { this.stash(e); this.mobs.splice(i, 1); continue; }
+        // (Mob.checkDespawn: the idle time of an animal counts too, beyond 32 blocks; not of one kept)
+        e.idleT = h < 32 || e.persist ? 0 : (e.idleT || 0) + dt;
       } else {
         // Mob.checkDespawn: gone beyond 128 blocks (fish 64), and beyond 32 now and then (1 in 800 a
         // tick) once idle for 600 ticks; within 32 blocks the idle time starts over. Monsters idle
@@ -835,7 +840,7 @@ class Entities {
   ai(e, d, dt, dx, dz, h, hunt, inW) {
     // (speed I, a spider's on hard: x1.2 the attribute)
     const g = this.game, p = g.player, S = d.slime ? SLIME_SIZES[e.size] : null, speed = S ? MOB_SPEED_K * S[2] * S[2] : d.speed * (e.effect === 'speed' ? 1.44 : 1);
-    e.aiming = false; e.strafe = false;
+    e.aiming = false; e.strafe = false; e.aiTick = (e.aiTick || 0) + 1;
     const face = () => { e.headYaw = Math.atan2(dx, -dz); };
     // spiders hunt in the dark; in bright light one that has the player drops it now and then
     // (SpiderAttackGoal.canContinueToUse: 1 in 100, checked every other tick as goals are)
@@ -1012,11 +1017,23 @@ class Entities {
       }
       return;
     }
-    // wander: every 3-8 s either pick a spot within 10 blocks (Minecraft's random stroll) or rest
-    e.aiT -= dt;
-    if (e.aiT <= 0) {
-      e.aiT = 3 + Math.random() * 5;
-      e.tgt = Math.random() < 0.6 ? [e.pos[0] + (Math.random() - 0.5) * 20, e.pos[2] + (Math.random() - 0.5) * 20] : null;
+    // RandomStrollGoal (WaterAvoidingRandomStrollGoal): idle, a stroll starts 1 time in 60 at each
+    // goal tick (every other tick: 1 in 120 a tick), but not once the mob has been idle 100 ticks out
+    // of 32 blocks of the player (noActionTime); to dry ground within 10 blocks, 15 from in the water
+    // (LandRandomPos; a drowned anywhere). It walks on until the path is done, or it is stuck
+    // (PathNavigation.doStuckDetection: under speed^2 x 25 blocks on in 100 ticks), or another goal
+    // takes over (that stops it)
+    if (e.wanderTick !== e.aiTick - 1) e.tgt = null;
+    e.wanderTick = e.aiTick;
+    if (e.aiT > 0) e.aiT -= dt;          // (a pause asked for elsewhere, as at the water's edge)
+    if (!e.tgt && e.aiT <= 0 && (e.idleT || 0) < 5 && Math.random() < 1 - Math.pow(1 - 1 / 120, dt * 20)) {
+      e.tgt = d.drowned ? [e.pos[0] + (Math.random() - 0.5) * 20, e.pos[2] + (Math.random() - 0.5) * 20] : this.landSpot(e, d, inW ? 15 : 10);
+      if (e.tgt) { e.tgtT = 0; e.tgtP = [e.pos[0], e.pos[2]]; }
+    }
+    if (e.tgt && (e.tgtT += dt) >= 5) {
+      const sp = d.attr * (d.wander || 1), lim = (sp >= 1 ? sp : sp * sp) * 25;
+      if (Math.hypot(e.pos[0] - e.tgtP[0], e.pos[2] - e.tgtP[1]) < lim) e.tgt = null;
+      e.tgtT = 0; e.tgtP[0] = e.pos[0]; e.tgtP[1] = e.pos[2];
     }
     if (e.tgt) { if (this.goTo(e, e.tgt[0], e.tgt[1], goalSpeed(speed, d.wander || 1), dt)) e.tgt = null; }
     else this.stop(e);
@@ -1254,7 +1271,11 @@ class Entities {
       e.pathT = 0.6; e.pathTx = tx; e.pathTz = tz; e.path = this.findPath(e, tx, tz); e.pathI = 0;
     }
     const P = e.path;
-    if (!P || e.pathI >= P.length) return this.steer(e, tx, tz, speed);
+    if (!P) return this.steer(e, tx, tz, speed);
+    // the path walked: on to the goal itself, or (PathNavigation done short of a goal out of reach)
+    // standing at its end until the next path
+    const end = () => { if (P.full) return this.steer(e, tx, tz, speed); this.stop(e); return true; };
+    if (e.pathI >= P.length) return end();
     // waypoints already behind (the start cell, or one passed while pushed) are skipped: the next
     // one is nearer to the mob than to the current waypoint (PathFollower advancing past nodes)
     while (e.pathI + 1 < P.length) {
@@ -1264,10 +1285,13 @@ class Entities {
     let wp = P[e.pathI];
     if (Math.hypot(wp[0] - e.pos[0], wp[1] - e.pos[2]) < 0.55) {
       e.pathI++;
-      if (e.pathI >= P.length) return this.steer(e, tx, tz, speed);
+      if (e.pathI >= P.length) return end();
       wp = P[e.pathI];
     }
     this.steer(e, wp[0], wp[1], speed);
+    // MoveControl: the next node more than a step (0.6) above the feet and within a block across:
+    // jump (in water LivingEntity.jumpInLiquid, each tick it holds)
+    if (wp[2] > e.pos[1] + 0.6 && (wp[0] - e.pos[0]) ** 2 + (wp[1] - e.pos[2]) ** 2 < 1) e.wantJump = true;
     return false;
   }
   pointSolid(x, y, z) {
@@ -1302,33 +1326,125 @@ class Entities {
     const w = this.game.world, id = w.getBlock(x, y, z);
     return SHAPE[id] === SH.DOOR && !((w.getMeta(x, y, z) >> 3) & 1) && (id === B.IRON_DOOR || !this.pathBreaker);
   }
-  // a cell to stand in: a floor under it, room for the body, no hazard; for a drowned a cell of
-  // water will do as well (its water path malus is 0)
+  // a cell to stand in: a floor under it, room for the body, no hazard. Water (WalkNodeEvaluator):
+  // a drowned (amphibious) and a mob that floats (canFloat: a FloatGoal) take any cell of it, a mob
+  // that sinks only one on the bottom, an enderman none (its water malus is -1)
   standable(x, y, z) {
-    return (this.solidIn(x, y - 1, z, 0.8) || (this.pathSwim && isWaterId(this.game.world.getBlock(x, y, z)))) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
+    const wet = isWaterId(this.game.world.getBlock(x, y, z));
+    if (wet && this.pathDry) return false;
+    return (this.floorIn(x, y - 1, z) || (wet && (this.pathSwim || this.pathFloat))) && this.clear2(x, y, z) && !this.hazard(x, y, z) && !this.hazard(x, y + 1, z);
   }
-  // walkable height in column x,z near y: one step up or a drop of up to 3
+  // a floor to stand on in block (x, y, z) (WalkNodeEvaluator.getFloorLevel): its collision across
+  // the middle reaches at least half way up (a bottom slab, stairs, farmland, a full block); not a
+  // fence, wall or gate (FENCE: no way over it)
+  floorIn(x, y, z) {
+    const w = this.game.world, id = w.getBlock(x, y, z);
+    if (!id || !SOLID[id]) return false;
+    if (SHAPE[id] === SH.CUBE) return true;
+    if (SHAPE[id] === SH.FENCE || SHAPE[id] === SH.WALL || SHAPE[id] === SH.GATE) return false;
+    const boxes = collisionBoxes(w, id, w.getMeta(x, y, z), x, y, z);
+    if (!boxes) return false;
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      if (0.5 >= b[0] && 0.5 <= b[3] && 0.5 >= b[2] && 0.5 <= b[5] && b[4] >= 0.5) return true;
+    }
+    return false;
+  }
+  // walkable height in column x,z near y: one step up or a drop of up to 3; a mob that sinks goes on
+  // down through water to the bottom (tryFindFirstNonWaterBelow)
   standY(x, y, z) {
     for (let t = 1; t >= -3; t--) if (this.standable(x, y + t, z)) return y + t;
+    if (this.pathSink) {
+      const w = this.game.world;
+      for (let yy = y - 3; yy > y - 64 && isWaterId(w.getBlock(x, yy, z)); yy--) if (this.standable(x, yy - 1, z)) return yy - 1;
+    }
     return null;
   }
-  // A* over block columns (8 directions, no corner cutting), at most PATH_NODES nodes within
-  // PATH_RANGE blocks (the original: 320 / 22; wider here so mobs find the way around long walls).
-  // Returns waypoints to the goal, or to the closest reachable node when the goal is out of reach.
+  // WalkNodeEvaluator's path costs (BlockPathTypes): a cell of water 8 (WATER; a drowned 0); a dry
+  // one on a magma block 16 (DAMAGE_FIRE); one with water, lava, fire, magma or a cactus in the 8
+  // columns around it, a level below to a level above, 8 (WATER_BORDER, DANGER_FIRE, DANGER_OTHER)
+  pathMalus(x, y, z) {
+    const w = this.game.world;
+    if (isWaterId(w.getBlock(x, y, z))) return this.pathSwim ? 0 : 8;
+    if (w.getBlock(x, y - 1, z) === B.MAGMA_BLOCK) return 16;
+    // none of them in the sections round the cell: nothing near it
+    let any = 0;
+    const s0 = (y - 1 - WORLD_MIN_Y) >> 4, s1 = (y + 1 - WORLD_MIN_Y) >> 4;
+    for (let cx = (x - 1) >> 4; cx <= (x + 1) >> 4 && !any; cx++) for (let cz = (z - 1) >> 4; cz <= (z + 1) >> 4 && !any; cz++)
+      for (let sc = s0; sc <= s1 && !any; sc++) any = w.sectionDanger(cx, sc, cz);
+    if (!any) return 0;
+    return this.dangerNear(x - 1, y, z - 1) || this.dangerNear(x, y, z - 1) || this.dangerNear(x + 1, y, z - 1) || this.dangerNear(x - 1, y, z) ||
+      this.dangerNear(x + 1, y, z) || this.dangerNear(x - 1, y, z + 1) || this.dangerNear(x, y, z + 1) || this.dangerNear(x + 1, y, z + 1) ? 8 : 0;
+  }
+  // dangerAt in any of the cells y - 1 .. y + 1 of a column (cached like it, PS.nStamp / nVal)
+  dangerNear(x, y, z) {
+    const ix = x - this.psx + PO, iz = z - this.psz + PO, iy = y - this.psy + 16;
+    let k = -1;
+    if (this.inPath && ix >= 0 && ix < PG && iz >= 0 && iz < PG && iy >= 0 && iy < 32) {
+      k = ((ix * PG) + iz) * 32 + iy;
+      if (PS.nStamp[k] === PS.gen) return PS.nVal[k];
+    }
+    const v = this.dangerAt(x, y - 1, z) | this.dangerAt(x, y, z) | this.dangerAt(x, y + 1, z);
+    if (k >= 0) { PS.nStamp[k] = PS.gen; PS.nVal[k] = v; }
+    return v;
+  }
+  // water, lava, fire, magma or a cactus in a cell; looked up once a search for the cells near its
+  // start (PS.dStamp / dVal: the columns of the search, 16 levels each way)
+  dangerAt(x, y, z) {
+    const ix = x - this.psx + PO, iz = z - this.psz + PO, iy = y - this.psy + 16;
+    let k = -1;
+    if (this.inPath && ix >= 0 && ix < PG && iz >= 0 && iz < PG && iy >= 0 && iy < 32) {
+      k = ((ix * PG) + iz) * 32 + iy;
+      if (PS.dStamp[k] === PS.gen) return PS.dVal[k];
+    }
+    const id = this.game.world.getBlock(x, y, z), v = isWaterId(id) || id === B.LAVA || id === B.FIRE || id === B.MAGMA_BLOCK || id === B.CACTUS ? 1 : 0;
+    if (k >= 0) { PS.dStamp[k] = PS.gen; PS.dVal[k] = v; }
+    return v;
+  }
+  // WaterAvoidingRandomStrollGoal (LandRandomPos.getPos): ten random spots within r across and 7 up
+  // or down (15 across from in the water), each on a full block (isStableDestination) and moved up
+  // out of anything solid, kept when dry and free of path costs; the one the mob likes best
+  // (getWalkTargetValue: a monster the darkest, an animal grass, else the brightest)
+  landSpot(e, d, r) {
+    const w = this.game.world, ex = Math.floor(e.pos[0]), ey = Math.floor(e.pos[1]), ez = Math.floor(e.pos[2]);
+    let best = null, bv = -Infinity;
+    for (let k = 0; k < 10; k++) {
+      const x = ex + ((Math.random() * (2 * r + 1)) | 0) - r, z = ez + ((Math.random() * (2 * r + 1)) | 0) - r;
+      let y = ey + ((Math.random() * 15) | 0) - 7;
+      if (!w.isLoaded(x, z) || y <= WORLD_MIN_Y || y >= WORLD_MAX_Y) continue;
+      const under = w.getBlock(x, y - 1, z);
+      if (!OPAQUE[under] || SHAPE[under] !== SH.CUBE) continue;
+      while (y < WORLD_MAX_Y && SOLID[w.getBlock(x, y, z)]) y++;
+      const id = w.getBlock(x, y, z);
+      if (isWaterId(id) || this.hazard(x, y, z) || this.pathMalus(x, y, z)) continue;
+      const below = w.getBlock(x, y - 1, z);
+      const v = d.hostile ? -this.rawLight(x, y, z) : below === B.GRASS || below === B.SNOWY_GRASS ? 100 : this.rawLight(x, y, z);
+      if (v > bv) { bv = v; best = [x + 0.5, z + 0.5]; }
+    }
+    return best;
+  }
+  // A* over block columns (8 directions, no corner cutting), as Minecraft's PathFinder: at most
+  // follow range x 16 nodes visited (a zombie 560, most mobs 256), none walked farther than the
+  // follow range from the start; each node costs its distance plus its path malus. Returns
+  // waypoints to the goal, or to the closest node found when the goal is out of reach.
   findPath(e, tx, tz) {
     this.pathBreaker = !!e.breakDoors && this.game.difficulty === 'hard';
-    this.pathSwim = !!MOB_DEFS[e.type].drowned;
+    const md = MOB_DEFS[e.type];
+    this.pathSwim = !!md.drowned; this.pathDry = e.type === 'enderman';
+    this.pathSink = !!md.sinks && !md.drowned; this.pathFloat = !md.sinks && !this.pathDry;
     const sx = Math.floor(e.pos[0]), sy = Math.floor(e.pos[1] + 0.1), sz = Math.floor(e.pos[2]);
     const gx = Math.floor(tx), gz = Math.floor(tz);
     if (sx === gx && sz === gz) return null;
-    if (++PS.gen > 0x3fffffff) { PS.gen = 1; PS.stamp.fill(0); PS.mStamp.fill(0); }
+    if (++PS.gen > 0x3fffffff) { PS.gen = 1; PS.stamp.fill(0); PS.mStamp.fill(0); PS.dStamp.fill(0); PS.nStamp.fill(0); }
     const gen = PS.gen, ST = PS.stamp, G = PS.g, F = PS.f, Y = PS.y, FR = PS.from, D = PS.done;
-    const MS = PS.mStamp, MY = PS.mY, MV = PS.mV;
+    this.inPath = true; this.psx = sx; this.psy = sy; this.psz = sz;
+    const MS = PS.mStamp, MY = PS.mY, MV = PS.mV, MM = PS.mM;
     const s0 = PO * PG + PO;
-    ST[s0] = gen; G[s0] = 0; F[s0] = octDist(sx - gx, sz - gz); Y[s0] = sy; FR[s0] = -1; D[s0] = 0;
+    const WD = PS.wd, range = this.followRange(e, md), maxN = Math.min(PATH_NODES, Math.floor(range * 16));
+    ST[s0] = gen; G[s0] = 0; WD[s0] = 0; F[s0] = octDist(sx - gx, sz - gz); Y[s0] = sy; FR[s0] = -1; D[s0] = 0;
     PS.hn = 0; heapPush(s0);
     let best = s0, bestH = F[s0], n = 0;
-    while (PS.hn && n < PATH_NODES) {
+    while (PS.hn && n < maxN) {
       const P = heapPop();
       if (D[P]) continue;
       D[P] = 1; n++;
@@ -1340,26 +1456,29 @@ class Entities {
         const kk = (hx - sx + PO) * PG + (hz - sz + PO);
         let y;
         if (MS[kk] === gen && MY[kk] === py) y = MV[kk];
-        else { const v = this.standY(hx, py, hz); y = v === null ? PNONE : v; MS[kk] = gen; MY[kk] = py; MV[kk] = y; }
+        else { const v = this.standY(hx, py, hz); y = v === null ? PNONE : v; MS[kk] = gen; MY[kk] = py; MV[kk] = y; if (v !== null) MM[kk] = this.pathMalus(hx, v, hz); }
         if (y === PNONE) continue;
         const diag = bx !== 0 && bz !== 0;
         if (diag && (y !== py || !this.clear2(px + bx, py, pz) || !this.clear2(px, py, pz + bz))) continue;
-        const gc = G[P] + (diag ? Math.SQRT2 : 1);
+        const step = diag ? Math.SQRT2 : 1, gc = G[P] + step + MM[kk], wd = WD[P] + step;
+        if (wd >= range) continue;
         if (ST[kk] === gen) {
           if (D[kk] || gc >= G[kk]) continue;
-          G[kk] = gc; FR[kk] = P; Y[kk] = y; F[kk] = gc + octDist(hx - gx, hz - gz); heapPush(kk);
+          G[kk] = gc; WD[kk] = wd; FR[kk] = P; Y[kk] = y; F[kk] = gc + octDist(hx - gx, hz - gz); heapPush(kk);
           continue;
         }
         const hh = octDist(hx - gx, hz - gz);
-        ST[kk] = gen; G[kk] = gc; F[kk] = gc + hh; Y[kk] = y; FR[kk] = P; D[kk] = 0;
+        ST[kk] = gen; G[kk] = gc; WD[kk] = wd; F[kk] = gc + hh; Y[kk] = y; FR[kk] = P; D[kk] = 0;
         if (hh < bestH) { bestH = hh; best = kk; }
         heapPush(kk);
       }
     }
-    if (best === s0) return null;
+    // waypoints [x, z, floor y]; full: it reaches the goal (else it ends at the node nearest to it)
     const out = [];
-    for (let q = best; FR[q] >= 0; q = FR[q]) out.push([sx + ((q / PG) | 0) - PO + 0.5, sz + (q % PG) - PO + 0.5]);
+    for (let q = best; FR[q] >= 0; q = FR[q]) out.push([sx + ((q / PG) | 0) - PO + 0.5, sz + (q % PG) - PO + 0.5, Y[q]]);
     out.reverse();
+    out.full = sx + ((best / PG) | 0) - PO === gx && sz + (best % PG) - PO === gz;
+    this.inPath = false;
     return out;
   }
   // a drop of more than 3 blocks right ahead
@@ -1367,8 +1486,8 @@ class Entities {
     const l = Math.hypot(e.wish[0], e.wish[2]);
     if (l < 0.2) return false;
     const x = Math.floor(e.pos[0] + e.wish[0] / l * 0.8), z = Math.floor(e.pos[2] + e.wish[2] / l * 0.8), y = Math.floor(e.pos[1] + 0.1);
-    // a drowned takes a drop into water as a way on (its water path malus is 0)
-    const wet = MOB_DEFS[e.type].drowned;
+    // a drop into water is a way on (it breaks the fall), but not for an enderman
+    const wet = e.type !== 'enderman';
     for (let a = 0; a <= 3; a++) if (this.solidIn(x, y - a - 1, z, 0.8) || (wet && isWaterId(this.game.world.getBlock(x, y - a - 1, z)))) return false;
     return true;
   }
@@ -1417,7 +1536,7 @@ class Entities {
     // the current's push (Entity.baseTick, before the move)
     if (inW && e.wPush) { v[0] += e.wPush[0]; v[1] += e.wPush[1]; v[2] += e.wPush[2]; }
     const depth = inW ? e.wDepth : 0, deep = depth > (this.eyeH(e) < 0.4 ? 0 : 0.4);
-    if (deep && (d.sinks ? e.wantJump : Math.random() < 0.8)) v[1] += 0.04;
+    if (deep && (e.wantJump || (!d.sinks && Math.random() < 0.8))) v[1] += 0.04;
     else if (e.wantJump && e.onGround && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
     e.wantJump = false;
     if (e.type === 'chicken' && !e.onGround && v[1] < 0) v[1] *= 0.6;   // Chicken.aiStep: flaps down

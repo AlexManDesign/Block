@@ -11,7 +11,17 @@ class Section {
     this.meta = new Uint8Array(4096);
     this.light = new Uint8Array(4096);
     if (skyFill) this.light.fill(0xF0);
+    this.danger = -1;      // blocks of water, lava, fire, magma or cactus in it (-1: not counted yet)
   }
+}
+// the blocks the path finder keeps away from (water, lava, fire, magma, cactus), by id
+let DANGER_ID = null;
+function dangerIds() {
+  if (!DANGER_ID) {
+    DANGER_ID = new Uint8Array(65536);
+    for (let id = 0; id < 65536; id++) if (isWaterId(id) || id === B.LAVA || id === B.FIRE || id === B.MAGMA_BLOCK || id === B.CACTUS) DANGER_ID[id] = 1;
+  }
+  return DANGER_ID;
 }
 
 class Column {
@@ -95,6 +105,21 @@ class World {
   col(cx, cz) {
     const c = this.grid[((cx & COL_MASK) << 6) | (cz & COL_MASK)];
     return c && c.cx === cx && c.cz === cz ? c : null;
+  }
+  // how many water, lava, fire, magma or cactus blocks section s of column (cx, cz) holds (counted
+  // the first time it is asked, then kept by setBlock)
+  sectionDanger(cx, s, cz) {
+    const c = this.col(cx, cz);
+    if (!c || !c.state || s < 0 || s >= SECTIONS) return 0;
+    const sec = c.secs[s];
+    if (!sec) return 0;
+    if (sec.danger < 0) {
+      const D = dangerIds(), ids = sec.ids;
+      let n = 0;
+      for (let i = 0; i < 4096; i++) n += D[ids[i]];
+      sec.danger = n;
+    }
+    return sec.danger;
   }
   getBlock(x, y, z) {
     if (y < WORLD_MIN_Y) return B.BEDROCK;
@@ -224,7 +249,7 @@ class World {
         sec = c.secs[s];
       }
       const li = ((y & 15) << 8) | (idx & 255);
-      sec.ids[li] = v & 0xFFFF; sec.meta[li] = (v >>> 16) & 255;
+      sec.ids[li] = v & 0xFFFF; sec.meta[li] = (v >>> 16) & 255; sec.danger = -1;
     }
   }
 
@@ -492,6 +517,7 @@ class World {
     meta = meta | 0;
     if (oldId === id && oldMeta === meta) return false;
     sec.ids[li] = id; sec.meta[li] = meta;
+    if (sec.danger >= 0) { const D = DANGER_ID; sec.danger += D[id] - D[oldId]; }
     if (!c.edits) c.edits = new Map();
     c.edits.set(((y - WORLD_MIN_Y) << 8) | ((z & 15) << 4) | (x & 15), id | (meta << 16));
     this.dirtyCols.add(c.key);
