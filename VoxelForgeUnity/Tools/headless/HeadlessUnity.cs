@@ -119,7 +119,11 @@ namespace UnityEngine
             foreach (var c in components.ToArray())
             {
                 var cam = c as Camera; if (cam == null || cam.__destroyed || !cam.enabled) continue;
+                // Model the risk the real player has: a camera whose culling mask is "Nothing" is reported, since its
+                // render loop (and the camera events carrying command buffers) may be skipped.
+                if (cam.cullingMask == 0 && cam.buffers.Count > 0) Problem("camera '" + cam.name + "' has cullingMask 0 (Nothing) but carries command buffers");
                 foreach (var cb in cam.buffers) cb.Execute();
+                if (Camera.onPostRender != null) Camera.onPostRender(cam);
             }
             lastDraws = frameDraws; lastTris = frameTris;
             // OnGUI: Layout + event for every queued input event, then Layout + Repaint
@@ -944,6 +948,8 @@ namespace UnityEngine
     [Flags] public enum DepthTextureMode { None = 0, Depth = 1, DepthNormals = 2, MotionVectors = 4 }
     public sealed class Camera : Behaviour
     {
+        public delegate void CameraCallback(Camera cam);
+        public static CameraCallback onPreCull, onPreRender, onPostRender;
         internal readonly List<Rendering.CommandBuffer> buffers = new List<Rendering.CommandBuffer>();
         public static Camera main { get { return null; } }
         public static Camera[] allCameras { get { var l = new List<Camera>(); foreach (var c in HeadlessHost.components) { var k = c as Camera; if (k != null && !k.__destroyed && k.enabled) l.Add(k); } return l.ToArray(); } }
@@ -987,12 +993,14 @@ namespace UnityEngine
     }
     public sealed class QualitySettings
     {
+        public static ColorSpace activeColorSpace { get { return ColorSpace.Gamma; } }
         public static int antiAliasing { get; set; }
         public static int vSyncCount { get; set; }
         public static int masterTextureLimit { get; set; }
     }
     public sealed class SystemInfo
     {
+        public static string graphicsDeviceName { get { return "Headless"; } }
         public static int systemMemorySize { get { return 16384; } }
         public static int graphicsMemorySize { get { return 4096; } }
         public static int processorCount { get { return Environment.ProcessorCount; } }
@@ -1029,6 +1037,7 @@ namespace UnityEngine
         public static Rect safeArea { get { return new Rect(0, 0, HeadlessHost.screenW, HeadlessHost.screenH); } }
         public static ScreenOrientation orientation { get; set; }
     }
+    public enum ColorSpace { Uninitialized = -1, Gamma = 0, Linear = 1 }
     public enum CursorLockMode { None, Locked, Confined }
     public class Cursor
     {

@@ -49,6 +49,8 @@ namespace VoxelForge
         RenderTexture scaledRT;
         CommandBuffer blitCB;
         bool cbAttached;
+        const int VF_EMPTY_LAYER = 31;
+        int cameraRenders = 0, diagStage = 0; double startedAt = -1;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void AutoCreate()
@@ -76,7 +78,9 @@ namespace VoxelForge
             cam = gameObject.AddComponent<Camera>();
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = Color.black;
-            cam.cullingMask = 0;
+            // Render an (empty) layer rather than "Nothing": a camera that culls nothing at all may skip its render
+            // loop, and with it the camera events the frame CommandBuffer is attached to.
+            cam.cullingMask = 1 << VF_EMPTY_LAYER;
             cam.renderingPath = RenderingPath.Forward;
             cam.allowHDR = false;
             cam.allowMSAA = false;
@@ -92,7 +96,7 @@ namespace VoxelForge
             bgo.transform.SetParent(transform, false);
             blitCam = bgo.AddComponent<Camera>();
             blitCam.clearFlags = CameraClearFlags.Nothing;
-            blitCam.cullingMask = 0;
+            blitCam.cullingMask = 1 << VF_EMPTY_LAYER;
             blitCam.allowHDR = false;
             blitCam.allowMSAA = false;
             blitCam.depth = 10;
@@ -103,6 +107,23 @@ namespace VoxelForge
             try { VF.bootstrap(); }
             catch (Exception e) { Debug.LogException(e); }
             if (VF.frameCB != null) { cam.AddCommandBuffer(CameraEvent.AfterForwardAlpha, VF.frameCB); cbAttached = true; }
+            else Debug.LogError("[Voxel Forge] renderer not initialised (see the exception above): nothing can be drawn.");
+            try { VF.logGraphicsDiagnostics(); } catch (Exception e) { Debug.LogException(e); }
+            Camera.onPostRender += countRender;
+        }
+        void countRender(Camera c) { if (c == cam) cameraRenders++; }
+
+        /// <summary>World/render snapshot 3 s, 10 s and 30 s after a world starts (and a warning if it is still not visible).</summary>
+        void diagnostics(double now)
+        {
+            if (!VF.started) { startedAt = -1; diagStage = 0; return; }
+            if (startedAt < 0) startedAt = now;
+            double t = (now - startedAt) / 1000; double next = diagStage == 0 ? 3 : diagStage == 1 ? 10 : diagStage == 2 ? 30 : double.PositiveInfinity;
+            if (t < next) return;
+            diagStage++;
+            string line = VF.worldDiagnostics(cameraRenders);
+            bool bad = !VF.worldReady || VF.drawCalls == 0 || cameraRenders == 0;
+            if (bad && diagStage >= 2) Debug.LogWarning(line + "  <- world not visible yet"); else Debug.Log(line);
         }
 
         void Update()
@@ -120,6 +141,7 @@ namespace VoxelForge
                 configureTarget(out w, out h);
                 VF.renderWorld(cam, now, dt, w, h);
                 VF.frameFinish(now, frameStart);
+                diagnostics(now);
             }
             catch (Exception e) { Debug.LogException(e); }
         }
@@ -184,6 +206,7 @@ namespace VoxelForge
             if (instance != this) return;
             if (cbAttached && cam != null) cam.RemoveCommandBuffer(CameraEvent.AfterForwardAlpha, VF.frameCB);
             if (blitCam != null && blitCB != null) blitCam.RemoveCommandBuffer(CameraEvent.AfterEverything, blitCB);
+            Camera.onPostRender -= countRender;
             if (scaledRT != null) { scaledRT.Release(); Destroy(scaledRT); }
             instance = null;
         }

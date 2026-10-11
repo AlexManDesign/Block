@@ -355,6 +355,8 @@ namespace UnityEngine
     [Flags] public enum DepthTextureMode { None = 0, Depth = 1, DepthNormals = 2, MotionVectors = 4 }
     public sealed class Camera : Behaviour
     {
+        public delegate void CameraCallback(Camera cam);
+        public static CameraCallback onPreCull, onPreRender, onPostRender;
         public static Camera main { get { return null; } }
         public static Camera[] allCameras { get { return null; } }
         public CameraClearFlags clearFlags { get; set; }
@@ -396,12 +398,14 @@ namespace UnityEngine
     }
     public sealed class QualitySettings
     {
+        public static ColorSpace activeColorSpace { get { return ColorSpace.Gamma; } }
         public static int antiAliasing { get; set; }
         public static int vSyncCount { get; set; }
         public static int masterTextureLimit { get; set; }
     }
     public sealed class SystemInfo
     {
+        public static string graphicsDeviceName { get { return "Headless"; } }
         public static int systemMemorySize { get { return 0; } }
         public static int graphicsMemorySize { get { return 0; } }
         public static int processorCount { get { return 1; } }
@@ -437,6 +441,7 @@ namespace UnityEngine
         public static Rect safeArea { get { return new Rect(); } }
         public static ScreenOrientation orientation { get; set; }
     }
+    public enum ColorSpace { Uninitialized = -1, Gamma = 0, Linear = 1 }
     public enum CursorLockMode { None, Locked, Confined }
     public class Cursor
     {
