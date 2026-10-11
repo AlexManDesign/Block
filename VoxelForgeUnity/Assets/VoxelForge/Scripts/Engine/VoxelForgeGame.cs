@@ -66,6 +66,12 @@ namespace VoxelForge
             DontDestroyOnLoad(gameObject);
             Application.runInBackground = true;
             QualitySettings.antiAliasing = 0;
+            // The WebGL reference has no anisotropic filtering, shadows or reflection probes; Unity's default quality
+            // levels force anisotropy on and keep realtime probes/shadows enabled.
+            QualitySettings.anisotropicFiltering = AnisotropicFiltering.Disable;
+            QualitySettings.shadows = ShadowQuality.Disable;
+            QualitySettings.realtimeReflectionProbes = false;
+            QualitySettings.softParticles = false;
             QualitySettings.vSyncCount = 1;
             Application.targetFrameRate = Application.isMobilePlatform ? 60 : -1;
             Screen.sleepTimeout = SleepTimeout.NeverSleep;

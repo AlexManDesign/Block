@@ -219,12 +219,35 @@ namespace VoxelForge
         }
 
         // ---------------- HUD ----------------
+        static readonly string[] SLOT_NUM = { "<size=9>1</size>", "<size=9>2</size>", "<size=9>3</size>", "<size=9>4</size>", "<size=9>5</size>", "<size=9>6</size>", "<size=9>7</size>", "<size=9>8</size>", "<size=9>9</size>" };
+        static readonly Dictionary<int, string> numStrCache = new Dictionary<int, string>();
+        static string numStr(int v) { string s; if (!numStrCache.TryGetValue(v, out s)) { s = v.ToString(); if (numStrCache.Count < 4096) numStrCache[v] = s; } return s; }
+        // CalcSize per string, cached by reference (stats/mode/toast strings only change when their text changes).
+        static string sizeKeyMode, sizeKeyTip, sizeKeyToast; static Vector2 sizeMode, sizeTip, sizeToast;
+        static Vector2 cachedSize(GUIStyle st, string text, ref string key, ref Vector2 size)
+        {
+            if (!ReferenceEquals(key, text)) { key = text; size = st.CalcSize(new GUIContent(text)); }
+            return size;
+        }
+        static string barTextHp, barTextFood, barTextAir; static int barHp = -1, barFood = -1, barAir = -1;
+        static string barText(ref string cache, ref int last, int v, string prefix, string suffix)
+        {
+            if (v != last || cache == null) { last = v; cache = "<size=11>" + prefix + v + suffix + "</size>"; }
+            return cache;
+        }
         static void drawHUD(float W, float H)
         {
+            // The HUD is passive (labels and textures take no control ids), so it is drawn on Repaint only; IMGUI calls
+            // OnGUI for Layout and every input event too. Touch hotbar taps are still handled on MouseDown.
+            if (Event.current.type != EventType.Repaint)
+            {
+                if (TOUCH_DEVICE && uiInput && Event.current.type == EventType.MouseDown) hudTouchHotbar(W, H);
+                return;
+            }
             // stats / mode
             GUI.Label(new Rect(10, 8, 900, 140), statsText, stStats);
             // #mode right:12 top:10; #resources right:12 top:42 (hidden at max-width:760px)
-            if (!string.IsNullOrEmpty(modeText)) { float mw = stStatsR.CalcSize(new GUIContent(modeText)).x + 18; var mr = new Rect(W - 12 - mw, 10, mw, 26); fill(mr, new Color(0, 0, 0, 0.33f)); GUI.Label(new Rect(mr.x, mr.y + 6, mw - 9, 18), modeText, stStatsR); }
+            if (!string.IsNullOrEmpty(modeText)) { float mw = cachedSize(stStatsR, modeText, ref sizeKeyMode, ref sizeMode).x + 18; var mr = new Rect(W - 12 - mw, 10, mw, 26); fill(mr, new Color(0, 0, 0, 0.33f)); GUI.Label(new Rect(mr.x, mr.y + 6, mw - 9, 18), modeText, stStatsR); }
             if (!string.IsNullOrEmpty(resourceHUDText) && W > 760) GUI.Label(new Rect(W - 330, 42, 320, 200), resourceHUDText, mkStyleCached(ref stResCache, () => mkStyle(GUI.skin.label, 12, C(0xe0e8ee), FontStyle.Normal, TextAnchor.UpperRight)));
             if (xrayActive) { var r = new Rect(W - 12 - 90, H - (W <= 760 ? 205 : 250) - 24, 90, 24); fill(r, C(0x25143d, 0.87f)); frame(r, C(0xc8a2ff, 0.53f)); GUI.Label(r, "<size=11>X-RAY · X</size>", stCenter); }
             if (minimapVisible && minimapTex != null)
@@ -239,14 +262,14 @@ namespace VoxelForge
             {
                 const string tip = "WASD · мышь · удерживай ЛКМ: добывать/атаковать · ПКМ использовать/ставить · E инвентарь · Q выбросить · 1–9/колесо · F полёт в Creator · [ ] дальность · Esc";
                 var tst = mkStyleCached(ref stTipCache, () => { var q = mkStyle(GUI.skin.label, 12, C(0xffffff, 0.9f), FontStyle.Normal, TextAnchor.MiddleCenter); q.wordWrap = false; return q; });
-                float tw = Mathf.Min(W - 24, tst.CalcSize(new GUIContent(tip)).x + 20); var tr = new Rect(W / 2 - tw / 2, 14, tw, 26);
+                float tw = Mathf.Min(W - 24, cachedSize(tst, tip, ref sizeKeyTip, ref sizeTip).x + 20); var tr = new Rect(W / 2 - tw / 2, 14, tw, 26);
                 fill(tr, new Color(0, 0, 0, 0.4f)); GUI.Label(tr, tip, tst);
             }
             // toast
             if (JS.now() < toastUntil + 300 && !string.IsNullOrEmpty(toastText))
             {
                 float a = JS.now() < toastUntil ? 1 : (float)Math.Max(0, 1 - (JS.now() - toastUntil) / 300);
-                var sz = stToast.CalcSize(new GUIContent(toastText)); var r = new Rect(W / 2 - sz.x / 2 - 12, 70, sz.x + 24, 30);
+                var sz = cachedSize(stToast, toastText, ref sizeKeyToast, ref sizeToast); var r = new Rect(W / 2 - sz.x / 2 - 12, 70, sz.x + 24, 30);
                 fill(r, new Color(0, 0, 0, 0.55f * a)); var oc = GUI.color; GUI.color = new Color(1, 1, 1, a); GUI.Label(r, toastText, stToast); GUI.color = oc;
             }
             // crosshair
@@ -261,17 +284,14 @@ namespace VoxelForge
             {
                 var r = new Rect(hbX + i * (sl + 2), hbY, sl, sl);
                 fill(r, C(0x0b1218, 0.78f)); frame(r, i == selected ? C(0xffe36a) : C(0xffffff, 0.25f), i == selected ? 2 : 1);
-                GUI.Label(new Rect(r.x + 3, r.y + 1, 12, 12), "<size=9>" + (i + 1) + "</size>", stSmall);
+                GUI.Label(new Rect(r.x + 3, r.y + 1, 12, 12), SLOT_NUM[i], stSmall);
                 var st = inventory[i];
                 drawItemIcon(new Rect(r.x + 7, r.y + 7, 32, 32), st);
                 if (st != null)
                 {
-                    string cnt = player.creative ? "∞" : st.count > 1 ? st.count.ToString() : idef(st.key).maxDur != 0 ? (st.dur != 0 ? st.dur : idef(st.key).maxDur).ToString() : "";
+                    string cnt = player.creative ? "∞" : st.count > 1 ? numStr(st.count) : idef(st.key).maxDur != 0 ? numStr(st.dur != 0 ? st.dur : idef(st.key).maxDur) : "";
                     if (cnt.Length > 0) shadowLabel(new Rect(r.x, r.y, r.width - 3, r.height - 1), cnt, stCount);
                 }
-                // touch hotbar pointerdown: only reachable when no overlay is open, and not under #touchLookZone (left:38%) / the stick
-                if (TOUCH_DEVICE && uiInput && Event.current.type == EventType.MouseDown && r.Contains(Event.current.mousePosition)
-                    && !(touchActive && (Event.current.mousePosition.x >= W * 0.38f || touchStickRect.Contains(Event.current.mousePosition * uiScale)))) { cancelBowCharge(); selected = i; drawHotbar(); Event.current.Use(); }
             }
             var ss = selectedStack();
             string bn = ss != null ? idef(ss.key).name + (player.creative ? " · ∞" : ss.count > 1 ? " ×" + ss.count : "") : "Пустая рука";
@@ -280,9 +300,9 @@ namespace VoxelForge
             if (!player.creative)
             {
                 float vx = hbX, vy = hbY - 26, vw = 150;
-                drawBar(new Rect(vx, vy, vw, 16), player.hp / 20, C(0xd84343), "❤ " + Math.Ceiling(player.hp) + "/20");
-                drawBar(new Rect(vx + vw + 8, vy, vw, 16), player.hunger / 20, C(0xc8892d), "Еда " + Math.Ceiling(player.hunger) + "/20");
-                if (player.air < 9.95) drawBar(new Rect(vx + (vw + 8) * 2, vy, vw - 30, 16), player.air / 10, C(0x3d8fd8), "Воздух " + Math.Ceiling(player.air));
+                drawBarRaw(new Rect(vx, vy, vw, 16), player.hp / 20, C(0xd84343), barText(ref barTextHp, ref barHp, (int)Math.Ceiling(player.hp), "❤ ", "/20"));
+                drawBarRaw(new Rect(vx + vw + 8, vy, vw, 16), player.hunger / 20, C(0xc8892d), barText(ref barTextFood, ref barFood, (int)Math.Ceiling(player.hunger), "Еда ", "/20"));
+                if (player.air < 9.95) drawBarRaw(new Rect(vx + (vw + 8) * 2, vy, vw - 30, 16), player.air / 10, C(0x3d8fd8), barText(ref barTextAir, ref barAir, (int)Math.Ceiling(player.air), "Воздух ", ""));
             }
             // mining / bow bar
             if (mineBarVisible) drawBar(new Rect(W / 2 - 46, H / 2 + 22, 92, 7), mineBarFrac, C(0xffffff), null);
@@ -294,11 +314,23 @@ namespace VoxelForge
         }
         static GUIStyle stResCache, stTipCache;
         static GUIStyle mkStyleCached(ref GUIStyle s, Func<GUIStyle> make) { return s ?? (s = make()); }
-        static void drawBar(Rect r, double frac, Color c, string text)
+        static void drawBar(Rect r, double frac, Color c, string text) { drawBarRaw(r, frac, c, text != null ? "<size=11>" + text + "</size>" : null); }
+        static void drawBarRaw(Rect r, double frac, Color c, string richText)
         {
             fill(r, new Color(0, 0, 0, 0.55f));
             fill(new Rect(r.x, r.y, r.width * Mathf.Clamp01((float)frac), r.height), c);
-            if (text != null) GUI.Label(new Rect(r.x + 4, r.y - 1, r.width, r.height + 2), "<size=11>" + text + "</size>", stLabel);
+            if (richText != null) GUI.Label(new Rect(r.x + 4, r.y - 1, r.width, r.height + 2), richText, stLabel);
+        }
+        /// <summary>Touch hotbar pointerdown: only reachable when no overlay is open, and not under #touchLookZone (left:38%) / the stick.</summary>
+        static void hudTouchHotbar(float W, float H)
+        {
+            float sl = 46, hbW = sl * 9 + 8 * 2, hbX = W / 2 - hbW / 2, hbY = H - sl - 12;
+            var mp = Event.current.mousePosition;
+            for (int i = 0; i < 9; i++)
+            {
+                var r = new Rect(hbX + i * (sl + 2), hbY, sl, sl);
+                if (r.Contains(mp) && !(touchActive && (mp.x >= W * 0.38f || touchStickRect.Contains(mp * uiScale)))) { cancelBowCharge(); selected = i; drawHotbar(); Event.current.Use(); return; }
+            }
         }
 
         // ---------------- touch ----------------

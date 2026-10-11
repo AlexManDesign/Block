@@ -398,6 +398,10 @@ namespace UnityEngine
     }
     public sealed class QualitySettings
     {
+        public static AnisotropicFiltering anisotropicFiltering { get; set; }
+        public static ShadowQuality shadows { get; set; }
+        public static bool realtimeReflectionProbes { get; set; }
+        public static bool softParticles { get; set; }
         public static ColorSpace activeColorSpace { get { return ColorSpace.Gamma; } }
         public static int antiAliasing { get; set; }
         public static int vSyncCount { get; set; }
@@ -442,6 +446,8 @@ namespace UnityEngine
         public static ScreenOrientation orientation { get; set; }
     }
     public enum ColorSpace { Uninitialized = -1, Gamma = 0, Linear = 1 }
+    public enum AnisotropicFiltering { Disable = 0, Enable = 1, ForceEnable = 2 }
+    public enum ShadowQuality { Disable = 0, HardOnly = 1, All = 2 }
     public enum CursorLockMode { None, Locked, Confined }
     public class Cursor
     {

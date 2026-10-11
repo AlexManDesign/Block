@@ -38,6 +38,7 @@ namespace VoxelForge.EditorTools
             PlayerSettings.allowedAutorotateToLandscapeLeft = true;
             PlayerSettings.allowedAutorotateToLandscapeRight = true;
             PlayerSettings.runInBackground = true;
+            PlayerSettings.gcIncremental = true; // spread GC work over frames instead of long stop-the-world pauses
             // Unity 2022 starts the Editor in Debug code optimization (JIT optimizations off): generation and meshing
             // run several times slower in Play mode. Release mode matches what a player build gets.
             if (CompilationPipeline.codeOptimization != CodeOptimization.Release)
