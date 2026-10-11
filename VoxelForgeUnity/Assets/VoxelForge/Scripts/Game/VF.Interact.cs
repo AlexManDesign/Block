@@ -461,7 +461,7 @@ namespace VoxelForge
                 player.x = sleepReturn.pos[0]; player.y = sleepReturn.pos[1]; player.z = sleepReturn.pos[2];
                 player.vx = player.vy = player.vz = 0;
                 double dx = sleepReturn.bed[0] - player.x, dz = sleepReturn.bed[1] - player.z;
-                player.yaw = JsMath.atan2(dx, -dz); player.pitch = -0.5;
+                player.yaw = Math.Atan2(dx, -dz); player.pitch = -0.5;
                 sleepReturn = null;
             }
             sleepOverlayState = 1;

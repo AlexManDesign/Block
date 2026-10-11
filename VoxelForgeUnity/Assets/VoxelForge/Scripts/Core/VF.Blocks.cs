@@ -277,7 +277,9 @@ namespace VoxelForge
         public static int HW_CORES = Math.Max(1, Environment.ProcessorCount);
         // Render-priority worker budget: do not create N gen + N mesh threads and starve the main/render thread.
         public static int WORKER_BUDGET = Math.Max(2, Math.Min(8, HW_CORES - 1));
-        public static int GEN_WORKER_COUNT = Math.Max(1, Math.Min(2, WORKER_BUDGET / 3));
+        // Generation is the expensive stage (meshing a chunk is several times cheaper), so it gets about 2/3 of the
+        // budget and at least one thread is left for meshing: 4 cores -> 2 gen + 1 mesh, 8 cores -> 5 + 2, 9+ cores -> 5 + 3.
+        public static int GEN_WORKER_COUNT = Math.Max(1, Math.Min(Math.Min(5, WORKER_BUDGET - 1), (WORKER_BUDGET * 2 + 2) / 3));
         public static int MESH_WORKER_COUNT = Math.Max(1, WORKER_BUDGET - GEN_WORKER_COUNT);
         public static int GEN_QUEUE_LIMIT = Math.Max(10, GEN_WORKER_COUNT * 6);
 

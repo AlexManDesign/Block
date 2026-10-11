@@ -3,6 +3,7 @@
 // decorators, branch-pruned selection, 4x4x8 density lattice, deterministic caves/fluids/ores and cell based features.
 // All integer/double arithmetic mirrors JS semantics exactly (ToInt32 of doubles, Math.imul, >>>) for seed parity.
 using System;
+using System.Runtime.CompilerServices;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -148,7 +149,7 @@ namespace VoxelForge
         static double fade(double t) { return t * t * t * (t * (t * 6 - 15) + 10); }
         static int floorDiv(int v, int d) { return (int)Math.Floor(v / (double)d); }
         static int ffloor(double v) { return (int)Math.Floor(v); }
-        static double round(double v) { return JsMath.round(v); }
+        static double round(double v) { return Math.Floor(v + 0.5); }
         static uint mix32(int v)
         {
             v ^= ushr(v, 16); v = imul(v, 0x7feb352d); v ^= ushr(v, 15); v = imul(v, unchecked((int)0x846ca68b)); v ^= ushr(v, 16);
@@ -291,19 +292,23 @@ namespace VoxelForge
             for (int i = 0; i < oct; i++) { sum += mainPerlin2(p, x * f + i * 131.7, z * f - i * 57.3) * amp; norm += amp; amp *= 0.5; f *= 2; }
             return sum / norm;
         }
-        /// <summary>hash2Main: world seed applied before ToInt32; initial multiply/add in double arithmetic, then 32-bit avalanche.</summary>
-        public double hash2Main(double x, double z)
+        /// <summary>hash2Main: world seed applied before ToInt32, then a native wrapping 32-bit multiply/add and avalanche.
+        /// (The reference does the multiply/add in double and ToInt32s the rounded sum; native int math is several times
+        /// faster on Mono/IL2CPP and only changes which pseudo-random value a cell gets.)</summary>
+        public double hash2Main(double x, double z) { return hash2MainI(toInt32(x + seed), toInt32(z - seed)); }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static double hash2MainI(int xi, int zi)
         {
-            int xi = toInt32(x + seed), zi = toInt32(z - seed);
-            int n = toInt32((double)xi * 374761393.0 + (double)zi * 668265263.0 + 527595518.0);
-            n = n ^ ushr(n, 13);
-            n = imul(n, 1274126177);
-            return (uint)(n ^ ushr(n, 16)) / 4294967296.0;
+            int n = unchecked(xi * 374761393 + zi * 668265263 + 527595518);
+            n ^= (int)((uint)n >> 13);
+            n = unchecked(n * 1274126177);
+            return (double)((long)(n ^ (int)((uint)n >> 16)) & 0xFFFFFFFFL) * (1.0 / 4294967296.0);
         }
         double valueNoise2Main(double x, double z)
         {
-            int ix = ffloor(x), iz = ffloor(z); double fx = x - ix, fz = z - iz, u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz),
-                a = hash2Main(ix, iz), b = hash2Main(ix + 1, iz), c = hash2Main(ix, iz + 1), d = hash2Main(ix + 1, iz + 1);
+            int ix = ffloor(x), iz = ffloor(z); double fx = x - ix, fz = z - iz, u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+            int x0i = unchecked(ix + seed), x1i = unchecked(x0i + 1), z0i = unchecked(iz - seed), z1i = unchecked(z0i + 1);
+            double a = hash2MainI(x0i, z0i), b = hash2MainI(x1i, z0i), c = hash2MainI(x0i, z1i), d = hash2MainI(x1i, z1i);
             return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
         }
         static readonly double[][] MAIN_ROT = { new[] { 1.0, 0 }, new[] { 0.866, 0.5 }, new[] { 0.5, 0.866 }, new[] { 0.0, 1 } };
@@ -342,7 +347,7 @@ namespace VoxelForge
         static List<CNode> climateGroups(List<CNode> items, int axis)
         {
             var sorted = items.OrderBy(a => climateMid(a.bounds, axis)).ToList(); // stable, like V8 TimSort
-            int groupSize = (int)JsMath.pow(10, Math.Floor(JsMath.log10(items.Count - 0.01)));
+            int groupSize = (int)Math.Pow(10, Math.Floor(Math.Log10(items.Count - 0.01)));
             var o = new List<CNode>();
             for (int i = 0; i < sorted.Count; i += groupSize)
             {
@@ -498,7 +503,7 @@ namespace VoxelForge
             for (int i = 0; i < 8; i++)
             {
                 double ang = (i * Math.PI) / 4;
-                for (int r = 6; r <= 20; r += 7) a.Add(new[] { round(JsMath.cos(ang) * r), round(JsMath.sin(ang) * r), 1 - (r - 6) / 20.0 });
+                for (int r = 6; r <= 20; r += 7) a.Add(new[] { round(Math.Cos(ang) * r), round(Math.Sin(ang) * r), 1 - (r - 6) / 20.0 });
             }
             return a.ToArray();
         }
@@ -514,8 +519,8 @@ namespace VoxelForge
         double[] terrainShapeMain(double[] p, int x, int z)
         {
             double cont = p[2], eros = p[3], weird = p[4], pv = clamp(peakValley(weird), -1, 1), bs = curveSample(MAIN_HEIGHT_CONT, cont),
-                land = clamp((cont + 0.25) / 0.4, 0, 1), mount = curveSample(MAIN_HEIGHT_EROS, eros) * land, rdg = JsMath.pow(pv * 0.5 + 0.5, 1.4);
-            double h = bs + JsMath.pow(mount, 1.15) * rdg * 235;
+                land = clamp((cont + 0.25) / 0.4, 0, 1), mount = curveSample(MAIN_HEIGHT_EROS, eros) * land, rdg = Math.Pow(pv * 0.5 + 0.5, 1.4);
+            double h = bs + Math.Pow(mount, 1.15) * rdg * 235;
             if (h > SEA - 3) { double d = mainFbm2(4, x, z, 1 / 22.0, 3); h += d * (9 + mount * 15) * clamp((h - (SEA - 2)) / 11, 0, 1); }
             else if (h < SEA - 4)
             {
@@ -567,22 +572,25 @@ namespace VoxelForge
         }
         public string biomeAt(int x, int z) { return columnInfo(x, z).biome; }
         public double dryAt(int x, int z) { return clamp((1 - columnInfo(x, z).moist) * 0.5, 0, 1); }
-        public double hash3Main(double x, double y, double z)
+        public double hash3Main(double x, double y, double z) { return hash3MainI(toInt32(x + seed), toInt32(y), toInt32(z - seed)); }
+        /// <summary>Native wrapping 32-bit version of the reference hash (see hash2MainI).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static double hash3MainI(int xi, int yi, int zi)
         {
-            int xi = toInt32(x + seed), yi = toInt32(y), zi = toInt32(z - seed);
-            int n = toInt32((double)xi * 374761393.0 + (double)yi * 668265263.0 + (double)zi * 2147483423.0);
-            n = n ^ ushr(n, 13);
-            n = imul(n, 1274126177);
-            return (uint)(n ^ ushr(n, 16)) / 4294967296.0;
+            int n = unchecked(xi * 374761393 + yi * 668265263 + zi * 2147483423);
+            n ^= (int)((uint)n >> 13);
+            n = unchecked(n * 1274126177);
+            return (double)((long)(n ^ (int)((uint)n >> 16)) & 0xFFFFFFFFL) * (1.0 / 4294967296.0);
         }
         double valueNoise3Main(double x, double y, double z)
         {
             int ix = ffloor(x), iy = ffloor(y), iz = ffloor(z);
-            double fx = x - ix, fy = y - iy, fz = z - iz, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), w = fz * fz * (3 - 2 * fz),
-                a = hash3Main(ix, iy, iz), b = hash3Main(ix + 1, iy, iz), c = hash3Main(ix, iy + 1, iz), d = hash3Main(ix + 1, iy + 1, iz),
-                e = hash3Main(ix, iy, iz + 1), f = hash3Main(ix + 1, iy, iz + 1), g = hash3Main(ix, iy + 1, iz + 1), h = hash3Main(ix + 1, iy + 1, iz + 1),
-                x0 = lerp(a, b, u), x1 = lerp(c, d, u), x2 = lerp(e, f, u), x3 = lerp(g, h, u);
-            return lerp(lerp(x0, x1, v), lerp(x2, x3, v), w);
+            double fx = x - ix, fy = y - iy, fz = z - iz, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), w = fz * fz * (3 - 2 * fz);
+            int x0i = unchecked(ix + seed), x1i = unchecked(x0i + 1), y1 = iy + 1, z0i = unchecked(iz - seed), z1i = unchecked(z0i + 1);
+            double a = hash3MainI(x0i, iy, z0i), b = hash3MainI(x1i, iy, z0i), c = hash3MainI(x0i, y1, z0i), d = hash3MainI(x1i, y1, z0i),
+                e = hash3MainI(x0i, iy, z1i), f = hash3MainI(x1i, iy, z1i), g = hash3MainI(x0i, y1, z1i), h = hash3MainI(x1i, y1, z1i),
+                xa = a + (b - a) * u, xb = c + (d - c) * u, xc = e + (f - e) * u, xd = g + (h - g) * u, ya = xa + (xb - xa) * v;
+            return ya + (xc + (xd - xc) * v - ya) * w;
         }
         double valueFbm3Main(double x, double y, double z)
         {
@@ -821,8 +829,8 @@ namespace VoxelForge
             double minx = double.PositiveInfinity, maxx = double.NegativeInfinity, minz = double.PositiveInfinity, maxz = double.NegativeInfinity;
             for (int i = 0; i < steps; i++)
             {
-                x += JsMath.cos(ang) * RAVINE_STEP; z += JsMath.sin(ang) * RAVINE_STEP; ang += (rng() - 0.5) * 0.55;
-                double p = steps > 1 ? i / (double)(steps - 1) : 0.5, r = baseR * JsMath.sin(p * Math.PI) + 0.5;
+                x += Math.Cos(ang) * RAVINE_STEP; z += Math.Sin(ang) * RAVINE_STEP; ang += (rng() - 0.5) * 0.55;
+                double p = steps > 1 ? i / (double)(steps - 1) : 0.5, r = baseR * Math.Sin(p * Math.PI) + 0.5;
                 nodes.Add(new[] { x, z, r });
                 if (x - r < minx) minx = x - r; if (x + r > maxx) maxx = x + r; if (z - r < minz) minz = z - r; if (z + r > maxz) maxz = z + r;
             }

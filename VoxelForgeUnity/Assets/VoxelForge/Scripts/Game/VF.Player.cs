@@ -65,7 +65,7 @@ namespace VoxelForge
                 for (int n = 0; n < steps; n++)
                 {
                     double a = n * Math.PI * 2 / steps;
-                    var s = safeSpawnAt(x + JS.round(JsMath.cos(a) * r), z + JS.round(JsMath.sin(a) * r));
+                    var s = safeSpawnAt(x + JS.round(Math.Cos(a) * r), z + JS.round(Math.Sin(a) * r));
                     if (s != null) return s;
                 }
             }
@@ -80,7 +80,7 @@ namespace VoxelForge
                 for (int n = 0; n < steps; n++)
                 {
                     double a = n * 2 * Math.PI / steps;
-                    int px = x + (int)JS.round(JsMath.cos(a) * r), pz = z + (int)JS.round(JsMath.sin(a) * r);
+                    int px = x + (int)JS.round(Math.Cos(a) * r), pz = z + (int)JS.round(Math.Sin(a) * r);
                     var col = columnInfo(px, pz);
                     if (col.origH >= SEA && heightAt(px, pz) >= SEA) return new[] { px, pz };
                 }
@@ -136,7 +136,7 @@ namespace VoxelForge
                 for (int n = 0; n < steps; n++)
                 {
                     double a = n * 2 * Math.PI / steps;
-                    int px = x + (int)JS.round(JsMath.cos(a) * r), pz = z + (int)JS.round(JsMath.sin(a) * r);
+                    int px = x + (int)JS.round(Math.Cos(a) * r), pz = z + (int)JS.round(Math.Sin(a) * r);
                     if (!spawnNaturalLandColumn(px, pz)) continue;
                     int surface = heightAt(px, pz);
                     for (int gy = WORLD_MAX_Y - 3; gy >= Math.Max(WORLD_MIN_Y + 1, SEA); gy--)
@@ -207,8 +207,8 @@ namespace VoxelForge
         }
         public static double[] viewDir()
         {
-            double cp = JsMath.cos(player.pitch);
-            return new[] { JsMath.sin(player.yaw) * cp, -JsMath.sin(player.pitch), -JsMath.cos(player.yaw) * cp };
+            double cp = Math.Cos(player.pitch);
+            return new[] { Math.Sin(player.yaw) * cp, -Math.Sin(player.pitch), -Math.Cos(player.yaw) * cp };
         }
         public static double? rayBoxDistance(double[] ro, double[] rd, double[] mn, double[] mx, double maxD)
         {
@@ -238,7 +238,7 @@ namespace VoxelForge
         static double nz9(double v) { return v != 0 && !double.IsNaN(v) ? v : 1e-9; }
         public static Hit raycast(double max = 7)
         {
-            double cp = JsMath.cos(player.pitch), dx = nz9(JsMath.sin(player.yaw) * cp), dy = nz9(-JsMath.sin(player.pitch)), dz = nz9(-JsMath.cos(player.yaw) * cp);
+            double cp = Math.Cos(player.pitch), dx = nz9(Math.Sin(player.yaw) * cp), dy = nz9(-Math.Sin(player.pitch)), dz = nz9(-Math.Cos(player.yaw) * cp);
             double ex = player.x, ey = player.y + 1.62, ez = player.z, ix = 1 / dx, iy = 1 / dy, iz = 1 / dz;
             int x = JS.floor(ex), y = JS.floor(ey), z = JS.floor(ez), sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1, sz = dz > 0 ? 1 : -1;
             double tx = Math.Abs(ix), ty = Math.Abs(iy), tz = Math.Abs(iz);

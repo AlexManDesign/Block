@@ -341,7 +341,7 @@ namespace VoxelForge
             foreach (var r in RECOVER_NUDGE_RINGS)
                 for (int k = 0; k < 8; k++)
                 {
-                    double a = k * Math.PI / 4, nx = ox + JsMath.cos(a) * r, nz = oz + JsMath.sin(a) * r;
+                    double a = k * Math.PI / 4, nx = ox + Math.Cos(a) * r, nz = oz + Math.Sin(a) * r;
                     if (playerCollisionAt(nx, y, nz, hh) == null) { player.x = nx; player.y = y; player.z = nz; player.h = hh; player.vx = player.vz = 0; return true; }
                 }
             return false;
@@ -384,7 +384,7 @@ namespace VoxelForge
             int groundId = player.onGround && !player.flying ? getBlock(player.x, player.y - 0.01, player.z) : B.AIR;
             bool inWeb = !player.flying && (getBlock(player.x, player.y + 0.2, player.z) == B.COBWEB || getBlock(player.x, player.y + 1.1, player.z) == B.COBWEB);
             if (inWeb) speed *= 0.22;
-            double sy = JsMath.sin(player.yaw), cy = JsMath.cos(player.yaw), wishX = -forward * sy + side * cy, wishZ = -forward * -cy + side * sy;
+            double sy = Math.Sin(player.yaw), cy = Math.Cos(player.yaw), wishX = -forward * sy + side * cy, wishZ = -forward * -cy + side * sy;
             double groundAccel = groundId == B.ICE ? 2.2 : 12, accel = Math.Min(1, dt * (player.onGround || player.flying ? (player.flying ? 12 : groundAccel) : 5));
             player.vx += (wishX * speed - player.vx) * accel;
             player.vz += (wishZ * speed - player.vz) * accel;
@@ -407,7 +407,7 @@ namespace VoxelForge
                 if (swimming)
                 {
                     if ((player.h != 0 ? player.h : PLAYER_H) > PLAYER_SWIM_H) player.h = PLAYER_SWIM_H;
-                    double cp = JsMath.cos(player.pitch), spp = JsMath.sin(player.pitch), tx = (-forward * sy * cp + side * cy) * speed, tz = (-forward * -cy * cp + side * sy) * speed, ty = -forward * spp * speed, k = Math.Min(1, dt * 5);
+                    double cp = Math.Cos(player.pitch), spp = Math.Sin(player.pitch), tx = (-forward * sy * cp + side * cy) * speed, tz = (-forward * -cy * cp + side * sy) * speed, ty = -forward * spp * speed, k = Math.Min(1, dt * 5);
                     player.vx += (tx - player.vx) * k; player.vz += (tz - player.vz) * k; player.vy += (ty - player.vy) * k;
                     if (jump) player.vy += 10 * dt;
                     if (down) player.vy -= 14 * dt;

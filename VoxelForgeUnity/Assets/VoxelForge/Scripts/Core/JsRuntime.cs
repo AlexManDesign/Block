@@ -160,19 +160,21 @@ namespace VoxelForge
         /// <summary>JS "x | 0" for doubles (ToInt32).</summary>
         public static int toInt32(double v)
         {
-            if (double.IsNaN(v) || double.IsInfinity(v)) return 0;
             if (v >= -2147483648.0 && v <= 2147483647.0) return (int)v;
+            // |v| < 2^63: truncate through long and keep the low 32 bits (= ToInt32) — native conversions only; the
+            // Truncate/%/(uint) path below is emulated by runtime calls on Mono and is ~10x slower.
+            if (v > -9.2233720368547758E18 && v < 9.2233720368547758E18) return unchecked((int)(long)v);
+            if (double.IsNaN(v) || double.IsInfinity(v)) return 0;
             double m = Math.Truncate(v) % 4294967296.0; if (m < 0) m += 4294967296.0;
             return unchecked((int)(uint)m);
         }
         public static bool isFinite(double v) { return !double.IsNaN(v) && !double.IsInfinity(v); }
-        /// <summary>Math.hypot exactly as V8 computes it (scaled Kahan sum), see JsMath.</summary>
-        public static double hypot(double a, double b) { return JsMath.hypot(a, b); }
-        public static double hypot(double a, double b, double c) { return JsMath.hypot(a, b, c); }
+        public static double hypot(double a, double b) { return Math.Sqrt(a * a + b * b); }
+        public static double hypot(double a, double b, double c) { return Math.Sqrt(a * a + b * b + c * c); }
         public static double clamp(double v, double a, double b) { return v < a ? a : v > b ? b : v; }
         public static int clampi(int v, int a, int b) { return v < a ? a : v > b ? b : v; }
-        /// <summary>Math.round exactly as V8 (ceil, minus 1 when ceil - 0.5 > x): differs from floor(x + 0.5) for 0.49999999999999994, |x| >= 2^52 and -0.</summary>
-        public static double round(double v) { return JsMath.round(v); }
+        /// <summary>Math.round (.5 rounds up).</summary>
+        public static double round(double v) { return Math.Floor(v + 0.5); }
         public static double sign(double v) { return v > 0 ? 1 : v < 0 ? -1 : 0; }
         /// <summary>JS % on doubles (truncated remainder) is C# % — kept for clarity.</summary>
         public static double mod(double a, double b) { return a % b; }

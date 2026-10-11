@@ -21,7 +21,7 @@ namespace VoxelForge
             worldDrops.Add(new WorldDrop
             {
                 key = key, count = count, dur = dur, x = x, y = y, z = z,
-                vx = v != null ? v[0] : JsMath.cos(a) * 1.2, vy = v != null ? v[1] : 2.4, vz = v != null ? v[2] : JsMath.sin(a) * 1.2,
+                vx = v != null ? v[0] : Math.Cos(a) * 1.2, vy = v != null ? v[1] : 2.4, vz = v != null ? v[2] : Math.Sin(a) * 1.2,
                 age = 0, pickAfter = double.IsNaN(pickAfter) ? DROP_DEFAULT_PICK_AFTER : pickAfter,
             });
         }
@@ -125,7 +125,7 @@ namespace VoxelForge
                 side = b.side; top = b.top; bottom = b.bottom;
                 thin = b.plant || b.cutout || b.special == "torch" || b.special == "ladder" || b.special == "door" || b.special == "doorOpen";
             }
-            double bob = JsMath.sin(q.age * 2.2) * 0.05, baseY = q.y + bob, a = q.age * 0.9, c = JsMath.cos(a), sn = JsMath.sin(a), lit = dropLight(q, sun);
+            double bob = Math.Sin(q.age * 2.2) * 0.05, baseY = q.y + bob, a = q.age * 0.9, c = Math.Cos(a), sn = Math.Sin(a), lit = dropLight(q, sun);
             if (thin)
             {
                 double d = 0.22, hh = 0.42, p1x, p1z, p2x, p2z;
@@ -151,7 +151,7 @@ namespace VoxelForge
         {
             int tile = ItemTile(q.key);
             if (tile < 0) return;
-            double bob = JsMath.sin(q.age * 2.2) * 0.05, baseY = q.y + bob, a = q.age * 0.9, c = JsMath.cos(a), sn = JsMath.sin(a), d = 0.22, h = 0.44, lit = dropLight(q, sun), p1x, p1z, p2x, p2z;
+            double bob = Math.Sin(q.age * 2.2) * 0.05, baseY = q.y + bob, a = q.age * 0.9, c = Math.Cos(a), sn = Math.Sin(a), d = 0.22, h = 0.44, lit = dropLight(q, sun), p1x, p1z, p2x, p2z;
             dropRotate(-d, 0, c, sn, out p1x, out p1z); dropRotate(d, 0, c, sn, out p2x, out p2z);
             setPt(0, q.x + p1x, baseY + h, q.z + p1z); setPt(1, q.x + p2x, baseY + h, q.z + p2z);
             setPt(2, q.x + p1x, baseY, q.z + p1z); setPt(3, q.x + p2x, baseY, q.z + p2z);
@@ -162,7 +162,7 @@ namespace VoxelForge
         {
             dropBlockV.Clear(); dropItemV.Clear();
             if (worldDrops.Count == 0) return;
-            double max2 = JsMath.pow(Math.Min(fogFar, 56) + 4, 2);
+            double max2 = Math.Pow(Math.Min(fogFar, 56) + 4, 2);
             foreach (var q in worldDrops)
             {
                 double dx = q.x - player.x, dz = q.z - player.z;
