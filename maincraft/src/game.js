@@ -538,6 +538,12 @@ class Game {
       show('loading', false);
       UI.onWorldReady();
     }
+    // respawning where the ground is not loaded yet: the loading screen till it is
+    if (this.respawning && !this.loadingWorld) {
+      const done = this.placeRespawn();
+      show('loading', !done);
+      if (!done) { this.renderFrame(0); return; }
+    }
     let tu = performance.now();
     if (!this.paused && !this.surv.dead) {
       this.update(dt);
@@ -1597,13 +1603,57 @@ class Game {
       [hx + DIRX_W[f], hz + DIRZ_W[f]], [fx - DIRX_W[f], fz - DIRZ_W[f]],
       [hx + sx + DIRX_W[f], hz + sz + DIRZ_W[f]], [hx - sx + DIRX_W[f], hz - sz + DIRZ_W[f]],
       [fx + sx - DIRX_W[f], fz + sz - DIRZ_W[f]], [fx - sx - DIRX_W[f], fz - sz - DIRZ_W[f]]];
-    for (const dy of [0, -1, 1]) for (const [x, z] of cand) {
+    // (findStandUpPositionAtOffset: first leaving out a cell with, or over, a block that hurts
+    // (DismountHelper, checkDangerous), then any)
+    for (const safe of [true, false]) for (const dy of [0, -1, 1]) for (const [x, z] of cand) {
       const y = hy + dy;
-      if (!SOLID[w.getBlock(x, y - 1, z)] || isWaterId(w.getBlock(x, y, z)) || SHAPE[w.getBlock(x, y - 1, z)] === SH.BED) continue;
+      if (!SOLID[w.getBlock(x, y - 1, z)] || SHAPE[w.getBlock(x, y - 1, z)] === SH.BED) continue;
+      if (safe && (this.hurtsToStand(x, y, z) || this.hurtsToStand(x, y - 1, z))) continue;
       if (!p.collides(w, x + 0.5, y, z + 0.5, PLAYER_H)) return [x + 0.5, y, z + 0.5];
     }
     if (!p.collides(w, hx + 0.5, hy + 0.5625, hz + 0.5, PLAYER_H)) return [hx + 0.5, hy + 0.5625, hz + 0.5];
     return null;
+  }
+  // EntityType.isBlockDangerous for the player: what burns (fire, lava, a magma block, a lit
+  // campfire), a wither rose, a sweet berry bush, a cactus
+  hurtsToStand(x, y, z) {
+    const w = this.world, id = w.getBlock(x, y, z);
+    return id === B.FIRE || id === B.LAVA || id === B.MAGMA_BLOCK || (id === B.CAMPFIRE && !(w.getMeta(x, y, z) & 4)) ||
+      id === B.WITHER_ROSE || id === B.SWEET_BERRY_BUSH || id === B.CACTUS;
+  }
+  // PlayerSpawnFinder.findSpawn round the world spawn: the cells of the square respawn_radius (10)
+  // to each side, taken in a shuffled order (a random first one, then steps of 17 through the
+  // count); a cell is good when its column holds no liquid above its top floor (a block whose top
+  // face is full) and the player's box there touches neither a block nor a liquid. None good: the
+  // spawn itself, moved up out of what it is in and down onto what is under it
+  worldRespawnSpot(s) {
+    const w = this.world, p = this.player, R = 10, side = 2 * R + 1, n = Math.min(1024, side * side);
+    const cop = n <= 16 ? n - 1 : 17, off = (Math.random() * n) | 0, sx = Math.floor(s[0]), sz = Math.floor(s[2]);
+    const liquid = (x, y, z) => { const id = w.getBlock(x, y, z); return isWaterId(id) || id === B.LAVA; };
+    const clear = (x, y, z) => !p.collides(w, x + 0.5, y, z + 0.5, PLAYER_H) && !liquid(x, y, z) && !liquid(x, y + 1, z);
+    const fullTop = (x, y, z) => {
+      const id = w.getBlock(x, y, z);
+      if (!SOLID[id]) return false;
+      if (SHAPE[id] === SH.CUBE) return true;
+      const bx = collisionBoxes(w, id, w.getMeta(x, y, z), x, y, z);
+      return !!bx && bx.some(b => b[0] <= 0 && b[2] <= 0 && b[3] >= 1 && b[5] >= 1 && b[4] >= 1);
+    };
+    for (let k = 0; k < n; k++) {
+      const v = (off + cop * k) % n, x = sx + v % side - R, z = sz + ((v / side) | 0) - R;
+      if (!w.isLoaded(x, z)) continue;
+      // (getLevelRespawnPos: down from over the top solid or liquid block; a liquid first: none here)
+      let y = WORLD_MAX_Y - 1;
+      while (y > WORLD_MIN_Y && !SOLID[w.getBlock(x, y, z)] && !liquid(x, y, z)) y--;
+      for (let yy = y + 1; yy > WORLD_MIN_Y; yy--) {
+        if (liquid(x, yy, z)) break;
+        if (fullTop(x, yy, z)) { if (clear(x, yy + 1, z)) return [x + 0.5, yy + 1, z + 0.5]; break; }
+      }
+    }
+    // (fixupSpawnHeight)
+    let y = Math.floor(s[1]);
+    while (!clear(sx, y, sz) && y < WORLD_MAX_Y - 2) y++;
+    while (y > WORLD_MIN_Y && clear(sx, y - 1, sz)) y--;
+    return [sx + 0.5, y, sz + 0.5];
   }
   // BedBlock.use -> ServerPlayer.startSleepInBed, with its checks in Minecraft's order
   useBed(x, y, z) {
@@ -1691,16 +1741,45 @@ class Game {
     if (this.boats && this.boats.riding) this.boats.leave();
     if (this.ships && this.ships.ship) this.ships.anchor();
     // ServerPlayer respawn: at the bed when it is still there and has room beside it, else at the
-    // world spawn with a message
-    let at = null;
-    if (this.bedSpawn) {
-      const [x, y, z] = this.bedSpawn, id = this.world.getBlock(x, y, z);
-      if (SHAPE[id] === SH.BED) at = this.standUpSpot(x, y, z, this.world.getMeta(x, y, z) & 3);
-      if (!at) { this.bedSpawn = null; this.say(T('noBed')); }
-    }
-    p.pos = (at || this.spawn || [0.5, 100, 0.5]).slice(); p.vel = [0, 0, 0]; p.fallDist = 0;
+    // world spawn (with a message when the bed was lost). The place is looked for once its ground
+    // is loaded: till then the player waits there (placeRespawn, from the frame loop)
+    this.respawning = { bed: this.bedSpawn ? this.bedSpawn.slice() : null };
+    const t = this.respawning.bed || this.spawn || [0.5, 100, 0.5];
+    p.pos = [Math.floor(t[0]) + 0.5, Math.floor(t[1]) + 1, Math.floor(t[2]) + 0.5]; p.prev = p.pos.slice(); p.prevOf = p.pos;
+    p.vel = [0, 0, 0]; p.fallDist = 0;
+    this.placeRespawn();
     this.updateHotbar(); this.updateSurvivalHud();
     UI.hideDeath();
+  }
+  // true once the respawn place is settled; false while its ground is not loaded yet
+  placeRespawn() {
+    const R = this.respawning, w = this.world, p = this.player;
+    if (!R) return true;
+    const loaded = (x, z, r) => {
+      for (let cx = (Math.floor(x) - r) >> 4; cx <= (Math.floor(x) + r) >> 4; cx++)
+        for (let cz = (Math.floor(z) - r) >> 4; cz <= (Math.floor(z) + r) >> 4; cz++) { const c = w.col(cx, cz); if (!c || c.state !== 2) return false; }
+      return true;
+    };
+    let at = null;
+    if (R.bed) {
+      const [x, y, z] = R.bed;
+      if (!loaded(x, z, 2)) return false;
+      if (SHAPE[w.getBlock(x, y, z)] === SH.BED) at = this.standUpSpot(x, y, z, w.getMeta(x, y, z) & 3);
+      if (!at) {
+        this.bedSpawn = null; this.say(T('noBed')); R.bed = null;
+        const s = this.spawn || [0.5, 100, 0.5];
+        p.pos = [Math.floor(s[0]) + 0.5, Math.floor(s[1]) + 1, Math.floor(s[2]) + 0.5]; p.prev = p.pos.slice(); p.prevOf = p.pos;
+      }
+    }
+    if (!at) {
+      const s = this.spawn || [0.5, 100, 0.5];
+      if (!loaded(s[0], s[2], 10)) return false;
+      at = this.worldRespawnSpot(s);
+    }
+    this.respawning = null;
+    p.pos = at.slice(); p.prev = p.pos.slice(); p.prevOf = p.pos; p.vel = [0, 0, 0]; p.fallDist = 0;
+    p.interp(1);
+    return true;
   }
 
   randomTicks() {
