@@ -68,6 +68,7 @@ function leafLod(d2, cur) {
   return t;
 }
 const BUILD_ID = '@BUILD@';   // filled in by build.py
+const SPAWN_RADIUS = 5;       // respawn spread round the world spawn (Bedrock's spawnradius)
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
 const MB_FACES = new Int8Array([5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3]);
@@ -1621,13 +1622,13 @@ class Game {
     return id === B.FIRE || id === B.LAVA || id === B.MAGMA_BLOCK || (id === B.CAMPFIRE && !(w.getMeta(x, y, z) & 4)) ||
       id === B.WITHER_ROSE || id === B.SWEET_BERRY_BUSH || id === B.CACTUS;
   }
-  // PlayerSpawnFinder.findSpawn round the world spawn: the cells of the square respawn_radius (10)
-  // to each side, taken in a shuffled order (a random first one, then steps of 17 through the
+  // PlayerSpawnFinder.findSpawn round the world spawn: the cells of the square of the spawn radius
+  // to each side (5: Bedrock's spawnradius; Java's respawn_radius is 10), taken in a shuffled order (a random first one, then steps of 17 through the
   // count); a cell is good when its column holds no liquid above its top floor (a block whose top
   // face is full) and the player's box there touches neither a block nor a liquid. None good: the
   // spawn itself, moved up out of what it is in and down onto what is under it
   worldRespawnSpot(s) {
-    const w = this.world, p = this.player, R = 10, side = 2 * R + 1, n = Math.min(1024, side * side);
+    const w = this.world, p = this.player, R = SPAWN_RADIUS, side = 2 * R + 1, n = Math.min(1024, side * side);
     const cop = n <= 16 ? n - 1 : 17, off = (Math.random() * n) | 0, sx = Math.floor(s[0]), sz = Math.floor(s[2]);
     const liquid = (x, y, z) => { const id = w.getBlock(x, y, z); return isWaterId(id) || id === B.LAVA; };
     const clear = (x, y, z) => !p.collides(w, x + 0.5, y, z + 0.5, PLAYER_H) && !liquid(x, y, z) && !liquid(x, y + 1, z);
@@ -1773,7 +1774,7 @@ class Game {
     }
     if (!at) {
       const s = this.spawn || [0.5, 100, 0.5];
-      if (!loaded(s[0], s[2], 10)) return false;
+      if (!loaded(s[0], s[2], SPAWN_RADIUS)) return false;
       at = this.worldRespawnSpot(s);
     }
     this.respawning = null;
