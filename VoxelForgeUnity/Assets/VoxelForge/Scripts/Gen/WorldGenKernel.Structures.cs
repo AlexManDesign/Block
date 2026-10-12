@@ -71,6 +71,7 @@ namespace VoxelForge
             ensureShipTables();
             var cfg = STRUCT_CFG[type]; var cache = structureCache[cfg.idx]; var key = xzKey(rx, rz); Structure cached;
             if (cache.TryGetValue(key, out cached)) return cached;
+            if (cache.Count > 4096) cache.Clear();
             var r = structRand(rx, rz, cfg.salt);
             int span = cfg.spacing - cfg.sep, acx = rx * cfg.spacing + (int)Math.Floor(r() * span), acz = rz * cfg.spacing + (int)Math.Floor(r() * span);
             double freqRoll = r(); int rot = (int)Math.Floor(r() * 4); double waterRoll = cfg.water ? r() : 0;
@@ -827,14 +828,19 @@ namespace VoxelForge
             }
         }
 
-        public DenseChunk generateDense(int cx, int cz)
+        const int DENSE_SXZ = 4, DENSE_SY = 8, DENSE_GX = 5, DENSE_GY = WORLD_H / DENSE_SY + 1;
+        readonly ColumnInfo[] denseColumnCols = new ColumnInfo[CHUNK * CHUNK];
+        readonly float[] denseGrid = new float[DENSE_GX * DENSE_GX * DENSE_GY];
+        /// <summary>Generates one chunk. <paramref name="into"/> (optional, CHUNK*WORLD_H*CHUNK bytes) is a caller-owned
+        /// buffer to fill instead of a fresh array; every cell is written by the density pass, so it needs no clearing.</summary>
+        public DenseChunk generateDense(int cx, int cz, byte[] into = null)
         {
-            var data = new byte[CHUNK * WORLD_H * CHUNK];
-            var columnCols = new ColumnInfo[CHUNK * CHUNK];
+            var data = into ?? new byte[CHUNK * WORLD_H * CHUNK];
+            var columnCols = denseColumnCols;
             var seaMeta = new List<int>(); var caveMeta = new List<int>();
             int x0 = cx * CHUNK, z0 = cz * CHUNK;
-            const int SXZ = 4, SY = 8, GX = 5, GY = WORLD_H / SY + 1;
-            var grid = new float[GX * GX * GY];
+            const int SXZ = DENSE_SXZ, SY = DENSE_SY, GX = DENSE_GX, GY = DENSE_GY;
+            var grid = denseGrid;
             for (int lz = 0; lz < CHUNK; lz++) for (int lx = 0; lx < CHUNK; lx++) columnCols[lz * CHUNK + lx] = columnInfo(x0 + lx, z0 + lz);
             // R5 density lattice: 4x4 horizontal and 8 vertical, trilinearly interpolated (float32 storage like the reference).
             for (int gx = 0; gx < GX; gx++)

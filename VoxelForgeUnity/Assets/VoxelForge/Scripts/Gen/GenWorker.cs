@@ -16,6 +16,12 @@ namespace VoxelForge
         readonly BlockDef[] defs;
         readonly byte[] simClass = new byte[256], fluidClass = new byte[256], fluidOpenClass = new byte[256];
         readonly bool[] stopsT = new bool[256], attenT = new bool[256];
+        // Per-thread scratch (one GenWorker per generator thread), reused by every job: the reference allocates these
+        // per job, which a generational JS heap absorbs, but in Unity's non-generational GC four 96 KB arrays and a
+        // growing light queue per chunk drive the stop-the-world collections that hitch the main thread.
+        readonly byte[] denseBuf = new byte[N], skyBuf = new byte[N], blkBuf = new byte[N], extraBuf = new byte[N], lightBuf = new byte[N];
+        int[] lightQ = new int[1 << 16]; int lightQn;
+        readonly List<uint> simBuf = new List<uint>(), boundaryBuf = new List<uint>();
 
         public GenWorker(int seed, BlockDef[] blockDefs)
         {
@@ -71,10 +77,16 @@ namespace VoxelForge
                         if (y > 0 && denseWater(data[p - S])) data[p - S] = (byte)B.STONE;
                     }
         }
+        void lightQAdd(int p)
+        {
+            if (lightQn == lightQ.Length) Array.Resize(ref lightQ, lightQ.Length * 2);
+            lightQ[lightQn++] = p;
+        }
         void lightDense(byte[] data, List<GenMetaEntry> meta, out byte[] light, out List<uint> sim, out List<uint> boundary)
         {
-            var sky = new byte[N]; var blk = new byte[N]; var q = new List<int>(4096); var extra = new byte[N];
-            sim = new List<uint>(); boundary = new List<uint>();
+            var sky = skyBuf; var blk = blkBuf; var extra = extraBuf;
+            Array.Clear(sky, 0, N); Array.Clear(blk, 0, N); Array.Clear(extra, 0, N); lightQn = 0;
+            sim = simBuf; boundary = boundaryBuf; sim.Clear(); boundary.Clear();
             if (meta != null)
                 foreach (var m in meta)
                     if (m.m != null && m.m.Bool("berries")) { int x = m.lx, y = m.iy, z = m.lz; if (x >= 0 && x < CHUNK && y >= 0 && y < H && z >= 0 && z < CHUNK) extra[idx(x, y, z)] = 14; }
@@ -120,39 +132,40 @@ namespace VoxelForge
                         if (sc != 0) { if (sc != 6 || y == 0 || data[p - S] != B.CACTUS) sim.Add((uint)((sc << SIM_BITS) | p)); }
                         if (stopsT[id]) { sv = 0; continue; }
                         if (sv > 0 && attenT[id]) sv = Math.Max(0, sv - 2);
-                        if (sv > 0) { sky[p] = (byte)sv; q.Add(p); }
+                        if (sv > 0) { sky[p] = (byte)sv; lightQAdd(p); }
                     }
                 }
-            Action<byte[]> flood = a =>
-            {
-                int h = 0;
-                while (h < q.Count)
-                {
-                    int p = q[h++], lv = a[p];
-                    if (lv <= 1) continue;
-                    int x = p % CHUNK, z = (p / CHUNK) % CHUNK, y = p / (CHUNK * CHUNK);
-                    for (int k = 0; k < 6; k++)
-                    {
-                        int n;
-                        if (k == 0) { if (x + 1 >= CHUNK) continue; n = p + 1; }
-                        else if (k == 1) { if (x <= 0) continue; n = p - 1; }
-                        else if (k == 2) { if (z + 1 >= CHUNK) continue; n = p + CHUNK; }
-                        else if (k == 3) { if (z <= 0) continue; n = p - CHUNK; }
-                        else if (k == 4) { if (y + 1 >= H) continue; n = p + CHUNK * CHUNK; }
-                        else { if (y <= 0) continue; n = p - CHUNK * CHUNK; }
-                        int id = data[n];
-                        if (stopsT[id]) continue;
-                        int nv = lv - (attenT[id] ? 2 : 1);
-                        if (nv > a[n]) { a[n] = (byte)nv; q.Add(n); }
-                    }
-                }
-            };
-            flood(sky);
-            q.Clear();
-            for (int p = 0; p < N; p++) if (blk[p] != 0) q.Add(p);
-            flood(blk);
-            light = new byte[N];
+            floodLight(data, sky);
+            lightQn = 0;
+            for (int p = 0; p < N; p++) if (blk[p] != 0) lightQAdd(p);
+            floodLight(data, blk);
+            light = lightBuf;
             for (int p = 0; p < N; p++) light[p] = (byte)((sky[p] << 4) | blk[p]);
+        }
+        /// <summary>Breadth-first light spread from the queued cells (same order as the reference flood).</summary>
+        void floodLight(byte[] data, byte[] a)
+        {
+            int h = 0;
+            while (h < lightQn)
+            {
+                int p = lightQ[h++], lv = a[p];
+                if (lv <= 1) continue;
+                int x = p % CHUNK, z = (p / CHUNK) % CHUNK, y = p / (CHUNK * CHUNK);
+                for (int k = 0; k < 6; k++)
+                {
+                    int n;
+                    if (k == 0) { if (x + 1 >= CHUNK) continue; n = p + 1; }
+                    else if (k == 1) { if (x <= 0) continue; n = p - 1; }
+                    else if (k == 2) { if (z + 1 >= CHUNK) continue; n = p + CHUNK; }
+                    else if (k == 3) { if (z <= 0) continue; n = p - CHUNK; }
+                    else if (k == 4) { if (y + 1 >= H) continue; n = p + CHUNK * CHUNK; }
+                    else { if (y <= 0) continue; n = p - CHUNK * CHUNK; }
+                    int id = data[n];
+                    if (stopsT[id]) continue;
+                    int nv = lv - (attenT[id] ? 2 : 1);
+                    if (nv > a[n]) { a[n] = (byte)nv; lightQAdd(n); }
+                }
+            }
         }
         static List<GenSectionOut> pack(byte[] data, byte[] light)
         {
@@ -192,7 +205,7 @@ namespace VoxelForge
         {
             K.setSeed(m.seed);
             double t0 = JS.now();
-            var dense = K.generateDense(m.cx, m.cz);
+            var dense = K.generateDense(m.cx, m.cz, denseBuf);
             var data = applyChunkDeltaDense(dense, m.cx, m.cz, m.delta);
             mixDenseFluids(data);
             var meta = K.structureMetaForChunk(m.cx, m.cz);

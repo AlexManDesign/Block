@@ -193,5 +193,9 @@ namespace VoxelForge
 
 public static class LightParity
 {
-    public static int Main(string[] a) { return VoxelForge.VF.LightParityRun(a); }
+    public static int Main(string[] a)
+    {
+        VoxelForge.VF.lightProgressEveryFrame = false; // compare the reference scheduling rule ("lightpast" must not start a batch)
+        return VoxelForge.VF.LightParityRun(a);
+    }
 }

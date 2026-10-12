@@ -228,7 +228,7 @@ namespace VoxelForge
 
         // ---------------- render regions ----------------
         public static int renderRegionCoord(int v) { return JS.floor((double)v / RENDER_REGION_SIZE); }
-        public static string renderRegionKey(int rx, int rz) { return rx + "," + rz; }
+        public static string renderRegionKey(int rx, int rz) { return ckey(rx, rz); } // same "x,z" format, cached
         public static string chunkRenderRegionKey(int cx, int cz) { return renderRegionKey(renderRegionCoord(cx), renderRegionCoord(cz)); }
         static string chunkRenderRegionKeyCached(Chunk c) { if (c._rrKey == null || c._rrKeyCx != c.cx || c._rrKeyCz != c.cz) { c._rrKey = chunkRenderRegionKey(c.cx, c.cz); c._rrKeyCx = c.cx; c._rrKeyCz = c.cz; } return c._rrKey; }
         public static RenderRegion getRenderRegion(int rx, int rz, bool create = true)

@@ -259,16 +259,29 @@ namespace VoxelForge
             else if (lightDirtyHead >= 64 && lightDirtyHead * 2 >= lightDirtyQueue.Count) { lightDirtyQueue.RemoveRange(0, lightDirtyHead); lightDirtyHead = 0; }
             return p;
         }
+        /// <summary>false = the reference rule exactly (no repair at all when less than 2 ms remain).</summary>
+        public static bool lightProgressEveryFrame = true;
+        static readonly List<int[]> lightBatch = new List<int[]>();
+        static readonly Dictionary<string, HashSet<int>> lightBatchDirty = new Dictionary<string, HashSet<int>>();
+        static readonly HashSet<long> lightBatchSkyDone = new HashSet<long>();
         public static int processLightDirty(double deadline)
         {
-            // main G4 scheduling semantics: do not begin a lighting batch unless at least ~2 ms of the deadline remains.
+            // main G4 scheduling: do not begin a lighting batch unless ~2 ms of the deadline remains; once begun, finish the
+            // current repair, then stop and carry the untouched tail to the next frame. Unlike the gen/mesh integration
+            // loops, the reference has no "first item always goes" rule here, so once frames are shorter than ~7.5 ms
+            // (144 Hz displays, uncapped Editor play) the background budget never leaves 2 ms and lighting never updates.
+            // Here a short budget still repairs one entry per frame.
             if (lightDirtyCount() == 0) return 0;
             bool timed = !double.IsInfinity(deadline) && !double.IsNaN(deadline);
-            if (timed && JS.now() > deadline - 2) return 0;
-            var batch = new List<int[]>();
+            if (timed && JS.now() > deadline - 2)
+            {
+                if (!lightProgressEveryFrame) return 0; // reference rule (Tools/parity-light checks it)
+                deadline = JS.now(); // past the deadline: the loop below stops after one repair
+            }
+            var batch = lightBatch; batch.Clear();
             for (int[] p; (p = takeLightDirty()) != null;) batch.Add(p);
             if (batch.Count == 0) return 0;
-            var dirty = new Dictionary<string, HashSet<int>>(); var skyDone = new HashSet<long>();
+            var dirty = lightBatchDirty; dirty.Clear(); var skyDone = lightBatchSkyDone; skyDone.Clear();
             int done = 0, i = 0; double tBatch = JS.now();
             for (; i < batch.Count; i++)
             {
@@ -289,6 +302,7 @@ namespace VoxelForge
             double cost = JS.now() - tBatch;
             if (done > 0) avgLightRepairMs += (cost / done - avgLightRepairMs) * 0.2;
             for (; i < batch.Count; i++) lightDirtyQueue.Add(batch[i]);
+            batch.Clear(); dirty.Clear();
             return done;
         }
         static int lightNeighborhoodTopY(int cx, int cz)

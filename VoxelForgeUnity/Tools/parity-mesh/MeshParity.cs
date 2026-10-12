@@ -21,11 +21,11 @@ public static class MeshParity
         g = g ?? GeoBucket.Empty; w.Add((uint)g.VCount); w.Add((uint)g.ICount);
         for (int k = 0; k < g.VCount; k++)
         {
-            var v = g.v[k];
+            var v = g.v[g.vOff + k];
             w.Add(Bits(v.x)); w.Add(Bits(v.y)); w.Add(Bits(v.z)); w.Add(v.u); w.Add(v.v);
             w.Add((uint)ToUint(Half.ToFloat(v.tile), 65536)); w.Add(Bits(v.sa)); w.Add((uint)ToUint(Half.ToFloat(v.light), 256));
         }
-        for (int k = 0; k < g.ICount; k++) w.Add((uint)g.i[k]);
+        for (int k = 0; k < g.ICount; k++) w.Add((uint)(g.i[g.iOff + k] - g.iBase));
     }
     static byte[] Dump(MeshResult r)
     {
@@ -47,8 +47,8 @@ public static class MeshParity
                 for (int si = 0; si < 24; si++)
                 {
                     var g = r.full24[si]; if (g == null) continue; var q = g.Get(b);
-                    for (int k = 0; k < q.VCount; k++) if (!q.v[k].Equals(agg.v[vo + k])) throw new Exception("full24/agg vertex mismatch");
-                    for (int k = 0; k < q.ICount; k++) if (q.i[k] + vo != agg.i[io + k]) throw new Exception("full24/agg index mismatch");
+                    for (int k = 0; k < q.VCount; k++) if (!q.v[q.vOff + k].Equals(agg.v[vo + k])) throw new Exception("full24/agg vertex mismatch");
+                    for (int k = 0; k < q.ICount; k++) if (q.i[q.iOff + k] - q.iBase + vo != agg.i[io + k]) throw new Exception("full24/agg index mismatch");
                     vo += q.VCount; io += q.ICount;
                 }
                 if (vo != agg.VCount || io != agg.ICount) throw new Exception("full24/agg size mismatch");

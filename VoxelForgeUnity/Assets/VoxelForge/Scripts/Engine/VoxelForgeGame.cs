@@ -141,8 +141,10 @@ namespace VoxelForge
             VF.perfBeginFrame(); perfOpen = true;
             try
             {
+                var tt = VF.perfMark();
                 Timers.Tick();
                 VF.tickPeriodicSave();
+                VF.perfEnd(VF.PERF_SAVE, tt);
                 var td = VF.perfMark();
                 VF.drainWorkerMessages();
                 VF.perfEnd(VF.PERF_DRAIN, td);

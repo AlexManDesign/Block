@@ -131,8 +131,14 @@ namespace VoxelForge
                 if (slot.stop) break;
                 var j = Interlocked.Exchange(ref slot.mailbox, null);
                 if (j == null) continue;
+#if VF_PERF_ALLOC
+                long pa = GC.GetAllocatedBytesForCurrentThread();
+#endif
                 try { workerInbox.Enqueue(new WorkerMsg { kind = 0, slot = slot, gen = w.Run(j) }); }
                 catch (Exception e) { workerInbox.Enqueue(new WorkerMsg { kind = 0, slot = slot, err = e }); }
+#if VF_PERF_ALLOC
+                Interlocked.Add(ref perfGenWorkerAlloc, GC.GetAllocatedBytesForCurrentThread() - pa); Interlocked.Increment(ref perfGenWorkerJobs);
+#endif
             }
         }
         static void meshThreadMain(MeshSlot slot)
@@ -147,8 +153,14 @@ namespace VoxelForge
                 if (slot.stop) break;
                 var j = Interlocked.Exchange(ref slot.mailbox, null);
                 if (j == null) continue;
-                try { workerInbox.Enqueue(new WorkerMsg { kind = 1, slot = slot, mesh = core.run(j) }); }
+#if VF_PERF_ALLOC
+                long pa = GC.GetAllocatedBytesForCurrentThread();
+#endif
+                try { var res = core.run(j); returnMeshJobBuffers(j); workerInbox.Enqueue(new WorkerMsg { kind = 1, slot = slot, mesh = res }); }
                 catch (Exception e) { workerInbox.Enqueue(new WorkerMsg { kind = 1, slot = slot, err = e }); }
+#if VF_PERF_ALLOC
+                Interlocked.Add(ref perfMeshWorkerAlloc, GC.GetAllocatedBytesForCurrentThread() - pa); Interlocked.Increment(ref perfMeshWorkerJobs);
+#endif
             }
         }
 
@@ -294,6 +306,29 @@ namespace VoxelForge
             for (int si = 0; si < SECTION_COUNT; si++) if (sectionHasBlocks(c.sections[si]) || (c.sectionGeo != null && c.sectionGeo[si] != null)) a.Add(si);
             return a.ToArray();
         }
+        // Mesh job payload buffers (4096-byte section copies). JS structured-clones them for the worker; here they are rented
+        // from a pool and handed back by the mesher thread once MeshCore.run has consumed them (it copies them into its own
+        // padded volume and keeps no reference), so a moving player does not allocate ~1 MB of copies per mesh job.
+        const int SEC_POOL_MAX = 4096;
+        static readonly System.Collections.Concurrent.ConcurrentBag<byte[]> secBufPool = new System.Collections.Concurrent.ConcurrentBag<byte[]>();
+        static byte[] rentSecCopy(byte[] src)
+        {
+            byte[] b; if (!secBufPool.TryTake(out b)) b = new byte[4096];
+            if (src != null) Buffer.BlockCopy(src, 0, b, 0, 4096); else Array.Clear(b, 0, 4096);
+            return b;
+        }
+        static void returnMeshJobBuffers(MeshJob j)
+        {
+            if (j == null || j.sections == null) return;
+            foreach (var q in j.sections)
+            {
+                if (q.blocks != null && q.blocks.Length == 4096 && secBufPool.Count < SEC_POOL_MAX) secBufPool.Add(q.blocks);
+                if (q.light != null && q.light.Length == 4096 && secBufPool.Count < SEC_POOL_MAX) secBufPool.Add(q.light);
+                q.blocks = null; q.light = null;
+            }
+            j.sections = null;
+        }
+        public static long perfGenWorkerAlloc, perfMeshWorkerAlloc; public static int perfGenWorkerJobs, perfMeshWorkerJobs;
         static List<SecPayload> meshSectionPayload(Chunk c, int[] sis)
         {
             var outp = new List<SecPayload>();
@@ -316,7 +351,7 @@ namespace VoxelForge
                     var sec = n.sections[si];
                     if (sec == null) continue;
                     var lt = ensureSectionLight(sec);
-                    outp.Add(new SecPayload { dx = dx, dz = dz, si = si, blocks = (byte[])sec.blocks.Clone(), light = lt != null ? (byte[])lt.Clone() : new byte[4096] });
+                    outp.Add(new SecPayload { dx = dx, dz = dz, si = si, blocks = rentSecCopy(sec.blocks), light = rentSecCopy(lt) });
                 }
             };
             add(c, 0, 0, centerMask);
@@ -372,6 +407,7 @@ namespace VoxelForge
         {
             if (mainMeshCore == null) return false;
             var outp = mainMeshCore.run(job);
+            returnMeshJobBuffers(job);
             outp.ctx = job.ctx; outp.geoEpoch = job.geoEpoch; outp.chunkToken = job.chunkToken; outp.initial = job.initial;
             meshPending.Remove(job.key);
             avgMeshWorkerMs = avgMeshWorkerMs != 0 ? avgMeshWorkerMs * 0.9 + outp.ms * 0.1 : outp.ms;
@@ -423,6 +459,7 @@ namespace VoxelForge
                 ctx = meshNeighborContext(c), geoEpoch = c.sectionGeoEpoch, chunkToken = c.meshChunkToken, initial = !c.meshBuilt,
             };
             var outp = mainMeshCore.run(job);
+            returnMeshJobBuffers(job);
             outp.ctx = job.ctx; outp.geoEpoch = job.geoEpoch; outp.chunkToken = job.chunkToken; outp.initial = job.initial;
             if (full) meshFullJobs++; else meshPartialJobs++;
             integrateMeshResult(outp);
@@ -532,12 +569,12 @@ namespace VoxelForge
             if (an != bn) return false;
             for (int i = 0; i < an; i++)
             {
-                var p = a.v[i]; var q = b.v[i];
+                var p = a.v[a.vOff + i]; var q = b.v[b.vOff + i];
                 if (p.x != q.x || p.y != q.y || p.z != q.z || p.u != q.u || p.v != q.v || p.sa != q.sa || p.tile != q.tile || p.light != q.light) return false;
             }
             int ain = a != null ? a.ICount : 0, bin = b != null ? b.ICount : 0;
             if (ain != bin) return false;
-            for (int i = 0; i < ain; i++) if (a.i[i] != b.i[i]) return false;
+            for (int i = 0; i < ain; i++) if (a.i[a.iOff + i] - a.iBase != b.i[b.iOff + i] - b.iBase) return false;
             return true;
         }
         static readonly List<GeoBucket> combineScratch = new List<GeoBucket>();

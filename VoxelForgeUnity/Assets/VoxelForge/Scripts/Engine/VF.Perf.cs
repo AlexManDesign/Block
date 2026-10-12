@@ -8,8 +8,8 @@ namespace VoxelForge
     public static partial class VF
     {
         public const int PERF_DRAIN = 0, PERF_CONTROL = 1, PERF_SIM = 2, PERF_GEN = 3, PERF_LIGHT = 4, PERF_MESH = 5, PERF_EDIT = 6,
-            PERF_SUBMIT = 7, PERF_CLEANUP = 8, PERF_REGION = 9, PERF_RENDER = 10, PERF_GUI = 11, PERF_COUNT = 12;
-        static readonly string[] PERF_NAMES = { "drain", "ввод", "сим", "ген", "свет", "меш", "правки", "очередь", "выгрузка", "регионы", "рендер", "UI" };
+            PERF_SUBMIT = 7, PERF_CLEANUP = 8, PERF_REGION = 9, PERF_RENDER = 10, PERF_GUI = 11, PERF_SAVE = 12, PERF_COUNT = 13;
+        static readonly string[] PERF_NAMES = { "drain", "ввод", "сим", "ген", "свет", "меш", "правки", "очередь", "выгрузка", "регионы", "рендер", "UI", "таймеры/сохранение" };
         /// <summary>Milliseconds spent per phase in the current frame (reset at frame start).</summary>
         public static readonly double[] perfFrame = new double[PERF_COUNT];
         static readonly double[] perfPeak = new double[PERF_COUNT];
@@ -28,11 +28,13 @@ namespace VoxelForge
         /// VF_PERF_ALLOC; zero in Unity).</summary>
         public static readonly long[] perfAllocFrame = new long[PERF_COUNT];
         public struct PerfMark { public double t; public long a; }
+        /// <summary>Headless harness only: bytes the Unity stand-ins allocated (native memory in a real player), excluded from the counts.</summary>
+        public static Func<long> perfExternalAlloc;
         public static PerfMark perfMark()
         {
             PerfMark m; m.t = JS.now();
 #if VF_PERF_ALLOC
-            m.a = GC.GetAllocatedBytesForCurrentThread();
+            m.a = GC.GetAllocatedBytesForCurrentThread() - (perfExternalAlloc != null ? perfExternalAlloc() : 0);
 #else
             m.a = 0;
 #endif
@@ -42,7 +44,7 @@ namespace VoxelForge
         {
             perfFrame[phase] += JS.now() - m.t;
 #if VF_PERF_ALLOC
-            perfAllocFrame[phase] += GC.GetAllocatedBytesForCurrentThread() - m.a;
+            perfAllocFrame[phase] += GC.GetAllocatedBytesForCurrentThread() - (perfExternalAlloc != null ? perfExternalAlloc() : 0) - m.a;
 #endif
         }
         /// <summary>Per-call breakdown of the simulation phase (headless perf build only).</summary>
@@ -51,7 +53,7 @@ namespace VoxelForge
         {
             perfSimMs[i] += JS.now() - m.t;
 #if VF_PERF_ALLOC
-            perfSimAlloc[i] += GC.GetAllocatedBytesForCurrentThread() - m.a;
+            perfSimAlloc[i] += GC.GetAllocatedBytesForCurrentThread() - (perfExternalAlloc != null ? perfExternalAlloc() : 0) - m.a;
 #endif
         }
         /// <summary>Closes the frame: keeps the worst frame of the last 2 s (by measured main-thread total).</summary>

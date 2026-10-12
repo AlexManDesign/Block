@@ -1083,14 +1083,15 @@ namespace VoxelForge
                     }
             }
         }
-        static GeoBucket take(VBuf v, IBuf i, int v0, int i0, float ox, float oz)
+        static GeoBucket take(VBuf v, IBuf i, int v0, int i0, float ox, float oz, bool rebase = true)
         {
             int vn = v.n - v0, inn = i.n - i0;
             if (inn == 0) return GeoBucket.Empty;
             var va = new TVert[vn]; Array.Copy(v.a, v0, va, 0, vn);
             for (int k = 0; k < vn; k++) { va[k].x += ox; va[k].y -= 64; va[k].z += oz; } // worldify
             var ia = new int[inn];
-            for (int k = 0; k < inn; k++) ia[k] = i.a[i0 + k] - v0;
+            if (rebase) for (int k = 0; k < inn; k++) ia[k] = i.a[i0 + k] - v0;
+            else Array.Copy(i.a, i0, ia, 0, inn);
             return new GeoBucket { v = va, i = ia };
         }
         public static GeoBucket concat(IList<GeoBucket> parts)
@@ -1102,11 +1103,24 @@ namespace VoxelForge
             foreach (var p in parts)
             {
                 if (p == null || p.ICount == 0) continue;
-                Array.Copy(p.v, 0, v, vo, p.VCount);
-                for (int j = 0; j < p.ICount; j++) ind[io + j] = p.i[j] + vo;
+                Array.Copy(p.v, p.vOff, v, vo, p.VCount);
+                int d = vo - p.iBase, pi = p.iOff; var src = p.i;
+                for (int j = 0; j < p.ICount; j++) ind[io + j] = src[pi + j] + d;
                 vo += p.VCount; io += p.ICount;
             }
             return new GeoBucket { v = v, i = ind };
+        }
+        /// <summary>Whole bucket from everything accumulated in (v, i): the chunk aggregate of a full job.</summary>
+        static GeoBucket takeAll(VBuf v, IBuf i, float ox, float oz) { return take(v, i, 0, 0, ox, oz, false); }
+        // Per-section [vStart, vCount, iStart, iCount] for the four buckets of a full job (o, c, w, t).
+        readonly int[] fullRanges = new int[24 * 16];
+        readonly bool[] fullWanted = new bool[24];
+        /// <summary>A bucket that got vertices but no indices from one section is dropped, as take() did per section.</summary>
+        static void dropUnindexed(VBuf v, IBuf i, int v0, int i0) { if (i.n == i0) v.n = v0; }
+
+        static GeoBucket sectionView(GeoBucket agg, int[] R, int r)
+        {
+            return R[r + 3] == 0 ? GeoBucket.Empty : GeoBucket.View(agg, R[r], R[r + 1], R[r + 2], R[r + 3]);
         }
 
         public MeshResult run(MeshJob m)
@@ -1121,20 +1135,45 @@ namespace VoxelForge
             metaMap.Clear();
             if (m.meta != null) foreach (var q in m.meta) if (q.x >= -16 && q.x <= 31 && q.z >= -16 && q.z <= 31 && q.iy >= 0 && q.iy < H) metaMap[mkey(q.x, q.iy, q.z)] = q.m ?? EMPTY;
             float ox = m.cx * C, oz = m.cz * C;
-            if (m.full) res.full24 = new SectionGeo[24]; else res.parts = new List<KeyValuePair<int, SectionGeo>>();
-            foreach (var si in sisL)
-            {
-                ov.Clear(); oi.Clear(); cv.Clear(); ci.Clear(); wv.Clear(); wi.Clear(); tv.Clear(); ti.Clear();
-                buildSection(si);
-                var g = new SectionGeo { o = take(ov, oi, 0, 0, ox, oz), c = take(cv, ci, 0, 0, ox, oz), w = take(wv, wi, 0, 0, ox, oz), t = take(tv, ti, 0, 0, ox, oz) };
-                if (m.full) res.full24[si] = g.Any ? g : null;
-                else res.parts.Add(new KeyValuePair<int, SectionGeo>(si, g));
-            }
             if (m.full)
             {
-                var lo = new List<GeoBucket>(); var lc = new List<GeoBucket>(); var lw = new List<GeoBucket>(); var lt = new List<GeoBucket>();
-                for (int si = 0; si < 24; si++) { var g = res.full24[si]; if (g == null) continue; lo.Add(g.o); lc.Add(g.c); lw.Add(g.w); lt.Add(g.t); }
-                res.aggO = concat(lo); res.aggC = concat(lc); res.aggW = concat(lw); res.aggT = concat(lt);
+                // All sections accumulate into one set of buffers (in section order, as the aggregate concatenation
+                // orders them); the chunk buckets are copied out once and each section bucket is a view into them.
+                res.full24 = new SectionGeo[24];
+                Array.Clear(fullWanted, 0, 24); foreach (var si in sisL) fullWanted[si] = true;
+                ov.Clear(); oi.Clear(); cv.Clear(); ci.Clear(); wv.Clear(); wi.Clear(); tv.Clear(); ti.Clear();
+                var R = fullRanges;
+                for (int si = 0; si < 24; si++)
+                {
+                    if (!fullWanted[si]) continue;
+                    int o0 = ov.n, oi0 = oi.n, c0 = cv.n, ci0 = ci.n, w0 = wv.n, wi0 = wi.n, t0v = tv.n, ti0 = ti.n;
+                    buildSection(si);
+                    dropUnindexed(ov, oi, o0, oi0); dropUnindexed(cv, ci, c0, ci0); dropUnindexed(wv, wi, w0, wi0); dropUnindexed(tv, ti, t0v, ti0);
+                    int r = si * 16;
+                    R[r] = o0; R[r + 1] = ov.n - o0; R[r + 2] = oi0; R[r + 3] = oi.n - oi0;
+                    R[r + 4] = c0; R[r + 5] = cv.n - c0; R[r + 6] = ci0; R[r + 7] = ci.n - ci0;
+                    R[r + 8] = w0; R[r + 9] = wv.n - w0; R[r + 10] = wi0; R[r + 11] = wi.n - wi0;
+                    R[r + 12] = t0v; R[r + 13] = tv.n - t0v; R[r + 14] = ti0; R[r + 15] = ti.n - ti0;
+                }
+                res.aggO = takeAll(ov, oi, ox, oz); res.aggC = takeAll(cv, ci, ox, oz); res.aggW = takeAll(wv, wi, ox, oz); res.aggT = takeAll(tv, ti, ox, oz);
+                for (int si = 0; si < 24; si++)
+                {
+                    if (!fullWanted[si]) continue;
+                    int r = si * 16;
+                    if (R[r + 3] == 0 && R[r + 7] == 0 && R[r + 11] == 0 && R[r + 15] == 0) continue;
+                    res.full24[si] = new SectionGeo { o = sectionView(res.aggO, R, r), c = sectionView(res.aggC, R, r + 4), w = sectionView(res.aggW, R, r + 8), t = sectionView(res.aggT, R, r + 12) };
+                }
+            }
+            else
+            {
+                res.parts = new List<KeyValuePair<int, SectionGeo>>();
+                foreach (var si in sisL)
+                {
+                    ov.Clear(); oi.Clear(); cv.Clear(); ci.Clear(); wv.Clear(); wi.Clear(); tv.Clear(); ti.Clear();
+                    buildSection(si);
+                    var g = new SectionGeo { o = take(ov, oi, 0, 0, ox, oz), c = take(cv, ci, 0, 0, ox, oz), w = take(wv, wi, 0, 0, ox, oz), t = take(tv, ti, 0, 0, ox, oz) };
+                    res.parts.Add(new KeyValuePair<int, SectionGeo>(si, g));
+                }
             }
             res.ms = JS.now() - t0;
             return res;

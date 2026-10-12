@@ -30,6 +30,8 @@ namespace UnityEngine
         public static TextWriter log = Console.Out;
         /// <summary>--perf: skip per-index validation in SetSubMesh so frame timings are not dominated by the harness.</summary>
         public static bool fastMeshes = false;
+        /// <summary>Main-thread bytes allocated inside the stand-ins (excluded from the game's per-phase allocation numbers).</summary>
+        public static long stubBytes;
         public static void Problem(string msg)
         {
             lock (logLock)
@@ -807,7 +809,7 @@ namespace UnityEngine
         public void Clear(bool keepVertexLayout)
         {
             M("Clear");
-            vcount = 0; vdata = new byte[4][]; icount = 0; idata = new byte[0]; subs.Clear(); subs.Add(new Rendering.SubMeshDescriptor(0, 0)); legacyVerts = null;
+            vcount = 0; if (!HeadlessHost.fastMeshes) { vdata = new byte[4][]; idata = new byte[0]; } icount = 0; subs.Clear(); subs.Add(new Rendering.SubMeshDescriptor(0, 0)); legacyVerts = null;
             if (!keepVertexLayout) { layout = new Rendering.VertexAttributeDescriptor[0]; strides = new int[4]; }
         }
         public void MarkDynamic() { M("MarkDynamic"); }
@@ -855,7 +857,7 @@ namespace UnityEngine
             }
             if (!seen.Contains(Rendering.VertexAttribute.Position)) throw new ArgumentException("Mesh vertex layout must contain a Position attribute");
             layout = (Rendering.VertexAttributeDescriptor[])attributes.Clone(); strides = st; vcount = vertexCount;
-            if (HeadlessHost.fastMeshes) { for (int s = 0; s < 4; s++) if (st[s] > 0 && (vdata[s] == null || vdata[s].Length < st[s] * vertexCount)) vdata[s] = new byte[st[s] * vertexCount]; }
+            if (HeadlessHost.fastMeshes) { for (int s = 0; s < 4; s++) if (st[s] > 0 && (vdata[s] == null || vdata[s].Length < st[s] * vertexCount)) { vdata[s] = new byte[st[s] * vertexCount]; HeadlessHost.stubBytes += st[s] * vertexCount; } }
             else { vdata = new byte[4][]; for (int s = 0; s < 4; s++) if (st[s] > 0) vdata[s] = new byte[st[s] * vertexCount]; }
             legacyVerts = null;
         }
@@ -904,7 +906,7 @@ namespace UnityEngine
             M("SetIndexBufferParams");
             if (indexCount < 0) throw new ArgumentOutOfRangeException("indexCount");
             int ib = indexCount * (format == Rendering.IndexFormat.UInt16 ? 2 : 4);
-            icount = indexCount; ifmt = format; if (!HeadlessHost.fastMeshes || idata.Length < ib) idata = new byte[ib];
+            icount = indexCount; ifmt = format; if (!HeadlessHost.fastMeshes || idata.Length < ib) { idata = new byte[ib]; HeadlessHost.stubBytes += ib; }
         }
         void SetI(byte[] bytes, int esize, int meshBufferStart, int count)
         {

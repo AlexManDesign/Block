@@ -223,7 +223,10 @@ namespace VoxelForge
         public int Seed { get { return seed; } }
         public void setSeed(int v)
         {
-            if (v == seed && perms.Count > 0 && Array.Exists(mainClimatePerms, q => q != null)) return;
+            // The reference keeps its caches only while `perms` is non-empty, but nothing fills `perms` (fbm2/fbm3 are
+            // unused), so every job wiped every cache and re-planned ~360 mineshaft cells, ravines, structures and the
+            // neighbouring columns. All caches are pure functions of the seed, so they stay valid until it changes.
+            if (v == seed) return;
             seed = v;
             Array.Clear(ncValid, 0, ncValid.Length);
             perms = new List<byte[]>();

@@ -193,8 +193,32 @@ namespace VoxelForge
         public static readonly OrderedMap<string, JObj> blockMeta = new OrderedMap<string, JObj>();
         public static readonly Dictionary<string, OrderedMap<int, JObj>> metaByChunk = new Dictionary<string, OrderedMap<int, JObj>>(); // inner maps keep JS Map insertion order
         public static readonly Dictionary<string, OrderedMap<int, JObj>> generatedMetaByChunk = new Dictionary<string, OrderedMap<int, JObj>>();
-        public static string key3(int x, int y, int z) { return x + "," + y + "," + z; }
-        public static string ckey(int cx, int cz) { return cx + "," + cz; }
+        public static string key3(int x, int y, int z) { return internKey3(x, y, z); }
+        public static string ckey(int cx, int cz)
+        {
+            // The reference keys its maps with "cx,cz" strings; building one per lookup is the largest source of
+            // main-thread garbage while streaming. Keys repeat every frame, so a direct-mapped cache hands back the
+            // same string instance (an immutable entry per slot keeps reads consistent without locking).
+            int s = (int)((uint)(JS.imul(cx, 73856093) ^ JS.imul(cz, 19349663)) & (CKEY_CACHE - 1));
+            var e = ckeyCache[s];
+            if (e != null && e.x == cx && e.z == cz) return e.s;
+            e = new KeyEntry { x = cx, z = cz, s = cx.ToString() + "," + cz.ToString() };
+            ckeyCache[s] = e;
+            return e.s;
+        }
+        sealed class KeyEntry { public int x, y, z; public string s; }
+        const int CKEY_CACHE = 8192, KEY3_CACHE = 32768;
+        static readonly KeyEntry[] ckeyCache = new KeyEntry[CKEY_CACHE], key3Cache = new KeyEntry[KEY3_CACHE];
+        /// <summary>"x,y,z" block key (edits, meta, simulation queues), cached like ckey.</summary>
+        static string internKey3(int x, int y, int z)
+        {
+            int s = (int)((uint)(JS.imul(x, 73856093) ^ JS.imul(y, 19349663) ^ JS.imul(z, 83492791)) & (KEY3_CACHE - 1));
+            var e = key3Cache[s];
+            if (e != null && e.x == x && e.y == y && e.z == z) return e.s;
+            e = new KeyEntry { x = x, y = y, z = z, s = x.ToString() + "," + y.ToString() + "," + z.ToString() };
+            key3Cache[s] = e;
+            return e.s;
+        }
         public static int metaLocalKey(int x, int y, int z) { return ((y - WORLD_MIN_Y) << 8) | ((z & 15) << 4) | (x & 15); }
         public static void clearRuntimeWorld()
         {
@@ -516,7 +540,7 @@ namespace VoxelForge
         }
 
         // ---------------- simulation keys & fluid rules ----------------
-        public static string simKey(int x, int y, int z) { return x + "," + y + "," + z; }
+        public static string simKey(int x, int y, int z) { return internKey3(x, y, z); }
         static readonly int[] SIM_DECODE = new int[3];
         public static readonly int[][] FLUID_XZ_DIRS = { new[] { 1, 0 }, new[] { -1, 0 }, new[] { 0, 1 }, new[] { 0, -1 } };
         public static readonly int[][] FLUID_NEIGHBOR_DIRS = { new[] { 1, 0, 0 }, new[] { -1, 0, 0 }, new[] { 0, 1, 0 }, new[] { 0, -1, 0 }, new[] { 0, 0, 1 }, new[] { 0, 0, -1 } };

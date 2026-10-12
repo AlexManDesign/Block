@@ -212,8 +212,105 @@ namespace VoxelForge
             return k == 1 ? s + es : s.Substring(0, 1) + "." + s.Substring(1) + es;
         }
         /// <summary>Shortest decimal digits (no leading/trailing zeros) that round-trip to v (v finite, &gt; 0); exp = decimal exponent of the first digit.
-        /// Exact: a candidate is accepted when it lies inside v's rounding interval (computed with big integers, no double.Parse).</summary>
+        /// Same result as the JS Number-to-String algorithm (checked against V8 on all classes of doubles): the P-digit
+        /// candidates come from one 17-digit runtime conversion and are accepted only when exact integer comparisons
+        /// prove which P-digit values are nearest to v and inside its rounding interval. The exact digit search below
+        /// remains for the rare candidate whose digit count changes. Saves stringify thousands of coordinates and
+        /// decaying velocities (down to subnormals); that search alone cost 20 µs to ms and up to MBs of garbage each.</summary>
         static string shortestDigits(double v, out int exp)
+        {
+            long bits = BitConverter.DoubleToInt64Bits(v); int be = (int)((bits >> 52) & 0x7FF); ulong mant = (ulong)(bits & 0xFFFFFFFFFFFFFL);
+            // A power of two has a lower rounding gap half as wide as the upper one.
+            bool lowerCloser = be > 1 && mant == 0;
+            int E2; if (be == 0) E2 = -1074; else { mant |= 1UL << 52; E2 = be - 1075; }
+            bool even = (mant & 1) == 0;
+            ulong loN = lowerCloser ? 4 * mant - 1 : 2 * mant - 1; int loK = lowerCloser ? E2 - 2 : E2 - 1;
+            var ci = System.Globalization.CultureInfo.InvariantCulture;
+            // One runtime conversion to 17 digits; the P-digit candidates are its roundings (a double rounding can be one
+            // unit off, which the exact check below corrects).
+            string str = v.ToString("E16", ci); int ei = str.IndexOf('E');
+            int e17 = int.Parse(str.Substring(ei + 1), ci);
+            ulong c17 = 0; for (int i = 0; i < ei; i++) { char ch = str[i]; if (ch >= '0' && ch <= '9') c17 = c17 * 10 + (ulong)(ch - '0'); }
+            // Normal doubles: any shorter form is the 15-digit rounding with trailing zeros. Subnormals carry fewer
+            // digits of precision, so their search starts at one digit.
+            for (int P = be == 0 ? 1 : 15; P <= 17; P++)
+            {
+                ulong div = POW10U[17 - P], c = c17 / div; if (c17 % div >= (div + 1) / 2 && div > 1) c++;
+                int e10 = e17, nd = P;
+                if (c >= POW10U[P]) { c /= 10; e10++; }
+                int q = e10 - (nd - 1); ulong lowP = POW10U[nd - 1], highP = POW10U[nd];
+                // nearest P-digit value: (2c-1)/2 * 10^q < v < (2c+1)/2 * 10^q   (v = mant * 2^E2, so 2v = mant * 2^(E2+1))
+                int lo = cmpDecBin(2 * c - 1, q, mant, E2 + 1), hi = lo < 0 ? cmpDecBin(2 * c + 1, q, mant, E2 + 1) : 1;
+                if (lo > 0) { c--; lo = cmpDecBin(2 * c - 1, q, mant, E2 + 1); hi = cmpDecBin(2 * c + 1, q, mant, E2 + 1); }
+                else if (hi < 0) { c++; lo = cmpDecBin(2 * c - 1, q, mant, E2 + 1); hi = cmpDecBin(2 * c + 1, q, mant, E2 + 1); }
+                ulong c0, c1; // candidates closest to v (two when v lies exactly halfway)
+                if (lo < 0 && hi > 0) { c0 = c1 = c; }
+                else if (lo == 0) { c0 = c - 1; c1 = c; }
+                else if (hi == 0) { c0 = c; c1 = c + 1; }
+                else return shortestDigitsExact(v, out exp);
+                if (c0 < lowP || c1 >= highP) return shortestDigitsExact(v, out exp); // the digit count would change
+                // The closest P-digit value inside the rounding interval wins (ends included for an even mantissa); of two
+                // equally close ones, the even one. With a symmetric interval the closest value is inside whenever any
+                // P-digit value is; with the narrow lower gap of a power of two, a c below v may fall outside while c+1
+                // above v is inside.
+                bool in0 = insideRounding(c0, q, loN, loK, mant, E2, even), in1 = c1 != c0 && insideRounding(c1, q, loN, loK, mant, E2, even);
+                if (in0 && in1) { exp = e10; return trimDigits((c0 & 1) == 0 ? c0 : c1, ci); }
+                if (in0 || in1) { exp = e10; return trimDigits(in0 ? c0 : c1, ci); }
+                if (lowerCloser && c0 == c1 && cmpDecBin(c, q, mant, E2) < 0 && c + 1 < highP && insideRounding(c + 1, q, loN, loK, mant, E2, even)) { exp = e10; return trimDigits(c + 1, ci); }
+            }
+            return shortestDigitsExact(v, out exp);
+        }
+        static bool insideRounding(ulong c, int q, ulong loN, int loK, ulong mant, int E2, bool even)
+        {
+            int a = cmpDecBin(c, q, loN, loK); if (a < 0 || (a == 0 && !even)) return false;
+            int b = cmpDecBin(c, q, 2 * mant + 1, E2 - 1); return b < 0 || (b == 0 && even);
+        }
+        static string trimDigits(ulong c, System.Globalization.CultureInfo ci) { while (c % 10 == 0) c /= 10; return c.ToString(ci); }
+        static readonly ulong[] POW10U = BuildPow10U();
+        static ulong[] BuildPow10U() { var a = new ulong[20]; a[0] = 1; for (int i = 1; i < 20; i++) a[i] = a[i - 1] * 10; return a; }
+        static readonly uint[] POW5U = { 1, 5, 25, 125, 625, 3125, 15625, 78125, 390625, 1953125, 9765625, 48828125, 244140625, 1220703125 };
+        [ThreadStatic] static uint[] bigScratchA, bigScratchB;
+        /// <summary>sign(N * 10^q - B * 2^k) for N, B &gt; 0, exact (small fixed-size bignums, no allocation).</summary>
+        static int cmpDecBin(ulong N, int q, ulong B, int k)
+        {
+            var a = bigScratchA ?? (bigScratchA = new uint[96]); var b = bigScratchB ?? (bigScratchB = new uint[96]);
+            int na = bigSet(a, N), nb = bigSet(b, B);
+            // N * 5^q * 2^q vs B * 2^k  ->  (q >= 0) N*5^q vs B * 2^(k-q);  (q < 0) N vs B*5^-q * 2^(k-q)
+            if (q >= 0) na = bigMulPow5(a, na, q); else nb = bigMulPow5(b, nb, -q);
+            int t = k - q;
+            if (t >= 0) nb = bigShl(b, nb, t); else na = bigShl(a, na, -t);
+            if (na != nb) return na < nb ? -1 : 1;
+            for (int i = na - 1; i >= 0; i--) if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+            return 0;
+        }
+        static int bigSet(uint[] x, ulong v) { x[0] = (uint)v; x[1] = (uint)(v >> 32); return x[1] != 0 ? 2 : x[0] != 0 ? 1 : 0; }
+        static int bigMulPow5(uint[] x, int n, int p)
+        {
+            while (p > 0)
+            {
+                int c = Math.Min(13, p); uint m = POW5U[c]; ulong carry = 0;
+                for (int i = 0; i < n; i++) { ulong pr = (ulong)x[i] * m + carry; x[i] = (uint)pr; carry = pr >> 32; }
+                if (carry != 0) x[n++] = (uint)carry;
+                p -= c;
+            }
+            return n;
+        }
+        static int bigShl(uint[] x, int n, int s)
+        {
+            if (n == 0 || s == 0) return n;
+            int w = s >> 5, r = s & 31;
+            if (r == 0) { for (int i = n - 1; i >= 0; i--) x[i + w] = x[i]; x[n + w] = 0; }
+            else
+            {
+                x[n + w] = x[n - 1] >> (32 - r);
+                for (int i = n - 1; i > 0; i--) x[i + w] = (x[i] << r) | (x[i - 1] >> (32 - r));
+                x[w] = x[0] << r;
+            }
+            for (int i = 0; i < w; i++) x[i] = 0;
+            int nn = n + w + 1; while (nn > 0 && x[nn - 1] == 0) nn--;
+            return nn;
+        }
+        static string shortestDigitsExact(double v, out int exp)
         {
             if (v >= 2.2250738585072014e-308)
             {

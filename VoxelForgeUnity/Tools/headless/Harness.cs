@@ -29,7 +29,7 @@ static class Harness
             else if (args[i] == "--seed" && i + 1 < args.Length) seedArg = args[++i];
             else if (args[i] == "--soak" && i + 1 < args.Length) soakSeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--only" && i + 1 < args.Length) only = new HashSet<string>(args[++i].Split(','));
-            else if (args[i] == "--perf") { perfMode = true; HeadlessHost.fastMeshes = true; }
+            else if (args[i] == "--perf") { perfMode = true; HeadlessHost.fastMeshes = true; VF.perfExternalAlloc = () => HeadlessHost.stubBytes; }
             else if (args[i] == "--idle-seconds" && i + 1 < args.Length) idleSeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
             else if (args[i] == "--scale" && i + 1 < args.Length) scale = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
         }
@@ -258,7 +258,14 @@ static class Harness
         // Light from fluid moves made before the freeze is relit incrementally under a per-frame budget (processLightDirty,
         // as in the reference) and re-dirties meshes; drain it too, otherwise those remeshes look like a loop.
         int light0 = VF.lightDirtyCount();
-        Until(() => VF.meshPending.Count == 0 && VF.meshJobs.Count == 0 && VF.lightDirtyCount() == 0 && !VF.chunks.Values.Any(c => c.dirty), 30, label + ": mesh + light queues drained with fluids frozen (light queue was " + light0 + ")");
+        // Unbuilt chunks on the edge of the loaded area stay dirty until their neighbours load (meshNeighborhoodReady), as in
+        // the reference; only remeshes of built chunks are waited for.
+        Func<bool> drained = () => VF.meshPending.Count == 0 && VF.meshJobs.Count == 0 && VF.lightDirtyCount() == 0 && !VF.chunks.Values.Any(c => c.dirty && c.meshBuilt);
+        Until(drained, 30, label + ": mesh + light queues drained with fluids frozen (light queue was " + light0 + ")");
+        if (!drained())
+            Console.WriteLine("  idle probe[" + label + "] still pending: light " + VF.lightDirtyCount() + " mesh " + VF.meshPending.Count + "/" + VF.meshJobs.Count
+                + " dirty built chunks " + string.Join(" ", VF.chunks.Values.Where(c => c.dirty && c.meshBuilt).Take(12).Select(c => c.key + (c.meshBuilt ? "" : "(unbuilt)") + (VF.meshPending.Contains(c.key) ? "(pending)" : "")))
+                + " · player chunk " + JS.floor(P.x / 16) + "," + JS.floor(P.z / 16));
         Frames(60);
         var map0 = new Dictionary<string, int>(); rev0.Clear(); up0 = TerrainUploads();
         foreach (var kv in VF.chunks) { rev0[kv.Key] = kv.Value.meshRev; map0[kv.Key] = kv.Value.mapRev; }
@@ -292,6 +299,7 @@ static class Harness
         { int top = 0; for (int k = -8; k <= 8; k++) top = Math.Max(top, VF.heightAt(JS.floor(P.x) + k, JS.floor(P.z) + k)); P.y = Math.Max(P.y, top + 24); }
         HeadlessHost.PressKey(KeyCode.W); Frames(2); HeadlessHost.ReleaseKey(KeyCode.W); Frames(2); HeadlessHost.PressKey(KeyCode.W);
         Array.Clear(VF.perfSimMs, 0, 12); Array.Clear(VF.perfSimAlloc, 0, 12);
+        VF.perfGenWorkerAlloc = 0; VF.perfMeshWorkerAlloc = 0; VF.perfGenWorkerJobs = 0; VF.perfMeshWorkerJobs = 0;
         var rows = new List<double[]>(); var end = DateTime.UtcNow.AddSeconds(seconds); double x0 = P.x, z0 = P.z; int gc0 = GC.CollectionCount(0);
         while (DateTime.UtcNow < end)
         {
@@ -308,7 +316,7 @@ static class Harness
         Console.WriteLine("  perf RD " + rd + ": " + rows.Count + " samples, flew " + JS.Fixed(JS.hypot(P.x - x0, P.z - z0), 0) + " blocks, GCs " + (GC.CollectionCount(0) - gc0)
             + " · main-thread ms p50 " + JS.Fixed(pct(0.5), 1) + " p95 " + JS.Fixed(pct(0.95), 1) + " p99 " + JS.Fixed(pct(0.99), 1) + " max " + JS.Fixed(tot.Length > 0 ? tot[tot.Length - 1] : 0, 1)
             + " · >33ms " + tot.Count(v => v > 33) + " · >100ms " + tot.Count(v => v > 100));
-        string[] names = { "drain", "ctl", "sim", "gen", "light", "mesh", "edit", "submit", "cleanup", "region", "render", "gui" };
+        string[] names = { "drain", "ctl", "sim", "gen", "light", "mesh", "edit", "submit", "cleanup", "region", "render", "gui", "timers" };
         var avg = new double[VF.PERF_COUNT]; foreach (var r in rows) for (int i = 0; i < VF.PERF_COUNT; i++) avg[i] += r[i] / Math.Max(1, rows.Count);
         Console.WriteLine("  perf RD " + rd + " avg: " + string.Join(" ", Enumerable.Range(0, VF.PERF_COUNT).Select(i => names[i] + " " + JS.Fixed(avg[i], 2))));
         var aavg = new double[VF.PERF_COUNT]; foreach (var r in rows) for (int i = 0; i < VF.PERF_COUNT; i++) aavg[i] += r[VF.PERF_COUNT + 2 + i] / 1024.0 / Math.Max(1, rows.Count);
@@ -316,9 +324,27 @@ static class Harness
         { string[] sn = { "bounds", "vehicles", "fishing", "pearls", "survival", "mobs", "spawns", "tnt", "drops", "particles", "worldTick", "furnaces" };
           Console.WriteLine("  perf RD " + rd + " sim breakdown (total over run): " + string.Join(" ", Enumerable.Range(0, 12).Select(i => sn[i] + " " + JS.Fixed(VF.perfSimMs[i], 0) + "ms/" + JS.Fixed(VF.perfSimAlloc[i] / 1048576.0, 0) + "MB")));
           Array.Clear(VF.perfSimMs, 0, 12); Array.Clear(VF.perfSimAlloc, 0, 12); }
+        Console.WriteLine("  perf RD " + rd + " worker threads: gen " + VF.perfGenWorkerJobs + " jobs " + JS.Fixed(VF.perfGenWorkerAlloc / 1048576.0, 0) + " MB ("
+            + JS.Fixed(VF.perfGenWorkerAlloc / 1024.0 / Math.Max(1, VF.perfGenWorkerJobs), 0) + " KB/job) · mesh " + VF.perfMeshWorkerJobs + " jobs " + JS.Fixed(VF.perfMeshWorkerAlloc / 1048576.0, 0) + " MB ("
+            + JS.Fixed(VF.perfMeshWorkerAlloc / 1024.0 / Math.Max(1, VF.perfMeshWorkerJobs), 0) + " KB/job) · main " + JS.Fixed(aavg.Sum() * rows.Count / 1024.0, 0) + " MB");
         foreach (var r in rows.OrderByDescending(r => r[VF.PERF_COUNT]).Take(8))
             Console.WriteLine("    slow " + JS.Fixed(r[VF.PERF_COUNT], 1) + " ms: " + string.Join(" ", Enumerable.Range(0, VF.PERF_COUNT).Where(i => r[i] >= 0.5).OrderByDescending(i => r[i]).Select(i => names[i] + " " + JS.Fixed(r[i], 1))));
         StateCheck("perf RD " + rd);
+        SaveProbe();
+    }
+    /// <summary>Times the periodic save (saveStateNow) and its parts: the reference runs it every 10 s on the main thread.</summary>
+    static void SaveProbe()
+    {
+        Func<Action, double> ms = a => { var sw = System.Diagnostics.Stopwatch.StartNew(); a(); return sw.Elapsed.TotalMilliseconds; };
+        object live = null, stored = null; string sl = null, ss = null;
+        double tSave = ms(() => VF.saveStateNow()), tSave2 = ms(() => VF.saveStateNow());
+        double tLive = ms(() => live = VF.serializeLiveMobs()), tStored = ms(() => stored = VF.serializeStoredMobs());
+        double tLiveJ = ms(() => sl = Json.Stringify(live)), tStoredJ = ms(() => ss = Json.Stringify(stored));
+        double tTouch = ms(() => VF.touchWorldRecord(true));
+        string big = new string('x', 170000); double tWrite = ms(() => LocalStorage.setItem("vf_probe", big));
+        Console.WriteLine("  save probe: saveStateNow " + JS.Fixed(tSave, 1) + " / " + JS.Fixed(tSave2, 1) + " ms · live mobs " + VF.liveMobs.Count + " serialize " + JS.Fixed(tLive, 1) + " + json " + JS.Fixed(tLiveJ, 1) + " ms (" + sl.Length + " ch)"
+            + " · stored mobs " + VF.storedMobs.Count + " chunks serialize " + JS.Fixed(tStored, 1) + " + json " + JS.Fixed(tStoredJ, 1) + " ms (" + ss.Length + " ch)"
+            + " · crops " + VF.worldSim.crops.Count + " saplings " + VF.worldSim.saplings.Count + " · touchWorldRecord " + JS.Fixed(tTouch, 1) + " ms · write 170 KB " + JS.Fixed(tWrite, 1) + " ms");
     }
     static void EnsureLocked()
     {
@@ -353,7 +379,11 @@ static class Harness
         Frames(30);
         StateCheck("creative idle");
 
-        if (perfMode) { PerfFlight(12, 30); PerfFlight(8, 20); }
+        if (perfMode)
+        {
+            int ps; var pe = Environment.GetEnvironmentVariable("VF_PERF_SECONDS");
+            if (pe != null && int.TryParse(pe, out ps)) PerfFlight(12, ps); else { PerfFlight(12, 30); PerfFlight(8, 20); }
+        }
         if (Do("idle")) IdleRemeshProbe("creative idle", idleSeconds);
         if (Do("look"))
         {

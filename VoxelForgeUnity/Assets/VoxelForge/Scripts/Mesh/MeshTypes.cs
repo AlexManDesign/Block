@@ -66,13 +66,23 @@ namespace VoxelForge
         public int[] ToArray(int from = 0) { var r = new int[n - from]; Array.Copy(a, from, r, 0, n - from); return r; }
     }
 
-    /// <summary>One CPU geometry bucket (vertices + indices). Indices are relative to the bucket's own vertex array.</summary>
+    /// <summary>One CPU geometry bucket: vertices v[vOff, vOff+VCount) and indices i[iOff, iOff+ICount), whose values
+    /// minus iBase address the bucket's own vertices. A whole bucket owns its arrays (offsets 0). The section buckets of
+    /// a full mesh result are views into the chunk aggregate arrays, like the reference's subarray views with oiBase,
+    /// so a chunk mesh is copied once instead of once per section plus once more for the aggregate.
+    /// Chunk CPU buckets (opaqueCPU/cutoutCPU/waterCPU) are always whole.</summary>
     public sealed class GeoBucket
     {
         public TVert[] v; public int[] i;
+        public int vOff, iOff, iBase, vLen = -1, iLen = -1;
         public static readonly GeoBucket Empty = new GeoBucket { v = new TVert[0], i = new int[0] };
-        public int VCount { get { return v != null ? v.Length : 0; } }
-        public int ICount { get { return i != null ? i.Length : 0; } }
+        public int VCount { get { return vLen >= 0 ? vLen : v != null ? v.Length : 0; } }
+        public int ICount { get { return iLen >= 0 ? iLen : i != null ? i.Length : 0; } }
+        public bool IsView { get { return vLen >= 0; } }
+        public static GeoBucket View(GeoBucket whole, int vOff, int vn, int iOff, int inn)
+        {
+            return new GeoBucket { v = whole.v, i = whole.i, vOff = vOff, iOff = iOff, iBase = vOff, vLen = vn, iLen = inn };
+        }
     }
     /// <summary>Per-section geometry in four buckets: opaque, cutout, water, transparent.</summary>
     public sealed class SectionGeo
