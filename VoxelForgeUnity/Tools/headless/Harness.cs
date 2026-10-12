@@ -179,13 +179,16 @@ static class Harness
         {
             int px = JS.floor(P.x), pz = JS.floor(P.z), y = JS.floor(P.y) - 1, x = px + off[0] * dist, z = pz + off[1] * dist;
             if (!PlainGround(VF.getBlock(x, y, z)) && VF.getBlock(x, y, z) != B.AIR && VF.bdef(VF.getBlock(x, y, z)) != null && VF.bdef(VF.getBlock(x, y, z)).solid) continue; // keep containers etc. intact
-            for (int k = 1; k <= dist; k++) for (int dy = 1; dy <= 3; dy++) { int xx = px + off[0] * k, zz = pz + off[1] * k, id = VF.getBlock(xx, y + dy, zz); var bb = VF.bdef(id); if (id != B.AIR && (bb == null || !bb.solid)) VF.setBlock(xx, y + dy, zz, B.AIR); }
+            // clear the line of sight (plants, and on a slope the terrain itself), keeping containers
+            for (int k = 1; k <= dist; k++) for (int dy = 1; dy <= 3; dy++) { int xx = px + off[0] * k, zz = pz + off[1] * k, id = VF.getBlock(xx, y + dy, zz); if (id != B.AIR && id != B.CHEST && id != B.FURNACE && id != B.FURNACE_LIT && id != B.BED) VF.setBlock(xx, y + dy, zz, B.AIR); }
             VF.setBlock(x, y, z, B.STONE); VF.setBlock(x, y + 1, z, B.AIR); VF.setBlock(x, y + 2, z, B.AIR);
             Frames(3);
             if (AimHitsTop(x, y, z)) { Info("ground fixture: stone pedestal at " + x + "," + y + "," + z); return new[] { x, y, z }; }
         }
         P.yaw = yaw0; P.pitch = pitch0;
-        Check(false, "found a reachable ground block " + dist + ".." + (dist + 3) + " blocks around " + JS.Fixed(P.x, 1) + "," + JS.Fixed(P.y, 1) + "," + JS.Fixed(P.z, 1));
+        { int px = JS.floor(P.x), pz = JS.floor(P.z), y = JS.floor(P.y) - 1;
+          Check(false, "found a reachable ground block " + dist + ".." + (dist + 3) + " blocks around " + JS.Fixed(P.x, 1) + "," + JS.Fixed(P.y, 1) + "," + JS.Fixed(P.z, 1)
+            + " (fixture cells: " + string.Join(" ", new[] { new[] { 0, -1 }, new[] { 1, 0 }, new[] { 0, 1 }, new[] { -1, 0 } }.Select(o => VF.blocks[VF.getBlock(px + o[0] * dist, y, pz + o[1] * dist)].name + "/" + VF.blocks[VF.getBlock(px + o[0] * dist, y + 1, pz + o[1] * dist)].name)) + ")"); }
         return null;
     }
     /// <summary>A plain full cube to build on: no container/workstation/TNT/bed (a right click on those interacts instead of placing).</summary>
