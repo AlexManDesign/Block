@@ -84,8 +84,10 @@ SPAWN_EGGS = [('pig', (240, 160, 156), (219, 99, 94)), ('cow', (68, 54, 37), (16
 
 
 def drowned_skin(img):
-    """The zombie's skin left in the sea (own recolour): the green skin a pale sea green, the clothes
-    faded to grey-blues, strands of dark kelp hanging down the body and the legs."""
+    """The zombie's skin left in the sea (own recolour): the green skin a light aquamarine (the
+    drowned's egg colour, so it stands apart from a zombie's green even in the dark water), the
+    shirt a dark sea blue, the trousers silt brown (the egg's spots), strands of kelp hanging down
+    the body and the legs."""
     import colorsys
     import random
     out = img.copy()
@@ -96,12 +98,12 @@ def drowned_skin(img):
             if a == 0:
                 continue
             h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
-            if 0.17 < h < 0.42:            # green skin -> sea green, lighter
-                h, l, s = 0.45, min(0.75, l * 1.15 + 0.08), s * 0.75
-            elif 0.42 <= h < 0.6:          # the cyan shirt -> faded slate teal
-                h, l, s = 0.52, l * 0.7, s * 0.35
-            else:                          # the purple trousers -> dark grey-blue
-                h, l, s = 0.6, l * 0.85, s * 0.3
+            if 0.17 < h < 0.42:            # green skin -> light aquamarine, its shading kept
+                h, l, s = 0.465, min(0.86, 0.38 + l * 0.75), min(0.75, 0.45 + s * 0.3)
+            elif 0.42 <= h < 0.6:          # the cyan shirt -> dark sea blue
+                h, l, s = 0.55, l * 0.55 + 0.05, 0.45
+            else:                          # the purple trousers -> silt brown
+                h, l, s = 0.08, l * 0.8 + 0.06, 0.35
             rr, gg, bb = colorsys.hls_to_rgb(h, l, s)
             px[x, y] = (int(rr * 255), int(gg * 255), int(bb * 255), a)
     rnd = random.Random(7)
@@ -116,7 +118,7 @@ def drowned_skin(img):
                 r, g, b, a = px[x, yy]
                 if a:
                     k = 0.8 + 0.2 * rnd.random()
-                    px[x, yy] = (int(46 * k), int(92 * k), int(48 * k), a)
+                    px[x, yy] = (int(52 * k), int(122 * k), int(50 * k), a)
     return out
 
 
