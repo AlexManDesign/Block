@@ -1619,12 +1619,15 @@ class Entities {
     if (inW && e.wPush) { v[0] += e.wPush[0]; v[1] += e.wPush[1]; v[2] += e.wPush[2]; }
     // (lava: LivingEntity.travel's lava branch, FloatGoal rising in it as in water)
     const lava = inW ? 0 : this.lavaDepth(e), thr = this.eyeH(e) < 0.4 ? 0 : 0.4;
-    const depth = inW ? e.wDepth : lava, deep = inW ? depth > thr : lava > 0 && (!e.onGround || lava > thr);
-    // (LivingEntity.aiStep: from the ground, or in water up to the threshold, a jump; deeper a swim
-    // up; the 10-tick pause between jumps only while it keeps wanting to jump)
-    if (deep && (e.wantJump || (!d.sinks && Math.random() < 0.8))) v[1] += 0.04;
-    else if (e.wantJump && (e.onGround || (inW && depth > 0)) && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
-    if (!e.wantJump) e.noJump = 0;
+    const depth = inW ? e.wDepth : lava;
+    // (LivingEntity.aiStep: in the liquid a jump swims up, unless the mob stands on the bottom where
+    // it is no deeper than the threshold: from there, as from the ground, it jumps; the 10-tick
+    // pause between jumps only while it keeps wanting to jump. FloatGoal: deeper than the threshold
+    // in water, or in lava, it wants to jump 4 ticks in 5)
+    const want = e.wantJump || (!d.sinks && (inW ? depth > thr : lava > 0) && Math.random() < 0.8);
+    if (want && depth > 0 && (!e.onGround || depth > thr)) v[1] += 0.04;
+    else if (want && e.onGround && !e.noJump) { v[1] = 0.42; e.noJump = 10; }
+    if (!want) e.noJump = 0;
     e.wantJump = false;
     if (e.type === 'chicken' && !e.onGround && v[1] < 0) v[1] *= 0.6;   // Chicken.aiStep: flaps down
     const wasGround = e.onGround, climb = d.climber && e.hitWall && !inW;
