@@ -57,6 +57,13 @@ const Sfx = {
   hurt() { if (!this.enabled || !this.ctx) return; const t = this.ctx.currentTime; this.noise(t, 0.18, 0.4, 'bandpass', 500, 200, 1); this.tone(t, 180, 0.15, 0.2, 'square'); },
   fuse() { if (!this.enabled || !this.ctx) return; this.noise(this.ctx.currentTime, 1.4, 0.22, 'highpass', 3000, 5000, 0.7); },
   splash() { if (!this.enabled || !this.ctx) return; this.noise(this.ctx.currentTime, 0.35, 0.3, 'lowpass', 1500, 200, 0.6); },
+  // a zombie turned into a drowned (own sound): a gurgle sinking low, a groan under it
+  drownedConvert() {
+    if (!this.enabled || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.noise(t, 0.6, 0.3, 'lowpass', 900, 150, 4);
+    this.tone(t + 0.05, 140, 0.5, 0.12, 'sawtooth');
+  },
   // a trident: thrown (a whoosh), striking a body, sticking in the ground
   trident(kind) {
     if (!this.enabled || !this.ctx) return;

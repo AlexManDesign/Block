@@ -420,7 +420,8 @@ class Entities {
   keeps(e) { const d = MOB_DEFS[e.type]; return e.deathT <= 0 && ((!d.hostile && !d.aquatic) || e.persist); }
   record(e) {
     return { t: e.type, p: [+e.pos[0].toFixed(2), +e.pos[1].toFixed(2), +e.pos[2].toFixed(2)], y: +e.bodyYaw.toFixed(2), hp: e.hp,
-      baby: e.baby ? +e.growT.toFixed(1) : 0, c: e.color, sh: e.sheared ? 1 : 0, bc: +(e.breedCd || 0).toFixed(1), egg: e.eggT ? +e.eggT.toFixed(1) : undefined, ps: e.persist ? 1 : 0, sz: e.size };
+      baby: e.baby ? +e.growT.toFixed(1) : 0, c: e.color, sh: e.sheared ? 1 : 0, bc: +(e.breedCd || 0).toFixed(1), egg: e.eggT ? +e.eggT.toFixed(1) : undefined, ps: e.persist ? 1 : 0, sz: e.size,
+      iw: e.underT ? +e.underT.toFixed(2) : undefined, dc: e.convT ? +e.convT.toFixed(2) : undefined };   // (InWaterTime, DrownedConversionTime)
   }
   revive(r) {
     if (!MOB_DEFS[r.t]) return null;
@@ -429,6 +430,7 @@ class Entities {
     if (r.baby > 0) e.growT = r.baby;
     if (r.c) e.color = r.c;
     e.sheared = !!r.sh; e.breedCd = r.bc || 0; if (r.egg) e.eggT = r.egg; if (r.ps) e.persist = true;
+    if (r.iw) e.underT = r.iw; if (r.dc) e.convT = r.dc;
     this.snapshot(e);
     return e;
   }
@@ -803,12 +805,15 @@ class Entities {
         e.burnT += dt;
         if (e.burnT >= 1) { e.burnT -= 1; this.damageMob(e, 1, null); if (e.hp <= 0) continue; }
       } else e.burnT = 0;
-      // Zombie.tick: a zombie with its eyes under water for 600 ticks starts turning into a drowned
-      // (shaking); 300 ticks later it is one, a new drowned in its place at full health
+      // Zombie.tick (ConversionTracker): a zombie with its eyes under water for 600 ticks starts
+      // turning into a drowned (shaking); 300 ticks more with them still under and it is one, a new
+      // drowned in its place at full health. Eyes out of the water: the count starts again and a
+      // conversion under way is called off
       if (e.type === 'zombie') {
-        if (e.convT > 0) { if ((e.convT -= dt) <= 0) { this.drownZombie(e, i); continue; } }
-        else if (isWaterId(w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])))) { if ((e.underT = (e.underT || 0) + dt) >= 30) e.convT = 15; }
-        else e.underT = 0;
+        if (isWaterId(w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])))) {
+          if (e.convT > 0) { if ((e.convT -= dt) <= 0) { this.drownZombie(e, i); continue; } }
+          else if ((e.underT = (e.underT || 0) + dt) >= 30) e.convT = 15.05;
+        } else { e.underT = 0; e.convT = 0; }
       }
       this.ai(e, d, dt, dx, dz, h, d.drowned ? huntWet : hunt, inW);
       if (e.deathT > 0 || this.mobs[i] !== e) continue;
@@ -2358,11 +2363,16 @@ class Entities {
     if (e.swim) { const ty = e.swim[1] - e.pos[1]; lp = -Math.atan2(ty, Math.hypot(e.swim[0] - e.pos[0], e.swim[2] - e.pos[2])); }
     e.swimPitch = -e.swimAmt * (Math.PI / 2 + Math.max(-1, Math.min(1, lp)));
   }
+  // Mob.convertTo (ConversionType.SINGLE): the new mob takes the old one's place, motion, body
+  // turn, ground contact, effects, hurt cooldown and persistence; then the conversion sound
   drownZombie(z, i) {
     const n = this.spawnMob('drowned', z.pos[0], z.pos[1], z.pos[2]);
     n.bodyYaw = n.headYaw = n.tgtYaw = z.bodyYaw; n.vel = z.vel.slice(); n.persist = z.persist;
+    n.onGround = z.onGround; n.effect = z.effect; n.invT = z.invT; n.hurtT = z.hurtT;
     this.endDoor(z);
     this.mobs.splice(i, 1);
+    const p = this.game.player.pos;
+    if (Math.hypot(z.pos[0] - p[0], z.pos[1] - p[1], z.pos[2] - p[2]) < 16) Sfx.drownedConvert();
   }
   // NaturalSpawner at a spot in the water of an ocean or a river: only the drowned can be placed
   // there (SpawnPlacementTypes.IN_WATER). Oceans list it in the zombie's place (95, packs of 4) and
@@ -2501,8 +2511,8 @@ class Entities {
       } else { P[0] = e.pos[0]; P[1] = e.pos[1]; P[2] = e.pos[2]; e.ryaw = e.bodyYaw; e.rhead = e.headYaw; e.rwalk = e.walk; e.rpitch = e.swimPitch; e.rswim = e.swimAmt; }
       // SalmonRenderer.setupRotations: the body sways 4.3 degrees at 0.6 x ticks (out of the water 1.3 x as far, 1.7 x as fast)
       if (e.type === 'salmon') { const dry = e.inWater === false; e.ryaw += (dry ? 1.3 : 1) * 4.3 * Math.PI / 180 * Math.sin((dry ? 1.7 : 1) * 0.6 * performance.now() / 50); }
-      // a zombie turning into a drowned shakes (LivingEntityRenderer.isShaking: cos(ticks x 3.25) x 0.4 pi degrees)
-      if (e.convT > 0) e.ryaw += Math.cos(e.age * 65) * 0.0219;
+      // a zombie turning into a drowned shakes (LivingEntityRenderer.isShaking: cos(whole ticks x 3.25) x 0.4 pi degrees)
+      if (e.convT > 0) e.ryaw += Math.cos(Math.floor(e.age * 20) * 3.25) * 0.4 * Math.PI * Math.PI / 180;
       const dx = P[0] - cam[0], dz = P[2] - cam[2], rr = Math.max(2, e.w * 0.5 + 1);
       if (dx * dx + dz * dz > R2) continue;
       if (!r.boxVisible(dx - rr, P[1] - cam[1] - 0.5, dz - rr, dx + rr, P[1] - cam[1] + e.h + 0.5, dz + rr)) continue;
