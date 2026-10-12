@@ -1686,6 +1686,10 @@ class Game {
     Object.assign(this.surv, { hp: 20, food: 20, sat: 5, air: 300, exh: 0, dead: false, poisonT: 0, fire: -20 });
     this.inv = this.inv.map(() => null);
     if (this.sleeping) { this.sleeping = null; p.eyeOffset = EYE; }
+    // the dead player is removed (setRemoved: stopRiding) and comes back on foot: the boat stays
+    // where it was, a vessel under way drops anchor there
+    if (this.boats && this.boats.riding) this.boats.leave();
+    if (this.ships && this.ships.ship) this.ships.anchor();
     // ServerPlayer respawn: at the bed when it is still there and has room beside it, else at the
     // world spawn with a message
     let at = null;
