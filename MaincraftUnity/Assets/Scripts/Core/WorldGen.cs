@@ -188,7 +188,7 @@ namespace Maincraft
 
         int BiomeOf(Clim o, double x, double z)
         {
-            double h = JsMath.Round(o.h); int ti = o.ti;
+            double h = Math.Floor(o.h + 0.5); int ti = o.ti;
             if (o.mush > 0.25 && h > SEA) return BI.MUSHROOM_FIELDS;
             // flat erosion-6 lowland: water level ground is still land (swamp), not beach or ocean
             bool low6 = o.k6 > 0.5 && h > SEA - 4;
@@ -879,8 +879,8 @@ namespace Maincraft
                     if (spread && rnd.Next() < 0.3) { x += rnd.Next() < 0.5 ? -1 : 1; }
                 }
             }
-            int Tri(int a, int b) { double r1 = rnd.Next(); double r2 = rnd.Next(); return (int)JsMath.Round(a + (b - a) * (r1 + r2) * 0.5); }
-            int Uni(int a, int b) => (int)JsMath.Round(a + (b - a) * rnd.Next());
+            int Tri(int a, int b) { double r1 = rnd.Next(); double r2 = rnd.Next(); return (int)Math.Floor(a + (b - a) * (r1 + r2) * 0.5 + 0.5); }
+            int Uni(int a, int b) => (int)Math.Floor(a + (b - a) * rnd.Next() + 0.5);
             // stone variety blobs
             void Blob(int id, int host2, int n, int y) => Vein(id, host2, n, y, true);
             for (int i = 0; i < 2; i++) Blob(B.GRANITE, 0, 40, Uni(0, 70));
@@ -1136,11 +1136,11 @@ namespace Maincraft
             {
                 double dx = bx - ax, dy = by - ay, dz = bz - az, n = Math.Max(Math.Abs(dx), Math.Max(Math.Abs(dy), Math.Abs(dz)));
                 int axis = Math.Abs(dy) >= Math.Abs(dx) && Math.Abs(dy) >= Math.Abs(dz) ? 0 : Math.Abs(dx) >= Math.Abs(dz) ? 1 : 2;
-                int lcx = (int)JsMath.Round(ax), lcy = (int)JsMath.Round(ay), lcz = (int)JsMath.Round(az);
+                int lcx = (int)Math.Floor(ax + 0.5), lcy = (int)Math.Floor(ay + 0.5), lcz = (int)Math.Floor(az + 0.5);
                 Put(lcx, lcy, lcz, id | (axis << 16), 0);
                 for (int k = 1; k <= n; k++)
                 {
-                    int px = (int)JsMath.Round(ax + dx * k / n), py = (int)JsMath.Round(ay + dy * k / n), pz = (int)JsMath.Round(az + dz * k / n);
+                    int px = (int)Math.Floor(ax + dx * k / n + 0.5), py = (int)Math.Floor(ay + dy * k / n + 0.5), pz = (int)Math.Floor(az + dz * k / n + 0.5);
                     // one coordinate at a time (sideways, then up or down): every log rests on the one before it by a face
                     while (lcx != px || lcy != py || lcz != pz)
                     {
@@ -1203,7 +1203,7 @@ namespace Maincraft
                     {
                         double a = a0 + k * Math.PI * 2 / n + (Rnd() - 0.5) * 0.6; int len = 3 + NextInt(3);
                         int by = sy + (int)Math.Floor(h * (0.45 + Rnd() * 0.4));
-                        int ex = x + (int)JsMath.Round(Math.Cos(a) * len), ez = z + (int)JsMath.Round(Math.Sin(a) * len), ey = by + 2 + NextInt(3);
+                        int ex = x + (int)Math.Floor(Math.Cos(a) * len + 0.5), ez = z + (int)Math.Floor(Math.Sin(a) * len + 0.5), ey = by + 2 + NextInt(3);
                         Line(x, by, z, ex, ey, ez, B.LOG);
                         Ball(ex, ey + 1, ez, 2.3, 1.7, 2.3, B.LEAVES);
                     }
@@ -1220,7 +1220,7 @@ namespace Maincraft
                     {
                         double t = (top - y) / (double)Math.Max(1, top - low); int tier = (top - y) % 2;     // every other row steps in: tiers
                         // at least a ring around the trunk on every row, up to the top: no bare log above the crown
-                        int r = (int)Math.Max(1, JsMath.Round(t * maxR + 0.3) - tier);
+                        int r = (int)Math.Max(1, Math.Floor(t * maxR + 0.3 + 0.5) - tier);
                         for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++)
                         {
                             int d = Math.Abs(dx) + Math.Abs(dz);
@@ -1258,7 +1258,7 @@ namespace Maincraft
                     Ball(x + 0.5, top + 1, z + 0.5, 4.5, 1.8, 4.5, B.JUNGLE_LEAVES);
                     for (int yy = top - 4 - NextInt(3); yy > sy + h * 0.5; yy -= 3 + NextInt(4))
                     {
-                        double a = Rnd() * Math.PI * 2; int ex = x + (int)JsMath.Round(0.5 + Math.Cos(a) * 4), ez = z + (int)JsMath.Round(0.5 + Math.Sin(a) * 4);
+                        double a = Rnd() * Math.PI * 2; int ex = x + (int)Math.Floor(0.5 + Math.Cos(a) * 4 + 0.5), ez = z + (int)Math.Floor(0.5 + Math.Sin(a) * 4 + 0.5);
                         Line(x + (Math.Cos(a) > 0 ? 1 : 0), yy, z + (Math.Sin(a) > 0 ? 1 : 0), ex, yy + 2, ez, B.JUNGLE_LOG);
                         Ball(ex, yy + 3, ez, 2.6, 1.3, 2.6, B.JUNGLE_LEAVES);
                     }
@@ -1280,7 +1280,7 @@ namespace Maincraft
                     for (int k = 0; k < 2; k++)
                     {
                         int d = NextInt(4); double ex = x + 0.5 + FACE4[d * 2] * 3, ez = z + 0.5 + FACE4[d * 2 + 1] * 3;
-                        Line(x + (FACE4[d * 2] > 0 ? 1 : 0), top - 1, z + (FACE4[d * 2 + 1] > 0 ? 1 : 0), JsMath.Round(ex), top, JsMath.Round(ez), LG);
+                        Line(x + (FACE4[d * 2] > 0 ? 1 : 0), top - 1, z + (FACE4[d * 2 + 1] > 0 ? 1 : 0), Math.Floor(ex + 0.5), top, Math.Floor(ez + 0.5), LG);
                     }
                     break;
                 }
@@ -1317,14 +1317,14 @@ namespace Maincraft
                     int n = 2 + NextInt(2); double a0 = Rnd() * Math.PI * 2; var tips = new List<(int, int, int)>();
                     for (int k = 0; k < n; k++)
                     {
-                        double a = a0 + k * Math.PI * 2 / n; int ex = x + (int)JsMath.Round(Math.Cos(a) * 3), ez = z + (int)JsMath.Round(Math.Sin(a) * 3), ey = top + 2 + NextInt(2);
+                        double a = a0 + k * Math.PI * 2 / n; int ex = x + (int)Math.Floor(Math.Cos(a) * 3 + 0.5), ez = z + (int)Math.Floor(Math.Sin(a) * 3 + 0.5), ey = top + 2 + NextInt(2);
                         Line(x, top, z, ex, ey, ez, B.CHERRY_LOG);
                         tips.Add((ex, ey, ez));
                     }
                     foreach (var (ex, ey, ez) in tips) Ball(ex, ey + 1, ez, 2.8, 1.5, 2.8, B.CHERRY_LEAVES);
                     foreach (var (ex, ey, ez) in tips) for (int k = 0; k < 6; k++)
                     {
-                        double a = Rnd() * Math.PI * 2; int hx = ex + (int)JsMath.Round(Math.Cos(a) * 3), hz = ez + (int)JsMath.Round(Math.Sin(a) * 3);
+                        double a = Rnd() * Math.PI * 2; int hx = ex + (int)Math.Floor(Math.Cos(a) * 3 + 0.5), hz = ez + (int)Math.Floor(Math.Sin(a) * 3 + 0.5);
                         if (tbMap.ContainsKey(Key(hx, ey, hz))) { Put(hx, ey - 1, hz, B.CHERRY_LEAVES, 1); if (Rnd() < 0.3) Put(hx, ey - 2, hz, B.CHERRY_LEAVES, 1); }
                     }
                     break;
@@ -1386,7 +1386,7 @@ namespace Maincraft
                         }
                         for (int s2 = 1, yy = oy - 1; s2 <= 7 && yy > sy - 4 && !done; s2++)
                         {
-                            int rx = x + (int)JsMath.Round(ca * Math.Min(s2, 3)), rz = z + (int)JsMath.Round(sa * Math.Min(s2, 3));
+                            int rx = x + (int)Math.Floor(ca * Math.Min(s2, 3) + 0.5), rz = z + (int)Math.Floor(sa * Math.Min(s2, 3) + 0.5);
                             while (!done && (rcx != rx || rcy != yy || rcz != rz))
                             {
                                 if (rcx != rx) rcx += Math.Sign(rx - rcx); else if (rcz != rz) rcz += Math.Sign(rz - rcz); else rcy += Math.Sign(yy - rcy);
@@ -1752,14 +1752,14 @@ namespace Maincraft
                     // NoiseProvider(scale 0.020833334): the kind of flower changes smoothly across the forest
                     var L = FLOWER_FOREST_L ?? (FLOWER_FOREST_L = new[] { B.DANDELION, B.POPPY, B.ALLIUM, B.AZURE_BLUET, B.RED_TULIP, B.ORANGE_TULIP, B.WHITE_TULIP, B.PINK_TULIP, B.OXEYE_DAISY, B.CORNFLOWER, B.LILY_OF_THE_VALLEY });
                     double v = (nMisc.n2(x * 0.020833334 - 313.1, z * 0.020833334 + 77.7) + 1) / 2;
-                    return L[Math.Max(0, Math.Min(L.Length - 1, JsMath.ToInt32(v * L.Length)))];
+                    return L[Math.Max(0, Math.Min(L.Length - 1, (int)(v * L.Length)))];
                 }
                 case "flower_meadow":
                 {
                     var L = FLOWER_MEADOW_L ?? (FLOWER_MEADOW_L = new[] { B.TALL_GRASS_PLANT, B.ALLIUM, B.POPPY, B.AZURE_BLUET, B.DANDELION, B.CORNFLOWER, B.OXEYE_DAISY, B.TALL_GRASS });
                     double v = (nMisc.n2(x * 0.020833334 + 911.1, z * 0.020833334 - 55.5) + 1) / 2;
                     // DualNoiseProvider in Minecraft: a few kinds at a time, changing across the meadow
-                    return L[Math.Max(0, Math.Min(L.Length - 1, JsMath.ToInt32((v + (r1 - 0.5) * 0.25) * L.Length)))];
+                    return L[Math.Max(0, Math.Min(L.Length - 1, (int)((v + (r1 - 0.5) * 0.25) * L.Length)))];
                 }
             }
             return 0;
@@ -1847,8 +1847,8 @@ namespace Maincraft
                     double c = V.f2(x * 0.02 + 911.1, z * 0.02 - 333.3);
                     if (c > 0.72 && depth >= 3)
                     {
-                        double f = Math.Min(1, (c - 0.72) / 0.28); int top = SEA + (int)JsMath.Round(f * 6);
-                        int bot = SEA - 1 - (int)JsMath.Round(f * 5);
+                        double f = Math.Min(1, (c - 0.72) / 0.28); int top = SEA + (int)Math.Floor(f * 6 + 0.5);
+                        int bot = SEA - 1 - (int)Math.Floor(f * 5 + 0.5);
                         if (bot < fy + 1) bot = fy + 1;
                         for (int y = bot; y <= top && y < WORLD_MAX_Y - 1; y++) ids[Col(y)] = B.PACKED_ICE;
                         if (top > SEA + 2 && ids[Col(top + 1)] == 0) ids[Col(top + 1)] = B.SNOW;

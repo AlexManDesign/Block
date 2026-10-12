@@ -71,7 +71,7 @@ namespace Maincraft
             double x0 = xin - (i - t), y0 = yin - (j - t);
             int i1, j1; if (x0 > y0) { i1 = 1; j1 = 0; } else { i1 = 0; j1 = 1; }
             double x1 = x0 - i1 + G2, y1 = y0 - j1 + G2, x2 = x0 - 1 + 2 * G2, y2 = y0 - 1 + 2 * G2;
-            int ii = JsMath.ToInt32(i) & 255, jj = JsMath.ToInt32(j) & 255;
+            int ii = (int)i & 255, jj = (int)j & 255;
             double n = 0, tt; int g;
             tt = 0.5 - x0 * x0 - y0 * y0;
             if (tt > 0) { g = pm[ii + perm[jj]]; tt *= tt; n += tt * tt * (GRAD3[g] * x0 + GRAD3[g + 1] * y0); }
@@ -106,7 +106,7 @@ namespace Maincraft
             double x1 = x0 - i1 + G3, y1 = y0 - j1 + G3, z1 = z0 - k1 + G3;
             double x2 = x0 - i2 + 2 * G3, y2 = y0 - j2 + 2 * G3, z2 = z0 - k2 + 2 * G3;
             double x3 = x0 - 1 + 3 * G3, y3 = y0 - 1 + 3 * G3, z3 = z0 - 1 + 3 * G3;
-            int ii = JsMath.ToInt32(i) & 255, jj = JsMath.ToInt32(j) & 255, kk = JsMath.ToInt32(k) & 255;
+            int ii = (int)i & 255, jj = (int)j & 255, kk = (int)k & 255;
             double n = 0, tt; int g;
             tt = 0.6 - x0 * x0 - y0 * y0 - z0 * z0;
             if (tt > 0) { g = pm[ii + perm[jj + perm[kk]]]; tt *= tt; n += tt * tt * (GRAD3[g] * x0 + GRAD3[g + 1] * y0 + GRAD3[g + 2] * z0); }
@@ -144,32 +144,33 @@ namespace Maincraft
         readonly int s;
         public ValueNoise(int seed) { s = seed; }
 
-        public double g(double a, double c)
+        // lattice hash: products summed in double precision as the original does, low 32 bits kept
+        public double g(int a, int c)
         {
-            // the original multiplies in doubles (past 2^53) and wraps the sum to 32 bits; same IEEE steps here
-            double wd = (double)JsMath.ToInt32(a + s) * 374761393 + (double)JsMath.ToInt32(c - s) * 668265263 + 527595518;
-            int w = JsMath.ToInt32(wd);
             unchecked
             {
-                w = w ^ (int)((uint)w >> 13); w = w * 1274126177; uint u = (uint)(w ^ (int)((uint)w >> 16));
-                return u / 4294967296.0;
+                double wd = (double)(a + s) * 374761393 + (double)(c - s) * 668265263 + 527595518;
+                int w = (int)(long)wd;
+                w ^= (int)((uint)w >> 13); w *= 1274126177;
+                return (uint)(w ^ (int)((uint)w >> 16)) / 4294967296.0;
             }
         }
 
-        public double g3(double a, double c, double e)
+        public double g3(int a, int c, int e)
         {
-            double qd = (double)JsMath.ToInt32(a + s) * 374761393 + (double)JsMath.ToInt32(c) * 668265263 + (double)JsMath.ToInt32(e - s) * 2147483423;
-            int q = JsMath.ToInt32(qd);
             unchecked
             {
-                q = q ^ (int)((uint)q >> 13); q = q * 1274126177; uint u = (uint)(q ^ (int)((uint)q >> 16));
-                return u / 4294967296.0;
+                double qd = (double)(a + s) * 374761393 + (double)c * 668265263 + (double)(e - s) * 2147483423;
+                int q = (int)(long)qd;
+                q ^= (int)((uint)q >> 13); q *= 1274126177;
+                return (uint)(q ^ (int)((uint)q >> 16)) / 4294967296.0;
             }
         }
 
         public double v2(double x, double z)
         {
-            double xi = Math.Floor(x), zi = Math.Floor(z), fx = x - xi, fz = z - zi;
+            double fxi = Math.Floor(x), fzi = Math.Floor(z), fx = x - fxi, fz = z - fzi;
+            int xi = (int)fxi, zi = (int)fzi;
             double a = g(xi, zi), b = g(xi + 1, zi), c = g(xi, zi + 1), d = g(xi + 1, zi + 1);
             double u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
             return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;

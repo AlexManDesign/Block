@@ -466,7 +466,7 @@ namespace Maincraft
                                 for (int i = 0; i < 3; i++) { lo[i] = Math.Min(lo[i], Math.Max(0, q[i])); hi[i] = Math.Max(hi[i], Math.Min(16, q[i])); }
                             }
                     var bx = new[] { lo[0] / 16, lo[1] / 16, lo[2] / 16, hi[0] / 16, hi[1] / 16, hi[2] / 16 };
-                    for (int i = 0; i < 6; i++) bx[i] = JsMath.Round(bx[i] * 1e4) / 1e4;
+                    for (int i = 0; i < 6; i++) bx[i] = Math.Floor(bx[i] * 1e4 + 0.5) / 1e4;
                     boxes[vi] = bx;
                 }
                 MODEL_BOX[kv.Key] = boxes;

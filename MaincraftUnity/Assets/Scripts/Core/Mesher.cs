@@ -147,8 +147,9 @@ namespace Maincraft
             for (int p = 0; p < 16; p++)
             {
                 double f = p / 15.0, r = f * 0.6 + (p != 0 ? 0.4 : 0.3), g = Math.Max(0, f * f * 0.7 - 0.5), bl = Math.Max(0, f * f * 0.6 - 0.7);
-                WIRE_TINT[p] = (ushort)(((int)JsMath.Round(r * 31) << 11) | ((int)JsMath.Round(g * 63) << 5) | (int)JsMath.Round(bl * 31));
+                WIRE_TINT[p] = (ushort)(((int)Math.Floor(r * 31 + 0.5) << 11) | ((int)Math.Floor(g * 63 + 0.5) << 5) | (int)Math.Floor(bl * 31 + 0.5));
             }
+            InitExtras();
             for (int i = 0; i < 256; i++) { DEFAULT_TINTS[i] = C565(0x91BD59); DEFAULT_TINTS[256 + i] = C565(0x77AB2F); DEFAULT_TINTS[512 + i] = C565(0x3F76E4); }
         }
 
@@ -213,8 +214,28 @@ namespace Maincraft
         readonly int[] paneTex = new int[6];
         readonly bool[] paneConn = new bool[4];
         readonly double[] flowV = new double[2];
-        readonly int[] texs = new int[6];
-        static readonly int[] FL_SWAY = { 0, 0, 1, 1 };
+        readonly int[] texs = new int[6], tex2 = new int[6];
+        readonly double[] fpts = new double[12], rbox = new double[6];
+        // the 4 corners of a flat quad in the scratch buffer (Flat copies them at once)
+        double[] Pts(double a0, double a1, double a2, double b0, double b1, double b2, double c0, double c1, double c2, double d0, double d1, double d2)
+        {
+            var p = fpts;
+            p[0] = a0; p[1] = a1; p[2] = a2; p[3] = b0; p[4] = b1; p[5] = b2; p[6] = c0; p[7] = c1; p[8] = c2; p[9] = d0; p[10] = d1; p[11] = d2;
+            return p;
+        }
+        // RotBox into the scratch box (Box reads it at once)
+        double[] RotBoxS(double x0, double y0, double z0, double x1, double y1, double z1, int turns)
+        {
+            for (int t = 0; t < turns; t++)
+            {
+                double nx0 = 16 - z1, nx1 = 16 - z0, nz0 = x0, nz1 = x1;
+                x0 = nx0; x1 = nx1; z0 = nz0; z1 = nz1;
+            }
+            var r = rbox; r[0] = x0; r[1] = y0; r[2] = z0; r[3] = x1; r[4] = y1; r[5] = z1;
+            return r;
+        }
+        double[] RotBoxS(double[] b, int turns) => RotBoxS(b[0], b[1], b[2], b[3], b[4], b[5], turns);
+        static readonly int[] FL_SWAY = { 0, 0, 1, 1 }, FL_SWAY_REV = { 0, 1, 1, 0 };
 
         // push one quad: positions in 1/16 units (converted to 1/32), uv in texels
         void Quad(QBuf buf, float[] px, float[] py, float[] pz, float[] us, float[] vs, int layer, int[] shades, int[] skys, int[] blks, int flagN, int[] flags, bool flip)
@@ -246,13 +267,13 @@ namespace Maincraft
             for (int k = 0; k < 4; k++)
             {
                 int v = flip ? (k + 1) & 3 : k;
-                int x = (int)JsMath.Round(px[v] * 2.0), y = (int)JsMath.Round(py[v] * 2.0), z = (int)JsMath.Round(pz[v] * 2.0);
+                int x = (int)Math.Floor(px[v] * 2.0 + 0.5), y = (int)Math.Floor(py[v] * 2.0 + 0.5), z = (int)Math.Floor(pz[v] * 2.0 + 0.5);
                 if (x < 0) x = 0; if (y < 0) y = 0; if (z < 0) z = 0;
                 int fl = flags == null ? flagN : flags[v];
                 d[o++] = (uint)x | ((uint)y << 10) | ((uint)z << 20) | ((uint)fl << 30);
                 double u = us[v], vv = vs[v];
                 u = u < 0 ? 0 : u > 16 ? 16 : u; vv = vv < 0 ? 0 : vv > 16 ? 16 : vv;
-                d[o++] = (uint)layer | ((uint)JsMath.Round(u) << 11) | ((uint)JsMath.Round(vv) << 16) | ((uint)shades[v] << 21) | ovl | uvRot;
+                d[o++] = (uint)layer | ((uint)Math.Floor(u + 0.5) << 11) | ((uint)Math.Floor(vv + 0.5) << 16) | ((uint)shades[v] << 21) | ovl | uvRot;
                 d[o++] = (uint)skys[v] | ((uint)blks[v] << 8) | (tint << 16);
             }
             buf.n++;
@@ -389,10 +410,10 @@ namespace Maincraft
                     if (s1 == 0) { int l = light[i1]; ssum += l >> 4; bsum += l & 15; cnt++; }
                     if (s2 == 0) { int l = light[i2]; ssum += l >> 4; bsum += l & 15; cnt++; }
                     if (s3 == 0 && !(s1 != 0 && s2 != 0)) { int l = light[i3]; ssum += l >> 4; bsum += l & 15; cnt++; }
-                    int skyv = (int)JsMath.Round(ssum * 16.0 / cnt), blkv = emissive ? 240 : (int)JsMath.Round(bsum * 16.0 / cnt);
+                    int skyv = (int)Math.Floor(ssum * 16.0 / cnt + 0.5), blkv = emissive ? 240 : (int)Math.Floor(bsum * 16.0 / cnt + 0.5);
                     sk[v] = skyv; bl[v] = blkv;
                     double s = fs * AO_CURVE[ao];
-                    sh[v] = (int)JsMath.Round(s * 255);
+                    sh[v] = (int)Math.Floor(s * 255 + 0.5);
                     bright[v] = (float)(ao * 4 + (Math.Max(skyv, blkv) / 16.0));
                 }
                 FaceUV(f, tpx, tpy, tpz, rot, tu, tv, x, y, z);
@@ -482,7 +503,7 @@ namespace Maincraft
                     tu[0] = (float)o[0]; tv[0] = (float)o[3]; tu[1] = (float)o[2]; tv[1] = (float)o[3]; tu[2] = (float)o[2]; tv[2] = (float)o[1]; tu[3] = (float)o[0]; tv[3] = (float)o[1];
                 }
                 if (extra != null && extra.flipU != null && extra.flipU[f]) for (int v = 0; v < 4; v++) tu[v] = 16 - tu[v];
-                int fsv = (int)JsMath.Round(FACE_SHADE[f] * 255);
+                int fsv = (int)Math.Floor(FACE_SHADE[f] * 255 + 0.5);
                 for (int v = 0; v < 4; v++) { sh[v] = fsv; sk[v] = s * 16; bl[v] = b * 16; }
                 Quad(buf, tpx, tpy, tpz, tu, tv, layer, sh, sk, bl, 0, null, false);
             }
@@ -544,8 +565,8 @@ namespace Maincraft
                         {
                             var n = FN[F.Cull];
                             int nx = n[0], ny = n[1], nz = n[2], t;
-                            if (rx != 0) { t = (int)JsMath.Round(ny * cx + nz * sx); nz = (int)JsMath.Round(-ny * sx + nz * cx); ny = t; }
-                            if (ry != 0) { t = (int)JsMath.Round(nx * cy - nz * sy); nz = (int)JsMath.Round(nx * sy + nz * cy); nx = t; }
+                            if (rx != 0) { t = (int)Math.Floor(ny * cx + nz * sx + 0.5); nz = (int)Math.Floor(-ny * sx + nz * cx + 0.5); ny = t; }
+                            if (ry != 0) { t = (int)Math.Floor(nx * cy - nz * sy + 0.5); nz = (int)Math.Floor(nx * sy + nz * cy + 0.5); nx = t; }
                             if (OPAQUE[ids[p + nx * SX + ny * SY + nz * SZ]] != 0) continue;
                         }
                         int rq = F.UvRot / 90;
@@ -561,7 +582,7 @@ namespace Maincraft
                         double fnx = e1y * e2z - e1z * e2y, fny = e1z * e2x - e1x * e2z, fnz = e1x * e2y - e1y * e2x;
                         double ax = Math.Abs(fnx), ay = Math.Abs(fny), az = Math.Abs(fnz);
                         double fs = F.Shade == 0 ? 1 : ay >= ax && ay >= az ? (fny > 0 ? FACE_SHADE[2] : FACE_SHADE[3]) : ax >= az ? FACE_SHADE[0] : FACE_SHADE[4];
-                        int shv = (int)JsMath.Round(fs * 255);
+                        int shv = (int)Math.Floor(fs * 255 + 0.5);
                         for (int v = 0; v < 4; v++) { sh[v] = shv; sk[v] = s * 16; bl[v] = b * 16; }
                         Quad(buf, tpx, tpy, tpz, tu, tv, F.Layer, sh, sk, bl, 0, null, false);
                     }
@@ -574,7 +595,7 @@ namespace Maincraft
         {
             for (int v = 0; v < 4; v++) { tpx[v] = (float)pts[v * 3]; tpy[v] = (float)pts[v * 3 + 1]; tpz[v] = (float)pts[v * 3 + 2]; }
             tu[0] = (float)u0; tv[0] = (float)v1; tu[1] = (float)u1; tv[1] = (float)v1; tu[2] = (float)u1; tv[2] = (float)v0; tu[3] = (float)u0; tv[3] = (float)v0;
-            int shv = (int)JsMath.Round(shade * 255);
+            int shv = (int)Math.Floor(shade * 255 + 0.5);
             for (int v = 0; v < 4; v++) { sh[v] = shv; sk[v] = s * 16; bl[v] = b * 16; }
             Quad(buf, tpx, tpy, tpz, tu, tv, layer, sh, sk, bl, flagN, flags, false);
             if (twoSided)
@@ -583,7 +604,7 @@ namespace Maincraft
                 float t;
                 t = tpx[1]; tpx[1] = tpx[3]; tpx[3] = t; t = tpy[1]; tpy[1] = tpy[3]; tpy[3] = t; t = tpz[1]; tpz[1] = tpz[3]; tpz[3] = t;
                 t = tu[1]; tu[1] = tu[3]; tu[3] = t; t = tv[1]; tv[1] = tv[3]; tv[3] = t;
-                int[] f2 = flags != null ? new[] { flags[0], flags[3], flags[2], flags[1] } : null;
+                int[] f2 = flags == null ? null : flags == FL_SWAY ? FL_SWAY_REV : new[] { flags[0], flags[3], flags[2], flags[1] };
                 Quad(buf, tpx, tpy, tpz, tu, tv, layer, sh, sk, bl, flagN, f2, false);
             }
         }
@@ -606,22 +627,22 @@ namespace Maincraft
             var draw = (int[])L.Clone();
             if (n == 1) for (int d = 0; d < 4; d++) if (L[d] != 0) draw[(d + 2) & 3] = 1;
             // north / south halves (line along z), west / east halves (line along x)
-            if (draw[2] != 0) Flat(buf, new[] { X, Y, Z + 8, X + 16, Y, Z + 8, X + 16, Y, Z, X, Y, Z }, line, 0, 0, 16, 8, s, b, 1, 0, null, false);
-            if (draw[0] != 0) Flat(buf, new[] { X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z + 8, X, Y, Z + 8 }, line, 0, 8, 16, 16, s, b, 1, 0, null, false);
-            if (draw[1] != 0) Flat(buf, new[] { X + 8, Y, Z + 16, X + 8, Y, Z, X, Y, Z, X, Y, Z + 16 }, line, 0, 0, 16, 8, s, b, 1, 0, null, false);
-            if (draw[3] != 0) Flat(buf, new[] { X + 16, Y, Z + 16, X + 16, Y, Z, X + 8, Y, Z, X + 8, Y, Z + 16 }, line, 0, 8, 16, 16, s, b, 1, 0, null, false);
+            if (draw[2] != 0) Flat(buf, Pts(X, Y, Z + 8, X + 16, Y, Z + 8, X + 16, Y, Z, X, Y, Z), line, 0, 0, 16, 8, s, b, 1, 0, null, false);
+            if (draw[0] != 0) Flat(buf, Pts(X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z + 8, X, Y, Z + 8), line, 0, 8, 16, 16, s, b, 1, 0, null, false);
+            if (draw[1] != 0) Flat(buf, Pts(X + 8, Y, Z + 16, X + 8, Y, Z, X, Y, Z, X, Y, Z + 16), line, 0, 0, 16, 8, s, b, 1, 0, null, false);
+            if (draw[3] != 0) Flat(buf, Pts(X + 16, Y, Z + 16, X + 16, Y, Z, X + 8, Y, Z, X + 8, Y, Z + 16), line, 0, 8, 16, 16, s, b, 1, 0, null, false);
             bool straight = n == 2 && ((L[0] != 0 && L[2] != 0) || (L[1] != 0 && L[3] != 0)) || n == 1;
-            if (!straight) Flat(buf, new[] { X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z, X, Y, Z }, dot, 0, 0, 16, 16, s, b, 1, 0, null, false);
+            if (!straight) Flat(buf, Pts(X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z, X, Y, Z), dot, 0, 0, 16, 16, s, b, 1, 0, null, false);
             // up the side of the neighbouring block
             for (int d = 0; d < 4; d++)
             {
                 if (L[d] != 2) continue;
                 double e = 15.75, Yb = y * 16, Yt = Yb + 16;
                 double[] pts;
-                if (d == 0) pts = new[] { X, Yb, Z + e, X + 16, Yb, Z + e, X + 16, Yt, Z + e, X, Yt, Z + e };
-                else if (d == 2) pts = new[] { X + 16, Yb, Z + 16 - e, X, Yb, Z + 16 - e, X, Yt, Z + 16 - e, X + 16, Yt, Z + 16 - e };
-                else if (d == 1) pts = new[] { X + 16 - e, Yb, Z, X + 16 - e, Yb, Z + 16, X + 16 - e, Yt, Z + 16, X + 16 - e, Yt, Z };
-                else pts = new[] { X + e, Yb, Z + 16, X + e, Yb, Z, X + e, Yt, Z, X + e, Yt, Z + 16 };
+                if (d == 0) pts = Pts(X, Yb, Z + e, X + 16, Yb, Z + e, X + 16, Yt, Z + e, X, Yt, Z + e);
+                else if (d == 2) pts = Pts(X + 16, Yb, Z + 16 - e, X, Yb, Z + 16 - e, X, Yt, Z + 16 - e, X + 16, Yt, Z + 16 - e);
+                else if (d == 1) pts = Pts(X + 16 - e, Yb, Z, X + 16 - e, Yb, Z + 16, X + 16 - e, Yt, Z + 16, X + 16 - e, Yt, Z);
+                else pts = Pts(X + e, Yb, Z + 16, X + e, Yb, Z, X + e, Yt, Z, X + e, Yt, Z + 16);
                 Flat(buf, pts, line, 0, 0, 16, 16, s, b, 1, 0, null, true);
             }
             forceTint = -1;
@@ -648,11 +669,25 @@ namespace Maincraft
             int s = lt >> 4, b = lt & 15;
             double X = x * 16, Y = y * 16, Z = z * 16;
             int[] fl = swayIt ? FL_SWAY : null;
-            Flat(buf, new[] { X + a, Y, Z + a, X + c, Y, Z + c, X + c, Y + H, Z + c, X + a, Y + H, Z + a }, layer, 0, 16 - H, 16, 16, s, b, 0.95, 0, fl, true);
-            Flat(buf, new[] { X + c, Y, Z + a, X + a, Y, Z + c, X + a, Y + H, Z + c, X + c, Y + H, Z + a }, layer, 0, 16 - H, 16, 16, s, b, 0.95, 0, fl, true);
+            Flat(buf, Pts(X + a, Y, Z + a, X + c, Y, Z + c, X + c, Y + H, Z + c, X + a, Y + H, Z + a), layer, 0, 16 - H, 16, 16, s, b, 0.95, 0, fl, true);
+            Flat(buf, Pts(X + c, Y, Z + a, X + a, Y, Z + c, X + a, Y + H, Z + c, X + c, Y + H, Z + a), layer, 0, 16 - H, 16, 16, s, b, 0.95, 0, fl, true);
         }
 
         static readonly double[][] TORCH_UVO = { null, null, new double[] { 7, 6, 9, 8 }, new double[] { 7, 14, 9, 16 }, null, null };
+        static readonly BoxExtra TORCH_EXTRA = new BoxExtra { uvOverride = TORCH_UVO };
+        static readonly BoxExtra[] WALL_TORCH_EXTRA = new BoxExtra[4];
+        static readonly BoxExtra[] BED_EXTRA = new BoxExtra[4];
+        static readonly BoxExtra DOOR_FLIP = new BoxExtra { flipU = new[] { true, true, false, false, true, true } }, DOOR_NOFLIP = new BoxExtra { flipU = new bool[6] };
+        static void InitExtras()
+        {
+            for (int d = 0; d < 4; d++)
+            {
+                WALL_TORCH_EXTRA[d] = new BoxExtra { uvOverride = TORCH_UVO, shear = new[] { -DIRX[d] * 0.42, -DIRZ[d] * 0.42 } };
+                BED_EXTRA[d] = new BoxExtra { rot = new[] { 0, 0, d, 0, 0, 0 } };
+            }
+        }
+        static readonly double[] DOOR_SHUT = { 0, 0, 13, 16, 16, 16 }, DOOR_OPEN_R = { 13, 0, 0, 16, 16, 16 }, DOOR_OPEN_L = { 0, 0, 0, 3, 16, 16 };
+        static readonly double[] TRAP_OPEN = { 0, 0, 13, 16, 16, 16 }, TRAP_TOP = { 0, 13, 0, 16, 16, 16 }, TRAP_BOTTOM = { 0, 0, 0, 16, 3, 16 };
         static readonly double[][] PICKLE_POS = { new double[] { 6, 6 }, new double[] { 3, 4 }, new double[] { 10, 9 }, new double[] { 5, 11 } };
 
         void Special(ushort[] ids, byte[] meta, byte[] light, int p, int id, int shape, int x, int y, int z)
@@ -661,7 +696,7 @@ namespace Maincraft
             int m = meta[p];
             var buf = bufs[RLAYER[id]];
             int T = id * 6;
-            var texs = new int[6];
+            var texs = this.texs;
             for (int i = 0; i < 6; i++) texs[i] = FTEX[T + i];
             // waterlogged: the water of the cell is drawn with the block
             if ((FLAGS[id] & BF_WET) != 0) Fluid(ids, meta, light, p, B.WATER, x, y, z, true);
@@ -725,20 +760,17 @@ namespace Maincraft
                     int upper = (m >> 2) & 1, open = (m >> 3) & 1, hingeR = (m >> 4) & 1, f = m & 3;
                     int t = upper != 0 ? texs[2] : texs[3];
                     // closed: thin slab on the edge opposite to facing; open: rotated around the hinge
-                    double[] bxs = { 0, 0, 13, 16, 16, 16 }; // north-facing closed box (south edge)
-                    if (open != 0) bxs = hingeR != 0 ? new double[] { 13, 0, 0, 16, 16, 16 } : new double[] { 0, 0, 0, 3, 16, 16 };
-                    var r = RotBox(bxs, (f + 2) & 3);
-                    var flipU = new bool[6];
-                    if (hingeR != 0) { flipU[0] = flipU[1] = flipU[4] = flipU[5] = true; }
-                    Box(p, id, x, y, z, r[0], r[1], r[2], r[3], r[4], r[5], t, null, 0, buf, new BoxExtra { flipU = flipU });
+                    var bxs = open == 0 ? DOOR_SHUT : hingeR != 0 ? DOOR_OPEN_R : DOOR_OPEN_L; // north-facing closed box (south edge)
+                    var r = RotBoxS(bxs, (f + 2) & 3);
+                    Box(p, id, x, y, z, r[0], r[1], r[2], r[3], r[4], r[5], t, null, 0, buf, hingeR != 0 ? DOOR_FLIP : DOOR_NOFLIP);
                     return;
                 }
                 case SH.TRAPDOOR:
                 {
                     int f = m & 3, top = (m >> 2) & 1, open = (m >> 3) & 1;
                     double[] bxs;
-                    if (open != 0) bxs = RotBox(new double[] { 0, 0, 13, 16, 16, 16 }, (f + 2) & 3);
-                    else bxs = top != 0 ? new double[] { 0, 13, 0, 16, 16, 16 } : new double[] { 0, 0, 0, 16, 3, 16 };
+                    if (open != 0) bxs = RotBoxS(TRAP_OPEN, (f + 2) & 3);
+                    else bxs = top != 0 ? TRAP_TOP : TRAP_BOTTOM;
                     Box(p, id, x, y, z, bxs[0], bxs[1], bxs[2], bxs[3], bxs[4], bxs[5], texs[2], null, 0, buf);
                     return;
                 }
@@ -748,10 +780,10 @@ namespace Maincraft
                     int lt = MaxLight(p), s = lt >> 4, b = lt & 15;
                     double X = x * 16, Y = y * 16, Z = z * 16, e = 15.2;
                     double[] pts;
-                    if (f == 2) pts = new[] { X, Y, Z + e, X + 16, Y, Z + e, X + 16, Y + 16, Z + e, X, Y + 16, Z + e };          // north-facing, on south wall
-                    else if (f == 0) pts = new[] { X + 16, Y, Z + 16 - e, X, Y, Z + 16 - e, X, Y + 16, Z + 16 - e, X + 16, Y + 16, Z + 16 - e };
-                    else if (f == 1) pts = new[] { X + e, Y, Z, X + e, Y, Z + 16, X + e, Y + 16, Z + 16, X + e, Y + 16, Z };                      // west-facing, on east wall
-                    else pts = new[] { X + 16 - e, Y, Z + 16, X + 16 - e, Y, Z, X + 16 - e, Y + 16, Z, X + 16 - e, Y + 16, Z + 16 };        // east-facing, on west wall
+                    if (f == 2) pts = Pts(X, Y, Z + e, X + 16, Y, Z + e, X + 16, Y + 16, Z + e, X, Y + 16, Z + e);          // north-facing, on south wall
+                    else if (f == 0) pts = Pts(X + 16, Y, Z + 16 - e, X, Y, Z + 16 - e, X, Y + 16, Z + 16 - e, X + 16, Y + 16, Z + 16 - e);
+                    else if (f == 1) pts = Pts(X + e, Y, Z, X + e, Y, Z + 16, X + e, Y + 16, Z + 16, X + e, Y + 16, Z);                      // west-facing, on east wall
+                    else pts = Pts(X + 16 - e, Y, Z + 16, X + 16 - e, Y, Z, X + 16 - e, Y + 16, Z, X + 16 - e, Y + 16, Z + 16);        // east-facing, on west wall
                     Flat(buf, pts, texs[0], 0, 0, 16, 16, s, b, 0.9, 0, null, true);
                     return;
                 }
@@ -759,15 +791,14 @@ namespace Maincraft
                 {
                     if (m == 0 || m > 4)
                     {
-                        Box(p, id, x, y, z, 7, 0, 7, 9, 10, 9, texs[0], null, 0, buf, new BoxExtra { uvOverride = TORCH_UVO });
+                        Box(p, id, x, y, z, 7, 0, 7, 9, 10, 9, texs[0], null, 0, buf, TORCH_EXTRA);
                     }
                     else
                     {
                         int d = m - 1; // wall direction: 0 S,1 W,2 N,3 E (wall is on that side)
                         int dx = DIRX[d], dz = DIRZ[d];
                         double ox = dx * 5.5, oz = dz * 5.5;
-                        Box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13.5, 9 + oz, texs[0], null, 0, buf,
-                            new BoxExtra { uvOverride = TORCH_UVO, shear = new[] { -dx * 0.42, -dz * 0.42 } });
+                        Box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13.5, 9 + oz, texs[0], null, 0, buf, WALL_TORCH_EXTRA[d]);
                     }
                     return;
                 }
@@ -777,7 +808,7 @@ namespace Maincraft
                 case SH.BUTTON:
                 {
                     int d = m & 3;
-                    var r = RotBox(new double[] { 5, 6, 0, 11, 10, (m & 8) != 0 ? 1 : 2 }, (d + 2) & 3);   // pressed: pushed in
+                    var r = RotBoxS(5, 6, 0, 11, 10, (m & 8) != 0 ? 1 : 2, (d + 2) & 3);   // pressed: pushed in
                     Box(p, id, x, y, z, r, texs, buf);
                     return;
                 }
@@ -791,7 +822,7 @@ namespace Maincraft
                 }
                 case SH.CHEST:
                 {
-                    int f = m & 3; var t = (int[])texs.Clone();
+                    int f = m & 3; var t = tex2; Array.Copy(texs, t, 6);
                     t[FACE_OF_DIR[f]] = FRONT[id];
                     Box(p, id, x, y, z, 1, 0, 1, 15, 14, 15, 0, t, 0, buf);
                     return;
@@ -799,10 +830,9 @@ namespace Maincraft
                 case SH.BED:
                 {
                     int f = m & 3, head = (m >> 2) & 1;
-                    var t = (int[])texs.Clone();
+                    var t = tex2; Array.Copy(texs, t, 6);
                     t[2] = head != 0 ? (LAYER_BED_HEAD.TryGetValue(id, out var bh) && bh != 0 ? bh : texs[2]) : texs[2];
-                    var rot = new[] { 0, 0, (f + 2) & 3, 0, 0, 0 };
-                    Box(p, id, x, y, z, 0, 3, 0, 16, 9, 16, 0, t, 0, buf, new BoxExtra { rot = rot });
+                    Box(p, id, x, y, z, 0, 3, 0, 16, 9, 16, 0, t, 0, buf, BED_EXTRA[(f + 2) & 3]);
                     // legs
                     int lg = BED_LEG;
                     Box(p, id, x, y, z, 0, 0, 0, 3, 3, 3, lg, null, 0, buf); Box(p, id, x, y, z, 13, 0, 0, 16, 3, 3, lg, null, 0, buf);
@@ -823,9 +853,12 @@ namespace Maincraft
                     int lt = MaxLight(p);
                     double X = x * 16, Y = y * 16 + 0.3, Z = z * 16;
                     int r = m & 3;
-                    double[][] P4 = { new[] { X, Z + 16 }, new[] { X + 16, Z + 16 }, new[] { X + 16, Z }, new[] { X, Z } };
-                    var q = new double[12];
-                    for (int k = 0; k < 4; k++) { var c = P4[(k + r) & 3]; q[k * 3] = c[0]; q[k * 3 + 1] = Y; q[k * 3 + 2] = c[1]; }
+                    var q = fpts;
+                    for (int k = 0; k < 4; k++)
+                    {
+                        int c = (k + r) & 3;   // corners (X, Z + 16), (X + 16, Z + 16), (X + 16, Z), (X, Z)
+                        q[k * 3] = c == 1 || c == 2 ? X + 16 : X; q[k * 3 + 1] = Y; q[k * 3 + 2] = c <= 1 ? Z + 16 : Z;
+                    }
                     Flat(buf, q, texs[2], 0, 0, 16, 16, lt >> 4, lt & 15, 1.0, 0, null, true);
                     return;
                 }
@@ -833,7 +866,7 @@ namespace Maincraft
                 {
                     int lt = MaxLight(p);
                     double X = x * 16, Y = y * 16 + 1, Z = z * 16;
-                    var q = (m & 1) != 0 ? new[] { X, Y, Z, X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z } : new[] { X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z, X, Y, Z };
+                    var q = (m & 1) != 0 ? Pts(X, Y, Z, X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z) : Pts(X, Y, Z + 16, X + 16, Y, Z + 16, X + 16, Y, Z, X, Y, Z);
                     Flat(buf, q, texs[2], 0, 0, 16, 16, lt >> 4, lt & 15, 1.0, 0, null, true);
                     return;
                 }
@@ -843,12 +876,12 @@ namespace Maincraft
                     double X = x * 16, Y = y * 16, Z = z * 16, e = 0.8;
                     int t = texs[2];
                     int bits = m != 0 ? m : 1;
-                    if ((bits & 1) != 0) Flat(buf, new[] { X + 16, Y, Z + 16 - e, X, Y, Z + 16 - e, X, Y + 16, Z + 16 - e, X + 16, Y + 16, Z + 16 - e }, t, 0, 0, 16, 16, s, b, 0.8, 0, null, true);
-                    if ((bits & 4) != 0) Flat(buf, new[] { X, Y, Z + e, X + 16, Y, Z + e, X + 16, Y + 16, Z + e, X, Y + 16, Z + e }, t, 0, 0, 16, 16, s, b, 0.8, 0, null, true);
-                    if ((bits & 2) != 0) Flat(buf, new[] { X + e, Y, Z + 16, X + e, Y, Z, X + e, Y + 16, Z, X + e, Y + 16, Z + 16 }, t, 0, 0, 16, 16, s, b, 0.72, 0, null, true);
-                    if ((bits & 8) != 0) Flat(buf, new[] { X + 16 - e, Y, Z, X + 16 - e, Y, Z + 16, X + 16 - e, Y + 16, Z + 16, X + 16 - e, Y + 16, Z }, t, 0, 0, 16, 16, s, b, 0.72, 0, null, true);
-                    if ((bits & 16) != 0) Flat(buf, new[] { X, Y + e, Z + 16, X + 16, Y + e, Z + 16, X + 16, Y + e, Z, X, Y + e, Z }, t, 0, 0, 16, 16, s, b, 1, 0, null, true);
-                    if ((bits & 32) != 0) Flat(buf, new[] { X, Y + 16 - e, Z, X + 16, Y + 16 - e, Z, X + 16, Y + 16 - e, Z + 16, X, Y + 16 - e, Z + 16 }, t, 0, 0, 16, 16, s, b, 0.55, 0, null, true);
+                    if ((bits & 1) != 0) Flat(buf, Pts(X + 16, Y, Z + 16 - e, X, Y, Z + 16 - e, X, Y + 16, Z + 16 - e, X + 16, Y + 16, Z + 16 - e), t, 0, 0, 16, 16, s, b, 0.8, 0, null, true);
+                    if ((bits & 4) != 0) Flat(buf, Pts(X, Y, Z + e, X + 16, Y, Z + e, X + 16, Y + 16, Z + e, X, Y + 16, Z + e), t, 0, 0, 16, 16, s, b, 0.8, 0, null, true);
+                    if ((bits & 2) != 0) Flat(buf, Pts(X + e, Y, Z + 16, X + e, Y, Z, X + e, Y + 16, Z, X + e, Y + 16, Z + 16), t, 0, 0, 16, 16, s, b, 0.72, 0, null, true);
+                    if ((bits & 8) != 0) Flat(buf, Pts(X + 16 - e, Y, Z, X + 16 - e, Y, Z + 16, X + 16 - e, Y + 16, Z + 16, X + 16 - e, Y + 16, Z), t, 0, 0, 16, 16, s, b, 0.72, 0, null, true);
+                    if ((bits & 16) != 0) Flat(buf, Pts(X, Y + e, Z + 16, X + 16, Y + e, Z + 16, X + 16, Y + e, Z, X, Y + e, Z), t, 0, 0, 16, 16, s, b, 1, 0, null, true);
+                    if ((bits & 32) != 0) Flat(buf, Pts(X, Y + 16 - e, Z, X + 16, Y + 16 - e, Z, X + 16, Y + 16 - e, Z + 16, X, Y + 16 - e, Z + 16), t, 0, 0, 16, 16, s, b, 0.55, 0, null, true);
                     return;
                 }
                 case SH.SNOWLAYER: Box(p, id, x, y, z, 0, 0, 0, 16, 2 * ((m & 7) + 1), 16, 0, texs, 0, buf); return;
@@ -886,14 +919,12 @@ namespace Maincraft
             int sy0 = top != 0 ? 8 : 0, sy1 = top != 0 ? 16 : 8, uy0 = top != 0 ? 0 : 8, uy1 = top != 0 ? 8 : 16;
             Box(p, id, x, y, z, 0, sy0, 0, 16, sy1, 16, 0, texs, 0, buf);
             // upper parts in north-facing frame (high part at north: z 0..8), left = west (x<8)
-            var parts = new List<double[]>(2);
-            if (shape == 0) parts.Add(new double[] { 0, uy0, 0, 16, uy1, 8 });
-            else if (shape == 1) parts.Add(new double[] { 0, uy0, 0, 8, uy1, 8 });
-            else if (shape == 2) parts.Add(new double[] { 8, uy0, 0, 16, uy1, 8 });
-            else if (shape == 3) { parts.Add(new double[] { 0, uy0, 0, 16, uy1, 8 }); parts.Add(new double[] { 0, uy0, 8, 8, uy1, 16 }); }
-            else { parts.Add(new double[] { 0, uy0, 0, 16, uy1, 8 }); parts.Add(new double[] { 8, uy0, 8, 16, uy1, 16 }); }
             int turns = (f + 2) & 3;
-            foreach (var b in parts) Box(p, id, x, y, z, RotBox(b, turns), texs, buf);
+            if (shape == 0) Box(p, id, x, y, z, RotBoxS(0, uy0, 0, 16, uy1, 8, turns), texs, buf);
+            else if (shape == 1) Box(p, id, x, y, z, RotBoxS(0, uy0, 0, 8, uy1, 8, turns), texs, buf);
+            else if (shape == 2) Box(p, id, x, y, z, RotBoxS(8, uy0, 0, 16, uy1, 8, turns), texs, buf);
+            else if (shape == 3) { Box(p, id, x, y, z, RotBoxS(0, uy0, 0, 16, uy1, 8, turns), texs, buf); Box(p, id, x, y, z, RotBoxS(0, uy0, 8, 8, uy1, 16, turns), texs, buf); }
+            else { Box(p, id, x, y, z, RotBoxS(0, uy0, 0, 16, uy1, 8, turns), texs, buf); Box(p, id, x, y, z, RotBoxS(8, uy0, 8, 16, uy1, 16, turns), texs, buf); }
         }
 
         bool Connects(int q, int kind)
@@ -915,13 +946,13 @@ namespace Maincraft
             for (int d = 0; d < 4; d++)
             {
                 if (!Connects(p + DIRX[d] * SX + DIRZ[d] * SZ, SH.FENCE)) continue;
-                foreach (var b in FENCE_ARMS) Box(p, id, x, y, z, RotBox(b, (d + 2) & 3), texs, buf);
+                foreach (var b in FENCE_ARMS) Box(p, id, x, y, z, RotBoxS(b, (d + 2) & 3), texs, buf);
             }
         }
 
         void Wall(int p, int id, int x, int y, int z, int[] texs, QBuf buf)
         {
-            var c = new bool[4];
+            var c = paneConn;
             for (int d = 0; d < 4; d++) c[d] = Connects(p + DIRX[d] * SX + DIRZ[d] * SZ, SH.WALL);
             int above = ids[p + SY];
             bool straight = ((c[0] && c[2] && !c[1] && !c[3]) || (c[1] && c[3] && !c[0] && !c[2])) && above == 0;
@@ -929,7 +960,7 @@ namespace Maincraft
             for (int d = 0; d < 4; d++)
             {
                 if (!c[d]) continue;
-                Box(p, id, x, y, z, RotBox(new double[] { 5, 0, 0, 11, 14, straight ? 8 : 4 }, (d + 2) & 3), texs, buf);
+                Box(p, id, x, y, z, RotBoxS(5, 0, 0, 11, 14, straight ? 8 : 4, (d + 2) & 3), texs, buf);
             }
         }
 
@@ -971,8 +1002,8 @@ namespace Maincraft
         void Gate(int p, int id, int m, int x, int y, int z, int[] texs, QBuf buf)
         {
             int f = m & 3, open = (m >> 2) & 1;
-            foreach (var b in GATE_POSTS) Box(p, id, x, y, z, RotBox(b, (f + 2) & 3), texs, buf);
-            foreach (var b in open == 0 ? GATE_SHUT : GATE_OPEN) Box(p, id, x, y, z, RotBox(b, (f + 2) & 3), texs, buf);
+            foreach (var b in GATE_POSTS) Box(p, id, x, y, z, RotBoxS(b, (f + 2) & 3), texs, buf);
+            foreach (var b in open == 0 ? GATE_SHUT : GATE_OPEN) Box(p, id, x, y, z, RotBoxS(b, (f + 2) & 3), texs, buf);
         }
 
         // ---------------------------------------------------------------- fluids
@@ -1090,7 +1121,7 @@ namespace Maincraft
                 int s = (l >> 4) * 16, b = lava ? 240 : (l & 15) * 16;
                 for (int v = 0; v < 4; v++) { sk[v] = s; bl[v] = b; }
             }
-            void ShadeAll(double f) { int s = (int)JsMath.Round(f * 255); for (int v = 0; v < 4; v++) sh[v] = s; }
+            void ShadeAll(double f) { int s = (int)Math.Floor(f * 255 + 0.5); for (int v = 0; v < 4; v++) sh[v] = s; }
             // top
             if (!upSame)
             {
@@ -1110,11 +1141,11 @@ namespace Maincraft
                 else
                 {
                     layer = flowL;
-                    int k = (int)JsMath.Round((Math.Atan2(F[1], F[0]) - Math.PI / 2) / (Math.PI / 4));
+                    int k = (int)Math.Floor((Math.Atan2(F[1], F[0]) - Math.PI / 2) / (Math.PI / 4) + 0.5);
                     if ((k & 1) != 0) { uvRot = 1u << 30; k -= 1; }
-                    double a = k * Math.PI / 4, sn = JsMath.Round(Math.Sin(a)) * 0.25, cs = JsMath.Round(Math.Cos(a)) * 0.25;
+                    double a = k * Math.PI / 4, sn = Math.Floor(Math.Sin(a) + 0.5) * 0.25, cs = Math.Floor(Math.Cos(a) + 0.5) * 0.25;
                     // MC's corner UVs (sprite units, a 32-texel sprite) -> texels of our 16-texel tile
-                    float Tf(double w) => (float)JsMath.Round((2 * w - 0.5) * 16);
+                    float Tf(double w) => (float)Math.Floor((2 * w - 0.5) * 16 + 0.5);
                     tu[0] = Tf(0.5 - cs + sn); tv[0] = Tf(0.5 + cs + sn);   // x 0, z 1
                     tu[1] = Tf(0.5 + cs + sn); tv[1] = Tf(0.5 + cs - sn);   // x 1, z 1
                     tu[2] = Tf(0.5 + cs - sn); tv[2] = Tf(0.5 - cs - sn);   // x 1, z 0

@@ -105,7 +105,7 @@ namespace Maincraft
                 int h = mode == "floor" ? FloorH(x, z) : SurfH(x, z);
                 lo = Math.Min(lo, h); hi = Math.Max(hi, h); sum += h; n++;
             }
-            return (lo, hi, (int)JsMath.Round(sum / n));
+            return (lo, hi, (int)Math.Floor(sum / n + 0.5));
         }
 
         // ===================================================================== jungle temple
