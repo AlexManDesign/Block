@@ -825,17 +825,13 @@ namespace Maincraft
         }
 
         // ------------------------------------------------------------ fluid springs (waterfalls)
-        static HashSet<int> WROCK, LROCK;
+        static readonly HashSet<int> WROCK = new HashSet<int> { B.STONE, B.GRANITE, B.DIORITE, B.ANDESITE, B.DEEPSLATE, B.TUFF, B.CALCITE, B.DIRT, B.SNOW, B.PACKED_ICE };
+        static readonly HashSet<int> LROCK = new HashSet<int> { B.STONE, B.GRANITE, B.DIORITE, B.ANDESITE, B.DEEPSLATE, B.TUFF, B.CALCITE };
 
         void Springs()
         {
             var ids = this.ids; int x0 = this.x0, z0 = this.z0; var list = springList = new List<int>();
             var rnd = new Mulberry(Hash.Hash2i(unchecked(seed + 433), cx, cz));
-            if (WROCK == null)
-            {
-                WROCK = new HashSet<int> { B.STONE, B.GRANITE, B.DIORITE, B.ANDESITE, B.DEEPSLATE, B.TUFF, B.CALCITE, B.DIRT, B.SNOW, B.PACKED_ICE };
-                LROCK = new HashSet<int> { B.STONE, B.GRANITE, B.DIORITE, B.ANDESITE, B.DEEPSLATE, B.TUFF, B.CALCITE };
-            }
             int Ni(int a, int b) => a + (int)(rnd.Next() * (b - a + 1));                  // Mth.nextInt(a, b)
             void TryAt(int x, int y, int z, int fluid, HashSet<int> rock)
             {
