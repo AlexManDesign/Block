@@ -192,7 +192,11 @@ namespace VoxelForge
         }
         static List<object> stacksJson(Stack[] a) { return a.Select(s => s != null ? (object)s.ToJson() : null).ToList(); }
 
-        public static void saveStateNow()
+        public static void saveStateNow() { saveState(false); }
+        /// <summary>Periodic / debounced state save: the tree is built here, stringified and written by the save writer
+        /// thread (LocalStorage.setItemDeferred), so the frame does not pay for JSON.stringify.</summary>
+        public static void saveStateDeferred() { saveState(true); }
+        static void saveState(bool deferred)
         {
             if (SAVE_KEYS.state == null) return;
             try
@@ -231,7 +235,8 @@ namespace VoxelForge
                 o["cropSim"] = worldSim.crops.Select(kv => (object)new List<object> { kv.Key, Math.Max(0, kv.Value.t) }).ToList();
                 o["saplingSim"] = worldSim.saplings.Select(kv => (object)new List<object> { kv.Key, Math.Max(0, kv.Value.t), Math.Max(1, kv.Value.delay != 0 ? kv.Value.delay : 90) }).ToList();
                 o["day"] = day;
-                LocalStorage.setItem(SAVE_KEYS.state, Json.Stringify(o));
+                if (deferred) LocalStorage.setItemDeferred(SAVE_KEYS.state, o);
+                else LocalStorage.setItem(SAVE_KEYS.state, Json.Stringify(o));
                 touchWorldRecord();
             }
             catch (Exception e) { UnityEngine.Debug.LogWarning("saveStateNow: " + e.Message); }
@@ -244,7 +249,7 @@ namespace VoxelForge
         {
             if (SAVE_KEYS.state == null) return;
             Timers.clearTimeout(saveGameT);
-            saveGameT = Timers.setTimeout(saveStateNow, 300);
+            saveGameT = Timers.setTimeout(saveStateDeferred, 300);
         }
         public static void resetContainers() { chests.Clear(); furnaces.Clear(); }
         static int[] CREATIVE_DEFAULT { get { return new[] { B.GRASS, B.STONE, B.PLANKS, B.GLASS, B.BRICKS, B.TNT, B.TORCH, B.LADDER, B.CHEST }; } }
@@ -340,7 +345,7 @@ namespace VoxelForge
             double now = JS.now();
             if (now - periodicSaveAt < 10000) return;
             periodicSaveAt = now;
-            if (started && worldReady && !pauseOpen) saveStateNow();
+            if (started && worldReady && !pauseOpen) saveStateDeferred();
         }
         public static string resourceHUDText = "";
         public static void updateResourceHUD()

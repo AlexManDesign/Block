@@ -41,6 +41,7 @@ namespace VoxelForge
             if (key == null) return null;
             lock (cache)
             {
+                waitPendingLocked(key);
                 string v;
                 if (cache.TryGetValue(key, out v)) return v;
                 if (missing.Contains(key)) return null;
@@ -64,34 +65,97 @@ namespace VoxelForge
         public static void setItem(string key, string value)
         {
             if (key == null) return;
-            lock (cache)
+            lock (cache) { bumpVersionLocked(key); writeLocked(key, value); }
+        }
+        static void writeLocked(string key, string value)
+        {
+            var f = FileFor(key); var tmp = f + ".tmp";
+            if (readFailed.Contains(key))
             {
-                var f = FileFor(key); var tmp = f + ".tmp";
-                if (readFailed.Contains(key))
-                {
-                    bool exists = true; try { exists = File.Exists(f); } catch { }
-                    if (exists) { UnityEngine.Debug.LogWarning("localStorage write skipped for unreadable key '" + key + "'"); return; }
-                    readFailed.Remove(key);
-                }
-                cache[key] = value; missing.Remove(key);
-                try
-                {
-                    File.WriteAllText(tmp, value ?? "", Encoding.UTF8);
-                    if (!File.Exists(f)) File.Move(tmp, f);
-                    else
-                    {
-                        try { File.Replace(tmp, f, null); }
-                        catch (Exception) { if (File.Exists(tmp)) { File.Delete(f); File.Move(tmp, f); } }
-                    }
-                }
-                catch (Exception e) { UnityEngine.Debug.LogWarning("localStorage write failed: " + e.Message); }
+                bool exists = true; try { exists = File.Exists(f); } catch { }
+                if (exists) { UnityEngine.Debug.LogWarning("localStorage write skipped for unreadable key '" + key + "'"); return; }
+                readFailed.Remove(key);
             }
+            cache[key] = value; missing.Remove(key);
+            try
+            {
+                File.WriteAllText(tmp, value ?? "", Encoding.UTF8);
+                if (!File.Exists(f)) File.Move(tmp, f);
+                else
+                {
+                    try { File.Replace(tmp, f, null); }
+                    catch (Exception) { if (File.Exists(tmp)) { File.Delete(f); File.Move(tmp, f); } }
+                }
+            }
+            catch (Exception e) { UnityEngine.Debug.LogWarning("localStorage write failed: " + e.Message); }
+        }
+
+        // ---- deferred writes: JSON.stringify + file write of a save on a background thread ----
+        // The reference stringifies its state save on the main thread every 10 s and 300 ms after inventory changes;
+        // V8 does that in ~1-2 ms, the Mono serializer needs ~20 ms (a dropped frame each time). The tree handed over
+        // must be owned by the save (freshly built, never mutated afterwards). Reads of a key wait for its pending
+        // write; a later setItem/removeItem supersedes it (version check under the cache lock), so order is kept.
+        sealed class PendingWrite { public string key; public object tree; public int version; }
+        static readonly Dictionary<string, int> versions = new Dictionary<string, int>();     // guarded by cache
+        static readonly Dictionary<string, int> pendingWrites = new Dictionary<string, int>(); // guarded by cache
+        static readonly Queue<PendingWrite> writeQueue = new Queue<PendingWrite>();          // guarded by itself
+        static System.Threading.Thread writerThread;
+        static int bumpVersionLocked(string key) { int v; versions.TryGetValue(key, out v); versions[key] = ++v; return v; }
+        static void waitPendingLocked(string key)
+        {
+            int n;
+            while (pendingWrites.TryGetValue(key, out n) && n > 0) System.Threading.Monitor.Wait(cache);
+        }
+        public static void setItemDeferred(string key, object jsonTree)
+        {
+            if (key == null) return;
+            var w = new PendingWrite { key = key, tree = jsonTree };
+            lock (cache) { w.version = bumpVersionLocked(key); int n; pendingWrites.TryGetValue(key, out n); pendingWrites[key] = n + 1; }
+            lock (writeQueue)
+            {
+                writeQueue.Enqueue(w);
+                if (writerThread == null)
+                {
+                    writerThread = new System.Threading.Thread(writerMain) { IsBackground = true, Name = "VF-SaveWriter", Priority = System.Threading.ThreadPriority.BelowNormal };
+                    writerThread.Start();
+                }
+                System.Threading.Monitor.Pulse(writeQueue);
+            }
+        }
+        static void writerMain()
+        {
+            while (true)
+            {
+                PendingWrite w;
+                lock (writeQueue)
+                {
+                    while (writeQueue.Count == 0) System.Threading.Monitor.Wait(writeQueue);
+                    w = writeQueue.Dequeue();
+                }
+                string text = null;
+                try { text = Json.Stringify(w.tree); }
+                catch (Exception e) { UnityEngine.Debug.LogWarning("save serialization failed for '" + w.key + "': " + e.Message); }
+                lock (cache)
+                {
+                    int v;
+                    if (text != null && versions.TryGetValue(w.key, out v) && v == w.version) writeLocked(w.key, text);
+                    int n; pendingWrites.TryGetValue(w.key, out n);
+                    if (n <= 1) pendingWrites.Remove(w.key); else pendingWrites[w.key] = n - 1;
+                    System.Threading.Monitor.PulseAll(cache);
+                }
+            }
+        }
+        /// <summary>Blocks until every deferred write is on disk (quit / pause / leaving a world).</summary>
+        public static void flush()
+        {
+            lock (cache) { while (pendingWrites.Count > 0) System.Threading.Monitor.Wait(cache); }
         }
         public static void removeItem(string key)
         {
             if (key == null) return;
             lock (cache)
             {
+                bumpVersionLocked(key);
                 cache.Remove(key); missing.Add(key); readFailed.Remove(key);
                 try { var f = FileFor(key); if (File.Exists(f)) File.Delete(f); if (File.Exists(f + ".tmp")) File.Delete(f + ".tmp"); } catch { }
             }

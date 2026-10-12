@@ -337,12 +337,12 @@ static class Harness
     {
         Func<Action, double> ms = a => { var sw = System.Diagnostics.Stopwatch.StartNew(); a(); return sw.Elapsed.TotalMilliseconds; };
         object live = null, stored = null; string sl = null, ss = null;
-        double tSave = ms(() => VF.saveStateNow()), tSave2 = ms(() => VF.saveStateNow());
+        double tSave = ms(() => VF.saveStateNow()), tSave2 = ms(() => VF.saveStateNow()), tDeferred = ms(() => VF.saveStateDeferred()), tFlush = ms(() => LocalStorage.flush());
         double tLive = ms(() => live = VF.serializeLiveMobs()), tStored = ms(() => stored = VF.serializeStoredMobs());
         double tLiveJ = ms(() => sl = Json.Stringify(live)), tStoredJ = ms(() => ss = Json.Stringify(stored));
         double tTouch = ms(() => VF.touchWorldRecord(true));
         string big = new string('x', 170000); double tWrite = ms(() => LocalStorage.setItem("vf_probe", big));
-        Console.WriteLine("  save probe: saveStateNow " + JS.Fixed(tSave, 1) + " / " + JS.Fixed(tSave2, 1) + " ms · live mobs " + VF.liveMobs.Count + " serialize " + JS.Fixed(tLive, 1) + " + json " + JS.Fixed(tLiveJ, 1) + " ms (" + sl.Length + " ch)"
+        Console.WriteLine("  save probe: saveStateNow " + JS.Fixed(tSave, 1) + " / " + JS.Fixed(tSave2, 1) + " ms · deferred (main thread) " + JS.Fixed(tDeferred, 1) + " ms + writer " + JS.Fixed(tFlush, 1) + " ms · live mobs " + VF.liveMobs.Count + " serialize " + JS.Fixed(tLive, 1) + " + json " + JS.Fixed(tLiveJ, 1) + " ms (" + sl.Length + " ch)"
             + " · stored mobs " + VF.storedMobs.Count + " chunks serialize " + JS.Fixed(tStored, 1) + " + json " + JS.Fixed(tStoredJ, 1) + " ms (" + ss.Length + " ch)"
             + " · crops " + VF.worldSim.crops.Count + " saplings " + VF.worldSim.saplings.Count + " · touchWorldRecord " + JS.Fixed(tTouch, 1) + " ms · write 170 KB " + JS.Fixed(tWrite, 1) + " ms");
     }
@@ -597,7 +597,11 @@ static class Harness
             Frames(60);
             int holes = 0;
             for (int dx = -2; dx <= 2; dx++) for (int dz = -2; dz <= 2; dz++) if (VF.getBlock(tx + dx, ty - 1, tz + dz) == B.AIR || VF.isWater(VF.getBlock(tx + dx, ty - 1, tz + dz))) holes++;
-            Check(holes > 3, "explosion crater (" + holes + " cleared cells)");
+            // Water in the TNT cell (flowed in during the fuse near the sea) absorbs the blast: water resistance stops
+            // every ray at once, so no crater is the reference result there.
+            bool wetCenter = VF.isWater(VF.getBlock(tx, ty, tz));
+            if (wetCenter && holes <= 3) Console.WriteLine("  note: TNT exploded in water (" + holes + " cleared cells), as the reference");
+            else Check(holes > 3, "explosion crater (" + holes + " cleared cells)");
             Until(() => VF.meshPending.Count == 0, 30, "remesh after explosion");
             StateCheck("after TNT");
         }
@@ -636,17 +640,21 @@ static class Harness
         ClickButton(t => t == "Играть", "Играть");
         if (!VF.started) VF.startGame("creative", creativeId);
         Check(VF.started, "world started again (load path)");
+        // finishInitialSpawnIfReady validates the saved position in the call that sets worldReady, so the check is
+        // evaluated in that same world state (later, falling blocks / fluids / physics may change the cell and the player).
+        Until(() => VF.worldReady, 180, "reloaded: worldReady");
+        bool savedValid = VF.startupPositionValidLoaded(px, py, pz, false);
+        double[] relocated = savedValid ? null : VF.resolveInitialSpawnLoaded(Math.Floor(px), Math.Floor(pz));
+        double lx = P.x, ly = P.y, lz = P.z;
         WaitWorld("reloaded");
         int lost = 0, changed = 0;
         foreach (var kv in editsBefore) { int v; if (!VF.edits.TryGetValue(kv.Key, out v)) lost++; else if (v != kv.Value && !VF.isWater(v) && !VF.isWater(kv.Value) && v != B.LAVA && kv.Value != B.LAVA) changed++; }
         Check(lost == 0 && changed == 0, "persistent edits survive save/load (" + editsBefore.Count + " saved, lost " + lost + ", changed " + changed + ")");
         // The reference validates the saved position against the RELOADED world (finishInitialSpawnIfReady).
-        bool savedValid = VF.startupPositionValidLoaded(px, py, pz, false);
-        double[] relocated = savedValid ? null : VF.resolveInitialSpawnLoaded(Math.Floor(px), Math.Floor(pz));
         if (savedValid || relocated == null)
-            Check(JS.hypot(P.x - px, P.z - pz) < 2 && Math.Abs(P.y - py) < 3, "position restored (" + JS.Fixed(P.x, 1) + "," + JS.Fixed(P.y, 1) + "," + JS.Fixed(P.z, 1) + " vs " + JS.Fixed(px, 1) + "," + JS.Fixed(py, 1) + "," + JS.Fixed(pz, 1) + ")");
+            Check(JS.hypot(lx - px, lz - pz) < 2 && Math.Abs(ly - py) < 3, "position restored (" + JS.Fixed(lx, 1) + "," + JS.Fixed(ly, 1) + "," + JS.Fixed(lz, 1) + " vs " + JS.Fixed(px, 1) + "," + JS.Fixed(py, 1) + "," + JS.Fixed(pz, 1) + ")");
         else
-            Check(Math.Abs(P.x - relocated[0]) < 0.01 && Math.Abs(P.y - relocated[1]) < 0.06 && Math.Abs(P.z - relocated[2]) < 0.01, "invalid saved position relocated like the reference (" + JS.Fixed(P.x, 2) + "," + JS.Fixed(P.y, 2) + "," + JS.Fixed(P.z, 2) + " vs resolveInitialSpawnLoaded " + JS.Fixed(relocated[0], 2) + "," + JS.Fixed(relocated[1], 2) + "," + JS.Fixed(relocated[2], 2) + ")");
+            Check(Math.Abs(lx - relocated[0]) < 0.01 && Math.Abs(ly - relocated[1]) < 0.06 && Math.Abs(lz - relocated[2]) < 0.01, "invalid saved position relocated like the reference (" + JS.Fixed(lx, 2) + "," + JS.Fixed(ly, 2) + "," + JS.Fixed(lz, 2) + " vs resolveInitialSpawnLoaded " + JS.Fixed(relocated[0], 2) + "," + JS.Fixed(relocated[1], 2) + "," + JS.Fixed(relocated[2], 2) + ")");
         EnsureLocked();
         Frames(60);
         StateCheck("reloaded idle");

@@ -211,12 +211,14 @@ namespace VoxelForge
         void OnApplicationPause(bool paused)
         {
             if (paused && VF.started && VF.worldReady) { try { VF.saveGameNow(); } catch (Exception e) { Debug.LogException(e); } }
+            if (paused) LocalStorage.flush(); // the OS may kill a backgrounded app: deferred save writes must be on disk
             VF.syncAudioState();
         }
 
         void OnApplicationQuit()
         {
             try { if (VF.started && VF.worldReady) VF.saveGameNow(); } catch (Exception e) { Debug.LogException(e); }
+            LocalStorage.flush();
             VF.shutdownWorkerEngine();
         }
 
