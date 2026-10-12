@@ -1029,7 +1029,10 @@ class Entities {
         return;
       }
       const c = this.chasePoint(e, d, dt);
-      this.goTo(e, c[0], c[1], speed, dt);
+      // (a drowned's path walked to its end short of the player: DrownedAttackGoal stops, the
+      // swim up may run till the attack is tried again, every 20 ticks)
+      // (its ground path lies on the bottom: walked when it stands there at the end of it)
+      if (this.goTo(e, c[0], c[1], speed, dt) && d.drowned && e.onGround) e.swimUpOn = true;
       if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
       return;
     }
@@ -1339,7 +1342,13 @@ class Entities {
     if (!P) return this.steer(e, tx, tz, speed);
     // the path walked: on to the goal itself, or (PathNavigation done short of a goal out of reach)
     // standing at its end until the next path
-    const end = () => { if (P.full) return this.steer(e, tx, tz, speed); this.stop(e); return true; };
+    // (PathNavigation.followThePath: a node counts as reached only within a block up or down too,
+    // so a mob over or under the end of its path keeps at it till it sinks or climbs to it)
+    const end = () => {
+      if (P.full) return this.steer(e, tx, tz, speed);
+      this.stop(e);
+      return !P.length || Math.abs(e.pos[1] - P[P.length - 1][2]) < 1;
+    };
     if (e.pathI >= P.length) return end();
     // waypoints already behind (the start cell, or one passed while pushed) are skipped: the next
     // one is nearer to the mob than to the current waypoint (PathFollower advancing past nodes)
@@ -1430,7 +1439,7 @@ class Entities {
   // columns around it, a level below to a level above, 8 (WATER_BORDER, DANGER_FIRE, DANGER_OTHER)
   pathMalus(x, y, z) {
     const w = this.game.world;
-    if (isWaterId(w.getBlock(x, y, z))) return this.pathSwim ? 0 : 8;
+    if (isWaterId(w.getBlock(x, y, z))) return this.pathWet0 ? 0 : 8;
     if (w.getBlock(x, y - 1, z) === B.MAGMA_BLOCK) return 16;
     // none of them in the sections round the cell: nothing near it
     let any = 0;
@@ -1517,8 +1526,10 @@ class Entities {
   findPath(e, tx, tz) {
     this.pathBreaker = !!e.breakDoors && this.game.difficulty === 'hard';
     const md = MOB_DEFS[e.type];
-    this.pathSwim = !!md.drowned; this.pathDry = e.type === 'enderman';
-    this.pathSink = !!md.sinks && !md.drowned; this.pathFloat = !md.sinks && !this.pathDry;
+    // a drowned paths through the water anywhere only while it wants to swim (its water
+    // navigation); else, as a zombie, along the bottom (groundNavigation), water costing it nothing
+    this.pathSwim = !!md.drowned && !!e.waterNav; this.pathDry = e.type === 'enderman'; this.pathWet0 = !!md.drowned;
+    this.pathSink = !!md.sinks && !this.pathSwim; this.pathFloat = !md.sinks && !this.pathDry;
     const sx = Math.floor(e.pos[0]), sz = Math.floor(e.pos[2]), sy = this.pathStartY(e, sx, sz);
     const gx = Math.floor(tx), gz = Math.floor(tz);
     if (sx === gx && sz === gz) return null;
@@ -1604,6 +1615,8 @@ class Entities {
   walkPhysics(e, d, dt, inW) {
     const w = this.game.world, v = [e.vel[0] * 0.05, e.vel[1] * 0.05, e.vel[2] * 0.05];
     if (e.noJump > 0) e.noJump--;
+    // DrownedMoveControl, not swimming: off the ground it is pulled down 0.008 more a tick
+    if (d.drowned && !e.onGround) v[1] -= 0.008;
     const wl = Math.hypot(e.wish[0], e.wish[2]);
     let s = 0, my = e.bodyYaw;
     if (wl > 0.05) {
@@ -2269,8 +2282,8 @@ class Entities {
   // the surface makes for land within 8 blocks (DrownedGoToBeachGoal). True when it took the move.
   drownedGoals(e, d, dt, hunting, speed, inW, dx, dz) {
     const g = this.game, p = g.player, day = g.skyDarken() < 4;
-    e.spear = false; if (!hunting) { e.throwTk = -1; e.seeTk = 0; }   // (RangedAttackGoal.stop)
-    e.searchLand = false;
+    e.spear = false; if (!hunting) { e.throwTk = -1; e.seeTk = 0; e.swimUpOn = false; }   // (RangedAttackGoal.stop)
+    e.searchLand = false; e.waterNav = false;
     if (day && !inW) {
       e.beach = null;
       if (!e.waterTgt || e.stuckT > 1) e.waterTgt = this.findWater(e);
@@ -2283,11 +2296,28 @@ class Entities {
     if (hunting && e.held && e.held.id === IT.TRIDENT) { e.beach = null; return this.tridentGoal(e, dt, speed, inW, dx, dz); }
     if (hunting) {
       e.beach = null;
-      if (!inW || !p.inWater) return false;
-      e.swim = [p.pos[0], p.pos[1], p.pos[2]];
-      this.stop(e); e.headYaw = Math.atan2(dx, -dz);
-      if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
-      return true;
+      if (inW && p.inWater) {
+        e.waterNav = true;
+        e.swim = [p.pos[0], p.pos[1], p.pos[2]];
+        this.stop(e); e.headYaw = Math.atan2(dx, -dz);
+        if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+        return true;
+      }
+      // the player out of the water (ashore, in a boat): DrownedAttackGoal goes for them by the
+      // ground navigation, on the bottom. Its path walked short of them, at night DrownedSwimUpGoal
+      // (priority 6) takes it up while it is more than 2 under the sea level: the attack, tried
+      // again every 20 ticks, stops at once (its path was made for the water navigation, which goes
+      // with the swim up), so the swim up goes on; up there the attack's path along the bottom
+      // takes it down again
+      if (e.swimUpOn) {
+        if (!day && inW && e.pos[1] < SEA - 1) {          // (seaLevel - 2: our SEA is the top water layer)
+          this.swimUp(e);
+          if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+          return true;
+        }
+        e.swimUpOn = false;
+      }
+      return false;
     }
     if (day || (!inW && !e.beach)) { e.beach = null; return false; }
     // once it has set off for the beach it keeps going (MoveToBlockGoal: up to 1200 ticks, while
@@ -2304,13 +2334,14 @@ class Entities {
       e.beachT = 1; e.beachT2 = 0; e.beach = this.findBeach(e);
       if (e.beach) { this.goTo(e, e.beach[0], e.beach[2], speed, dt); e.headYaw = e.bodyYaw; return true; }
     }
-    if (e.pos[1] < SEA - 1) {
-      e.searchLand = true;
-      if (!e.upTgt || e.pos[1] >= e.upTgt[1] - 0.5 || Math.random() < 0.02) e.upTgt = [e.pos[0] + (Math.random() - 0.5) * 8, SEA, e.pos[2] + (Math.random() - 0.5) * 8];
-      e.swim = e.upTgt; this.stop(e); e.headYaw = e.bodyYaw;
-      return true;
-    }
+    if (e.pos[1] < SEA - 1) { this.swimUp(e); return true; }
     return false;
+  }
+  // DrownedSwimUpGoal: looking for land (wantsToSwim), it swims up toward the sea level
+  swimUp(e) {
+    e.searchLand = true; e.waterNav = true;
+    if (!e.upTgt || e.pos[1] >= e.upTgt[1] - 0.5 || Math.random() < 0.02) e.upTgt = [e.pos[0] + (Math.random() - 0.5) * 8, SEA, e.pos[2] + (Math.random() - 0.5) * 8];
+    e.swim = e.upTgt; this.stop(e); e.headYaw = e.bodyYaw;
   }
   findWater(e) {
     const w = this.game.world;
@@ -2375,8 +2406,8 @@ class Entities {
     if (Math.hypot(z.pos[0] - p[0], z.pos[1] - p[1], z.pos[2] - p[2]) < 16) Sfx.drownedConvert();
   }
   // NaturalSpawner at a spot in the water of an ocean or a river: only the drowned can be placed
-  // there (SpawnPlacementTypes.IN_WATER). Oceans list it in the zombie's place (95, packs of 4) and
-  // again at 5 (single), rivers at 100 (frozen rivers 1, single); Drowned.checkDrownedSpawnRules:
+  // there (SpawnPlacementTypes.IN_WATER). Oceans list it at 5 beside the usual monsters (zombies
+  // 95 among them), rivers at 100 (frozen rivers 1), single each time; Drowned.checkDrownedSpawnRules:
   // dark enough, water at the spot and under it, then one try in 15 in a river, in an ocean one in
   // 40 and at least 5 under the sea level
   // Drowned.populateDefaultEquipmentSlots: 1 in 10 gets something, 10 in 16 of those a trident (the
@@ -2414,10 +2445,10 @@ class Entities {
     return true;
   }
   spawnDrowned(x, y, z, river, frozen) {
-    const w = this.game.world, k = Math.random() * (river ? 510 + (frozen ? 1 : 100) : 515);
-    let group;
-    if (river) { if (k < 510) return; group = 1; }
-    else if (k >= 100 && k < 200) group = 4; else if (k >= 510) group = 1; else return;
+    // (the monsters of commonSpawns weigh 515 together; none of them can be placed in water)
+    const w = this.game.world, k = Math.random() * (515 + (river ? (frozen ? 1 : 100) : 5));
+    if (k < 515) return;
+    const group = 1;
     let cx = x, cz = z, made = 0;
     for (let pk = 0; pk < 3 && made < group; pk++) {
       const steps = 1 + (Math.random() * 4 | 0);
