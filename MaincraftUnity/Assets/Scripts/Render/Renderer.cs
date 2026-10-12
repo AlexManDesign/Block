@@ -1,14 +1,15 @@
 // Port of render.js for Unity's built-in pipeline.
 //
-// Section meshes stay in the mesher's packed format (3 uints per vertex) in a few big GPU buffers
-// (QuadArena pages). Each frame the visible sections are found with the original's occlusion walk,
-// their quad runs (after directional culling) become 64-quad records, and every pass goes out as one
-// instanced draw per page: the vertex shader reads the record and its quads straight from the buffers.
+// A frame is recorded into one CommandBuffer in exactly the original's order (terrain, sky, vessels,
+// clouds, particles, entities, water, outline, hand ...) and runs before Unity's own opaque pass. The
+// view-projection is the original's own matrix (camera-relative, right-handed, GL clip space), set
+// with SetViewProjectionMatrices so Unity applies the platform's conversions; all positions are
+// camera-relative game coordinates, so precision does not fall off far from the world origin.
 //
-// The Unity camera stays at the origin and only turns; everything is drawn camera-relative (the
-// original's uCamI / uCamF split), so precision does not fall off far from the world origin. The
-// game's world is right-handed (y up, the camera looking down -z at yaw 0); Unity's is left-handed,
-// so game z is mirrored to Unity -z in the shaders and in the few meshes built here.
+// Section meshes stay in the mesher's packed format (3 uints per vertex) in a few big GPU buffers
+// (QuadArena pages). The visible sections are found with the original's occlusion walk, their quad runs
+// (after directional culling) become 64-quad records, and every pass goes out as one instanced draw per
+// page: the vertex shader reads the record and its quads straight from the buffers.
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -40,7 +41,7 @@ namespace Maincraft
         public bool underwater;
     }
 
-    public sealed class Renderer : IDisposable
+    public sealed partial class Renderer : IDisposable
     {
         public const int PAGE_QUADS = 1 << 19;       // 24 MB of vertices per arena page
         const int CHUNK = 64;                         // quads per record (instance)
@@ -54,10 +55,12 @@ namespace Maincraft
             ID_Zenith = Shader.PropertyToID("_Zenith"), ID_Horizon = Shader.PropertyToID("_Horizon"), ID_SunDir = Shader.PropertyToID("_SunDir"),
             ID_Sunset = Shader.PropertyToID("_Sunset"), ID_Stars = Shader.PropertyToID("_Stars"), ID_Void = Shader.PropertyToID("_Void"),
             ID_SeaClip = Shader.PropertyToID("_SeaClip"), ID_MainTex = Shader.PropertyToID("_MainTex"), ID_KeyBlack = Shader.PropertyToID("_KeyBlack"),
-            ID_Mul = Shader.PropertyToID("_Mul"), ID_CloudFog = Shader.PropertyToID("_CloudFog"), ID_Cull = Shader.PropertyToID("_Cull");
+            ID_Mul = Shader.PropertyToID("_Mul"), ID_CloudFog = Shader.PropertyToID("_CloudFog"), ID_Cull = Shader.PropertyToID("_Cull"),
+            ID_ShipRot = Shader.PropertyToID("_ShipRot"), ID_ShipRel = Shader.PropertyToID("_ShipRel");
 
         public readonly Camera cam;
-        readonly Material matSolid, matCutout, matTrans, matSky, matSun, matMoon, matClouds;
+        readonly CommandBuffer cb = new CommandBuffer { name = "Maincraft" };
+        readonly Material matSolid, matCutout, matTrans, matShip, matSky, matSun, matMoon, matClouds;
         public Texture2DArray texArr;
         Texture2D lmTex, sunTex, moonTex;
         GraphicsBuffer animBuf, quadIdx, recBuf;
@@ -72,13 +75,13 @@ namespace Maincraft
         readonly List<QuadArena> pages = new List<QuadArena>();
         QuadArena trans;
         readonly HashSet<SectionMesh> transSecs = new HashSet<SectionMesh>();
-        readonly Bounds hugeBounds = new Bounds(Vector3.zero, Vector3.one * 1e6f);
-        readonly List<MaterialPropertyBlock> mpbs = new List<MaterialPropertyBlock>();
+        readonly MaterialPropertyBlock mpb = new MaterialPropertyBlock();
 
-        // camera (game space, camera-relative)
-        public readonly double[] proj = new double[16], view = new double[16], vp = new double[16], frustum = new double[24];
-        public double[] bob;                          // view bobbing: x, y offset, roll, nod (player.js)
-        public double[] hurtTilt;
+        // camera (game space, camera-relative, GL conventions)
+        public readonly double[] proj = new double[16], view = new double[16], vp = new double[16], invVP = new double[16], frustum = new double[24];
+        public double[] bob;                          // view bobbing: x, y offset, roll, nod (set by the game each frame)
+        public double[] hurtTilt;                     // hurt tilt: direction, angle (or null)
+        Matrix4x4 vpU;                                // vp as a Unity matrix
 
         // visibility
         SectionMesh[] visList = new SectionMesh[4096];
@@ -88,10 +91,10 @@ namespace Maincraft
         public bool noOcclusion, dirCull = true, noFogCull;
         double fogCullEnd, fogCullY; bool fogCull;
 
-        // per-frame records: [quadStart | (count - 1) << 26, relX, relY, relZ] per 64-quad chunk
+        // records of the frame: [quadStart | (count - 1) << 26, x, y, z] per 64-quad chunk (xyz: section
+        // origin minus the camera block, or a vessel section's own origin)
         int[][] recLists = new int[0][]; int[] recCounts = new int[0];
-        int[] transRecs = new int[1024]; int transRecN;
-        int[] recAll = new int[4096];
+        int[] recs = new int[4096 * 4]; int recN;
         long[] sortKey = new long[4096];
         uint[] sortOut = new uint[4096 * 12];
 
@@ -99,15 +102,12 @@ namespace Maincraft
         public Stats stats;
         public double cpuVis, cpuSort;
 
-        // sky meshes
-        readonly Mesh skyCube, sunQuad, moonQuad, cloudMesh;
-        readonly Vector3[] quadPos = new Vector3[4]; readonly Vector2[] quadUV = new Vector2[4];
-        double[] seaClip = new double[2];
-
-        public Renderer(Camera cam, byte[] atlasPng, string atlasMetaJson, byte[] sunPng, byte[] moonPng)
+        public Renderer(Camera cam, byte[] atlasPng, string atlasMetaJson, byte[] sunPng, byte[] moonPng, Func<string, byte[]> entityImage)
         {
             this.cam = cam;
+            this.entityImage = entityImage;
             matSolid = NewMat("Shaders/TerrainSolid"); matCutout = NewMat("Shaders/TerrainCutout"); matTrans = NewMat("Shaders/TerrainTrans");
+            matShip = NewMat("Shaders/TerrainShip");
             matSky = NewMat("Shaders/Sky"); matSun = NewMat("Shaders/Celestial"); matMoon = NewMat("Shaders/Celestial"); matClouds = NewMat("Shaders/Clouds");
             InitTextures(atlasPng, atlasMetaJson, sunPng, moonPng);
             matSun.SetTexture(ID_MainTex, sunTex); matMoon.SetTexture(ID_MainTex, moonTex);
@@ -125,17 +125,9 @@ namespace Maincraft
             recBuf = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 4096, 16);
             trans = new QuadArena(1 << 16);
             lmTex = new Texture2D(16, 16, TextureFormat.RGBA32, false, true) { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
-            skyCube = BuildSkyCube();
-            sunQuad = NewQuad(); moonQuad = NewQuad();
-            cloudMesh = new Mesh { indexFormat = IndexFormat.UInt32 };
-            cloudMesh.MarkDynamic();
-        }
-
-        /// <summary>Culls the other side of terrain and cloud faces (a check of the winding on a new platform).</summary>
-        public void SetCullFlip(bool flip)
-        {
-            float mode = flip ? (float)CullMode.Back : (float)CullMode.Front;
-            matSolid.SetFloat(ID_Cull, mode); matCutout.SetFloat(ID_Cull, mode); matTrans.SetFloat(ID_Cull, mode); matClouds.SetFloat(ID_Cull, mode);
+            InitSky();
+            InitDyn();
+            cam.AddCommandBuffer(CameraEvent.BeforeForwardOpaque, cb);
         }
 
         static Material NewMat(string shader)
@@ -143,6 +135,16 @@ namespace Maincraft
             var s = Resources.Load<Shader>(shader);
             if (s == null) throw new Exception("shader not found: " + shader);
             return new Material(s) { hideFlags = HideFlags.DontSave };
+        }
+
+        /// <summary>Culls the other side of terrain and cloud faces (a check of the winding on a new platform).</summary>
+        public bool cullFlip;
+        public void SetCullFlip(bool flip)
+        {
+            cullFlip = flip;
+            float mode = flip ? (float)CullMode.Back : (float)CullMode.Front;
+            matSolid.SetFloat(ID_Cull, mode); matCutout.SetFloat(ID_Cull, mode); matTrans.SetFloat(ID_Cull, mode); matShip.SetFloat(ID_Cull, mode); matClouds.SetFloat(ID_Cull, mode);
+            dynMats.Clear();
         }
 
         // ---------------------------------------------------------------- textures
@@ -154,26 +156,7 @@ namespace Maincraft
             layerCount = N;
             overlayLayer = layers.TryGetValue("grass_block_side_overlay", out var ov) ? MiniJson.I(ov) : 0;
             whiteLayer = layers.TryGetValue("white", out var wl) ? MiniJson.I(wl) : 0;
-            var img = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);
-            img.LoadImage(atlasPng);
-            int W = img.width, H = img.height;
-            var px32 = img.GetPixels32();
-            UnityEngine.Object.Destroy(img);
-            // the canvas copy of the original: rows from the top, colour of fully transparent pixels lost
-            // and that of half transparent ones rounded through premultiplied storage
-            var px = new byte[W * H * 4];
-            for (int y = 0; y < H; y++)
-            {
-                int srow = (H - 1 - y) * W;
-                for (int x = 0; x < W; x++)
-                {
-                    var c = px32[srow + x]; int o = (y * W + x) * 4, a = c.a;
-                    if (a == 0) { px[o] = 0; px[o + 1] = 0; px[o + 2] = 0; }
-                    else if (a == 255) { px[o] = c.r; px[o + 1] = c.g; px[o + 2] = c.b; }
-                    else { px[o] = Unpremul(c.r, a); px[o + 1] = Unpremul(c.g, a); px[o + 2] = Unpremul(c.b, a); }
-                    px[o + 3] = (byte)a;
-                }
-            }
+            var px = DecodePng(atlasPng, out int W, out int H);
             atlasPixels = px; atlasW = W; atlasH = H;
             const int levels = 5;
             texArr = new Texture2DArray(16, 16, N, TextureFormat.RGBA32, levels, true)
@@ -228,7 +211,35 @@ namespace Maincraft
                 }
             animBuf = new GraphicsBuffer(GraphicsBuffer.Target.Structured, an, 4);
             animBuf.SetData(anim);
-            sunTex = Tex2D(sunPng); moonTex = Tex2D(moonPng);
+            sunTex = Tex2D(DecodePng(sunPng, out W, out H), W, H);
+            moonTex = Tex2D(DecodePng(moonPng, out W, out H), W, H);
+        }
+
+        /// <summary>
+        /// A PNG as a canvas reads it: RGBA rows from the top; the colour of fully transparent pixels is
+        /// lost and that of half transparent ones rounded through premultiplied storage.
+        /// </summary>
+        public static byte[] DecodePng(byte[] png, out int W, out int H)
+        {
+            var img = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);
+            img.LoadImage(png);
+            W = img.width; H = img.height;
+            var px32 = img.GetPixels32();
+            UnityEngine.Object.Destroy(img);
+            var px = new byte[W * H * 4];
+            for (int y = 0; y < H; y++)
+            {
+                int srow = (H - 1 - y) * W;
+                for (int x = 0; x < W; x++)
+                {
+                    var c = px32[srow + x]; int o = (y * W + x) * 4, a = c.a;
+                    if (a == 0) { px[o] = 0; px[o + 1] = 0; px[o + 2] = 0; }
+                    else if (a == 255) { px[o] = c.r; px[o + 1] = c.g; px[o + 2] = c.b; }
+                    else { px[o] = Unpremul(c.r, a); px[o + 1] = Unpremul(c.g, a); px[o + 2] = Unpremul(c.b, a); }
+                    px[o + 3] = (byte)a;
+                }
+            }
+            return px;
         }
 
         static byte Unpremul(int c, int a)
@@ -237,11 +248,12 @@ namespace Maincraft
             return (byte)Math.Min(255, (p * 255 + a / 2) / a);
         }
 
-        static Texture2D Tex2D(byte[] png)
+        /// <summary>A 2D texture of top-first RGBA rows uploaded like GL does (first row at v = 0), nearest filtering.</summary>
+        public static Texture2D Tex2D(byte[] rgbaTopFirst, int W, int H)
         {
-            var t = new Texture2D(2, 2, TextureFormat.RGBA32, false, true);
-            t.LoadImage(png, true);
-            t.filterMode = FilterMode.Point; t.wrapMode = TextureWrapMode.Clamp;
+            var t = new Texture2D(W, H, TextureFormat.RGBA32, false, true) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+            t.SetPixelData(rgbaTopFirst, 0);
+            t.Apply(false, true);
             return t;
         }
 
@@ -405,18 +417,18 @@ namespace Maincraft
         }
 
         // ---------------------------------------------------------------- camera
-        static void Persp(double[] o, double fovy, double aspect, double near, double far)
+        public static void Persp(double[] o, double fovy, double aspect, double near, double far)
         {
             double f = 1 / Math.Tan(fovy / 2), nf = 1 / (near - far);
             Array.Clear(o, 0, 16); o[0] = f / aspect; o[5] = f; o[10] = (far + near) * nf; o[11] = -1; o[14] = 2 * far * near * nf;
         }
-        static void Mul(double[] o, double[] a, double[] b)
+        public static void Mul(double[] o, double[] a, double[] b)
         {
             for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++)
                 o[j * 4 + i] = a[i] * b[j * 4] + a[4 + i] * b[j * 4 + 1] + a[8 + i] * b[j * 4 + 2] + a[12 + i] * b[j * 4 + 3];
         }
         // rotation-only view matrix from yaw/pitch (camera looks along -z at yaw=0)
-        static void View(double[] o, double yaw, double pitch)
+        public static void View(double[] o, double yaw, double pitch)
         {
             double cy = Math.Cos(yaw), sy = Math.Sin(yaw), cp = Math.Cos(pitch), sp = Math.Sin(pitch);
             double fx = sy * cp, fy = sp, fz = -cy * cp;
@@ -427,15 +439,56 @@ namespace Maincraft
             o[2] = -fx; o[6] = -fy; o[10] = -fz; o[14] = 0;
             o[3] = 0; o[7] = 0; o[11] = 0; o[15] = 1;
         }
+        public static void Invert(double[] o, double[] m)
+        {
+            double a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3], a10 = m[4], a11 = m[5], a12 = m[6], a13 = m[7];
+            double a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11], a30 = m[12], a31 = m[13], a32 = m[14], a33 = m[15];
+            double b00 = a00 * a11 - a01 * a10, b01 = a00 * a12 - a02 * a10, b02 = a00 * a13 - a03 * a10, b03 = a01 * a12 - a02 * a11;
+            double b04 = a01 * a13 - a03 * a11, b05 = a02 * a13 - a03 * a12, b06 = a20 * a31 - a21 * a30, b07 = a20 * a32 - a22 * a30;
+            double b08 = a20 * a33 - a23 * a30, b09 = a21 * a32 - a22 * a31, b10 = a21 * a33 - a23 * a31, b11 = a22 * a33 - a23 * a32;
+            double det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+            if (det == 0) return;
+            det = 1 / det;
+            o[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det; o[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+            o[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det; o[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+            o[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det; o[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+            o[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det; o[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+            o[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det; o[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+            o[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det; o[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+            o[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det; o[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+            o[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det; o[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+        }
+        /// <summary>A column-major GL matrix (double[16]) as a Unity matrix.</summary>
+        public static Matrix4x4 ToMatrix(double[] m)
+        {
+            var M = new Matrix4x4();
+            for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) M[r, c] = (float)m[c * 4 + r];
+            return M;
+        }
 
-        readonly double[] tmpM = new double[16], bobM = new double[16];
+        // PoseStack helpers of game.js (column-major, each step multiplied on the right)
+        public static void PmId(double[] m) { Array.Clear(m, 0, 16); m[0] = m[5] = m[10] = m[15] = 1; }
+        public static void PmY(double[] m, double a)
+        {
+            if (a == 0) return;
+            double c = Math.Cos(a), s = Math.Sin(a);
+            for (int i = 0; i < 4; i++) { double x = m[i], z = m[8 + i]; m[i] = x * c - z * s; m[8 + i] = x * s + z * c; }
+        }
+        public static void PmZ(double[] m, double a)
+        {
+            if (a == 0) return;
+            double c = Math.Cos(a), s = Math.Sin(a);
+            for (int i = 0; i < 4; i++) { double x = m[i], y = m[4 + i]; m[i] = x * c + y * s; m[4 + i] = y * c - x * s; }
+        }
+
+        readonly double[] tmpM = new double[16], bobM = new double[16], hurtM = new double[16];
         static readonly int[] PL_W = { 3, 3, 3, 3, 3, 3 }, PL_R = { 0, 0, 1, 1, 2, 2 }, PL_S = { 1, -1, 1, -1, 1, -1 };
+        public double Aspect => cam.pixelHeight > 0 ? (double)cam.pixelWidth / cam.pixelHeight : 1;
 
-        /// <summary>Sets the view (the original's setCamera) and turns the Unity camera to match.</summary>
+        /// <summary>Sets the view (the original's setCamera): projection, view with bobbing and hurt tilt, frustum.</summary>
         public void SetCamera(double fovDeg, double yaw, double pitch, double far)
         {
-            double aspect = cam.pixelHeight > 0 ? (double)cam.pixelWidth / cam.pixelHeight : 1;
-            Persp(proj, fovDeg * Math.PI / 180, aspect, 0.05, far);
+            Persp(proj, fovDeg * Math.PI / 180, Aspect, 0.05, far);
             View(view, yaw, pitch);
             var b = bob;
             if (b != null && (b[0] != 0 || b[1] != 0 || b[2] != 0 || b[3] != 0))
@@ -449,7 +502,16 @@ namespace Maincraft
                 B[12] = b[0]; B[13] = b[1]; B[14] = 0; B[15] = 1;
                 Mul(tmpM, B, view); Array.Copy(tmpM, view, 16);
             }
+            // hurt: the view leans across the way the blow came from (GameRenderer.bobHurt, before the bob)
+            var ht = hurtTilt;
+            if (ht != null)
+            {
+                var Hm = hurtM;
+                PmId(Hm); PmY(Hm, -ht[0]); PmZ(Hm, ht[1]); PmY(Hm, ht[0]);
+                Mul(tmpM, Hm, view); Array.Copy(tmpM, view, 16);
+            }
             Mul(vp, proj, view);
+            Invert(invVP, vp);
             // frustum planes from vp (camera relative)
             var m = vp; var f = frustum;
             for (int i = 0; i < 6; i++)
@@ -459,17 +521,13 @@ namespace Maincraft
                 double l = Math.Sqrt(a * a + bb * bb + c * c);
                 f[i * 4] = a / l; f[i * 4 + 1] = bb / l; f[i * 4 + 2] = c / l; f[i * 4 + 3] = dd / l;
             }
-            // the Unity camera: at the origin, its view matrix the game's with z mirrored
+            vpU = ToMatrix(vp);
+            // the Unity camera only frames the picture; the CommandBuffer draws with the matrix above
             cam.transform.position = Vector3.zero;
-            cam.transform.rotation = Quaternion.identity;
+            cam.transform.rotation = Quaternion.Euler(-(float)(pitch * 180 / Math.PI), (float)(yaw * 180 / Math.PI), 0);
             cam.fieldOfView = (float)fovDeg;
             cam.nearClipPlane = 0.05f;
             cam.farClipPlane = (float)far;
-            var V = new Matrix4x4();
-            for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) V[i, j] = (float)view[j * 4 + i];
-            // game point p = Z * unity point (Z mirrors z), so unity -> view is V * Z
-            V.m02 = -V.m02; V.m12 = -V.m12; V.m22 = -V.m22; V.m32 = -V.m32;
-            cam.worldToCameraMatrix = V;
         }
 
         public bool BoxVisible(double x0, double y0, double z0, double x1, double y1, double z1)
@@ -513,8 +571,7 @@ namespace Maincraft
                     if (fogCull && FullyFogged(cx, sy, cz, camX, camZ)) stats.fogCulled++;
                     else
                     {
-                        if (n == list.Length) Array.Resize(ref visList, n * 2);
-                        list = visList;
+                        if (n == list.Length) { Array.Resize(ref visList, n * 2); list = visList; }
                         list[n++] = m; m.cx = cx; m.cz = cz; m.sy = sy;
                     }
                 }
@@ -564,7 +621,65 @@ namespace Maincraft
             return Math.Max(Math.Sqrt(dx * dx + dz * dz), dy * 0.5) >= fogEnd + 1;
         }
 
-        // ---------------------------------------------------------------- terrain
+        // ---------------------------------------------------------------- frame
+        /// <summary>Starts recording a frame: clears the command list, the frame's records and dynamic vertices.</summary>
+        public void BeginFrame()
+        {
+            cb.Clear();
+            recN = 0;
+            dynN = 0;
+            ResetState();
+            stats.draws = 0; stats.quads = 0; stats.sections = 0; stats.fogCulled = 0;
+        }
+
+        /// <summary>Uploads what the frame's commands read (records, dynamic vertices); call after the last draw.</summary>
+        public void EndFrame()
+        {
+            if (recBuf.count < recN)
+            {
+                recBuf.Release();
+                recBuf = new GraphicsBuffer(GraphicsBuffer.Target.Structured, Math.Max(recN * 2, 4096), 16);
+            }
+            if (recN > 0) recBuf.SetData(recs, 0, 0, recN * 4);
+            Shader.SetGlobalBuffer(ID_Rec, recBuf);
+            UploadDyn();
+        }
+
+        int AddRecs(int[] src, int n)
+        {
+            int at = recN;
+            if ((recN + n) * 4 > recs.Length) Array.Resize(ref recs, Math.Max(recs.Length * 2, (recN + n) * 4));
+            Array.Copy(src, 0, recs, recN * 4, n * 4);
+            recN += n;
+            return at;
+        }
+
+        void BindTerrain(Env env, double camX, double camY, double camZ, double time, uint tick, double sway)
+        {
+            int ix = (int)Math.Floor(camX), iy = (int)Math.Floor(camY), iz = (int)Math.Floor(camZ);
+            cb.SetGlobalVector(ID_CamI, new Vector4(ix, iy, iz, 0));
+            cb.SetGlobalVector(ID_CamF, new Vector4((float)(camX - ix), (float)(camY - iy), (float)(camZ - iz), 0));
+            cb.SetGlobalFloat(ID_MTime, (float)time);
+            cb.SetGlobalFloat(ID_MTick, tick & 0xFFFFFF);
+            cb.SetGlobalVector(ID_Fog, new Vector4((float)env.fogStart, (float)env.fogEnd, 0, 0));
+            cb.SetGlobalVector(ID_FogColor, new Vector4((float)env.fogColor[0], (float)env.fogColor[1], (float)env.fogColor[2], 1));
+            cb.SetGlobalFloat(ID_Sway, (float)sway);
+            cb.SetGlobalFloat(ID_AlphaMul, 1);
+            cb.SetGlobalFloat(ID_Overlay, overlayLayer);
+            cb.SetGlobalBuffer(ID_Anim, animBuf);
+            cb.SetGlobalTexture(ID_Tex, texArr);
+            cb.SetGlobalTexture(ID_LM, lmTex);
+        }
+
+        void DrawRecords(Material mat, GraphicsBuffer data, int recBase, int count)
+        {
+            mpb.Clear();
+            mpb.SetBuffer(ID_Data, data);
+            mpb.SetFloat(ID_RecBase, recBase);
+            cb.DrawProcedural(quadIdx, Matrix4x4.identity, mat, 0, MeshTopology.Triangles, CHUNK * 6, count, mpb);
+            stats.draws++;
+        }
+
         void EnsureRecLists()
         {
             int need = 2 * pages.Count;
@@ -590,8 +705,9 @@ namespace Maincraft
 
         // Quads are grouped by facing (-X,+X,-Y,+Y,-Z,+Z,other); groups facing away from the camera for the
         // whole section are skipped (directional culling), the rest become records of their runs.
-        void BuildPass(int pass, double camX, double camY, double camZ, int ix, int iy, int iz)
+        void BuildPass(int pass, double camX, double camY, double camZ)
         {
+            int ix = (int)Math.Floor(camX), iy = (int)Math.Floor(camY), iz = (int)Math.Floor(camZ);
             var list = visList; int n = visCount;
             for (int k = 0; k < n; k++)
             {
@@ -627,6 +743,41 @@ namespace Maincraft
                 }
                 if (runStart >= 0) Emit(li, m.start + runStart, runLen, rx, ry, rz);
             }
+        }
+
+        /// <summary>
+        /// The opaque world (renderWorld): clears to the fog colour, finds the visible sections, draws their
+        /// solid and cut-out quads, then the sky with sun and moon where the terrain left the picture empty.
+        /// </summary>
+        public void RenderWorld(World world, double camX, double camY, double camZ, double yaw, double pitch, Env env, double time, uint tick)
+        {
+            SetCamera(env.fov, yaw, pitch, env.far);
+            cb.SetViewProjectionMatrices(Matrix4x4.identity, vpU);
+            cb.ClearRenderTarget(true, true, new Color((float)env.fogColor[0], (float)env.fogColor[1], (float)env.fogColor[2], 1));
+            cam.backgroundColor = new Color((float)env.fogColor[0], (float)env.fogColor[1], (float)env.fogColor[2], 1);
+            // fog occlusion only when the sky below the horizon is plain fog colour
+            fogCull = !env.underwater && env.sunset < 0.001 && !noFogCull;
+            fogCullEnd = env.fogEnd; fogCullY = camY;
+            double tc = Now;
+            CollectVisible(world, camX, camY, camZ, env.renderDist);
+            cpuVis = Now - tc;
+
+            EnsureRecLists();
+            int nl = 2 * pages.Count;
+            for (int i = 0; i < nl; i++) recCounts[i] = 0;
+            BuildPass(0, camX, camY, camZ);
+            BuildPass(1, camX, camY, camZ);
+            BindTerrain(env, camX, camY, camZ, time, tick, env.sway);
+            for (int pass = 0; pass < 2; pass++)
+                for (int p = 0; p < pages.Count; p++)
+                {
+                    int li = pass * pages.Count + p, cnt = recCounts[li];
+                    if (cnt == 0) continue;
+                    int at = AddRecs(recLists[li], cnt);
+                    DrawRecords(pass == 0 ? matSolid : matCutout, pages[p].buf, at, cnt);
+                }
+            // sky after the opaque terrain: it only shades pixels the terrain left empty
+            if (!env.underwater) DrawSky(env, camY);
         }
 
         // Re-sorts translucent quads of sections whose camera block changed, nearest sections first,
@@ -678,267 +829,45 @@ namespace Maincraft
             m.tn = k;
         }
 
-        MaterialPropertyBlock Mpb(int i)
-        {
-            while (mpbs.Count <= i) mpbs.Add(new MaterialPropertyBlock());
-            return mpbs[i];
-        }
+        int[] transRecs = new int[1024];
 
-        /// <summary>
-        /// Draws the terrain of a frame: solid, cut-out and (back to front) translucent quads of every
-        /// visible section, plus sky, sun, moon and clouds (renderWorld + renderTranslucent).
-        /// </summary>
-        public void RenderWorld(World world, double camX, double camY, double camZ, double yaw, double pitch, Env env, double time, uint tick, bool clouds, double cloudTime)
+        /// <summary>Translucent terrain (renderTranslucent): sections back to front, each one's quads sorted.</summary>
+        public void RenderTranslucent(double camX, double camY, double camZ, Env env, double time, uint tick)
         {
-            stats.draws = 0; stats.quads = 0; stats.sections = 0; stats.fogCulled = 0;
-            SetCamera(env.fov, yaw, pitch, env.far);
-            cam.backgroundColor = new Color((float)env.fogColor[0], (float)env.fogColor[1], (float)env.fogColor[2], 1);
-            // fog occlusion only when the sky below the horizon is plain fog colour
-            fogCull = !env.underwater && env.sunset < 0.001 && !noFogCull;
-            fogCullEnd = env.fogEnd; fogCullY = camY;
             double tc = Now;
-            CollectVisible(world, camX, camY, camZ, env.renderDist);
-            cpuVis = Now - tc;
-            tc = Now;
             SortTranslucent(camX, camY, camZ);
             cpuSort = Now - tc;
-
             int ix = (int)Math.Floor(camX), iy = (int)Math.Floor(camY), iz = (int)Math.Floor(camZ);
-            EnsureRecLists();
-            int nl = 2 * pages.Count;
-            for (int i = 0; i < nl; i++) recCounts[i] = 0;
-            BuildPass(0, camX, camY, camZ, ix, iy, iz);
-            BuildPass(1, camX, camY, camZ, ix, iy, iz);
-            // translucent: sections back to front, each one's quads already sorted
-            transRecN = 0;
+            int n = 0;
             for (int k = visCount - 1; k >= 0; k--)
             {
                 var m = visList[k];
                 if (m.tn == 0 || m.tStart < 0) continue;
                 int rx = m.cx * 16 - ix, ry = WORLD_MIN_Y + m.sy * 16 - iy, rz = m.cz * 16 - iz;
                 int chunks = (m.tn + CHUNK - 1) / CHUNK;
-                if ((transRecN + chunks) * 4 > transRecs.Length) Array.Resize(ref transRecs, Math.Max(transRecs.Length * 2, (transRecN + chunks) * 4));
+                if ((n + chunks) * 4 > transRecs.Length) Array.Resize(ref transRecs, Math.Max(transRecs.Length * 2, (n + chunks) * 4));
                 for (int q = 0; q < m.tn; q += CHUNK)
                 {
-                    int cnt = Math.Min(CHUNK, m.tn - q), o = transRecN * 4;
+                    int cnt = Math.Min(CHUNK, m.tn - q), o = n * 4;
                     transRecs[o] = (m.tStart + q) | ((cnt - 1) << 26); transRecs[o + 1] = rx; transRecs[o + 2] = ry; transRecs[o + 3] = rz;
-                    transRecN++;
+                    n++;
                 }
                 stats.quads += m.tn;
             }
-            // one upload of all records
-            int total = transRecN;
-            for (int i = 0; i < nl; i++) total += recCounts[i];
-            if (recAll.Length < total * 4) recAll = new int[total * 8];
-            int at = 0;
-            for (int i = 0; i < nl; i++) { Array.Copy(recLists[i], 0, recAll, at * 4, recCounts[i] * 4); at += recCounts[i]; }
-            Array.Copy(transRecs, 0, recAll, at * 4, transRecN * 4);
-            if (recBuf.count < total)
-            {
-                recBuf.Release();
-                recBuf = new GraphicsBuffer(GraphicsBuffer.Target.Structured, Math.Max(total * 2, 4096), 16);
-            }
-            if (total > 0) recBuf.SetData(recAll, 0, 0, total * 4);
-
-            // shared terrain state
-            Shader.SetGlobalBuffer(ID_Rec, recBuf);
-            Shader.SetGlobalBuffer(ID_Anim, animBuf);
-            Shader.SetGlobalTexture(ID_Tex, texArr);
-            Shader.SetGlobalTexture(ID_LM, lmTex);
-            Shader.SetGlobalVector(ID_CamI, new Vector4(ix, iy, iz, 0));
-            Shader.SetGlobalVector(ID_CamF, new Vector4((float)(camX - ix), (float)(camY - iy), (float)(camZ - iz), 0));
-            Shader.SetGlobalFloat(ID_MTime, (float)time);
-            Shader.SetGlobalFloat(ID_MTick, tick & 0xFFFFFF);
-            Shader.SetGlobalVector(ID_Fog, new Vector4((float)env.fogStart, (float)env.fogEnd, 0, 0));
-            Shader.SetGlobalVector(ID_FogColor, new Vector4((float)env.fogColor[0], (float)env.fogColor[1], (float)env.fogColor[2], 1));
-            Shader.SetGlobalFloat(ID_Sway, (float)env.sway);
-            Shader.SetGlobalFloat(ID_AlphaMul, 1);
-            Shader.SetGlobalFloat(ID_Overlay, overlayLayer);
-
-            int di = 0; at = 0;
-            for (int pass = 0; pass < 2; pass++)
-                for (int p = 0; p < pages.Count; p++)
-                {
-                    int cnt = recCounts[pass * pages.Count + p];
-                    if (cnt > 0) Draw(pass == 0 ? matSolid : matCutout, pages[p].buf, at, cnt, di++);
-                    at += cnt;
-                }
-            if (transRecN > 0) Draw(matTrans, trans.buf, at, transRecN, di++);
-
-            if (!env.underwater) DrawSky(env, camY);
-            if (clouds && !env.underwater) DrawClouds(camX, camY, camZ, env, cloudTime);
-        }
-
-        void Draw(Material mat, GraphicsBuffer data, int recBase, int count, int slot)
-        {
-            var mpb = Mpb(slot);
-            mpb.SetBuffer(ID_Data, data);
-            mpb.SetFloat(ID_RecBase, recBase);
-            Graphics.DrawProcedural(mat, hugeBounds, MeshTopology.Triangles, quadIdx, CHUNK * 6, count, cam, mpb, ShadowCastingMode.Off, false, 0);
-            stats.draws++;
-        }
-
-        // ---------------------------------------------------------------- sky, sun, moon
-        static Mesh BuildSkyCube()
-        {
-            var m = new Mesh();
-            var v = new Vector3[8];
-            for (int i = 0; i < 8; i++) v[i] = new Vector3((i & 1) != 0 ? 1 : -1, (i & 2) != 0 ? 1 : -1, (i & 4) != 0 ? 1 : -1);
-            m.vertices = v;
-            m.triangles = new[] { 0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5 };
-            m.bounds = new Bounds(Vector3.zero, Vector3.one * 1e6f);
-            return m;
-        }
-
-        static Mesh NewQuad()
-        {
-            var m = new Mesh();
-            m.MarkDynamic();
-            m.vertices = new Vector3[4];
-            m.uv = new Vector2[4];
-            m.triangles = new[] { 0, 1, 2, 0, 2, 3 };
-            m.bounds = new Bounds(Vector3.zero, Vector3.one * 1e6f);
-            return m;
-        }
-
-        void DrawSky(Env env, double camY)
-        {
-            // the sea surface (top water block at SEA, 8/9 full) out to the edge of the drawn world: what the
-            // sun and moon sink behind
-            seaClip[0] = camY - (SEA + 8.0 / 9); seaClip[1] = (env.renderDist + 0.5) * 16;
-            matSky.SetVector(ID_Zenith, V3(env.zenith));
-            matSky.SetVector(ID_Horizon, V3(env.fogColor));
-            matSky.SetVector(ID_SunDir, V3(env.sunDir));
-            matSky.SetVector(ID_Sunset, new Vector4((float)env.sunsetColor[0], (float)env.sunsetColor[1], (float)env.sunsetColor[2], (float)env.sunset));
-            matSky.SetFloat(ID_Stars, (float)env.stars);
-            matSky.SetFloat(ID_Void, 1);
-            Graphics.DrawMesh(skyCube, Matrix4x4.identity, matSky, 0, cam, 0, null, ShadowCastingMode.Off, false);
-            Shader.SetGlobalVector(ID_SeaClip, new Vector4((float)Math.Max(0, seaClip[0]), (float)seaClip[1], 0, 0));
-            // sun & moon as billboards at distance 100 along their directions
-            var s = env.sunDir;
-            Celestial(sunQuad, matSun, s[0], s[1], s[2], 16, 0, 0, 1, 1);
-            int ph = env.moonPhase;
-            double u0 = (ph % 4) / 4.0, v0 = (ph / 4) / 2.0;
-            Celestial(moonQuad, matMoon, -s[0], -s[1], -s[2], 11, u0, v0, u0 + 0.25, v0 + 0.5);
-        }
-
-        static Vector4 V3(double[] a) => new Vector4((float)a[0], (float)a[1], (float)a[2], 0);
-
-        void Celestial(Mesh mesh, Material mat, double dx, double dy, double dz, double size, double ua, double va, double ub, double vb)
-        {
-            const double D = 100;
-            double cx = dx * D, cy = dy * D, cz = dz * D;
-            // basis perpendicular to dir: axis a = z (sun path is in x-y plane), b = dir x a
-            double ax = 0, ay = 0, az = 1;
-            double bx = dy * az - dz * ay, by = dz * ax - dx * az, bz = dx * ay - dy * ax;
-            double bl = Math.Sqrt(bx * bx + by * by + bz * bz); if (bl == 0) bl = 1;
-            bx /= bl; by /= bl; bz /= bl;
-            ax = by * dz - bz * dy; ay = bz * dx - bx * dz; az = bx * dy - by * dx;
-            double h = size / 2;
-            void Corner(int i, double sa, double sb, double u, double w)
-            {
-                // game -> unity: z mirrored; the image's top row is v = 1 in Unity (t = 0 in GL)
-                quadPos[i] = new Vector3((float)(cx + (ax * sa + bx * sb) * h), (float)(cy + (ay * sa + by * sb) * h), -(float)(cz + (az * sa + bz * sb) * h));
-                quadUV[i] = new Vector2((float)u, (float)(1 - w));
-            }
-            Corner(0, -1, -1, ua, vb); Corner(1, 1, -1, ub, vb); Corner(2, 1, 1, ub, va); Corner(3, -1, 1, ua, va);
-            mesh.vertices = quadPos; mesh.uv = quadUV;
-            Graphics.DrawMesh(mesh, Matrix4x4.identity, mat, 0, cam, 0, null, ShadowCastingMode.Off, false);
-        }
-
-        // ---------------------------------------------------------------- clouds
-        byte[] cloudGrid; int cloudN;
-        string cloudKey = "";
-        readonly List<Vector3> cv = new List<Vector3>(); readonly List<Color> ccol = new List<Color>(); readonly List<int> cidx = new List<int>();
-
-        public void BuildClouds(int seed)
-        {
-            const int N = 256; var g = new byte[N * N];
-            double Rnd(int x, int z)
-            {
-                unchecked
-                {
-                    int hh = (x * 374761393) ^ (z * 668265263) ^ seed;
-                    hh = (hh ^ (int)((uint)hh >> 13)) * 1274126177;
-                    return (uint)(hh ^ (int)((uint)hh >> 16)) / 4294967296.0;
-                }
-            }
-            double Val(int x, int z, int s)
-            {
-                int x0 = (int)Math.Floor((double)x / s), z0 = (int)Math.Floor((double)z / s); double fx = (double)x / s - x0, fz = (double)z / s - z0;
-                int M = N / s - 1;
-                double a = Rnd(x0 & M, z0 & M), b = Rnd((x0 + 1) & M, z0 & M);
-                double c = Rnd(x0 & M, (z0 + 1) & M), d = Rnd((x0 + 1) & M, (z0 + 1) & M);
-                double sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
-                return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
-            }
-            for (int z = 0; z < N; z++) for (int x = 0; x < N; x++)
-            {
-                double v = Val(x, z, 16) * 0.6 + Val(x, z, 8) * 0.3 + Val(x, z, 4) * 0.1;
-                g[z * N + x] = (byte)(v > 0.56 ? 1 : 0);
-            }
-            cloudGrid = g; cloudN = N; cloudKey = "";
-        }
-
-        void DrawClouds(double camX, double camY, double camZ, Env env, double time)
-        {
-            if (cloudGrid == null) return;
-            int N = cloudN; var g = cloudGrid;
-            const int S = 12, H = 4; const double Y = 192.33;
-            double drift = time * 0.6;
-            int R = Math.Min(40, (int)Math.Ceiling(env.far / S) + 2);
-            double ox = camX + drift, oz = camZ;
-            // the mesh covers 8 cells more than is visible around an anchor that moves in 8-cell steps, so
-            // it is rebuilt only every ~100 blocks of travel; the colour is a uniform, not baked in
-            const int M = 8; int RR = R + M;
-            int gx0 = (int)Math.Floor(Math.Floor(ox / S) / M + 0.5) * M, gz0 = (int)Math.Floor(Math.Floor(oz / S) / M + 0.5) * M;
-            string key = gx0 + "," + gz0 + "," + RR;
-            if (cloudKey != key)
-            {
-                cloudKey = key;
-                int At(int x, int z) => g[((z % N + N) % N) * N + ((x % N + N) % N)];
-                cv.Clear(); ccol.Clear(); cidx.Clear();
-                void Quad(double ax, double ay, double az, double bx, double by, double bz, double qx, double qy, double qz, double dx, double dy, double dz, float sh)
-                {
-                    int b0 = cv.Count;
-                    cv.Add(new Vector3((float)ax, (float)ay, -(float)az)); cv.Add(new Vector3((float)bx, (float)by, -(float)bz));
-                    cv.Add(new Vector3((float)qx, (float)qy, -(float)qz)); cv.Add(new Vector3((float)dx, (float)dy, -(float)dz));
-                    var col = new Color(sh, sh, sh, 0.8f);
-                    ccol.Add(col); ccol.Add(col); ccol.Add(col); ccol.Add(col);
-                    cidx.Add(b0); cidx.Add(b0 + 1); cidx.Add(b0 + 2); cidx.Add(b0); cidx.Add(b0 + 2); cidx.Add(b0 + 3);
-                }
-                for (int dz = -RR; dz <= RR; dz++) for (int dx = -RR; dx <= RR; dx++)
-                {
-                    if (dx * dx + dz * dz > RR * RR) continue;
-                    int cx = gx0 + dx, cz = gz0 + dz;
-                    if (At(cx, cz) == 0) continue;
-                    double x0 = dx * S, x1 = x0 + S, z0 = dz * S, z1 = z0 + S, y0 = 0, y1 = H;
-                    Quad(x0, y1, z1, x1, y1, z1, x1, y1, z0, x0, y1, z0, 1.0f);
-                    Quad(x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1, 0.7f);
-                    if (At(cx + 1, cz) == 0) Quad(x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 0.9f);
-                    if (At(cx - 1, cz) == 0) Quad(x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, 0.9f);
-                    if (At(cx, cz + 1) == 0) Quad(x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0.8f);
-                    if (At(cx, cz - 1) == 0) Quad(x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0.8f);
-                }
-                cloudMesh.Clear();
-                cloudMesh.SetVertices(cv); cloudMesh.SetColors(ccol); cloudMesh.SetTriangles(cidx, 0, false);
-                cloudMesh.bounds = new Bounds(Vector3.zero, Vector3.one * 1e6f);
-            }
-            if (cv.Count == 0) return;
-            // grid-space mesh moved to camera-relative space
-            double tx = gx0 * S - drift - camX, ty = Y - camY, tz = gz0 * S - camZ;
-            var col2 = env.cloudColor;
-            matClouds.SetVector(ID_Mul, new Vector4((float)col2[0], (float)col2[1], (float)col2[2], 1));
-            // fog distance is measured in mesh space; approximate by far distances
-            matClouds.SetVector(ID_CloudFog, new Vector4((float)(env.far * 0.9 + 400), (float)(env.far * 2 + 600), 0, 0));
-            Graphics.DrawMesh(cloudMesh, Matrix4x4.Translate(new Vector3((float)tx, (float)ty, -(float)tz)), matClouds, 0, cam, 0, null, ShadowCastingMode.Off, false);
+            if (n == 0) return;
+            BindTerrain(env, camX, camY, camZ, time, tick, env.sway);
+            int at = AddRecs(transRecs, n);
+            DrawRecords(matTrans, trans.buf, at, n);
         }
 
         public void Dispose()
         {
+            if (cam != null) cam.RemoveCommandBuffer(CameraEvent.BeforeForwardOpaque, cb);
+            cb.Release();
             foreach (var p in pages) p.Release();
             pages.Clear();
             trans?.Release(); recBuf?.Release(); quadIdx?.Release(); animBuf?.Release();
+            DisposeDyn();
         }
     }
 }

@@ -92,7 +92,8 @@ namespace Maincraft
             Blocks.ResolveBlockTextures(layers);
             Mesher.InitMesherTextures(layers);
 
-            r = new Renderer(cam, Bytes("Textures/atlas.png"), metaJson, Bytes("Textures/sun.png"), Bytes("Textures/moon.png"));
+            r = new Renderer(cam, Bytes("Textures/atlas.png"), metaJson, Bytes("Textures/sun.png"), Bytes("Textures/moon.png"),
+                name => Resources.Load<TextAsset>("Textures/Entities/" + name + ".png")?.bytes);
             r.BuildClouds(seed);
 
             // column offsets around the player, nearest first
@@ -463,7 +464,12 @@ namespace Maincraft
             double now = Renderer.Now;
             double t = now / 1000;
             uint tick = (uint)Math.Floor(now / 50);
-            r.RenderWorld(world, px, py + EYE, pz, yaw, pitch, e, t, tick, Settings.clouds, t + time * DAY_LEN);
+            double ey = py + EYE;
+            r.BeginFrame();
+            r.RenderWorld(world, px, ey, pz, yaw, pitch, e, t, tick);
+            if (Settings.clouds && !e.underwater) r.DrawClouds(px, ey, pz, e, t + time * DAY_LEN);
+            r.RenderTranslucent(px, ey, pz, e, t, tick);
+            r.EndFrame();
         }
 
         // ------------------------------------------------------------------ debug overlay

@@ -1,10 +1,12 @@
 // Terrain shader of the original (TERRAIN_VS / TERRAIN_FS), reading the mesher's packed vertices
 // straight from GPU buffers. One instance = one record = up to 64 quads of one section:
-//   record: x = first quad | (quads - 1) << 26, yzw = section origin minus the camera block (blocks)
+//   record: x = first quad | (quads - 1) << 26, yzw = section origin minus the camera block (blocks),
+//           or for a vessel its section's origin in the vessel's grid
 //   vertex: 3 uints  w0 = x | y << 10 | z << 20 (1/32 block) | sway << 30
 //                    w1 = layer | u << 11 | v << 16 (1/16) | shade << 21 | overlay << 29 | uvRot << 30
 //                    w2 = sky light | block light << 8 | tint (RGB565) << 16
-#include "UnityCG.cginc"
+#include "Common.cginc"
+#include "TexArr.cginc"
 
 StructuredBuffer<uint> _Data;
 StructuredBuffer<int4> _Rec;
@@ -15,8 +17,9 @@ float3 _CamF;                      // camera position inside it
 float _MTime, _MTick, _Sway, _AlphaMul, _Overlay;
 float2 _Fog;
 float3 _FogColor;
+float4 _ShipRot;                   // cos, sin of a vessel's yaw
+float3 _ShipRel;                   // its wheel cell's centre relative to the camera
 sampler2D _LM;
-UNITY_DECLARE_TEX2DARRAY(_Tex);
 
 struct v2f
 {
@@ -39,8 +42,14 @@ v2f vert(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     uint w0 = _Data[b], w1 = _Data[b + 1], w2 = _Data[b + 2];
     float3 p = float3(w0 & 1023u, (w0 >> 10) & 1023u, (w0 >> 20) & 1023u) * 0.03125;
     float3 org = float3(r.yzw);
+#ifdef SHIP
+    // a vessel: its section origin in its own grid, turned about the wheel cell and moved there
+    float3 sq = org + p - float3(0.5, 0.0, 0.5);
+    float3 wp = float3(_ShipRot.x * sq.x - _ShipRot.y * sq.z, sq.y, _ShipRot.y * sq.x + _ShipRot.x * sq.z) + _ShipRel;
+#else
     // camera-relative: integer parts first, so the result is exact far from the world origin
     float3 wp = org - _CamF + p;
+#endif
     uint fl = w0 >> 30;
     if (fl != 0u && _Sway > 0.0)
     {
@@ -49,8 +58,7 @@ v2f vert(uint vid : SV_VertexID, uint iid : SV_InstanceID)
         if (fl == 1u) { wp.x += sin(t * 1.7 + a.x * 0.6 + a.z * 0.35) * 0.065 * _Sway; wp.z += cos(t * 1.3 + a.z * 0.5 + a.x * 0.2) * 0.05 * _Sway; }
         else if (fl == 2u) { wp.x += sin(t * 1.1 + a.x * 0.5 + a.y * 0.4 + a.z * 0.3) * 0.022 * _Sway; wp.y += cos(t * 1.3 + a.z * 0.45 + a.x * 0.25) * 0.012 * _Sway; }
     }
-    // game space is right-handed, Unity's left-handed: z mirrored
-    o.pos = mul(UNITY_MATRIX_VP, float4(wp.x, wp.y, -wp.z, 1.0));
+    o.pos = mul(UNITY_MATRIX_VP, float4(wp, 1.0));
     uint layer = w1 & 2047u;
     uint an = _Anim[layer];
     uint frames = an & 255u;
@@ -67,33 +75,6 @@ v2f vert(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     float d = max(length(wp.xz), abs(wp.y) * 0.5);
     o.fog = saturate((d - _Fog.x) / (_Fog.y - _Fog.x));
     return o;
-}
-
-// GL's NEAREST_MIPMAP_LINEAR: nearest texel in the two nearest mip levels, blended between them
-float MipLod(float2 uv)
-{
-    float2 t = uv * 16.0;
-    float2 dx = ddx(t), dy = ddy(t);
-    return 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1e-12));
-}
-float4 SampleArr(float3 uvl, float lod)
-{
-    if (lod <= 0.0) return UNITY_SAMPLE_TEX2DARRAY_LOD(_Tex, uvl, 0.0);
-    lod = min(lod, 4.0);
-    float l0 = floor(lod);
-    float4 a = UNITY_SAMPLE_TEX2DARRAY_LOD(_Tex, uvl, l0);
-    float4 b = UNITY_SAMPLE_TEX2DARRAY_LOD(_Tex, uvl, min(l0 + 1.0, 4.0));
-    return lerp(a, b, lod - l0);
-}
-
-// the original works on sRGB values as they are; in a linear-space project the result is converted
-float3 OutCol(float3 c)
-{
-#ifdef UNITY_COLORSPACE_GAMMA
-    return c;
-#else
-    return float3(GammaToLinearSpaceExact(c.r), GammaToLinearSpaceExact(c.g), GammaToLinearSpaceExact(c.b));
-#endif
 }
 
 float4 frag(v2f i) : SV_Target

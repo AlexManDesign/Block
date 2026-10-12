@@ -21,7 +21,7 @@ Shader "Maincraft/Sky"
             {
                 v2f o;
                 o.pos = AtFar(UnityObjectToClipPos(v));
-                o.dir = float3(v.x, v.y, -v.z);   // Unity -> game space
+                o.dir = v.xyz;
                 return o;
             }
             float hash(float3 p) { p = frac(p * 0.3183099 + 0.1); p *= 17.0; return frac(p.x * p.y * p.z * (p.x + p.y + p.z)); }
