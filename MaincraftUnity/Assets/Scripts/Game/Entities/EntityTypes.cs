@@ -23,6 +23,8 @@ namespace Maincraft
         public double walk = 0, walkAmt = 0, hurtT = 0, invT = 0, lastHurt = 0, deathT = 0, age = 0, fire = 0;
         public double aiT;                  // stroll pause (random 0..2 at spawn)
         public double[] tgt = null;         // random stroll target [x, z]
+        public double tgtT;                 // seconds on the stroll target (set with tgt, ai 9985)
+        public double[] tgtP;               // position when tgtT last restarted [x, z] (stuck check, ai 9985-9990)
         public double fleeT = 0, angryT = 0;
         public int noJump = 0;
         public bool wantJump = false;
@@ -63,6 +65,7 @@ namespace Maincraft
         public bool breakDoors, leader;
         public string effect;               // spider effect on hard: speed, strength, regeneration, invisibility (or null)
         public string color;                // sheep wool colour (or null)
+        public bool sheared;                // sheep shorn (game.js useEntity 13760, grass eating 10155, record sh)
         public double? swimPitch;           // body pitch: set for aquatic mobs at spawn and by the drowned's swimPose
 
         // ---- from save records (0: absent)
