@@ -43,7 +43,7 @@ namespace Maincraft
 
         static Part P(double[] box, double[] pivot, int[] uv, string anim = null, double[] rot = null, bool mirror = false,
             double inflate = 0, bool creepy = false, bool trans = false)
-            => new Part { box = box, pivot = pivot, uv = uv, anim = anim, rot = rot, mirror = mirror, inflate = inflate, creepy = creepy, trans = trans };
+            => Parsed(new Part { box = box, pivot = pivot, uv = uv, anim = anim, rot = rot, mirror = mirror, inflate = inflate, creepy = creepy, trans = trans });
         static double[] D(params double[] v) => v;
         static int[] U(int u, int v) => new[] { u, v };
 
@@ -191,43 +191,36 @@ namespace Maincraft
                 Opart(D(4, 5, 11), D(0, 3.5, -13), U(0, 20), piv: D(0, 5.5, -8), anim: "tail"),
                 Opart(D(1, 10, 6), D(0, 1, -21), U(28, 36), piv: D(0, 5.5, -8), anim: "tail"),
             } };
-            // the render-time parse of Part.anim ('spiderR3': side R, leg 3), done once here
-            foreach (var m in MODELS.Values)
-            {
-                ParseAnims(m.parts);
-                if (m.fur != null) ParseAnims(m.fur.parts);
-            }
         }
 
-        static void ParseAnims(Part[] parts)
+        // buildModel's render-time parse of Part.anim ('spiderR3': side R, leg 3), done when the part is made
+        static Part Parsed(Part part)
         {
-            foreach (var part in parts)
+            string an = part.anim;
+            part.leg = 0;
+            switch (an)
             {
-                string an = part.anim;
-                part.leg = 0;
-                switch (an)
-                {
-                    case null: part.kind = PartAnim.None; break;
-                    case "head": part.kind = PartAnim.Head; break;
-                    case "body": part.kind = PartAnim.Body; break;
-                    case "legA": part.kind = PartAnim.LegA; break;
-                    case "legB": part.kind = PartAnim.LegB; break;
-                    case "armR": part.kind = PartAnim.ArmR; break;
-                    case "armL": part.kind = PartAnim.ArmL; break;
-                    case "wingR": part.kind = PartAnim.WingR; break;
-                    case "wingL": part.kind = PartAnim.WingL; break;
-                    case "tail": part.kind = PartAnim.Tail; break;
-                    default:
-                        // an.startsWith('spider'): k = +an.slice(-1), side an[6] === 'R' ? 1 : -1
-                        if (an.StartsWith("spider", StringComparison.Ordinal))
-                        {
-                            part.kind = an.Length > 6 && an[6] == 'R' ? PartAnim.SpiderR : PartAnim.SpiderL;
-                            part.leg = an[an.Length - 1] - '0';
-                        }
-                        else part.kind = PartAnim.None;
-                        break;
-                }
+                case null: part.kind = PartAnim.None; break;
+                case "head": part.kind = PartAnim.Head; break;
+                case "body": part.kind = PartAnim.Body; break;
+                case "legA": part.kind = PartAnim.LegA; break;
+                case "legB": part.kind = PartAnim.LegB; break;
+                case "armR": part.kind = PartAnim.ArmR; break;
+                case "armL": part.kind = PartAnim.ArmL; break;
+                case "wingR": part.kind = PartAnim.WingR; break;
+                case "wingL": part.kind = PartAnim.WingL; break;
+                case "tail": part.kind = PartAnim.Tail; break;
+                default:
+                    // an.startsWith('spider'): k = +an.slice(-1), side an[6] === 'R' ? 1 : -1
+                    if (an.StartsWith("spider", StringComparison.Ordinal))
+                    {
+                        part.kind = an.Length > 6 && an[6] == 'R' ? PartAnim.SpiderR : PartAnim.SpiderL;
+                        part.leg = an[an.Length - 1] - '0';
+                    }
+                    else part.kind = PartAnim.None;
+                    break;
             }
+            return part;
         }
 
         // eye: the eye height (EntityType eyeHeight; 0.85 x the height when not given), where a mob sees
@@ -370,7 +363,7 @@ namespace Maincraft
         }
 
         static Part HPart(double[] box, double[] pivot, int[] uv, string anim, bool mirror = false, double inflate = 0)
-            => new Part { box = box, pivot = pivot, uv = uv, anim = anim, mirror = mirror, inflate = inflate };
+            => Parsed(new Part { box = box, pivot = pivot, uv = uv, anim = anim, mirror = mirror, inflate = inflate });
 
         // entities.js humanoid (9043-9058): HumanoidModel parts
         public static Part[] Humanoid(int armW, bool wide, bool hat = false)
@@ -402,7 +395,7 @@ namespace Maincraft
             var p = new Part { box = new[] { x0 - pv[0], y0 - pv[1], z0 - pv[2], w, h, d }, pivot = pv, uv = uv };
             if (!string.IsNullOrEmpty(anim)) p.anim = anim;
             if (rot != null) p.rot = new[] { rot[0], -rot[1], -rot[2] };
-            return p;
+            return Parsed(p);
         }
     }
 
@@ -661,26 +654,33 @@ namespace Maincraft
         public static readonly PoseFn ModelXformFn = ModelXform;
 
         /// <summary>
-        /// +x.toFixed(digits): x rounded to a multiple of 10^-digits by its exact binary value (a tie goes to the
-        /// larger magnitude, as toFixed picks the larger n), read back as the nearest double (Entities.record).
-        /// Exact while |x| * 10^digits stays below 2^51 (coordinates, angles, timers).
+        /// +x.toFixed(digits) for digits 0..3 (Entities.record): the integer n nearest to x * 10^digits by x's exact
+        /// binary value (a tie goes to the larger n, on the magnitude: "-" is written for x &lt; 0 only), read back
+        /// as the nearest double to n / 10^digits.
         /// </summary>
         public static double ToFixed(double x, int digits)
         {
-            if (double.IsNaN(x) || double.IsInfinity(x) || Math.Abs(x) >= 1e21) return x;
-            double f = 1; for (int i = 0; i < digits; i++) f *= 10;
-            double a = x < 0 ? -x : x;
-            // a * f exactly = p + err (Dekker's product with Veltkamp splitting)
-            double p = a * f;
-            const double SPLIT = 134217729.0;   // 2^27 + 1
-            double c = SPLIT * a, ah = c - (c - a), al = a - ah;
-            c = SPLIT * f; double fh = c - (c - f), fl = f - fh;
-            double err = ((ah * fh - p) + ah * fl + al * fh) + al * fl;
-            double n = Math.Floor(p), r = p - n;
-            // r and 0.5 are multiples of p's ulp, so only an exact half is decided by err
-            if (r > 0.5 || (r == 0.5 && err >= 0)) n += 1;
-            double v = n / f;
-            return x < 0 ? -v : v;
+            if (double.IsNaN(x) || double.IsInfinity(x) || Math.Abs(x) >= 1e21) return x;   // (toFixed: NaN, Infinity, ToString(x))
+            bool neg = x < 0;
+            long bits = BitConverter.DoubleToInt64Bits(x);
+            int exp = (int)((bits >> 52) & 0x7FF);
+            ulong man = (ulong)bits & 0xFFFFFFFFFFFFFUL;
+            if (exp == 0) exp = 1; else man |= 1UL << 52;
+            int k = 1075 - exp;                     // |x| = man / 2^k
+            if (k <= 0) return x;                   // an integer: only zeros follow the point
+            ulong f = 1; for (int i = 0; i < digits; i++) f *= 10;
+            ulong n;
+            if (k >= 64) n = 0;                     // man * f < 2^63 <= 2^(k-1): under half of a unit
+            else
+            {
+                ulong v = man * f;                  // < 2^53 * 1000 < 2^63
+                ulong q = v >> k, r = v & ((1UL << k) - 1), half = 1UL << (k - 1);
+                n = q + (r >= half ? 1UL : 0UL);
+            }
+            // n / 10^digits read back: a correctly rounded division while n is exact as a double, else the parse
+            double res = n < (1UL << 53) ? n / (double)f
+                : double.Parse(n.ToString(System.Globalization.CultureInfo.InvariantCulture) + "E-" + digits, System.Globalization.CultureInfo.InvariantCulture);
+            return neg ? -res : res;
         }
     }
 }

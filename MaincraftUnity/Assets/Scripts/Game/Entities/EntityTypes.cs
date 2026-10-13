@@ -2,8 +2,6 @@
 // anywhere, defaults as in spawnMob 9441 or as the JS reads an absent field), item drops, arrows and
 // tridents, falling blocks, the mob save record, mob definitions and models, spawner state, door cracks,
 // the A* scratch state and path, and the pose buildModel draws.
-//
-// API skeleton: bodies marked TODO(ent-a) are filled in by that implementer.
 using System;
 using System.Collections.Generic;
 
