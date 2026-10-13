@@ -6,12 +6,13 @@
 // bindInput: the DOM handlers become BindInput (one-time setup) and PollInput (the Unity input polling
 // entry point, called first thing in Loop every frame, which does what the handlers did, in their order);
 // OnBlur and OnPageHide are the window blur and pagehide / visibilitychange handlers, called by the
-// MonoBehaviour (OnApplicationFocus(false) / OnApplicationPause(true), OnApplicationQuit).
+// MonoBehaviour GameMain (OnApplicationFocus(false) / OnApplicationPause(true), OnApplicationQuit).
 //
 // API skeleton: bodies marked TODO(game-c) are filled in by that implementer.
 using System;
 using System.Collections.Generic;
 using static Maincraft.Blocks;
+using Cursor = UnityEngine.Cursor;
 
 namespace Maincraft
 {
@@ -23,7 +24,7 @@ namespace Maincraft
         public void RandomTicks() { throw new NotImplementedException(); } // TODO(game-c)
         // game.js randomTick (14510-14552): by RT.kind
         public void RandomTick(int x, int y, int z, int id) { throw new NotImplementedException(); } // TODO(game-c)
-        // game.js tickFurnaces (14554-14577): every record of meta.furnaces
+        // game.js tickFurnaces (14554-14577): every record of meta.furnaces (burnMax = burn = FuelValue(id) / 8.0)
         public void TickFurnaces(double dt) { throw new NotImplementedException(); } // TODO(game-c)
         // game.js particleLayer (14584-14588)
         public int ParticleLayer(int id) { throw new NotImplementedException(); } // TODO(game-c)
@@ -87,7 +88,9 @@ namespace Maincraft
         // game.js bindInput (15136-15193): one-time input setup (called by the constructor)
         public void BindInput() { throw new NotImplementedException(); } // TODO(game-c)
         // game.js bindInput handlers (15138-15188): per-frame polling of mouse buttons, pointer lock, look,
-        // wheel and keys (KeyCode -> KeyboardEvent.code names in this.keys); first thing in Loop
+        // wheel and keys (KeyCode -> KeyboardEvent.code names in this.keys); first thing in Loop. A press while
+        // the cursor is unlocked counts as the canvas mousedown only when !UI.PointerOverUI(Input.mousePosition);
+        // the keydown handling is skipped while UI.TextInputFocused (keyup still releases)
         public void PollInput() { throw new NotImplementedException(); } // TODO(game-c)
         // game.js bindInput blur handler (15190): keys and buttons released
         public void OnBlur() { throw new NotImplementedException(); } // TODO(game-c)

@@ -3,7 +3,7 @@
 // with an exponential frequency sweep, an exponential attack / decay envelope) and / or a plain
 // oscillator tone with the same envelope, into a master gain of 0.5.
 //
-// WebAudio -> Unity: the AudioContext is SfxMixer, a MonoBehaviour with an AudioSource whose
+// WebAudio -> Unity: the AudioContext is SfxMixer (Audio/SfxMixer.cs), a MonoBehaviour with an AudioSource whose
 // OnAudioFilterRead mixes a fixed voice pool (no allocation on either thread). Sfx (main thread) builds
 // voices with start times on the mixer's clock (ctx.currentTime -> Sfx.CurrentTime, seconds of DSP time)
 // and hands them over with SfxMixer.Add; the audio thread computes the envelopes, filters and
@@ -63,7 +63,8 @@ namespace Maincraft
         /// <summary>Material per block id (the regex tests of material() on B_KEY, precomputed by Init).</summary>
         public static SfxMaterial[] matTable;
 
-        /// <summary>ctx.currentTime: the mixer's clock in seconds (only valid while ctx != null).</summary>
+        /// <summary>ctx.currentTime: the mixer's clock in seconds, Interlocked.Read(ref ctx.samplesRendered) / (double)sampleRate
+        /// (only valid while ctx != null).</summary>
         public static double CurrentTime => throw new NotImplementedException(); // TODO(misc)
 
         // audio.js init (11755-11765): once (returns if ctx exists): the mixer GameObject, the noise buffer;
@@ -97,32 +98,5 @@ namespace Maincraft
         public static void Paddle(bool water) { throw new NotImplementedException(); } // TODO(misc)
         // audio.js door (11832)
         public static void Door(bool open) { throw new NotImplementedException(); } // TODO(misc)
-    }
-
-    /// <summary>
-    /// The audio output (the AudioContext's graph): a persistent GameObject with an AudioSource; mixes the
-    /// active voices sample by sample in OnAudioFilterRead (audio thread) times MASTER_GAIN.
-    /// </summary>
-    public sealed class SfxMixer : MonoBehaviour
-    {
-        /// <summary>Voice pool size (voices beyond it are dropped).</summary>
-        public const int MAX_VOICES = 64;
-        /// <summary>Voices handed over by the main thread, not yet taken by the audio thread (lock-guarded ring).</summary>
-        public readonly SfxVoice[] pending = new SfxVoice[MAX_VOICES];
-        public int pendingN;
-        /// <summary>Voices playing (audio thread only), with their per-voice filter / oscillator state.</summary>
-        public readonly SfxVoice[] active = new SfxVoice[MAX_VOICES];
-        public readonly double[] state = new double[MAX_VOICES * 6];   // biquad x1, x2, y1, y2; oscillator phase; noise read position
-        public int activeN;
-        public readonly object sync = new object();
-        /// <summary>The mixer clock (s): samples rendered / sampleRate, published by the audio thread.</summary>
-        public double now;
-
-        // creates the GameObject (DontDestroyOnLoad) with the AudioSource that drives OnAudioFilterRead
-        public static SfxMixer Create() { throw new NotImplementedException(); } // TODO(misc)
-        // main thread: schedules a voice
-        public void Add(in SfxVoice v) { throw new NotImplementedException(); } // TODO(misc)
-        // audio thread: mixes the voices into data (interleaved, channels) and advances the clock
-        void OnAudioFilterRead(float[] data, int channels) { throw new NotImplementedException(); } // TODO(misc)
     }
 }

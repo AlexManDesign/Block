@@ -41,8 +41,9 @@ namespace Maincraft
         // save.js export's read transaction (12452-12456): every stored column of a world as (key suffix
         // after "id:", raw pairs), in IndexedDB key order (ordinal order of the "id:key" strings)
         public static List<KeyValuePair<string, int[]>> ReadAllCols(string id) { throw new NotImplementedException(); } // TODO(misc)
-        // save.js import's write transaction (12487-12493): the columns and the record of a new world
-        // together; throws (the JS rejected with t.error) on failure
-        public static void ImportWorld(WorldMeta meta, List<KeyValuePair<string, int[]>> cols) { throw new NotImplementedException(); } // TODO(misc)
+        // save.js import's write transaction (12487-12493): the columns (keys already parsed by WorldFile.Import,
+        // so no file name comes from the imported file) and the record of a new world together; throws (the JS
+        // rejected with t.error) on failure, leaving nothing of the new world behind
+        public static void ImportWorld(WorldMeta meta, List<KeyValuePair<long, int[]>> cols) { throw new NotImplementedException(); } // TODO(misc)
     }
 }

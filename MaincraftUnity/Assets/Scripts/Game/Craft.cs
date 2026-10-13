@@ -38,7 +38,8 @@ namespace Maincraft
         public static bool Matches(int tag, int id) { throw new NotImplementedException(); } // TODO(misc)
         // craft.js craftResult (12274-12309): grid of ids (0 empty), w x h; {id, count} or null
         public static ItemStack CraftResult(int[] grid, int w, int h) { throw new NotImplementedException(); } // TODO(misc)
-        // craft.js fuelValue (12323-12330): burn value (the furnace divides by 8)
+        // craft.js fuelValue (12323-12330): burn value; the furnace's burn time is a float division,
+        // Game.TickFurnaces: FuelValue(id) / 8.0 (a stick gives 0.625, not 0)
         public static int FuelValue(int id) { throw new NotImplementedException(); } // TODO(misc)
     }
 }

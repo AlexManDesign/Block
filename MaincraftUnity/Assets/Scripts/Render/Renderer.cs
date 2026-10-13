@@ -100,7 +100,8 @@ namespace Maincraft
 
         public struct Stats { public int draws, quads, sections, fogCulled, upN; public long upBytes; }
         public Stats stats;
-        public double cpuVis, cpuSort;
+        /// <summary>CPU ms of the frame's visibility walk, terrain draw recording (solid + cut-out) and translucent sort.</summary>
+        public double cpuVis, cpuTerrain, cpuSort;
 
         public Renderer(Camera cam, byte[] atlasPng, string atlasMetaJson, byte[] sunPng, byte[] moonPng, Func<string, byte[]> entityImage)
         {
@@ -377,6 +378,75 @@ namespace Maincraft
         public long UsedQuads
         {
             get { long b = trans.usedQuads; foreach (var p in pages) b += p.usedQuads; return b; }
+        }
+
+        // ---------------------------------------------------------------- profiling (F3)
+        // render.js initProfiler / gpuBegin / gpuEnd / gpuPoll (7212-7256): GPU time per render phase from one
+        // timer query per phase, read back frames later and smoothed per phase. WebGL's
+        // EXT_disjoint_timer_query_webgl2 has no direct Unity counterpart, so tq is false and these run the
+        // original's no-extension branches exactly (gpuBegin / gpuPoll return at once; perfReport prints its
+        // 'timer unavailable' line). A real timer (CommandBuffer.BeginSample / EndSample per phase read back
+        // with Profiling.Recorder.gpuElapsedNanoseconds where SystemInfo.supportsGpuRecorder) would set tq,
+        // record in GpuBegin / GpuEnd and fill gpuMs / gpuAcc / gpuBad in GpuPoll as the JS does.
+        /// <summary>The timer query extension is available (render.js this.tq, truthy when present).</summary>
+        public bool tq;
+        /// <summary>Timing wanted this frame (game.js renderFrame: debug || bench).</summary>
+        public bool gpuOn;
+        /// <summary>Smoothed GPU ms per phase name ('solid', 'cutout', 'sky', 'clouds', 'particles', 'entities', 'water', 'hand').</summary>
+        public readonly Dictionary<string, double> gpuMs = new Dictionary<string, double>();
+        public double gpuFrameMs;
+        /// <summary>A benchmark's GPU time sum of one phase.</summary>
+        public sealed class GpuAccum { public double s; public int n; }
+        /// <summary>Per-phase sums while a benchmark runs (game.js sets a new map at the start of the run, reads it at the end and sets null).</summary>
+        public Dictionary<string, GpuAccum> gpuAcc;
+        /// <summary>Implausible query results dropped (this.gpuBad || 0).</summary>
+        public int gpuBad;
+        /// <summary>The GPU's name (WEBGL_debug_renderer_info's UNMASKED_RENDERER_WEBGL).</summary>
+        public readonly string gpuName = SystemInfo.graphicsDeviceName;
+        /// <summary>WEBGL_multi_draw (the report's 'multiDraw' line): the sections of a pass always go out as one instanced draw per arena page here.</summary>
+        public readonly bool multiDraw = true;
+        /// <summary>render.js pstat: one pass's sections drawn, draw calls, quads drawn and quads skipped by directional culling.</summary>
+        public sealed class PassStat { public int sec, draws, quads, skipped; }
+        /// <summary>Per pass (0 solid, 1 cut-out, 2 translucent), reset by RenderWorld every frame.</summary>
+        public readonly PassStat[] pstat = { new PassStat(), new PassStat(), new PassStat() };
+        string qCur;
+
+        // render.js resetPassStats (7223-7227)
+        public void ResetPassStats()
+        {
+            foreach (var p in pstat) { p.sec = 0; p.draws = 0; p.quads = 0; p.skipped = 0; }
+            stats.fogCulled = 0;
+        }
+        // render.js gpuBegin (7228-7234): ends the open phase and starts timing the next
+        public void GpuBegin(string name)
+        {
+            if (!gpuOn || !tq) return;
+            if (qCur != null) GpuEnd();
+            qCur = name;
+        }
+        // render.js gpuEnd (7235-7239)
+        public void GpuEnd()
+        {
+            if (qCur == null) return;
+            qCur = null;
+        }
+        // render.js gpuPoll (7240-7256): the finished queries into gpuMs (and gpuAcc)
+        public void GpuPoll()
+        {
+            if (!tq) return;
+        }
+        // render.js meshMemory (7257-7261): GPU bytes held by the section meshes (48 bytes a quad), and their number
+        public (long bytes, int n) MeshMemory(World world)
+        {
+            long bytes = 0; int n = 0;
+            foreach (var c in world.cols.Values)
+                foreach (var o in c.meshes)
+                {
+                    if (!(o is SectionMesh m) || (m.page < 0 && m.tStart < 0)) continue;
+                    bytes += ((m.page >= 0 ? m.cap : 0) + (m.tStart >= 0 ? m.tCap : 0)) * 48L;
+                    n++;
+                }
+            return (bytes, n);
         }
 
         // ---------------------------------------------------------------- per-frame
@@ -709,22 +779,24 @@ namespace Maincraft
         {
             int ix = (int)Math.Floor(camX), iy = (int)Math.Floor(camY), iz = (int)Math.Floor(camZ);
             var list = visList; int n = visCount;
+            var ps = pstat[pass];
             for (int k = 0; k < n; k++)
             {
                 var m = list[k];
                 int cnt = m.counts[pass];
                 if (cnt == 0 || m.page < 0) continue;
+                ps.sec++;
                 int first = pass == 0 ? 0 : m.counts[0];
                 int li = pass * pages.Count + m.page;
                 int bx = m.cx * 16, by = WORLD_MIN_Y + m.sy * 16, bz = m.cz * 16;
                 int rx = bx - ix, ry = by - iy, rz = bz - iz;
                 stats.sections++;
                 var gc = m.gc;
-                if (gc == null || !dirCull) { Emit(li, m.start + first, cnt, rx, ry, rz); stats.quads += cnt; continue; }
+                if (gc == null || !dirCull) { Emit(li, m.start + first, cnt, rx, ry, rz); stats.quads += cnt; ps.quads += cnt; continue; }
                 double ox = bx - camX, oy = by - camY, oz = bz - camZ;
                 // camera below / above / beside the section box on each axis
                 int vis = (ox > 0 ? 1 : ox + 16 < 0 ? 2 : 3) | (oy > 0 ? 4 : oy + 16 < 0 ? 8 : 12) | (oz > 0 ? 16 : oz + 16 < 0 ? 32 : 48) | 64;
-                int at = first, runStart = -1, runLen = 0, g0 = pass * 7;
+                int at = first, runStart = -1, runLen = 0, g0 = pass * 7, q0 = stats.quads;
                 for (int g = 0; g < 7; g++)
                 {
                     int c = gc[g0 + g];
@@ -742,6 +814,7 @@ namespace Maincraft
                     at += c;
                 }
                 if (runStart >= 0) Emit(li, m.start + runStart, runLen, rx, ry, rz);
+                ps.quads += stats.quads - q0; ps.skipped += cnt - (stats.quads - q0);
             }
         }
 
@@ -751,6 +824,8 @@ namespace Maincraft
         /// </summary>
         public void RenderWorld(World world, double camX, double camY, double camZ, double yaw, double pitch, Env env, double time, uint tick)
         {
+            ResetPassStats();
+            GpuBegin("solid");
             SetCamera(env.fov, yaw, pitch, env.far);
             cb.SetViewProjectionMatrices(Matrix4x4.identity, vpU);
             cb.ClearRenderTarget(true, true, new Color((float)env.fogColor[0], (float)env.fogColor[1], (float)env.fogColor[2], 1));
@@ -762,6 +837,7 @@ namespace Maincraft
             CollectVisible(world, camX, camY, camZ, env.renderDist);
             cpuVis = Now - tc;
 
+            tc = Now;
             EnsureRecLists();
             int nl = 2 * pages.Count;
             for (int i = 0; i < nl; i++) recCounts[i] = 0;
@@ -769,14 +845,20 @@ namespace Maincraft
             BuildPass(1, camX, camY, camZ);
             BindTerrain(env, camX, camY, camZ, time, tick, env.sway);
             for (int pass = 0; pass < 2; pass++)
+            {
+                if (pass == 1) GpuBegin("cutout");
                 for (int p = 0; p < pages.Count; p++)
                 {
                     int li = pass * pages.Count + p, cnt = recCounts[li];
                     if (cnt == 0) continue;
                     int at = AddRecs(recLists[li], cnt);
                     DrawRecords(pass == 0 ? matSolid : matCutout, pages[p].buf, at, cnt);
+                    pstat[pass].draws++;
                 }
+            }
+            cpuTerrain = Now - tc;
             // sky after the opaque terrain: it only shades pixels the terrain left empty
+            GpuBegin("sky");
             if (!env.underwater) DrawSky(env, camY);
         }
 
@@ -837,11 +919,14 @@ namespace Maincraft
             double tc = Now;
             SortTranslucent(camX, camY, camZ);
             cpuSort = Now - tc;
+            GpuBegin("water");
             int ix = (int)Math.Floor(camX), iy = (int)Math.Floor(camY), iz = (int)Math.Floor(camZ);
             int n = 0;
+            var ps = pstat[2];
             for (int k = visCount - 1; k >= 0; k--)
             {
                 var m = visList[k];
+                if (m.counts[2] != 0) { ps.sec++; ps.skipped += m.counts[2] - m.tn; }
                 if (m.tn == 0 || m.tStart < 0) continue;
                 int rx = m.cx * 16 - ix, ry = WORLD_MIN_Y + m.sy * 16 - iy, rz = m.cz * 16 - iz;
                 int chunks = (m.tn + CHUNK - 1) / CHUNK;
@@ -852,12 +937,13 @@ namespace Maincraft
                     transRecs[o] = (m.tStart + q) | ((cnt - 1) << 26); transRecs[o + 1] = rx; transRecs[o + 2] = ry; transRecs[o + 3] = rz;
                     n++;
                 }
-                stats.quads += m.tn;
+                stats.quads += m.tn; ps.quads += m.tn;
             }
             if (n == 0) return;
             BindTerrain(env, camX, camY, camZ, time, tick, env.sway);
             int at = AddRecs(transRecs, n);
             DrawRecords(matTrans, trans.buf, at, n);
+            ps.draws++;
         }
 
         public void Dispose()

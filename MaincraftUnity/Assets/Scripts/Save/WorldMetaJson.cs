@@ -19,8 +19,15 @@ namespace Maincraft
         public static WorldMeta FromJson(string s) { throw new NotImplementedException(); } // TODO(misc)
         // the record as a MiniJson tree (Dictionary / List / double / string / bool / typed arrays as C# arrays)
         public static Dictionary<string, object> ToObject(WorldMeta m) { throw new NotImplementedException(); } // TODO(misc)
-        // a record from a parsed (and revived) MiniJson tree
+        // a record from a parsed (and revived) MiniJson tree; seed and sel are read with ToInt32, not MiniJson.I
         public static WorldMeta FromObject(Dictionary<string, object> o) { throw new NotImplementedException(); } // TODO(misc)
+        // JS ToInt32 (`x | 0`) of a parsed value: a number truncated and wrapped mod 2^32 into the int range
+        // (t = Math.Truncate(d); m = t % 4294967296.0; if (m < 0) m += 4294967296.0; if (m >= 2147483648.0)
+        // m -= 4294967296.0); 0 for NaN, infinities and non-numbers. For seed (import accepts any number; the
+        // generator uses seed | 0 and seed >>> 0, equal mod 2^32) and sel (startWorld: meta.sel | 0). A plain
+        // (int) cast of an out-of-range double is unspecified in C#. A seed outside the int range (never written by
+        // the game) is kept wrapped, so the world list shows and a save writes the wrapped number.
+        public static int ToInt32(object o) { throw new NotImplementedException(); } // TODO(misc)
 
         // {id, count, dur?, maxDur?} (null for an empty slot)
         public static object StackToObject(ItemStack s) { throw new NotImplementedException(); } // TODO(misc)

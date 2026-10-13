@@ -62,7 +62,8 @@ namespace Maincraft
         // boats.js place (8290-8295): a new boat appended to the list
         public Boat Place(double x, double y, double z, double yaw) { throw new NotImplementedException(); } // TODO(player)
         // boats.js raycast (8297-8313): nearest boat box on the ray (eye, unit dir) within range, skipping skip; null if none
-        public BoatHit? Raycast(double[] eye, double[] dir, double range, Boat skip) { throw new NotImplementedException(); } // TODO(player)
+        // (game.js useEntity 13747 passes no skip: undefined matches no boat)
+        public BoatHit? Raycast(double[] eye, double[] dir, double range, Boat skip = null) { throw new NotImplementedException(); } // TODO(player)
         // boats.js hit (8317-8328): Boat.hurt
         public void Hit(Boat b, double dmg) { throw new NotImplementedException(); } // TODO(player)
         // boats.js board (8329-8335)

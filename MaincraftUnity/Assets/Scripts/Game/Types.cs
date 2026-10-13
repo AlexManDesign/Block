@@ -108,12 +108,19 @@ namespace Maincraft
         public int fire = -20;              // remainingFireTicks (rests at -20)
         public double invT = 0, lastHurt = 0;
         public double poisonT = 0, poisonAcc = 0;
-        public double tickAcc = 0;          // created lazily in the JS (s.tickAcc || 0)
-        public int ticks = 0;               // created lazily in the JS (s.ticks | 0)
+        // Created lazily by survivalTick / foodTick (14157, 14202): absent from a record until survival ran
+        // once in this session, and like every key carried over from world to world (this.surv lives as
+        // long as the Game; Object.assign overwrites only the keys a record has).
+        public double? tickAcc;             // s.tickAcc = (s.tickAcc ?? 0) + dt (|| 0 in the JS; never NaN)
+        public int? ticks;                  // s.ticks = ((s.ticks | 0) + 1) % 2000000: its phase drives peaceful regeneration
+        /// <summary>meta.surv keys this port does not know: Object.assign copies them in, {...this.surv} saves them again.</summary>
+        public Dictionary<string, object> extra;
 
-        // game.js 12863 / 14436: Object.assign(this.surv, d) - only the keys d has are written
+        // game.js 12863: Object.assign(this.surv, meta.surv) - only the keys d has are written (tickAcc / ticks
+        // too, ticks through ToInt32 like `| 0`), unknown keys go into extra (overwriting by key)
         public void Assign(Dictionary<string, object> d) { throw new NotImplementedException(); } // TODO(game-a)
-        // game.js 12979: {...this.surv} as a JSON record (every field)
+        // game.js 12979: {...this.surv} as a JSON record: the 14 constructor keys, then tickAcc and ticks only when
+        // set, then the extra keys
         public Dictionary<string, object> ToRecord() { throw new NotImplementedException(); } // TODO(game-a)
     }
 

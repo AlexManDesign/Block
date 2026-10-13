@@ -89,6 +89,9 @@ namespace Maincraft
         public void MobDied(Mob e, MobDef d) { throw new NotImplementedException(); } // TODO(ent-c)
         // entities.js render (11407-11492): every mob, the spawner mini-mobs, the third-person player, then renderItems
         public void Render(Env env, double[] cam) { throw new NotImplementedException(); } // TODO(ent-c)
+        // entities.js render (11417-11448): buildModel's input for a mob, after render set its r* fields (rpos,
+        // ryaw, rhead, rwalk, rpitch, rswim): every field of into written (it is the reused Entities.pose); returns into
+        public ModelPose PoseOf(Mob e, ModelPose into) { throw new NotImplementedException(); } // TODO(ent-c)
         // entities.js flame (11496-11509): camera-facing fire quads on a burning entity
         public void Flame(VBuf v, double[] P, double w, double h, double[] cam) { throw new NotImplementedException(); } // TODO(ent-c)
         // entities.js buildModel (11510-11619): animate and emit a box model; tint null = none;

@@ -305,7 +305,13 @@ namespace Maincraft
         public double deathT, fuse, eatT;
         public bool aggro, aiming, spear;
 
-        // entities.js render (11417-11448): this pose from a mob's interpolated state (after render set r*)
-        public ModelPose Set(Mob e) { throw new NotImplementedException(); } // TODO(ent-a)
+        /// <summary>Every field to its default, as on a fresh object literal (render's spawner mini-mob and player poses).</summary>
+        public ModelPose Reset()
+        {
+            type = null; pos = null; yaw = head = walk = walkAmt = swimPitch = swimAmt = 0; dispScale = 1; pitch = 0;
+            sneak = false; attack = 0; held = null; riding = false; size = 0; squish = 0; baby = false;
+            inWater = null; onGround = null; deathT = fuse = eatT = 0; aggro = aiming = spear = false;
+            return this;
+        }
     }
 }

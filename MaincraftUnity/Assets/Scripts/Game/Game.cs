@@ -8,11 +8,14 @@
 //
 // Note: inside Game the method Interact(dt) hides the class name Interact (interact.js); call those
 // functions unqualified through `using static Maincraft.Interact;` or as Maincraft.Interact.X.
+// Pointer lock is UnityEngine.Cursor.lockState: every Game file has the alias `using Cursor =
+// UnityEngine.Cursor;`, since with UnityEngine.UIElements imported a plain Cursor is ambiguous (CS0104).
 using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
 using static Maincraft.Blocks;
+using Cursor = UnityEngine.Cursor;
 
 namespace Maincraft
 {
@@ -63,7 +66,10 @@ namespace Maincraft
         /// <summary>Respawn spread round the world spawn (Bedrock's spawnradius).</summary>
         public const int SPAWN_RADIUS = 5;
         /// <summary>Biome water fog colours (RGB; the rest use 0x050533).</summary>
-        public static readonly Dictionary<string, int> WATER_FOG = new Dictionary<string, int>();   // TODO(game-a): fill (12772)
+        public static readonly Dictionary<string, int> WATER_FOG = new Dictionary<string, int>
+        {
+            ["WARM_OCEAN"] = 0x041F33, ["LUKEWARM_OCEAN"] = 0x041633, ["DEEP_LUKEWARM_OCEAN"] = 0x041633, ["SWAMP"] = 0x232317, ["MANGROVE_SWAMP"] = 0x4D7A60,
+        };
         /// <summary>Model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1).</summary>
         public static readonly sbyte[] MB_FACES = { 5, 1, 3, 7, 0, 4, 6, 2, 6, 7, 3, 2, 5, 4, 0, 1, 4, 5, 7, 6, 1, 0, 2, 3 };
         public static readonly double[] MB_SHADE = { 0.72, 0.72, 1.0, 0.55, 0.8, 0.9 };
@@ -228,7 +234,7 @@ namespace Maincraft
 
         // ================================================================== Game
         // game.js constructor (12801-12842): renderer, player, inventory, state, spiral, env, clouds, input
-        // (the RAF loop is the MonoBehaviour's Update calling Loop)
+        // (the RAF loop is GameMain.Update calling Loop)
         public Game(GameAssets assets, Camera camera) { throw new NotImplementedException(); } // TODO(game-a)
         // game.js resize (12844-12848): render size from the screen, Settings.scale and dynScale
         public void Resize() { throw new NotImplementedException(); } // TODO(game-a)

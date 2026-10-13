@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Generic;
 using static Maincraft.Blocks;
+using Cursor = UnityEngine.Cursor;
 
 namespace Maincraft
 {
@@ -75,7 +76,8 @@ namespace Maincraft
         // game.js localDifficulty (14230-14241): DifficultyInstance at a column
         public DifficultyInstance LocalDifficulty(int x, int z) { throw new NotImplementedException(); } // TODO(game-b)
         // game.js hurt (14245-14274): player damage; byMob scales by the difficulty; from: the attacker's
-        // position (hurt tilt direction), or null. True only for a full new hit
+        // position (hurt tilt direction), or null. True only for a full new hit. The #hurt flash restart (14270) is
+        // UI.RestartAnim("hurt")
         public bool Hurt(double n, bool byMob = false, double[] from = null) { throw new NotImplementedException(); } // TODO(game-b)
         // game.js poison (14275)
         public void Poison(double sec) { throw new NotImplementedException(); } // TODO(game-b)

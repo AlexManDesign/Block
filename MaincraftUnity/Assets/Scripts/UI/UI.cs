@@ -12,8 +12,15 @@
 // slots act on pointer down with button and shift like the JS mousedown handlers). The document-level
 // handlers (mousemove for the cursor item, the touch handlers and the 50 ms hold poller of buildTouch)
 // become Tick, called once per frame by the bootstrap. setTimeout is Game.Later; confirm / alert are a
-// modal panel (Confirm / Alert); the hidden file input of the import button is replaced by a file path
-// (a platform picker plugin or the persistentDataPath/imports folder).
+// modal panel (Confirm / Alert); the hidden file input of the import button is PickImportFile.
+// CSS keyframe animations (UI Toolkit has none) are played by Tick from start times: #heldName 'fade',
+// #hurt 'flash' (restarted through RestartAnim, the JS remove-class / reflow / add-class idiom) and the
+// title splash's 'pulse'; CSS transitions map to USS transitions.
+//
+// Polled input sees every click and key, where the browser's canvas saw only the clicks that hit it
+// (overlays without pointer-events: none took the rest) and keydown skipped focused INPUTs: Game.PollInput
+// asks PointerOverUI (only while the cursor is not locked; a locked pointer's events all went to the
+// canvas) and TextInputFocused.
 //
 // Pointer lock: Resume only locks the cursor (Cursor.lockState); Game.PollInput sees the lock change and
 // runs the pointerlockchange branch (unpause, hide pause) as the browser event did.
@@ -24,6 +31,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
 using static Maincraft.Blocks;
+using Cursor = UnityEngine.Cursor;   // UnityEngine.UIElements.Cursor would make a plain Cursor ambiguous (CS0104)
 
 namespace Maincraft
 {
@@ -74,8 +82,9 @@ namespace Maincraft
         /// <summary>The 9 hotbar slot elements (null before BuildHud: UpdateHotbar returns early).</summary>
         public static VisualElement[] hotSlots;
         public static HudIcons icons;
-        /// <summary>`${ceil(hp)}|${food}|${ceil(air/30)}|${poisonT>0}` of the last survival-bar rebuild.</summary>
-        public static string lastSurvKey;
+        /// <summary>The JS key `${ceil(hp)}|${food}|${ceil(air/30)}|${poisonT>0}` of the last survival-bar rebuild, as a
+        /// value (no string built every frame; -0 and 0 are the same int as they are the same string); null: none yet.</summary>
+        public static (int hp, int food, int air, bool poison)? lastSurvKey;
         /// <summary>The creative tab 'b' | 'c' | 'n' | 'f' | 't' | 's' ('\0' before the first opening; persists).</summary>
         public static char tab;
         /// <summary>The creative search text (persists).</summary>
@@ -100,16 +109,29 @@ namespace Maincraft
         public static int joyId = -1;       // the joystick's finger (null: -1)
         public static double jx, jy;        // joystick centre
         public static readonly Dictionary<int, TouchLook> looks = new Dictionary<int, TouchLook>();
+        /// <summary>Start times (Renderer.Now ms) of the CSS animations Tick plays; -infinity: not running (base opacity 0).
+        /// #heldName 'fade' 2.2 s: opacity 1 to 70 %, then 1 -> 0; #hurt 'flash' 0.5 s: 1 -> 0. Keyframe segments are
+        /// eased with the CSS default 'ease' (cubic-bezier(.25, .1, .25, 1)).</summary>
+        public static double heldNameAt = double.NegativeInfinity, hurtAt = double.NegativeInfinity;
 
         // ================================================================== DOM equivalents (ui.js 12650-12698)
         public static UIDocument doc;
         /// <summary>document.body: the root of the page (game.js appends its toast to it, toggles the 'nohud' / 'touch' classes on it).</summary>
         public static VisualElement root;
+        /// <summary>getElementById's index (id -> element), filled by BuildDom: every element with an id is in game.html,
+        /// none is removed later.</summary>
+        public static readonly Dictionary<string, VisualElement> byId = new Dictionary<string, VisualElement>();
 
-        // game.html (lines 7-176): the static page (ids, classes, data-t / data-ph keys) under root and the USS;
-        // called by Init before anything looks an element up
+        // game.html (lines 7-176): the static page (ids, classes, data-t / data-ph keys) under root, and byId.
+        // Called once by GameMain.Boot before the Game exists (#boot, and #fatal for a failing constructor); a
+        // second call does nothing. There are no UI assets yet: the UIDocument's PanelSettings is made in code
+        // (ScriptableObject.CreateInstance; no theme, the converted USS styles everything like the page's CSS), the
+        // USS is a Resources/UI StyleSheet, and the text needs a font set on root (unityFontDefinition).
+        // Full-screen containers that let clicks through (body, #hud, #hurt, #sleep, #vignette, #touch,
+        // #cursorItem) get PickingMode.Ignore like their pointer-events: none.
         public static void BuildDom() { throw new NotImplementedException(); } // TODO(ui)
-        // ui.js $ (12663): document.getElementById (null when missing)
+        // ui.js $ (12663): document.getElementById (null when missing): a byId lookup, no tree walk (game.js
+        // calls $ every frame: #debug, #biomeInfo, #loadBar)
         public static VisualElement ById(string id) { throw new NotImplementedException(); } // TODO(ui)
         // ui.js show (12664): toggles the 'hidden' class; a missing element is ignored
         public static void Show(string id, bool v) { throw new NotImplementedException(); } // TODO(ui)
@@ -129,12 +151,27 @@ namespace Maincraft
         public static void Confirm(string text, Action onYes) { throw new NotImplementedException(); } // TODO(ui)
         // window.alert: a modal message
         public static void Alert(string text) { throw new NotImplementedException(); } // TODO(ui)
+        // the hidden <input type=file> of the import button (menus.js 15283-15284): a modal pick list of
+        // WorldFile.ListImportFiles (or a platform file picker); done(path) on a choice, nothing on cancel
+        public static void PickImportFile(Action<string> done) { throw new NotImplementedException(); } // TODO(ui)
+        // the remove-class / reflow / add-class idiom (menus.js 15432 #heldName 'fade', game.js 14270 #hurt
+        // 'flash'): restarts that element's animation now (heldNameAt / hurtAt = Renderer.Now)
+        public static void RestartAnim(string id) { throw new NotImplementedException(); } // TODO(ui)
+        // the canvas was not the event target: true when the topmost pickable element at the screen point
+        // (Input.mousePosition, y up; RuntimePanelUtils.ScreenToPanel after flipping y) is a UI element. Game.PollInput
+        // ignores button presses then while the cursor is not locked
+        public static bool PointerOverUI(Vector2 screenPos) { throw new NotImplementedException(); } // TODO(ui)
+        /// <summary>document.activeElement is an INPUT: a TextField (or its inner text element) has the keyboard focus;
+        /// Game.PollInput skips the keydown handling then (15165).</summary>
+        public static bool TextInputFocused => throw new NotImplementedException(); // TODO(ui)
 
         // ================================================================== menus.js
-        // menus.js init (15218-15228): BuildDom, buildHud, bindMenus, buildTouch on touch devices, applyLang
+        // menus.js init (15218-15228): game, buildHud, bindMenus, buildTouch on touch devices, applyLang (the page
+        // itself was built by BuildDom before the Game)
         public static void Init(Game g) { throw new NotImplementedException(); } // TODO(ui)
         // menus.js document mousemove (15224-15227), the touch handlers and the hold poller of buildTouch
-        // (15666-15710), the #heldName fade: once per frame
+        // (15666-15710), and the CSS animations (#heldName fade, #hurt flash, the splash pulse): once per frame,
+        // before Game.Loop (GameMain.Update); does nothing before Init
         public static void Tick() { throw new NotImplementedException(); } // TODO(ui)
         // menus.js applyLang (15229-15233): every data-t text and data-ph placeholder through T; #hint
         public static void ApplyLang() { throw new NotImplementedException(); } // TODO(ui)
@@ -175,7 +212,7 @@ namespace Maincraft
         public static Texture2D PixelIcon(string[] rows, Color32 col, Color32 hi) { throw new NotImplementedException(); } // TODO(ui)
         // menus.js updateHotbar (15422-15427)
         public static void UpdateHotbar() { throw new NotImplementedException(); } // TODO(ui)
-        // menus.js showHeldName (15428-15433): the selected item's name, its fade restarted
+        // menus.js showHeldName (15428-15433): the selected item's name, its fade restarted (RestartAnim("heldName"))
         public static void ShowHeldName() { throw new NotImplementedException(); } // TODO(ui)
         // menus.js updateSurvival (15434-15460): hearts, food and air rows (rebuilt only when lastSurvKey changes)
         public static void UpdateSurvival() { throw new NotImplementedException(); } // TODO(ui)

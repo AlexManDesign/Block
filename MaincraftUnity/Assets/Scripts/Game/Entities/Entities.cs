@@ -39,6 +39,9 @@ namespace Maincraft
         // rendering buffers (reused every frame)
         public OrderedMap<string, VBuf> vbOpaque, vbTrans;   // per entity texture, insertion order = draw order
         public VBuf vbFire;                 // atlas-textured: flames, the bow, held items
+        /// <summary>buildModel's input, reused for every mob (PoseOf), spawner mini-mob and the player model (Reset, then
+        /// the JS literal's fields); each BuildModel call finishes with it before the next fill.</summary>
+        public readonly ModelPose pose = new ModelPose();
         public double[] xp;                 // modelXform parameters (28)
         public double[] tpM;                // heldItem3p pose matrix (16)
         public double[] tpQ, tpO, tpT3;     // heldItem3p scratch points (3)

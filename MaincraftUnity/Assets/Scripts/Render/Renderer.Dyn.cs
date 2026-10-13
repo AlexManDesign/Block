@@ -165,8 +165,11 @@ namespace Maincraft
         }
         public void DrawArr(VBuf v, Env env, double alphaRef, double[] vpOverride = null) => DrawArr(v.a, v.Verts, env, alphaRef, vpOverride);
 
-        /// <summary>drawEnt: triangles textured from an entity skin (alpha below 0.1 cut away).</summary>
-        public void DrawEnt(float[] arr, int count, Texture tex, double fogStart, double fogEnd, double[] fogColor)
+        /// <summary>
+        /// drawEnt: triangles textured from an entity skin (alpha below 0.1 cut away). vpOverride: another
+        /// view-projection for this draw (drawHand's empty arm, where the original swaps r.vp around drawEnt).
+        /// </summary>
+        public void DrawEnt(float[] arr, int count, Texture tex, double fogStart, double fogEnd, double[] fogColor, double[] vpOverride = null)
         {
             if (count <= 0 || tex == null) return;
             int first = AppendDyn(arr, count);
@@ -175,11 +178,14 @@ namespace Maincraft
             mpb.SetFloat(ID_VBase, first);
             Fog(fogStart, fogEnd, fogColor);
             mpb.SetTexture(ID_MainTex, tex);
+            if (vpOverride != null) cb.SetViewProjectionMatrices(Matrix4x4.identity, ToMatrix(vpOverride));
             cb.DrawProcedural(Matrix4x4.identity, mat, 0, MeshTopology.Triangles, count, 1, mpb);
+            if (vpOverride != null) cb.SetViewProjectionMatrices(Matrix4x4.identity, vpU);
             stats.draws++;
         }
         public void DrawEnt(float[] arr, int count, Texture tex, Env env) => DrawEnt(arr, count, tex, env.fogStart, env.fogEnd, env.fogColor);
         public void DrawEnt(VBuf v, Texture tex, Env env) => DrawEnt(v.a, v.Verts, tex, env.fogStart, env.fogEnd, env.fogColor);
+        public void DrawEnt(VBuf v, Texture tex, double fogStart, double fogEnd, double[] fogColor, double[] vpOverride = null) => DrawEnt(v.a, v.Verts, tex, fogStart, fogEnd, fogColor, vpOverride);
 
         float[] lineV = new float[600];
         /// <summary>drawLines: line segments (pairs of xyz points, nFloats floats) in one colour.</summary>
