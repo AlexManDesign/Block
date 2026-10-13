@@ -1,2 +1,4 @@
 # build archives of the Unity port (sent separately)
 *.zip
+# agent worktrees and local tool state
+.claude/
