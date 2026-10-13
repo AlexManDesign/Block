@@ -1988,13 +1988,18 @@ class Game {
     if (this.ents) this.ents.render(env, cam);
     if (this.boats) this.boats.renderMask(cam, env);
     this.perfT('rEntities', performance.now() - t);
+    // selection outline + cracks: a block outside the translucent layer has them before the water,
+    // which then lies over them where it is in front (seen from under the water surface, or through
+    // it from above); a translucent block's after it (LevelRenderer.submitBlockOutline: afterTerrain
+    // = the block's layer is translucent; the crumbling with the features, before translucent terrain)
+    const selLate = this.target && RLAYER[this.target.id] === RL_TRANS;
+    if (this.target && !this.hideHud && !selLate) this.drawSelection(env);
+    if (this.ents && this.ents.cracks.size) this.drawMobCracks();
     t = performance.now();
     r.renderTranslucent(cam, env, time, tick);
     this.perfT('rWater', performance.now() - t);
-    // selection outline + cracks
     t = performance.now(); r.gpuBegin('hand');
-    if (this.target && !this.hideHud) this.drawSelection(env);
-    if (this.ents && this.ents.cracks.size) this.drawMobCracks();
+    if (this.target && !this.hideHud && selLate) this.drawSelection(env);
     // hand
     if (!this.camMode && !this.hideHud && !this.sleeping) this.drawHand(env, dt);   // no hand in bed (GameRenderer.renderItemInHand)
     this.drawInWall();

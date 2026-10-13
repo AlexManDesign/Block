@@ -154,8 +154,10 @@ const MOB_DEFS = {
   // or a potato (killed_by_player, random_chance 0.025)
   zombie: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.025 ? [IT.IRON_INGOT, IT.CARROT, IT.POTATO][Math.random() * 3 | 0] : 0, 1]], hostile: true, burns: true, sinks: true, undead: true },
   // drowned (Drowned, a zombie of the sea): the zombie's attributes; loot 0-2 rotten flesh and,
-  // killed by the player, a copper ingot one time in 9 (random_chance 0.11)
-  drowned: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.11 ? IT.COPPER_INGOT : 0, 1]], hostile: true, burns: true, sinks: true, drowned: true, undead: true },
+  // killed by the player, a copper ingot one time in 9 (random_chance 0.11). Walking in water it
+  // speeds up by 0.06 x the input a tick (Bedrock's minecraft:underwater_movement 0.06; any other
+  // mob, the player too, 0.02): on the bottom three times a zombie's pace
+  drowned: { w: 0.6, h: 1.95, eye: 1.74, hp: 20, attr: 0.23, dmg: 3, armor: 2, follow: 35, uwMove: 0.06, drops: (e) => [[IT.ROTTEN_FLESH, Math.random() * 3 | 0], [e.byPlayer && Math.random() < 0.11 ? IT.COPPER_INGOT : 0, 1]], hostile: true, burns: true, sinks: true, drowned: true, undead: true },
   skeleton: { w: 0.6, h: 1.99, eye: 1.74, hp: 20, attr: 0.25, dmg: 3, drops: () => [[IT.BONE, Math.random() * 3 | 0], [IT.ARROW, Math.random() * 3 | 0]], hostile: true, burns: true, ranged: true, sinks: true, undead: true },
   creeper: { w: 0.6, h: 1.7, hp: 20, attr: 0.25, wander: 0.8, drops: () => [[IT.GUNPOWDER, Math.random() * 3 | 0]], hostile: true, creeper: true },
   spider: { w: 1.4, h: 0.9, eye: 0.65, hp: 16, attr: 0.3, wander: 0.8, dmg: 2, climber: true, neutralLight: 12, spiderAI: true, drops: (e) => [[IT.STRING, Math.random() * 3 | 0], [IT.SPIDER_EYE, e.byPlayer && Math.random() < 1 / 3 ? 1 : 0]], hostile: true },
@@ -853,9 +855,9 @@ class Entities {
       // stuck against something: take a short detour sideways
       if (wl > 0.5 && !d.slime && !e.doorPos) {
         const moved = Math.hypot(e.pos[0] - ox, e.pos[2] - oz);
-        // the pace it should make: walking, or in water a fraction of it (acceleration 0.02 x the
-        // input a tick, drag 0.8: settles at 0.1 x the input a tick, 2 x the input blocks/s)
-        const pace = inW ? Math.min(1, Math.sqrt(wl / MOB_SPEED_K)) * 0.98 * 2 : wl;
+        // the pace it should make: walking, or in water a fraction of it (acceleration 0.02, a
+        // drowned's 0.06, x the input a tick, drag 0.8: settles at 5 x that a tick, 100 x it a second)
+        const pace = inW ? Math.min(1, Math.sqrt(wl / MOB_SPEED_K)) * 0.98 * (d.uwMove || 0.02) * 100 : wl;
         if (moved < pace * dt * 0.3) e.stuckT += dt; else e.stuckT = Math.max(0, e.stuckT - dt * 2);
         if (e.stuckT > 0.5 && e.detourT <= 0) {
           e.stuckT = 0; e.detourT = 0.7; e.path = null;
@@ -898,7 +900,13 @@ class Entities {
       return;
     }
     e.swim = null;
-    if (d.drowned && this.drownedGoals(e, d, dt, hunting, speed, inW, dx, dz)) return;
+    if (d.drowned) {
+      // a path made for the swim to a player ashore is no ground path, nor the other way round
+      const sp = e.swimPath; e.swimPath = false;
+      const took = this.drownedGoals(e, d, dt, hunting, speed, inW, dx, dz, sp);
+      if (sp && !e.swimPath) e.path = null;
+      if (took) return;
+    }
     if (e.fleeT > 0) {
       // PanicGoal: while hurt within the last 5 s, run to random spots up to 5 blocks away, a new one
       // each time the last is reached; spots farther from whoever hit it (getPosAway), so the
@@ -1651,8 +1659,8 @@ class Entities {
     const wasGround = e.onGround, climb = d.climber && e.hitWall && !inW;
     if (inW) {
       // (jumpOutOfFluid: against a wall, with room 0.6 above where it was before the move, 0.3 up)
-      const y0 = e.pos[1];
-      v[0] += fx * input * 0.02; v[2] += fz * input * 0.02;
+      const y0 = e.pos[1], uw = d.uwMove || 0.02;
+      v[0] += fx * input * uw; v[2] += fz * input * uw;
       this.entStep(e, v, wasGround);
       if (d.climber && e.hitWall) v[1] = 0.2;          // a spider climbs a wall under water too
       v[0] *= 0.8; v[1] *= 0.8; v[2] *= 0.8; v[1] -= 0.005;
@@ -2280,7 +2288,7 @@ class Entities {
   // in the water it swims at them (wantsToSwim; the melee hit as a zombie's). At night in the water
   // with no target it swims up while more than 2 under the sea level (DrownedSwimUpGoal) and near
   // the surface makes for land within 8 blocks (DrownedGoToBeachGoal). True when it took the move.
-  drownedGoals(e, d, dt, hunting, speed, inW, dx, dz) {
+  drownedGoals(e, d, dt, hunting, speed, inW, dx, dz, wasSwim) {
     const g = this.game, p = g.player, day = g.skyDarken() < 4;
     e.spear = false; if (!hunting) { e.throwTk = -1; e.seeTk = 0; e.swimUpOn = false; }   // (RangedAttackGoal.stop)
     e.searchLand = false; e.waterNav = false;
@@ -2303,7 +2311,35 @@ class Entities {
         if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
         return true;
       }
-      // the player out of the water (ashore, in a boat): DrownedAttackGoal goes for them by the
+      // a player ashore at night: as Bedrock's drowned (the edition played here) it swims to them.
+      // With a target its navigation swims (hunter_mode, navigation.generic can_swim: "paths
+      // anywhere through water and plays the swimming animation along that path"); Java's swims
+      // only at a target in the water. Its path goes through any water cell (up a block a step to
+      // the top layer, over it to the bank): swum with the eyes kept under the surface, up to the
+      // node itself before the bank, then out on foot where the next node is dry or its eyes are
+      // out (the climb as any mob's: up 0.04 a tick, the hop at the bank). Its attack wants a whole
+      // path (melee_box_attack require_complete_path): with none, for a second, as Java's below
+      if (e.noSwimT > 0) e.noSwimT -= dt;
+      if (inW && !(g.boats && g.boats.riding) && !(e.noSwimT > 0)) {
+        const w = g.world;
+        if (!wasSwim) e.path = null;
+        e.waterNav = true; e.swimPath = true;
+        const c = this.chasePoint(e, d, dt);
+        this.goTo(e, c[0], c[1], speed, dt);
+        const P = e.path, wp = P && e.pathI < P.length ? P[e.pathI] : null;
+        if (P && !P.full) { e.noSwimT = 1; e.swimPath = false; e.waterNav = false; this.stop(e); return false; }
+        if (wp && this.eyeInWater(e) && isWaterId(w.getBlock(Math.floor(wp[0]), wp[2], Math.floor(wp[1])))) {
+          const bx = Math.floor(wp[0]), bz = Math.floor(wp[1]), nx = P[e.pathI + 1];
+          let ty = wp[2];
+          if (nx && isWaterId(w.getBlock(Math.floor(nx[0]), nx[2], Math.floor(nx[1]))) && !isWaterId(w.getBlock(bx, ty + 1, bz)))
+            ty = Math.min(ty, ty + waterHeight(w, bx, ty, bz) - this.eyeH(e) - 0.1);
+          e.swim = [wp[0], ty, wp[1]];
+          this.stop(e);
+        }
+        if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
+        return true;
+      }
+      // the player in a boat (here as Java's drowned): DrownedAttackGoal goes for them by the
       // ground navigation, on the bottom. Its path walked short of them, at night DrownedSwimUpGoal
       // (priority 6) takes it up while it is more than 2 under the sea level: the attack, tried
       // again every 20 ticks, stops at once (its path was made for the water navigation, which goes

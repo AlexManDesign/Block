@@ -868,11 +868,11 @@ class Mesher {
       setL(p + SY); shadeAll(1);
       this.quad(buf, tpx, tpy, tpz, tu, tv, layer, sh, sk, bl, 0, false);
       if (isW) {
-        // underside of the surface, seen from below water
+        // underside of the surface, seen from below water: the same quad turned round, in the top's
+        // colour and light (FluidRenderer.addFace with its back face)
         let t;
         t = tpx[1]; tpx[1] = tpx[3]; tpx[3] = t; t = tpy[1]; tpy[1] = tpy[3]; tpy[3] = t; t = tpz[1]; tpz[1] = tpz[3]; tpz[3] = t;
         t = tu[1]; tu[1] = tu[3]; tu[3] = t; t = tv[1]; tv[1] = tv[3]; tv[3] = t;
-        shadeAll(0.8);
         this.quad(buf, tpx, tpy, tpz, tu, tv, layer, sh, sk, bl, 0, false);
       }
       this.uvRot = 0;
