@@ -80,6 +80,8 @@ namespace Maincraft
         /// <summary>The vessel under way (one at a time), or null.</summary>
         public Ship ship = null;
         public Mesher mesher = null;        // private main-thread mesher for vessel meshes (lazy)
+        /// <summary>Set to null by the constructor and never used (Game.Say owns the message element).</summary>
+        public UnityEngine.UIElements.VisualElement msgEl = null;
 
         // ships.js constructor (8008-8013)
         public Ships(Game game) { throw new NotImplementedException(); } // TODO(player)

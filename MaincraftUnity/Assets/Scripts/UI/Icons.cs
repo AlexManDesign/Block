@@ -20,7 +20,7 @@ namespace Maincraft
         public static readonly Dictionary<int, Texture2D> cache = new Dictionary<int, Texture2D>();
         /// <summary>The 64x64 work canvas (cv / ctx), RGBA, top row first.</summary>
         public static Color32[] cv;
-        /// <summary>A 16x16 tile (layerCanvas's result, reused), RGBA, top row first.</summary>
+        /// <summary>The 16x16 tile canvas (tile / tctx; layerCanvas's result, reused), RGBA, top row first.</summary>
         public static Color32[] tile;
         /// <summary>assets.atlasPixels: the CPU atlas (Renderer.atlasPixels), RGBA, top row first.</summary>
         public static byte[] atlasPixels;
