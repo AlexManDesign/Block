@@ -12,14 +12,6 @@ using static Maincraft.Blocks;
 
 namespace Maincraft
 {
-    /// <summary>Settings of the original (game.js Settings), defaults of the desktop version.</summary>
-    public static class Settings
-    {
-        public static int renderDist = 8, leaves = 3;
-        public static double fov = 70, sens = 1, bright = 0.5;
-        public static bool clouds = true, sway = true, bobView = true;
-    }
-
     public sealed class GameMain : MonoBehaviour
     {
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
