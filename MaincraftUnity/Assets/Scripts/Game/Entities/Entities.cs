@@ -56,6 +56,8 @@ namespace Maincraft
 
         // wake's entries to revive (reused; the JS deletes from the Map while iterating it)
         readonly List<KeyValuePair<long, List<MobRecord>>> wakeList = new List<KeyValuePair<long, List<MobRecord>>>();
+        // update's newly lit columns to populate (reused)
+        readonly List<Column> newCols = new List<Column>();
 
         // x || d for a number: d when x is 0 or NaN
         static double Or(double x, double d) => x != 0 && !double.IsNaN(x) ? x : d;
@@ -93,7 +95,7 @@ namespace Maincraft
 
         // ------------------------------------------------------------------ keeping animals
         // entities.js keeps (9335): whether the mob is saved / stashed
-        public bool Keeps(Mob e) { var d = MOB_DEFS[e.type]; return e.deathT <= 0 && ((!d.hostile && !d.aquatic) || e.persist); }
+        public bool Keeps(Mob e) { var d = e.Def; return e.deathT <= 0 && ((!d.hostile && !d.aquatic) || e.persist); }
 
         // entities.js record (9336-9340): the save record (toFixed rounding, undefined fields left out)
         public MobRecord Record(Mob e)
@@ -277,7 +279,9 @@ namespace Maincraft
             }
             var g = game;
             bool ld = type == "zombie" || type == "drowned" || type == "spider";   // (g.localDifficulty always exists: ld is an object)
-            DifficultyInstance L = ld ? g.LocalDifficulty(Fl(x), Fl(z)) : default;
+            // (localDifficulty takes Math.floor(x) and keys its column by x >> 4: ToInt32, also for a revived
+            // record's missing coordinate)
+            DifficultyInstance L = ld ? g.LocalDifficulty(ToInt32(Math.Floor(x)), ToInt32(Math.Floor(z))) : default;
             if ((type == "zombie" || type == "drowned") && ld)
             {
                 // Zombie.finalizeSpawn / handleAttributes, by the local difficulty's special part f: door
@@ -333,11 +337,16 @@ namespace Maincraft
                     for (int a = -8; a <= 8; a++) for (int b = -8; b <= 8; b++) { long k = World.ColKey(pcx + a, pcz + b); ih.Set(k, Or(ih.Get(k), 0) + 20); }
                 }
                 // newly generated columns get their animals, once ever (lit, so the light rule can be read)
-                // (World.cols is a Dictionary: insertion order only while no column was unloaded, see the port notes)
-                foreach (var c in w.cols.Values) if (c.state == 2 && !populated.Contains(c.key)) { populated.Add(c.key); populatedList.Add(c.key); Populate(c); }
+                // (the JS walks w.cols in insertion order; World.cols is a Dictionary, which keeps that order only
+                // until a column is unloaded: see the World API request in the port notes. The columns are gathered
+                // first so that populate cannot disturb the walk; it touches neither w.cols nor populated)
+                newCols.Clear();
+                foreach (var c in w.cols.Values) if (c.state == 2 && !populated.Contains(c.key)) newCols.Add(c);
+                foreach (var c in newCols) { populated.Add(c.key); populatedList.Add(c.key); Populate(c); }
+                newCols.Clear();
                 if ((creatureT -= 1) <= 0) { creatureT = 20; SpawnAnimals(); }
                 int hostile = 0, fish = 0, sharks = 0;
-                foreach (var m in mobs) { var md = MOB_DEFS[m.type]; if (md.aquatic) { fish++; if (m.type == "shark") sharks++; } else if (md.hostile) hostile++; }
+                foreach (var m in mobs) { var md = m.Def; if (md.aquatic) { fish++; if (m.type == "shark") sharks++; } else if (md.hostile) hostile++; }
                 // hostile mobs spawn in creative too (as in Minecraft); they just never target a creative player
                 if (hostile < 22 && g.difficulty != Difficulty.Peaceful) TrySpawnMonsters();   // one monster cap day and night, as in Minecraft
                 fishT = Or(fishT, 0) - 1;
@@ -496,7 +505,7 @@ namespace Maincraft
             bool huntWet = hunt && (!sunUp || (p.inWater && !(g.boats != null && g.boats.riding != null)));
             for (int i = mobs.Count - 1; i >= 0; i--)
             {
-                var e = mobs[i]; var d = MOB_DEFS[e.type];
+                var e = mobs[i]; var d = e.Def;
                 e.age += dt;
                 double dx = p.pos[0] - e.pos[0], dz = p.pos[2] - e.pos[2], dist = Hyp(dx, dz);
                 double h = Hyp(dx, p.pos[1] + 0.9 - (e.pos[1] + e.h * 0.5), dz);
@@ -624,7 +633,7 @@ namespace Maincraft
                 for (int j = 0; j < mobs.Count; j++)
                 {
                     var o = mobs[j];
-                    if (o == e || o.deathT > 0 || MOB_DEFS[o.type].aquatic) continue;
+                    if (o == e || o.deathT > 0 || o.Def.aquatic) continue;
                     double sx = e.pos[0] - o.pos[0], sz = e.pos[2] - o.pos[2], r = (e.w + o.w) * 0.5;
                     if (Math.Abs(sx) < r && Math.Abs(sz) < r && Math.Abs(e.pos[1] - o.pos[1]) < 1.5)
                     {
