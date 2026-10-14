@@ -2,8 +2,6 @@
 // anywhere, defaults as in spawnMob 9441 or as the JS reads an absent field), item drops, arrows and
 // tridents, falling blocks, the mob save record, mob definitions and models, spawner state, door cracks,
 // the A* scratch state and path, and the pose buildModel draws.
-//
-// API skeleton: bodies marked TODO(ent-a) are filled in by that implementer.
 using System;
 using System.Collections.Generic;
 
@@ -14,6 +12,9 @@ namespace Maincraft
     {
         // ---- spawnMob (9443-9481)
         public string type;                 // key into MOB_DEFS and MODELS (kept as the string: records and render key by it)
+        MobDef def;
+        /// <summary>MOB_DEFS[type], looked up once (a mob's type never changes; the JS indexes MOB_DEFS every time).</summary>
+        public MobDef Def => def ?? (def = EntityData.MOB_DEFS[type]);
         public double[] pos;
         public double[] vel = { 0, 0, 0 };  // blocks per second
         public double[] wish = { 0, 0, 0 }; // desired horizontal velocity (wish[1]: fish / drowned vertical)
