@@ -401,7 +401,7 @@ namespace Maincraft
             var blocks = new List<ShipBlock>();
             foreach (var e in d.b) if (Has(e.key)) blocks.Add(new ShipBlock { x = e.x, y = e.y, z = e.z, id = Id(e.key), m = e.m });
             if (blocks.Count == 0) return;
-            ship = MakeShip(blocks, d.pos, double.IsNaN(d.yaw) ? 0 : d.yaw, d.face);
+            ship = MakeShip(blocks, d.pos, d.yaw == 0 || double.IsNaN(d.yaw) ? 0 : d.yaw, d.face);   // d.yaw || 0, d.face | 0
             ship.store = d.store ?? new ShipStore();
             Board();
         }
