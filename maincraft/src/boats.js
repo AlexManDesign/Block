@@ -40,18 +40,28 @@ class Boats {
     }
     return best;
   }
-  // Boat.hurt: the damage builds up (10 a point of the hit) and wears off 1 a tick; over 40 the
-  // boat breaks and drops itself (in creative the first hit takes it, without a drop). A hit rocks
-  // the boat for 10 ticks, the other way each time.
-  hit(b, dmg) {
+  // VehicleEntity.hurtServer: the damage builds up (10 a point of the hit) and wears off 1 a tick;
+  // over 40 the boat breaks and drops itself (a hit by a creative player takes it at once, without
+  // a drop): a trident's 8 is 80, so one breaks it. A hit rocks the boat for 10 ticks, the other
+  // way each time. byPlayer: the player's own hit. Its rider stays where it sat
+  // (LivingEntity.dismountVehicle from a vehicle gone: as high as the boat was, in the water)
+  hit(b, dmg, byPlayer) {
     const g = this.game;
     if (!this.list.includes(b)) return;
     b.damage += dmg * 10;
     b.hurtT = 10; b.hurtDir = -(b.hurtDir || -1);
-    if (g.mode !== 'survival' || b.damage > 40) {
-      if (this.riding === b) this.leave();
+    const creative = byPlayer && g.mode !== 'survival';
+    if (creative || b.damage > 40) {
+      if (this.riding === b) {
+        const p = g.player;
+        this.riding = null;
+        p.pos[1] = Math.max(p.pos[1], b.pos[1]);
+        p.prev = p.pos.slice(); p.prevOf = p.pos; p.vel = [0, 0, 0]; p.fallDist = 0;
+        p.eyeOffset = EYE; p.eyePrev = EYE;
+        p.interp(1);
+      }
       this.list.splice(this.list.indexOf(b), 1);
-      if (g.mode === 'survival') g.ents.dropItem(IT.BOAT, 1, b.pos[0], b.pos[1] + 0.5, b.pos[2]);
+      if (!creative) g.ents.dropItem(IT.BOAT, 1, b.pos[0], b.pos[1] + 0.5, b.pos[2]);
       Sfx.block(B.PLANKS, 'break');
     } else Sfx.block(B.PLANKS, 'hit');
   }

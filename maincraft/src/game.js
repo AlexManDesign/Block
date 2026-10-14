@@ -929,7 +929,7 @@ class Game {
     if (!bh && R && !hit && !this.target) bh = { b: R, t: 0 };
     if (bh && (!hit || bh.t < hit.t) && (!this.target || bh.t < this.target.t)) {
       const a = attackStats(this.inv[this.sel]), f = this.attackStrength(a.speed);
-      this.boats.hit(bh.b, a.dmg * (0.2 + f * f * 0.8));
+      this.boats.hit(bh.b, a.dmg * (0.2 + f * f * 0.8), true);
       this.atkT = 0; this.swing();
       if (this.mode === 'survival') this.surv.exh += 0.1;
       return true;

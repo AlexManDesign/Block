@@ -666,16 +666,14 @@ class Entities {
         const bt = bh ? bh.t / ml : 2;
         // the entity hit: the nearest on the move (ProjectileUtil.getEntityHitResult), each box
         // grown by the projectile's margin (0 for its first 2 ticks, then 0.05 a tick up to 0.3).
-        // A boat is one too (AbstractBoat.isPickable), all but the one the thrower rides. As in
-        // Bedrock (the edition played here) what flies at a player in a boat lands on the boat,
-        // and the boat takes no harm (no health), so the projectile bounces off it (should_bounce
-        // if_no_damage_dealt); Java's rider can be hit over the hull or under it, and a trident
-        // there breaks the boat
+        // A boat is one too (AbstractBoat.isPickable), all but the one the thrower rides: a player
+        // in a boat is hit where the hull does not cover them (the legs under it, the body over
+        // it), the hull takes the rest, and hurts (a trident breaks it, see Boats.hit)
         let hit = null, ht = bt, boatHit = false;
         if ((a.trident && !a.dealt) || (a.hostile && !a.trident && !a.bounced)) {
           const mg = Math.max(0, Math.min(0.3, (a.age * 20 - 2) / 20));
           const box = (who, isBoat, x0, y0, z0, x1, y1, z1) => { const hb = rayBox(ox, oy, oz, mx, my, mz, x0 - mg, y0 - mg, z0 - mg, x1 + mg, y1 + mg, z1 + mg); if (hb && hb.t <= 1 && hb.t < ht) { hit = who; ht = hb.t; boatHit = isBoat; } };
-          if (a.hostile && !g.surv.dead) box(p, !!(g.boats && g.boats.riding), p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
+          if (a.hostile && !g.surv.dead) box(p, false, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
           if (!a.hostile) for (const m of this.mobs) { if (m.deathT <= 0) { const r = m.w / 2; box(m, false, m.pos[0] - r, m.pos[1], m.pos[2] - r, m.pos[0] + r, m.pos[1] + m.h, m.pos[2] + r); } }
           if (g.boats) for (const b of g.boats.list) {
             if (!a.hostile && b === g.boats.riding) continue;
@@ -686,17 +684,21 @@ class Entities {
         // down) and harms nothing more
         if (hit && a.trident) {
           a.pos = [ox + mx * ht, oy + my * ht, oz + mz * ht];
-          if (hit === p && !boatHit) { if (g.hurt(8, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } }
-          else if (!boatHit) this.damageMob(hit, 8, a.pos);
+          if (boatHit) g.boats.hit(hit, 8, !a.hostile);
+          else if (hit === p) { if (g.hurt(8, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } }
+          else this.damageMob(hit, 8, a.pos);
           a.vel[0] *= -0.01; a.vel[1] *= -0.1; a.vel[2] *= -0.01; a.dealt = true;
           Sfx.trident('hit');
           break;
         }
         if (hit) {
           a.pos = [ox + mx * ht, oy + my * ht, oz + mz * ht];
-          if (hit === p && !boatHit && g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
-          // AbstractArrow.onHitEntity: a hit that does no harm (creative, just hurt, a boat) turns
-          // the arrow back at a tenth of its speed
+          // AbstractArrow.onHitEntity: ceil(speed x damage); a hit that harms (a boat always takes
+          // it) ends the arrow
+          const dmg = Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base);
+          if (boatHit) { g.boats.hit(hit, dmg, false); this.arrows.splice(i, 1); break; }
+          if (g.hurt(dmg, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+          // one that does no harm (creative, just hurt) turns the arrow back at a tenth of its speed
           a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
           break;
         }

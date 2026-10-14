@@ -14619,18 +14619,28 @@ class Boats {
     }
     return best;
   }
-  // Boat.hurt: the damage builds up (10 a point of the hit) and wears off 1 a tick; over 40 the
-  // boat breaks and drops itself (in creative the first hit takes it, without a drop). A hit rocks
-  // the boat for 10 ticks, the other way each time.
-  hit(b, dmg) {
+  // VehicleEntity.hurtServer: the damage builds up (10 a point of the hit) and wears off 1 a tick;
+  // over 40 the boat breaks and drops itself (a hit by a creative player takes it at once, without
+  // a drop): a trident's 8 is 80, so one breaks it. A hit rocks the boat for 10 ticks, the other
+  // way each time. byPlayer: the player's own hit. Its rider stays where it sat
+  // (LivingEntity.dismountVehicle from a vehicle gone: as high as the boat was, in the water)
+  hit(b, dmg, byPlayer) {
     const g = this.game;
     if (!this.list.includes(b)) return;
     b.damage += dmg * 10;
     b.hurtT = 10; b.hurtDir = -(b.hurtDir || -1);
-    if (g.mode !== 'survival' || b.damage > 40) {
-      if (this.riding === b) this.leave();
+    const creative = byPlayer && g.mode !== 'survival';
+    if (creative || b.damage > 40) {
+      if (this.riding === b) {
+        const p = g.player;
+        this.riding = null;
+        p.pos[1] = Math.max(p.pos[1], b.pos[1]);
+        p.prev = p.pos.slice(); p.prevOf = p.pos; p.vel = [0, 0, 0]; p.fallDist = 0;
+        p.eyeOffset = EYE; p.eyePrev = EYE;
+        p.interp(1);
+      }
       this.list.splice(this.list.indexOf(b), 1);
-      if (g.mode === 'survival') g.ents.dropItem(IT.BOAT, 1, b.pos[0], b.pos[1] + 0.5, b.pos[2]);
+      if (!creative) g.ents.dropItem(IT.BOAT, 1, b.pos[0], b.pos[1] + 0.5, b.pos[2]);
       Sfx.block(B.PLANKS, 'break');
     } else Sfx.block(B.PLANKS, 'hit');
   }
@@ -15889,16 +15899,14 @@ class Entities {
         const bt = bh ? bh.t / ml : 2;
         // the entity hit: the nearest on the move (ProjectileUtil.getEntityHitResult), each box
         // grown by the projectile's margin (0 for its first 2 ticks, then 0.05 a tick up to 0.3).
-        // A boat is one too (AbstractBoat.isPickable), all but the one the thrower rides. As in
-        // Bedrock (the edition played here) what flies at a player in a boat lands on the boat,
-        // and the boat takes no harm (no health), so the projectile bounces off it (should_bounce
-        // if_no_damage_dealt); Java's rider can be hit over the hull or under it, and a trident
-        // there breaks the boat
+        // A boat is one too (AbstractBoat.isPickable), all but the one the thrower rides: a player
+        // in a boat is hit where the hull does not cover them (the legs under it, the body over
+        // it), the hull takes the rest, and hurts (a trident breaks it, see Boats.hit)
         let hit = null, ht = bt, boatHit = false;
         if ((a.trident && !a.dealt) || (a.hostile && !a.trident && !a.bounced)) {
           const mg = Math.max(0, Math.min(0.3, (a.age * 20 - 2) / 20));
           const box = (who, isBoat, x0, y0, z0, x1, y1, z1) => { const hb = rayBox(ox, oy, oz, mx, my, mz, x0 - mg, y0 - mg, z0 - mg, x1 + mg, y1 + mg, z1 + mg); if (hb && hb.t <= 1 && hb.t < ht) { hit = who; ht = hb.t; boatHit = isBoat; } };
-          if (a.hostile && !g.surv.dead) box(p, !!(g.boats && g.boats.riding), p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
+          if (a.hostile && !g.surv.dead) box(p, false, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
           if (!a.hostile) for (const m of this.mobs) { if (m.deathT <= 0) { const r = m.w / 2; box(m, false, m.pos[0] - r, m.pos[1], m.pos[2] - r, m.pos[0] + r, m.pos[1] + m.h, m.pos[2] + r); } }
           if (g.boats) for (const b of g.boats.list) {
             if (!a.hostile && b === g.boats.riding) continue;
@@ -15909,17 +15917,21 @@ class Entities {
         // down) and harms nothing more
         if (hit && a.trident) {
           a.pos = [ox + mx * ht, oy + my * ht, oz + mz * ht];
-          if (hit === p && !boatHit) { if (g.hurt(8, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } }
-          else if (!boatHit) this.damageMob(hit, 8, a.pos);
+          if (boatHit) g.boats.hit(hit, 8, !a.hostile);
+          else if (hit === p) { if (g.hurt(8, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } }
+          else this.damageMob(hit, 8, a.pos);
           a.vel[0] *= -0.01; a.vel[1] *= -0.1; a.vel[2] *= -0.01; a.dealt = true;
           Sfx.trident('hit');
           break;
         }
         if (hit) {
           a.pos = [ox + mx * ht, oy + my * ht, oz + mz * ht];
-          if (hit === p && !boatHit && g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
-          // AbstractArrow.onHitEntity: a hit that does no harm (creative, just hurt, a boat) turns
-          // the arrow back at a tenth of its speed
+          // AbstractArrow.onHitEntity: ceil(speed x damage); a hit that harms (a boat always takes
+          // it) ends the arrow
+          const dmg = Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base);
+          if (boatHit) { g.boats.hit(hit, dmg, false); this.arrows.splice(i, 1); break; }
+          if (g.hurt(dmg, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+          // one that does no harm (creative, just hurt) turns the arrow back at a tenth of its speed
           a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
           break;
         }
@@ -19175,7 +19187,7 @@ function leafLod(d2, cur) {
   if (cur === 1 && t === 3 && d2 <= 49) return 1;
   return t;
 }
-const BUILD_ID = 'd3b1681';   // filled in by build.py
+const BUILD_ID = '8369648';   // filled in by build.py
 const SPAWN_RADIUS = 5;       // respawn spread round the world spawn (Bedrock's spawnradius)
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
@@ -20037,7 +20049,7 @@ class Game {
     if (!bh && R && !hit && !this.target) bh = { b: R, t: 0 };
     if (bh && (!hit || bh.t < hit.t) && (!this.target || bh.t < this.target.t)) {
       const a = attackStats(this.inv[this.sel]), f = this.attackStrength(a.speed);
-      this.boats.hit(bh.b, a.dmg * (0.2 + f * f * 0.8));
+      this.boats.hit(bh.b, a.dmg * (0.2 + f * f * 0.8), true);
       this.atkT = 0; this.swing();
       if (this.mode === 'survival') this.surv.exh += 0.1;
       return true;
