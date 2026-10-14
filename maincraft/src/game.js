@@ -197,6 +197,9 @@ class Game {
     rs.onTnt = (x, y, z) => { Sfx.fuse(); setTimeout(() => { if (this.world === w) this.explode(x + 0.5, y + 0.0625, z + 0.5, 4, { x, y, z }); }, 4000); };
     rs.sound = (kind, x, y, z, on) => { if (kind === 'door') Sfx.door(on); else if (kind === 'piston') Sfx.door(on); else Sfx.click(); };
     this.world = w;
+    // the block ticks still to come when it was saved (a world saved before they were: its fluids
+    // get one as they load)
+    if (meta.ticks) w.loadTicks(meta.ticks); else if (meta.player) w.legacyTicks = true;
     this.pendingSave = new Map();
     this.particles.length = 0;
     this.ents = new Entities(this);
@@ -285,6 +288,7 @@ class Game {
       difficulty: this.difficulty,
       inhab: this.inhabited ? Float64Array.from([].concat(...this.inhabited)) : null,
       popd: this.ents ? this.ents.savePopulated() : null,
+      ticks: w.saveTicks(),
     });
     await DB.putWorld(this.meta);
     if (await DB.saveCols(this.meta.id, entries)) {

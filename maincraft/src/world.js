@@ -93,8 +93,11 @@ class World {
     // light queues (x,y,z,v)
     this.lq = new Int32Array(1 << 20); this.lqh = 0; this.lqt = 0;
     this.rq = new Int32Array(1 << 20); this.rqh = 0; this.rqt = 0;
-    // scheduled block updates: Map key -> due tick
-    this.sched = new Map(); this.schedB = new Map();
+    // scheduled block updates: Map key -> due tick; those of columns not loaded when due wait with
+    // the column (colKey -> [x, y, z, delay, ...]) and run once it is back, as Minecraft keeps a
+    // chunk's ticks with it (LevelChunkTicks, saved with the chunk). legacyTicks: a world saved
+    // before its ticks were: its fluids get a tick as their columns load
+    this.sched = new Map(); this.schedB = new Map(); this.heldTicks = new Map(); this.legacyTicks = false;
     this.springCols = new Set();
     this.spawnerCols = new Set();   // columns holding generated monster spawners (ticked near the player)   // columns whose generated fluid springs have not started yet
     this.tick = 0;
@@ -233,6 +236,12 @@ class World {
     this.skyInit(c);
     c.state = 1;
     this.stats.gen++;
+    const held = this.heldTicks.get(c.key);
+    if (held) { this.heldTicks.delete(c.key); for (let i = 0; i < held.length; i += 4) this.schedule(held[i], held[i + 1], held[i + 2], held[i + 3]); }
+    if (this.legacyTicks && c.edits) for (const [li, v] of c.edits) {
+      const id = v & 0xFFFF;
+      if (id === B.WATER || id === B.LAVA) this.schedule(c.cx * 16 + (li & 15), WORLD_MIN_Y + (li >> 8), c.cz * 16 + ((li >> 4) & 15), id === B.LAVA ? 30 : 5);
+    }
     // this column and its neighbours may now be lightable
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
       const n = this.col(c.cx + dx, c.cz + dz);
@@ -524,7 +533,7 @@ class World {
     this.markDirtyAt(x, y, z);
     if (LCOST[oldId] !== LCOST[id] || VDIM[oldId] !== VDIM[id] || EMIT[oldId] !== EMIT[id]) this.relightAt(x, y, z, oldId, id);
     if (!(opts && opts.noUpdate)) {
-      this.scheduleAround(x, y, z);
+      this.scheduleAround(x, y, z, opts && opts.selfDelay);
       this.neighbourChanged(x, y, z);
     }
     if (this.onBlockChanged) this.onBlockChanged(x, y, z, oldId, id);
@@ -544,11 +553,29 @@ class World {
     if (!bk) this.schedB.set(due, bk = []);
     bk.push(k);
   }
+  holdTick(x, y, z, delay) {
+    const k = colKey(x >> 4, z >> 4);
+    let L = this.heldTicks.get(k);
+    if (!L) this.heldTicks.set(k, L = []);
+    L.push(x, y, z, delay);
+  }
+  // the ticks still to come, for the save: [x, y, z, ticks from now, ...]; and back from it (each
+  // waits for its column)
+  saveTicks() {
+    const out = [];
+    for (const [k, due] of this.sched) {
+      const y = (k % 512) + WORLD_MIN_Y, xz = Math.floor(k / 512);
+      out.push(Math.floor(xz / 2097152) - 1048576, y, (xz % 2097152) - 1048576, Math.max(1, due - this.tick));
+    }
+    for (const L of this.heldTicks.values()) for (const v of L) out.push(v);
+    return out;
+  }
+  loadTicks(a) { for (let i = 0; i + 3 < a.length; i += 4) this.holdTick(a[i], a[i + 1], a[i + 2], a[i + 3]); }
   // a block changed: it and its six neighbours get a tick, after the delay of what is there
-  // (water 5, lava 30, falling blocks 2, anything else 1)
-  scheduleAround(x, y, z) {
+  // (water 5, lava 30, falling blocks 2, anything else 1); selfDelay: the changed block's own
+  scheduleAround(x, y, z, selfDelay) {
     const d = (xx, yy, zz) => { const id = this.getBlock(xx, yy, zz); return isWaterId(id) ? 5 : id === B.LAVA ? 30 : (FLAGS[id] & BF_FALL) ? 2 : 1; };
-    this.schedule(x, y, z, d(x, y, z));
+    this.schedule(x, y, z, selfDelay || d(x, y, z));
     for (const [dx, dy, dz] of FACE_DIR) this.schedule(x + dx, y + dy, z + dz, d(x + dx, y + dy, z + dz));
   }
 
@@ -669,7 +696,7 @@ class World {
         if (this.sched.get(k) !== t) continue;      // moved to an earlier tick, or done
         this.sched.delete(k);
         const y = (k % 512) + WORLD_MIN_Y, xz = Math.floor(k / 512), z = (xz % 2097152) - 1048576, x = Math.floor(xz / 2097152) - 1048576;
-        this.updateBlock(x, y, z);
+        if (this.isLoaded(x, z)) this.updateBlock(x, y, z); else this.holdTick(x, y, z, 1);
         n++;
       }
       if (!bk.length) this.schedB.delete(t);
@@ -717,7 +744,12 @@ class World {
     if (m !== 0) {
       const nw = this.newLiquid(x, y, z, fid);
       if (nw < 0) { this.setBlock(x, y, z, 0, 0); return; }
-      if (nw !== m) { this.setBlock(x, y, z, fid, nw); m = nw; }
+      if (nw !== m) {
+        // LavaFluid.getSpreadDelay: lava rising in its cell (neither state falling) ticks again
+        // after 4 x 30 ticks, 3 times in 4
+        const rise = !isW && !(m & 8) && !(nw & 8) && (nw & 7) < (m & 7) && !this.sameFluid(this.getBlock(x, y + 1, z), fid) && Math.random() < 0.75;
+        this.setBlock(x, y, z, fid, nw, rise ? { selfDelay: 120 } : undefined); m = nw;
+      }
     }
     this.spread(x, y, z, fid, m);
   }

@@ -664,34 +664,41 @@ class Entities {
         // or a door stops it), then the entity on the clipped path
         const ml = Math.hypot(mx, my, mz), bh = ml > 0 ? raycast(w, ox, oy, oz, mx / ml, my / ml, mz / ml, ml, { collider: true }) : null;
         const bt = bh ? bh.t / ml : 2;
-        // ThrownTrident.onHitEntity: 8 damage, then it falls back (x -0.01 across, x -0.1 up and
-        // down) and harms nothing more
-        if (a.trident && !a.dealt) {
-          let hit = null, ht = bt;
-          if (a.hostile && !g.surv.dead) { const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3); if (hb && hb.t <= 1 && hb.t < ht) { hit = p; ht = hb.t; } }
-          if (!a.hostile) for (const m of this.mobs) {
-            if (m.deathT > 0) continue;
-            const r = m.w / 2, hb = rayBox(ox, oy, oz, mx, my, mz, m.pos[0] - r, m.pos[1], m.pos[2] - r, m.pos[0] + r, m.pos[1] + m.h, m.pos[2] + r);
-            if (hb && hb.t <= 1 && hb.t < ht) { hit = m; ht = hb.t; }
-          }
-          if (hit) {
-            a.pos = [ox + mx * ht, oy + my * ht, oz + mz * ht];
-            if (hit === p) { if (g.hurt(8, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } }
-            else this.damageMob(hit, 8, a.pos);
-            a.vel[0] *= -0.01; a.vel[1] *= -0.1; a.vel[2] *= -0.01; a.dealt = true;
-            Sfx.trident('hit');
-            break;
+        // the entity hit: the nearest on the move (ProjectileUtil.getEntityHitResult), each box
+        // grown by the projectile's margin (0 for its first 2 ticks, then 0.05 a tick up to 0.3).
+        // A boat is one too (AbstractBoat.isPickable), all but the one the thrower rides. As in
+        // Bedrock (the edition played here) what flies at a player in a boat lands on the boat,
+        // and the boat takes no harm (no health), so the projectile bounces off it (should_bounce
+        // if_no_damage_dealt); Java's rider can be hit over the hull or under it, and a trident
+        // there breaks the boat
+        let hit = null, ht = bt, boatHit = false;
+        if ((a.trident && !a.dealt) || (a.hostile && !a.trident && !a.bounced)) {
+          const mg = Math.max(0, Math.min(0.3, (a.age * 20 - 2) / 20));
+          const box = (who, isBoat, x0, y0, z0, x1, y1, z1) => { const hb = rayBox(ox, oy, oz, mx, my, mz, x0 - mg, y0 - mg, z0 - mg, x1 + mg, y1 + mg, z1 + mg); if (hb && hb.t <= 1 && hb.t < ht) { hit = who; ht = hb.t; boatHit = isBoat; } };
+          if (a.hostile && !g.surv.dead) box(p, !!(g.boats && g.boats.riding), p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
+          if (!a.hostile) for (const m of this.mobs) { if (m.deathT <= 0) { const r = m.w / 2; box(m, false, m.pos[0] - r, m.pos[1], m.pos[2] - r, m.pos[0] + r, m.pos[1] + m.h, m.pos[2] + r); } }
+          if (g.boats) for (const b of g.boats.list) {
+            if (!a.hostile && b === g.boats.riding) continue;
+            const r = BOAT_W / 2; box(b, true, b.pos[0] - r, b.pos[1], b.pos[2] - r, b.pos[0] + r, b.pos[1] + BOAT_H, b.pos[2] + r);
           }
         }
-        if (a.hostile && !a.trident && !g.surv.dead) {
-          const hb = rayBox(ox, oy, oz, mx, my, mz, p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3, p.pos[0] + 0.3, p.pos[1] + p.h, p.pos[2] + 0.3);
-          if (hb && hb.t <= 1 && hb.t < bt && !a.bounced) {
-            if (g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
-            // AbstractArrow.onHitEntity: a hit that does no harm (creative, or just hurt) turns the
-            // arrow back at a tenth of its speed
-            a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
-            break;
-          }
+        // ThrownTrident.onHitEntity: 8 damage, then it falls back (x -0.01 across, x -0.1 up and
+        // down) and harms nothing more
+        if (hit && a.trident) {
+          a.pos = [ox + mx * ht, oy + my * ht, oz + mz * ht];
+          if (hit === p && !boatHit) { if (g.hurt(8, true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; } }
+          else if (!boatHit) this.damageMob(hit, 8, a.pos);
+          a.vel[0] *= -0.01; a.vel[1] *= -0.1; a.vel[2] *= -0.01; a.dealt = true;
+          Sfx.trident('hit');
+          break;
+        }
+        if (hit) {
+          a.pos = [ox + mx * ht, oy + my * ht, oz + mz * ht];
+          if (hit === p && !boatHit && g.hurt(Math.ceil(Math.hypot(a.vel[0], a.vel[1], a.vel[2]) / 20 * a.base), true, a.pos)) { p.vel[0] += a.vel[0] * 0.15; p.vel[2] += a.vel[2] * 0.15; this.arrows.splice(i, 1); break; }
+          // AbstractArrow.onHitEntity: a hit that does no harm (creative, just hurt, a boat) turns
+          // the arrow back at a tenth of its speed
+          a.vel[0] *= -0.1; a.vel[1] *= -0.1; a.vel[2] *= -0.1; a.bounced = true;
+          break;
         }
         if (bh) {
           const l = Math.hypot(a.vel[0], a.vel[1], a.vel[2]) || 1;
@@ -899,7 +906,7 @@ class Entities {
       e.headYaw = e.bodyYaw;
       return;
     }
-    e.swim = null;
+    e.swim = null; e.swimHold = false; e.swimNode = false;
     if (d.drowned) {
       // a path made for the swim to a player ashore is no ground path, nor the other way round
       const sp = e.swimPath; e.swimPath = false;
@@ -2301,7 +2308,7 @@ class Entities {
       return true;
     }
     e.waterTgt = null;
-    if (hunting && e.held && e.held.id === IT.TRIDENT) { e.beach = null; return this.tridentGoal(e, dt, speed, inW, dx, dz); }
+    if (hunting && e.held && e.held.id === IT.TRIDENT) { e.beach = null; return this.tridentGoal(e, d, dt, speed, inW, dx, dz, wasSwim); }
     if (hunting) {
       e.beach = null;
       if (inW && p.inWater) {
@@ -2319,23 +2326,7 @@ class Entities {
       // node itself before the bank, then out on foot where the next node is dry or its eyes are
       // out (the climb as any mob's: up 0.04 a tick, the hop at the bank). Its attack wants a whole
       // path (melee_box_attack require_complete_path): with none, for a second, as Java's below
-      if (e.noSwimT > 0) e.noSwimT -= dt;
-      if (inW && !(g.boats && g.boats.riding) && !(e.noSwimT > 0)) {
-        const w = g.world;
-        if (!wasSwim) e.path = null;
-        e.waterNav = true; e.swimPath = true;
-        const c = this.chasePoint(e, d, dt);
-        this.goTo(e, c[0], c[1], speed, dt);
-        const P = e.path, wp = P && e.pathI < P.length ? P[e.pathI] : null;
-        if (P && !P.full) { e.noSwimT = 1; e.swimPath = false; e.waterNav = false; this.stop(e); return false; }
-        if (wp && this.eyeInWater(e) && isWaterId(w.getBlock(Math.floor(wp[0]), wp[2], Math.floor(wp[1])))) {
-          const bx = Math.floor(wp[0]), bz = Math.floor(wp[1]), nx = P[e.pathI + 1];
-          let ty = wp[2];
-          if (nx && isWaterId(w.getBlock(Math.floor(nx[0]), nx[2], Math.floor(nx[1]))) && !isWaterId(w.getBlock(bx, ty + 1, bz)))
-            ty = Math.min(ty, ty + waterHeight(w, bx, ty, bz) - this.eyeH(e) - 0.1);
-          e.swim = [wp[0], ty, wp[1]];
-          this.stop(e);
-        }
+      if (inW && !(g.boats && g.boats.riding) && this.swimAlong(e, d, dt, speed, wasSwim)) {
         if (e.atkT > 1 && this.inReach(e) && this.canSee(e)) { e.atkT = 0; this.hitPlayer(e, d.dmg, dx, dz); }
         return true;
       }
@@ -2373,6 +2364,35 @@ class Entities {
     if (e.pos[1] < SEA - 1) { this.swimUp(e); return true; }
     return false;
   }
+  // the swim to a player ashore (Bedrock's hunter_mode, see drownedGoals): along a path through the
+  // water, the next node 2 to 3 blocks ahead (PathNavigation in water: on to the one after once
+  // within 2 blocks of it, the way to that one clear); false without a whole path, and then for a
+  // second (the attack's require_complete_path: Java's way meanwhile)
+  swimAlong(e, d, dt, speed, wasSwim) {
+    const w = this.game.world, p = this.game.player;
+    if (e.noSwimT > 0) { e.noSwimT -= dt; return false; }
+    if (!wasSwim) e.path = null;
+    e.waterNav = true; e.swimPath = true;
+    const c = this.chasePoint(e, d, dt);
+    this.goTo(e, c[0], c[1], speed, dt);
+    const P = e.path;
+    if (P && !P.full) { e.noSwimT = 1; e.swimPath = false; e.waterNav = false; this.stop(e); return false; }
+    if (!P || !this.eyeInWater(e)) return true;
+    const wet = (n) => isWaterId(w.getBlock(Math.floor(n[0]), n[2], Math.floor(n[1]))), hh = e.h / 2;
+    while (e.pathI + 1 < P.length && wet(P[e.pathI]) && Math.hypot(P[e.pathI][0] - e.pos[0], P[e.pathI][2] - e.pos[1], P[e.pathI][1] - e.pos[2]) < 2) {
+      const n = P[e.pathI + 1], dx = n[0] - e.pos[0], dy = n[2] + hh - (e.pos[1] + hh), dz = n[1] - e.pos[2], l = Math.hypot(dx, dy, dz);
+      if (l > 0 && raycast(w, e.pos[0], e.pos[1] + hh, e.pos[2], dx / l, dy / l, dz / l, l, { collider: true })) break;
+      e.pathI++;
+    }
+    const wp = e.pathI < P.length ? P[e.pathI] : null;
+    if (!wp || !wet(wp)) return true;               // on foot up the bank (goTo's walk)
+    const bx = Math.floor(wp[0]), bz = Math.floor(wp[1]), nx = P[e.pathI + 1];
+    let ty = wp[2];
+    if (nx && wet(nx) && !isWaterId(w.getBlock(bx, ty + 1, bz))) ty = Math.min(ty, ty + waterHeight(w, bx, ty, bz) - this.eyeH(e) - 0.1);
+    e.swim = [wp[0], ty, wp[1]]; e.swimNode = true;
+    this.stop(e);
+    return true;
+  }
   // DrownedSwimUpGoal: looking for land (wantsToSwim), it swims up toward the sea level
   swimUp(e) {
     e.searchLand = true; e.waterNav = true;
@@ -2401,23 +2421,29 @@ class Entities {
   }
   // Drowned.travel under water while it wants to swim: moveRelative(0.01 x speed) along its heading,
   // move, x0.9 (no gravity). DrownedMoveControl adds 0.005 x speed x the way to the next node across
-  // (the water path skips ahead up to 6 blocks in a straight line) and 0.1 x speed x the up/down
-  // share of that way, 0.002 up while the target is above or it looks for land; the speed eases
-  // toward the attribute by 1/8 a tick and the heading turns up to 90 degrees a tick
+  // and 0.1 x speed x the up/down share of that way, 0.002 up while the target is above or it looks
+  // for land; the speed eases toward the attribute by 1/8 a tick and the heading turns up to 90
+  // degrees a tick. The next node: PathNavigation takes the one after once the mob is within 2
+  // blocks of it with a clear way on (in water), so the node it heads for is 2 to 3 blocks ahead;
+  // swimming straight at a target, the point 2.5 blocks along the way (a path's own node as it is).
+  // With no way to go (its navigation stopped: e.swimHold) the speed is 0 and it hangs in the water
   swimPhysics(e, d) {
     const T = e.swim, v = [e.vel[0] * 0.05, e.vel[1] * 0.05, e.vel[2] * 0.05];
     const dx = T[0] - e.pos[0], dy = T[1] - e.pos[1], dz = T[2] - e.pos[2], L = Math.hypot(dx, dy, dz) || 1, hl = Math.hypot(dx, dz);
     if (dy > 0 || e.searchLand) v[1] += 0.002;
-    if (hl > 0.05) {
-      let a = Math.atan2(dx, -dz) - e.bodyYaw;
-      while (a > Math.PI) a -= 6.2832; while (a < -Math.PI) a += 6.2832;
-      e.bodyYaw += Math.max(-Math.PI / 2, Math.min(Math.PI / 2, a));
+    if (e.swimHold) e.swimSpd = 0;
+    else {
+      if (hl > 0.05) {
+        let a = Math.atan2(dx, -dz) - e.bodyYaw;
+        while (a > Math.PI) a -= 6.2832; while (a < -Math.PI) a += 6.2832;
+        e.bodyYaw += Math.max(-Math.PI / 2, Math.min(Math.PI / 2, a));
+      }
+      e.swimSpd = (e.swimSpd || 0) + (d.attr - (e.swimSpd || 0)) * 0.125;
+      const s = e.swimSpd, k = e.swimNode || L <= 2.5 ? 1 : 2.5 / L;
+      v[0] += s * dx * k * 0.005 + Math.sin(e.bodyYaw) * 0.01 * s;
+      v[2] += s * dz * k * 0.005 - Math.cos(e.bodyYaw) * 0.01 * s;
+      v[1] += s * dy / L * 0.1;
     }
-    e.swimSpd = (e.swimSpd || 0) + (d.attr - (e.swimSpd || 0)) * 0.125;
-    const s = e.swimSpd, k = hl > 6 ? 6 / hl : 1;
-    v[0] += s * dx * k * 0.005 + Math.sin(e.bodyYaw) * 0.01 * s;
-    v[2] += s * dz * k * 0.005 - Math.cos(e.bodyYaw) * 0.01 * s;
-    v[1] += s * dy / L * 0.1;
     this.entStep(e, v, false);
     e.vel[0] = v[0] * 0.9 * 20; e.vel[1] = v[1] * 0.9 * 20; e.vel[2] = v[2] * 0.9 * 20;
   }
@@ -2465,15 +2491,22 @@ class Entities {
   }
   // DrownedTridentAttackGoal (RangedAttackGoal: speed 1, every 40 ticks, 10 blocks), before the
   // melee goal so a drowned with a trident only throws: once it has seen the player 5 ticks within
-  // 10 blocks it stands, else it closes in; the trident raised the while (aggressive: THROW_SPEAR);
-  // at each 40th tick it throws if it sees the player (else it waits another 40)
-  tridentGoal(e, dt, speed, inW, dx, dz) {
-    const p = this.game.player, h = Math.hypot(dx, p.pos[1] - e.pos[1], dz);
+  // 10 blocks its navigation stops, else it closes in; the trident raised the while (aggressive:
+  // THROW_SPEAR); at each 40th tick it throws if it sees the player (else it waits another 40).
+  // Under water it swims (at a player in the water; one ashore along a path, as Bedrock's ranged
+  // drowned in hunter_mode), and stopped there it hangs in the water swimming (DrownedMoveControl:
+  // no speed; the swim: no gravity, 0.002 up toward a player above). At a player in a boat as the
+  // melee drowned, Java's way: by the bottom, from where its tridents meet the hull
+  tridentGoal(e, d, dt, speed, inW, dx, dz, wasSwim) {
+    const g = this.game, p = g.player, h = Math.hypot(dx, p.pos[1] - e.pos[1], dz);
     e.spear = true;
     e.seeTk = e.sees ? (e.seeTk || 0) + 1 : 0;
-    if (h <= 10 && e.seeTk >= 5) { this.stop(e); e.path = null; }
-    else if (inW && p.inWater) { e.swim = [p.pos[0], p.pos[1], p.pos[2]]; this.stop(e); }
-    else this.goTo(e, p.pos[0], p.pos[2], speed, dt);
+    const halt = h <= 10 && e.seeTk >= 5, swims = inW && this.eyeInWater(e) && !(g.boats && g.boats.riding);
+    if (halt) {
+      this.stop(e); e.path = null;
+      if (swims) { e.waterNav = true; e.swim = [p.pos[0], p.pos[1], p.pos[2]]; e.swimHold = true; }
+    } else if (swims && p.inWater) { e.waterNav = true; e.swim = [p.pos[0], p.pos[1], p.pos[2]]; this.stop(e); }
+    else if (!(swims && this.swimAlong(e, d, dt, speed, wasSwim))) this.goTo(e, p.pos[0], p.pos[2], speed, dt);
     e.headYaw = Math.atan2(dx, -dz);
     e.throwTk = (e.throwTk ?? -1) - 1;
     if (e.throwTk === 0) { if (e.sees) { this.throwTridentAt(e); e.throwTk = 40; } }
