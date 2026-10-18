@@ -542,6 +542,10 @@ class Game {
       this.loadingWorld = false;
       show('loading', false);
       UI.onWorldReady();
+      // a player saved dead (the world kept while on the death screen: the autosave every 30 s,
+      // closing the page) comes back to the death screen to respawn, as Minecraft shows it again
+      // on joining; else it stood there dead, nothing moving
+      if (this.surv.dead) { show('clickToPlay', false); UI.showDeath(); }
     }
     // respawning where the ground is not loaded yet: the loading screen till it is
     if (this.respawning && !this.loadingWorld) {

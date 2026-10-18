@@ -78,7 +78,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   // stonecutter: a low block with the saw blade standing in the middle
   facing('STONECUTTER', add([
     box([0, 0, 0], [16, 9, 16], { u: 'stonecutter_top', d: 'stonecutter_bottom', side: 'stonecutter_side' }),
-    plane(1, 9, 15, 16, 'stonecutter_saw', 0, [1, 0, 15, 7]),
+    plane(1, 9, 15, 16, 'stonecutter_saw', 0, [1, 9, 15, 16]),          // (stonecutter.json: the blade at the bottom of the tile)
   ]));
   // bell: stone posts and a beam (floor), a short hanger (ceiling) or a wall bracket, and the bell
   {
@@ -144,7 +144,8 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   // composter: a box of planks, filled by level (meta 0-8)
   {
     const W = { side: 'composter_side', u: 'composter_top', d: 'composter_bottom' };
-    const shell = [box([0, 0, 0], [16, 2, 16], W, { skip: ['e', 'w', 's', 'n'] }), box([0, 0, 0], [2, 16, 16], W), box([14, 0, 0], [16, 16, 16], W),
+    // (composter.json: the floor's top is #inside = composter_bottom; the top tile only on the rims)
+    const shell = [box([0, 0, 0], [16, 2, 16], { u: 'composter_bottom', d: 'composter_bottom' }, { skip: ['e', 'w', 's', 'n'] }), box([0, 0, 0], [2, 16, 16], W), box([14, 0, 0], [16, 16, 16], W),
       box([2, 0, 0], [14, 16, 2], W), box([2, 0, 14], [14, 16, 16], W)];
     MODEL_VAR.COMPOSTER = [];
     for (let m = 0; m < 9; m++) {
@@ -263,7 +264,9 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     const ext = add([box([0, 0, 0], [16, 12, 16], { u: 'piston_inner', d: 'piston_bottom', side: 'piston_side' })]);
     const head = st => add([
       box([0, 12, 0], [16, 16, 16], { u: st ? 'piston_top_sticky' : 'piston_top', d: 'piston_top', side: 'piston_side' }),
-      box([6, 0, 6], [10, 12, 10], 'piston_side', { uv: { e: [0, 0, 4, 12], w: [0, 0, 4, 12], s: [0, 0, 4, 12], n: [0, 0, 4, 12] }, skip: ['u', 'd'] }),
+      // (piston_head.json: the arm 16 long, 4 of it inside the pushed-out base, whose top stops at
+      // 12; its sides the strip along the top of the side tile, turned to run along the arm)
+      box([6, -4, 6], [10, 12, 10], 'piston_side', { uv: { e: [0, 0, 16, 4], w: [0, 0, 16, 4], s: [0, 0, 16, 4], n: [0, 0, 16, 4] }, rot: { e: 90, w: 90, s: 90, n: 90 }, skip: ['u', 'd'] }),
     ]);
     const B0 = [base(0), base(1)], H = [head(0), head(1)];
     for (const [key, st] of [['PISTON', 0], ['STICKY_PISTON', 1]]) {

@@ -342,9 +342,14 @@ class Boats {
   }
 
   // ---------------------------------------------------------------- saving
-  serialize() { return this.list.map(b => [b.pos[0], b.pos[1], b.pos[2], b.yaw]); }
+  // the boat a living player sits in is marked (a fifth value, 1): it carries them again when the
+  // world is loaded (Minecraft saves the player with its vehicle, RootVehicle); a dead player's is
+  // not (it comes back on foot when it respawns)
+  serialize() { const g = this.game; return this.list.map(b => b === this.riding && !g.surv.dead ? [b.pos[0], b.pos[1], b.pos[2], b.yaw, 1] : [b.pos[0], b.pos[1], b.pos[2], b.yaw]); }
   restore(d) {
     this.list = []; this.riding = null;
-    if (Array.isArray(d)) for (const [x, y, z, yaw] of d) this.place(x, y, z, yaw || 0);
+    let seat = null;
+    if (Array.isArray(d)) for (const [x, y, z, yaw, rider] of d) { const b = this.place(x, y, z, yaw || 0); if (rider === 1 && !seat) seat = b; }
+    if (seat && !this.game.surv.dead) this.board(seat);
   }
 }

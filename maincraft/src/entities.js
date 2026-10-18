@@ -717,7 +717,7 @@ class Entities {
   snapshot(e) {
     if (!e.pp) e.pp = [0, 0, 0];
     e.pp[0] = e.pos[0]; e.pp[1] = e.pos[1]; e.pp[2] = e.pos[2];
-    e.pyaw = e.bodyYaw; e.phead = e.headYaw; e.pwalk = e.walk; e.pitchP = e.swimPitch; e.pswim = e.swimAmt;
+    e.pyaw = e.bodyYaw; e.phead = e.headYaw; e.pwalk = e.walk; e.pwalkAmt = e.walkAmt; e.pitchP = e.swimPitch; e.pswim = e.swimAmt;
   }
 
   tickMobs(dt) {
@@ -816,15 +816,15 @@ class Entities {
         e.burnT += dt;
         if (e.burnT >= 1) { e.burnT -= 1; this.damageMob(e, 1, null); if (e.hp <= 0) continue; }
       } else e.burnT = 0;
-      // Zombie.tick (ConversionTracker): a zombie with its eyes under water for 600 ticks starts
-      // turning into a drowned (shaking); 300 ticks more with them still under and it is one, a new
-      // drowned in its place at full health. Eyes out of the water: the count starts again and a
-      // conversion under way is called off
+      // Zombie.tick: a zombie with its eyes under water for 600 ticks starts turning into a drowned
+      // (shaking); 300 ticks later (301: the count goes below 0) it is one, a new drowned in its place
+      // at full health, wherever it is by then: once begun the conversion goes on out of the water
+      // too. Eyes out of the water before that: the count starts again (from -1, as inWaterTime)
       if (e.type === 'zombie') {
-        if (isWaterId(w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])))) {
-          if (e.convT > 0) { if ((e.convT -= dt) <= 0) { this.drownZombie(e, i); continue; } }
-          else if ((e.underT = (e.underT || 0) + dt) >= 30) e.convT = 15.05;
-        } else { e.underT = 0; e.convT = 0; }
+        if (e.convT > 0) { if ((e.convT -= dt) <= 0) { this.drownZombie(e, i); continue; } }
+        else if (isWaterId(w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])))) {
+          if ((e.underT = (e.underT || 0) + dt) >= 30) e.convT = 15.05;
+        } else e.underT = -dt;
       }
       this.ai(e, d, dt, dx, dz, h, d.drowned ? huntWet : hunt, inW);
       if (e.deathT > 0 || this.mobs[i] !== e) continue;
@@ -854,8 +854,10 @@ class Entities {
       const wl = Math.hypot(e.wish[0], e.wish[2]), ox = e.pos[0], oz = e.pos[2], wasGround = e.onGround;
       const fallStart = e.onGround ? e.pos[1] : e.fallY ?? e.pos[1];
       e.fallY = Math.max(fallStart, e.pos[1]);
-      if (d.drowned) this.swimPose(e, dt);
-      if (e.swim && isWaterId(w.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])))) this.swimPhysics(e, d);
+      if (d.drowned) this.swimPose(e, inW);
+      // Drowned.travel: the swim (no gravity) while it wants to swim and is in the water at all
+      // (isInWater: any of the body, not only the eyes), so it comes up to a player at the surface
+      if (e.swim && inW) this.swimPhysics(e, d);
       else this.walkPhysics(e, d, dt, inW);
       if (e.breakDoors || e.doorPos) this.breakDoor(e);
       if (d.slime && e.onGround && !wasGround) { e.tsq = -0.5; this.stop(e); }
@@ -1153,10 +1155,13 @@ class Entities {
     return null;
   }
   // Mob.isWithinMeleeAttackRange: the mob's box widened by sqrt(2.04) - 0.6 on each side (not in
-  // height) overlaps the player's
+  // height) overlaps the player's hitbox (LivingEntity.getHitbox: riding, it starts at the seat, the
+  // vehicle's riding position: in a boat a third of its height up, so the legs in the hull and
+  // whatever is under the boat are out of reach)
   inReach(e) {
-    const p = this.game.player, r = e.w / 2 + Math.sqrt(2.04) - 0.6 + PLAYER_W / 2;
-    return Math.abs(p.pos[0] - e.pos[0]) < r && Math.abs(p.pos[2] - e.pos[2]) < r && e.pos[1] < p.pos[1] + p.h && e.pos[1] + e.h > p.pos[1];
+    const g = this.game, p = g.player, r = e.w / 2 + Math.sqrt(2.04) - 0.6 + PLAYER_W / 2;
+    const R = g.boats && g.boats.riding, bot = R ? Math.max(p.pos[1], R.pos[1] + BOAT_H / 3) : p.pos[1];
+    return Math.abs(p.pos[0] - e.pos[0]) < r && Math.abs(p.pos[2] - e.pos[2]) < r && e.pos[1] < p.pos[1] + p.h && e.pos[1] + e.h > bot;
   }
   canSee(e) {
     const eye = this.game.player.eye();
@@ -1618,9 +1623,27 @@ class Entities {
   // collided move differs by more than 1e-5, Mth.equal)
   moveAxis(e, ax, d) {
     if (!d) return false;
-    const p = e.pos, a = entSweep(this.game.world, p[0], p[1], p[2], e.w, e.h, ax, d);
+    const p = e.pos, B = this.game.boats;
+    let a = entSweep(this.game.world, p[0], p[1], p[2], e.w, e.h, ax, d);
+    if (B && B.list.length) a = this.boatSweep(B.list, p, e.w / 2, e.h, ax, a);
     p[ax] += a;
     return Math.abs(a - d) > 1e-5;
+  }
+  // boats are solid to mobs as blocks are (Boat.canBeCollidedWith: Entity.collide takes their boxes
+  // with the blocks'): a mob stands on one, walks into its side, and coming up from under the water
+  // meets its bottom. Only a boat ahead on the axis stops the move (one already overlapping, as a
+  // boat put down over a mob, lets it out)
+  boatSweep(list, p, hw, h, ax, a) {
+    const lo = [p[0] - hw, p[1], p[2] - hw], hi = [p[0] + hw, p[1] + h, p[2] + hw], r = BOAT_W / 2, E = 1e-7;
+    for (const b of list) {
+      const bl = [b.pos[0] - r, b.pos[1], b.pos[2] - r], bh = [b.pos[0] + r, b.pos[1] + BOAT_H, b.pos[2] + r];
+      let across = true;
+      for (let k = 0; k < 3; k++) if (k !== ax && !(hi[k] > bl[k] + E && lo[k] < bh[k] - E)) { across = false; break; }
+      if (!across) continue;
+      if (a > 0 && hi[ax] <= bl[ax] + E) a = Math.min(a, bl[ax] - hi[ax]);
+      else if (a < 0 && lo[ax] >= bh[ax] - E) a = Math.max(a, bh[ax] - lo[ax]);
+    }
+    return a;
   }
   // Walking physics, one game tick, as Minecraft's Mob: MoveControl turns the body toward the wanted
   // direction by at most 90 degrees a tick and walks along it with speed = modifier x movement
@@ -2449,14 +2472,22 @@ class Entities {
     this.entStep(e, v, false);
     e.vel[0] = v[0] * 0.9 * 20; e.vel[1] = v[1] * 0.9 * 20; e.vel[2] = v[2] * 0.9 * 20;
   }
-  // swimming pose (LivingEntity.updateSwimAmount: 0.09 a tick toward 1 while swimming): the body
-  // tips forward by 90 degrees plus its pitch toward where it swims
-  swimPose(e) {
-    const on = !!e.swim && isWaterId(this.game.world.getBlock(Math.floor(e.pos[0]), Math.floor(e.pos[1] + this.eyeH(e)), Math.floor(e.pos[2])));
+  // swimming pose (LivingEntity.updateSwimAmount: 0.09 a tick toward 1 while swimming, Drowned.
+  // updateSwimming: in the water and wanting to swim). DrownedRenderer.setupRotations: the body
+  // leans forward 10 degrees plus its pitch (about the middle of its height), so it swims nearly
+  // upright, not lying as a swimming player. The pitch (getXRot) is its look at the player while it
+  // attacks (LookControl: from level each tick, at most 30 degrees, toward the player's eyes),
+  // level otherwise
+  swimPose(e, inW) {
+    const on = !!e.swim && inW;
     e.swimAmt = Math.max(0, Math.min(1, (e.swimAmt || 0) + (on ? 0.09 : -0.09)));
-    let lp = 0;
-    if (e.swim) { const ty = e.swim[1] - e.pos[1]; lp = -Math.atan2(ty, Math.hypot(e.swim[0] - e.pos[0], e.swim[2] - e.pos[2])); }
-    e.swimPitch = -e.swimAmt * (Math.PI / 2 + Math.max(-1, Math.min(1, lp)));
+    let xr = 0;
+    if (e.hunting || e.spear) {
+      const p = this.game.player, eye = p.eye();
+      xr = -Math.atan2(eye[1] - (e.pos[1] + this.eyeH(e)), Math.hypot(eye[0] - e.pos[0], eye[2] - e.pos[2]));
+      xr = Math.max(-Math.PI / 6, Math.min(Math.PI / 6, xr));
+    }
+    e.swimPitch = -e.swimAmt * (Math.PI / 18 + xr);
   }
   // Mob.convertTo (ConversionType.SINGLE): the new mob takes the old one's place, motion, body
   // turn, ground contact, effects, hurt cooldown and persistence; then the conversion sound
@@ -2503,7 +2534,9 @@ class Entities {
     const g = this.game, p = g.player, h = Math.hypot(dx, p.pos[1] - e.pos[1], dz);
     e.spear = true;
     e.seeTk = e.sees ? (e.seeTk || 0) + 1 : 0;
-    const halt = h <= 10 && e.seeTk >= 5, swims = inW && this.eyeInWater(e) && !(g.boats && g.boats.riding);
+    // (it swims while in the water at all at a player in the water, as Drowned.wantsToSwim; at one
+    // ashore with its eyes under)
+    const halt = h <= 10 && e.seeTk >= 5, swims = inW && (p.inWater || this.eyeInWater(e)) && !(g.boats && g.boats.riding);
     if (halt) {
       this.stop(e); e.path = null;
       if (swims) { e.waterNav = true; e.swim = [p.pos[0], p.pos[1], p.pos[2]]; e.swimHold = true; }
@@ -2608,13 +2641,15 @@ class Entities {
       if (e.pp) {
         for (let k = 0; k < 3; k++) P[k] = e.pp[k] + (e.pos[k] - e.pp[k]) * al;
         e.ryaw = lerpA(e.pyaw, e.bodyYaw); e.rhead = lerpA(e.phead, e.headYaw); e.rwalk = e.pwalk + (e.walk - e.pwalk) * al;
+        e.rwalkAmt = e.pwalkAmt !== undefined ? e.pwalkAmt + (e.walkAmt - e.pwalkAmt) * al : e.walkAmt;
         e.rpitch = e.pitchP !== undefined ? e.pitchP + ((e.swimPitch || 0) - e.pitchP) * al : e.swimPitch;
         e.rswim = e.pswim !== undefined ? e.pswim + ((e.swimAmt || 0) - e.pswim) * al : e.swimAmt;
-      } else { P[0] = e.pos[0]; P[1] = e.pos[1]; P[2] = e.pos[2]; e.ryaw = e.bodyYaw; e.rhead = e.headYaw; e.rwalk = e.walk; e.rpitch = e.swimPitch; e.rswim = e.swimAmt; }
+      } else { P[0] = e.pos[0]; P[1] = e.pos[1]; P[2] = e.pos[2]; e.ryaw = e.bodyYaw; e.rhead = e.headYaw; e.rwalk = e.walk; e.rwalkAmt = e.walkAmt; e.rpitch = e.swimPitch; e.rswim = e.swimAmt; }
       // SalmonRenderer.setupRotations: the body sways 4.3 degrees at 0.6 x ticks (out of the water 1.3 x as far, 1.7 x as fast)
       if (e.type === 'salmon') { const dry = e.inWater === false; e.ryaw += (dry ? 1.3 : 1) * 4.3 * Math.PI / 180 * Math.sin((dry ? 1.7 : 1) * 0.6 * performance.now() / 50); }
       // a zombie turning into a drowned shakes (LivingEntityRenderer.isShaking: cos(whole ticks x 3.25) x 0.4 pi degrees)
-      if (e.convT > 0) e.ryaw += Math.cos(Math.floor(e.age * 20) * 3.25) * 0.4 * Math.PI * Math.PI / 180;
+      // (the tick count rounded: the sum of 0.05 s steps falls just short of a whole tick every other time)
+      if (e.convT > 0) e.ryaw += Math.cos(Math.round(e.age * 20) * 3.25) * 0.4 * Math.PI * Math.PI / 180;
       const dx = P[0] - cam[0], dz = P[2] - cam[2], rr = Math.max(2, e.w * 0.5 + 1);
       if (dx * dx + dz * dz > R2) continue;
       if (!r.boxVisible(dx - rr, P[1] - cam[1] - 0.5, dz - rr, dx + rr, P[1] - cam[1] + e.h + 0.5, dz + rr)) continue;
@@ -2701,14 +2736,25 @@ class Entities {
     let hy = (e.rhead !== undefined ? e.rhead : e.headYaw !== undefined ? e.headYaw : by) - by;
     while (hy > Math.PI) hy -= 6.2832; while (hy < -Math.PI) hy += 6.2832;
     hy = Math.max(-1.2, Math.min(1.2, hy));
+    // LivingEntityRenderer.render: the limb swing (WalkAnimationState: the position and the amount
+    // between the last two ticks, the amount at most 1; a baby's position x3, so its legs go three
+    // times as fast); none for a dying mob
+    const dying = e.deathT > 0;
+    const wpos = dying ? 0 : (e.rwalk !== undefined ? e.rwalk : e.walk) * (e.baby ? 3 : 1);
+    const wamt = dying ? 0 : Math.min(1, e.rwalkAmt !== undefined ? e.rwalkAmt : e.walkAmt);
+    // ageInTicks (getBob: the mob's own tickCount + the partial tick) for the idle sway and the
+    // swim stroke; the player's model and a spawner's mob go by the page clock
+    const age = e.age !== undefined ? e.age * 20 + (this.alpha ?? 1) : performance.now() / 50;
+    // AnimationUtils.bobModelPart: the arms sway, out (z) 0.09 and back and forth (x) 0.067 rad a tick
+    const bobZ = Math.cos(age * 0.09) * 0.05 + 0.05, bobX = Math.sin(age * 0.067) * 0.05;
     // HumanoidModel.setupAnim: legs swing 1.4 x the limb swing amount, arms 1.0 (the other way)
-    const ws = Math.cos((e.rwalk !== undefined ? e.rwalk : e.walk) * 0.6662) * e.walkAmt;
+    const ws = Math.cos(wpos * 0.6662) * wamt;
     let walkA = ws * 1.4, armA = ws;
     if (m.halfSwing) { walkA = Math.max(-0.4, Math.min(0.4, walkA * 0.5)); armA = Math.max(-0.4, Math.min(0.4, armA * 0.5)); }
     // model scale: fixed per model, slime size with MC's squish (wide on landing, tall when jumping)
     let S = (m.scale || 1) * (e.size ? e.size * 0.999 : 1) * (e.baby ? 0.5 : 1) * (e.dispScale || 1), sxz = 1, syy = 1;
     if (e.size) { const f = (e.squish || 0) / (e.size * 0.5 + 1), f1 = 1 / (f + 1); sxz = f1; syy = 1 / f1; }
-    const sp = (e.rpitch !== undefined ? e.rpitch : e.swimPitch) || 0, cpt = Math.cos(sp), spt = Math.sin(sp), pY = (m.pitchY || 0) / 16 * S;
+    const sp = (e.rpitch !== undefined ? e.rpitch : e.swimPitch) || 0, cpt = Math.cos(sp), spt = Math.sin(sp), pY = e.type === 'drowned' ? e.h / 2 : (m.pitchY || 0) / 16 * S;
     // SalmonModel: the tail swings 0.25 rad at 0.6 x ticks (out of the water 1.3 x as far, 1.7 x as
     // fast); the shark (our own) its own way
     const dry = e.inWater === false, tk = performance.now() / 50;
@@ -2718,6 +2764,10 @@ class Entities {
     const death = e.deathT > 0 ? Math.min(1, e.deathT * 2.5) * Math.PI / 2 : e.inWater === false && m.pitchY ? Math.PI / 2 : 0;
     const t = performance.now() / 1000;
     const zArms = e.type === 'zombie' || e.type === 'drowned', swA = e.type === 'drowned' ? e.rswim || 0 : 0;
+    // Mob.isAggressive: its attack goal on (MeleeAttackGoal, a drowned's trident goal)
+    const aggr = !!(e.hunting || e.spear);
+    // HumanoidModel.rotlerpRad: the shorter way round
+    const rotlerp = (f, a, b) => { let d = (b - a) % 6.2831855; if (d < -Math.PI) d += 6.2831855; if (d >= Math.PI) d -= 6.2831855; return a + f * d; };
     const pitch = e.pitch !== undefined ? e.pitch : 0;
     // HumanoidModel.setupAttackAnimation (the player's swing, attackTime 0..1): the body twists
     // sin(sqrt(f) 2 pi) x 0.2 and the shoulders go round with it; the right arm swings down
@@ -2738,21 +2788,27 @@ class Entities {
       if (an === 'head') { ry += hy; rx += -pitch; if (e.eatT > 0) rx += 0.9; }
       else if (an === 'legA') rx += walkA;
       else if (an === 'legB') rx -= walkA;
-      else if (an === 'armR' && e.aiming) { rx += -Math.PI / 2; ry += -0.1 + hy; }
-      else if (an === 'armL' && e.aiming) { rx += -Math.PI / 2; ry += 0.1 + hy + 0.4; }
+      else if (an === 'armR' && e.aiming) { rx += -Math.PI / 2 + bobX; ry += -0.1 + hy; rz += bobZ; }
+      else if (an === 'armL' && e.aiming) { rx += -Math.PI / 2 - bobX; ry += 0.1 + hy + 0.4; rz -= bobZ; }
       else if (an === 'armR') {
-        rx += zArms ? -Math.PI / 2 : -armA;
+        // AnimationUtils.animateZombieArms: a zombie holds its arms out, 80 degrees up, 120 while it
+        // attacks, a little apart (instead of the walk's swing)
+        if (zArms) { rx = -Math.PI / (aggr ? 1.5 : 2.25); ry = -0.1; rz = 0; } else rx += -armA;
         // poseRightArm, ArmPose.ITEM: an item in the hand raises it a little
-        if (e.spear) { rx = rx * 0.5 - Math.PI; ry = 0; }                       // ArmPose.THROW_SPEAR
-        else if (e.held && e.type === 'player') { rx = rx * 0.5 - Math.PI / 10; ry = 0; }
+        if (e.held && e.type === 'player' && !e.spear) { rx = rx * 0.5 - Math.PI / 10; ry = 0; }
         if (at > 0) {
           ry += bodyY;
           const f = 1 - (1 - at) ** 4, f2 = Math.sin(at * Math.PI) * -(-pitch - 0.7) * 0.75;
           rx -= Math.sin(f * Math.PI) * 1.2 + f2; ry += bodyY * 2; rz += Math.sin(at * Math.PI) * -0.4;
         }
-        rz += Math.sin(t * 1.1) * 0.05 + 0.05;
+        rx += bobX; rz += bobZ;
+        if (e.spear) { rx = rx * 0.5 - Math.PI; ry = 0; }                       // DrownedModel: ArmPose.THROW_SPEAR
       }
-      else if (an === 'armL') { rx += zArms ? -Math.PI / 2 : armA; if (at > 0) { ry += bodyY; rx += bodyY; } rz -= Math.sin(t * 1.1) * 0.05 + 0.05; }
+      else if (an === 'armL') {
+        if (zArms) { rx = -Math.PI / (aggr ? 1.5 : 2.25); ry = 0.1; rz = 0; } else rx += armA;
+        if (at > 0) { ry += bodyY; rx += bodyY; }
+        rx -= bobX; rz -= bobZ;
+      }
       else if (an === 'body') ry += bodyY;
       // HumanoidModel.riding: seated, the legs straight out (-81 degrees, 18 apart), the arms forward
       if (e.riding) {
@@ -2760,19 +2816,22 @@ class Entities {
         else if (an === 'legB') { rx = -1.4137167; ry = -0.31415927; rz = -0.07853982; }
         else if (an === 'armR' || an === 'armL') rx -= 0.62831855;
       }
-      // DrownedModel.setupAnim: swimming, the arms reach over the head (-2.51) and stroke, the legs kick
+      // swimming: HumanoidModel eases the legs to a slow paddle (0.3 x cos of a third of the limb
+      // swing position: half the walk's pace, not scaled by the amount); DrownedModel then reaches the
+      // arms over the head (-2.51) and strokes them and kicks the legs (0.1 rad a tick of its age;
+      // the right arm and the right leg together)
       if (swA > 0) {
-        const st = Math.sin(t * 2);
-        if (an === 'armR') { rx += (-2.5133 - rx) * swA + swA * 0.35 * st; rz += (-0.15 - rz) * swA; }
-        else if (an === 'armL') { rx += (-2.5133 - rx) * swA - swA * 0.35 * st; rz += (0.15 - rz) * swA; }
-        else if (an === 'legA') rx -= swA * 0.55 * st;
-        else if (an === 'legB') rx += swA * 0.55 * st;
+        const st = Math.sin(0.1 * age);
+        if (an === 'armR') { rx = rotlerp(swA, rx, -2.5132742) + swA * 0.35 * st; rz = rotlerp(swA, rz, -0.15); }
+        else if (an === 'armL') { rx = rotlerp(swA, rx, -2.5132742) - swA * 0.35 * st; rz = rotlerp(swA, rz, 0.15); }
+        else if (an === 'legA') rx += (0.3 * Math.cos(wpos / 3) - rx) * swA + swA * 0.55 * st;
+        else if (an === 'legB') rx += (0.3 * Math.cos(wpos / 3 + Math.PI) - rx) * swA - swA * 0.55 * st;
         else if (an === 'head') rx = 0;
       }
       else if (an === 'wingR') rz += e.onGround === false ? Math.sin(t * 30) * 0.8 : 0;
       else if (an === 'wingL') rz -= e.onGround === false ? Math.sin(t * 30) * 0.8 : 0;
       else if (an === 'tail') ry += tail;
-      else if (an && an.startsWith('spider')) { const k = +an.slice(-1); const sw = e.rwalk !== undefined ? e.rwalk : e.walk; ry += Math.cos(sw * 1.3324 + k * 1.5708) * 0.4 * e.walkAmt; rz += Math.abs(Math.sin(sw * 0.6662 + k * 1.5708)) * 0.4 * e.walkAmt * (an[6] === 'R' ? 1 : -1); }
+      else if (an && an.startsWith('spider')) { const k = +an.slice(-1); ry += Math.cos(wpos * 1.3324 + k * 1.5708) * 0.4 * wamt; rz += Math.abs(Math.sin(wpos * 0.6662 + k * 1.5708)) * 0.4 * wamt * (an[6] === 'R' ? 1 : -1); }
       const inf = part.inflate || 0;
       const [bx, byy, bz, bw, bh, bd] = part.box;
       // y-up space

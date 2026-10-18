@@ -552,7 +552,11 @@ class Mesher {
         return;
       }
       case SH.TORCH: {
-        const uvo = [null, null, [7, 6, 9, 8], [7, 14, 9, 16], null, null];
+        // (template_torch / template_torch_wall: the top from rows 6-8, the bottom from 13-15; the
+        // wall torch's sides from the stick's rows 6-16 like the standing one, not from where its
+        // raised box happens to be)
+        const uvo = [null, null, [7, 6, 9, 8], [7, 13, 9, 15], null, null];
+        const uvw = [[7, 6, 9, 16], [7, 6, 9, 16], [7, 6, 9, 8], [7, 13, 9, 15], [7, 6, 9, 16], [7, 6, 9, 16]];
         if (m === 0 || m > 4) {
           this.box(p, id, x, y, z, 7, 0, 7, 9, 10, 9, texs[0], 0, buf, { uvOverride: uvo });
         } else {
@@ -560,7 +564,7 @@ class Mesher {
           const dx = DIRX[d], dz = DIRZ[d];
           const ox = dx * 5.5, oz = dz * 5.5;
           this.box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13.5, 9 + oz, texs[0], 0, buf,
-            { uvOverride: uvo, shear: [-dx * 0.42, -dz * 0.42] });
+            { uvOverride: uvw, shear: [-dx * 0.42, -dz * 0.42] });
         }
         return;
       }
@@ -590,7 +594,8 @@ class Mesher {
         const f = m & 3, head = (m >> 2) & 1;
         const t = texs.slice();
         t[2] = head ? LAYER_BED_HEAD[id] || texs[2] : texs[2];
-        const rot = [0, 0, (f + 2) & 3, 0, 0, 0];
+        // (the tile's top row, the pillow, at the head's far end: toward the facing)
+        const rot = [0, 0, (2 - f) & 3, 0, 0, 0];
         this.box(p, id, x, y, z, 0, 3, 0, 16, 9, 16, t, 0, buf, { rot });
         // legs
         const lg = BED_LEG;
