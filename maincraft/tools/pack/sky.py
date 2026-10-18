@@ -2,8 +2,7 @@
 
 The sun and the moon phases are drawn from scratch: a square body in rings, a moon with craters
 and its phase's shadow, and a glow falling off around the lit pixels (all on black: the sky adds
-them). The mob skins keep the layout of our models (the regions of our own skins, which their
-UVs rely on) and get their colours from the style's skins (tools/tone.py)."""
+them). The mob skins are painted by tools/pack/skins.py."""
 import math
 import os
 import sys
@@ -11,7 +10,7 @@ from PIL import Image
 from core import lum
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-import tone  # noqa: E402
+import skins  # noqa: E402
 
 CELL = 32
 
@@ -93,24 +92,10 @@ def moon(ctx):
     return out
 
 
-def skin(name):
-    def gen(ctx):
-        own = ctx.own.image(name)
-        if own is None:
-            return None
-        ref = ctx.src.image(name) if ctx.has_ref else None
-        if ref is None or ref is own:
-            return own.copy()
-        tone.ALPHA = 1.0
-        new, why = tone.tone(own, ref, name)
-        return new if new is not None else own.copy()
-    return gen
-
-
 def register(reg):
     reg['sun'] = sun
     reg['moon_phases'] = moon
     for n in ('entity_chicken', 'entity_cow', 'entity_creeper', 'entity_enderman', 'entity_enderman_eyes', 'entity_pig',
               'entity_player', 'entity_salmon', 'entity_shark', 'entity_sheep', 'entity_sheep_fur', 'entity_skeleton',
               'entity_slime', 'entity_spider', 'entity_spider_eyes', 'entity_zombie'):
-        reg[n] = skin(n)
+        reg[n] = skins.skin(n)
