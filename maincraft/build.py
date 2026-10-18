@@ -8,9 +8,16 @@ import hashlib, base64, io, json, os, random, re, sys
 from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-TEX = os.path.join(ROOT, 'tex')
+# python3 build.py [OUT_HTML] [--tex DIR]: the pack folder (packs/java by default; packs/bedrock,
+# packs/clean are the other painted styles; tex/ is our base pack the painter takes layouts from)
+_args = [a for a in sys.argv[1:]]
+TEX = os.path.join(ROOT, 'packs', 'java')     # our pack painted in the Java style (tools/pack)
+if '--tex' in _args:
+    k = _args.index('--tex')
+    TEX = os.path.abspath(_args[k + 1])
+    del _args[k:k + 2]
 SRC = os.path.join(ROOT, 'src')
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, '..', 'maincraft.html')
+OUT = _args[0] if _args else os.path.join(ROOT, '..', 'maincraft.html')
 
 GRASS = (145, 189, 89)
 FOLIAGE = (119, 171, 47)
@@ -447,7 +454,8 @@ def collect():
     extra['grass_block_side_bt'], extra['grass_block_side_overlay'] = grass_side_split(load('grass_block_side'), load('dirt'))
     # mangrove: the pack has planks, door and trapdoor only
     mplanks = load('mangrove_planks')
-    extra['mangrove_log'], extra['mangrove_log_top'] = mangrove_log(load('oak_log'), load('oak_log_top'), mplanks)
+    if 'mangrove_log' not in names:
+        extra['mangrove_log'], extra['mangrove_log_top'] = mangrove_log(load('oak_log'), load('oak_log_top'), mplanks)
     ml = load('oak_leaves').transpose(Image.FLIP_LEFT_RIGHT)
     extra['mangrove_leaves_bt'] = ml.copy()
     extra['mangrove_leaves'] = tint(ml, (146, 198, 72))
@@ -459,7 +467,8 @@ def collect():
         extra[side] = m
     extra['mangrove_propagule_hanging'] = mangrove_propagule()
     # cherry: dark purple-brown bark, pink planks inside, pink leaves (not biome tinted)
-    extra['cherry_log'], extra['cherry_log_top'] = mangrove_log(load('oak_log'), load('oak_log_top'), load('cherry_planks'), (58, 36, 46))
+    if 'cherry_log' not in names:
+        extra['cherry_log'], extra['cherry_log_top'] = mangrove_log(load('oak_log'), load('oak_log_top'), load('cherry_planks'), (58, 36, 46))
     extra['cherry_leaves'] = tint(load('azalea_leaves').convert('L').convert('RGBA'), (238, 168, 204))
     cl, al = extra['cherry_leaves'].load(), load('azalea_leaves').convert('RGBA').load()
     for yy in range(16):
@@ -493,7 +502,9 @@ def collect():
     sys.path.insert(0, os.path.join(ROOT, 'tools'))
     import art
     drawn, drawn_anim = art.all_textures(load)
-    extra.update(drawn)
+    # a picture of the pack (a painted style) wins over the drawing of the same name
+    extra.update({k: v for k, v in drawn.items() if k not in names})
+    drawn_anim = {k: v for k, v in drawn_anim.items() if k not in names}
     # a drawing replaces the pack's tile of the same name (no unused layer left behind)
     tiles = [t for t in tiles if t[0] not in extra]
     for k, frames in drawn_anim.items():
