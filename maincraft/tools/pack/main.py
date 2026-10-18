@@ -99,38 +99,31 @@ def main():
             continue
         im.save(os.path.join(out, n + '.png'))
         made += 1
-    # the drawings of tools/art.py (blocks the pack lacks): toned to the style's colours
+    # the drawings of tools/art.py (blocks whose models read set spots of the picture): redrawn
+    # region by region in this style (tools/pack/relayout.py)
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
     import art
-    import tone
+    import relayout
     from PIL import Image
-    tone.ALPHA = 1.0
     drawn, drawn_anim = art.all_textures(lambda n: Image.open(os.path.join(own_dir, n + '.png')).convert('RGBA'))
+    for k, frames in drawn_anim.items():
+        s = Image.new('RGBA', (16, 16 * len(frames)))
+        for j, f in enumerate(frames):
+            s.paste(f, (0, 16 * j))
+        drawn[k] = s
+    ratios = relayout.kind_ratios(ctx)
     for n, im in sorted(drawn.items()):
-        if (only and n not in only) or n in ctx.reg:
+        if (only and n not in only) or n in names:
             continue
-        ref = src.image(n) if ctx.has_ref else None
-        new = tone.tone(im, ref, n)[0] if ref is not None else None
-        new = new or im
-        if style == 'clean':
-            new = flatten(new)
-        new.save(os.path.join(out, n + '.png'))
+        if n in ctx.reg:                # drawn by a generator of ours
+            ctx.out(n).save(os.path.join(out, n + '.png'))
+            made += 1
+            continue
+        ref = ctx.ref(n)
+        relayout.repaint(style, n, im, ratios, ref if ref and len(ref) == 256 else None).save(
+            os.path.join(out, n + '.png'))
         made += 1
     print('painted', made, 'not yet drawn', missing)
-
-
-def flatten(im, k=5):
-    """the clean style for a finished drawing: a few even tones, no grain"""
-    import redraw
-    px = list(im.get_flattened_data())
-    pts = [p for p in px if p[3] > 0]
-    if not pts:
-        return im
-    cent, _, _, _ = redraw.palette(pts, k, 200)
-    near = lambda p: min(cent, key=lambda c: redraw.dist2(p, c))
-    out = im.copy()
-    out.putdata([tuple(round(v) for v in near(p)[:3]) + (p[3],) if p[3] > 0 else p for p in px])
-    return out
 
 
 if __name__ == '__main__':
