@@ -21,13 +21,18 @@ import plants  # noqa: E402
 import anim  # noqa: E402
 import items  # noqa: E402
 import sky  # noqa: E402
+import extras  # noqa: E402
 
-FAMILIES = [natural, wood, masonry, deco, plants, anim, items, sky]
+FAMILIES = [natural, wood, masonry, deco, plants, anim, items, sky, extras]
 
 # pictures build.py makes itself when the pack lacks them, and the drawings of tools/art.py: painted
 # here too, so each style has them in its own tones
 EXTRA = ['oak_door_bottom', 'spruce_door_top', 'spruce_door_bottom', 'mangrove_log', 'mangrove_log_top',
-         'cherry_log', 'cherry_log_top', 'pale_oak_log', 'pale_oak_log_top', 'pale_oak_planks', 'pale_oak_leaves']
+         'cherry_log', 'cherry_log_top', 'pale_oak_log', 'pale_oak_log_top', 'pale_oak_planks', 'pale_oak_leaves',
+         'small_amethyst_bud', 'medium_amethyst_bud', 'large_amethyst_bud', 'amethyst_cluster', 'spawner',
+         'mangrove_roots', 'mangrove_roots_top', 'muddy_mangrove_roots_side', 'muddy_mangrove_roots_top',
+         'mangrove_propagule_hanging', 'item_ender_pearl', 'item_slime_ball', 'grass_block_snow', 'redstone_torch',
+         'hud_heart', 'hud_heart_empty', 'hud_food', 'hud_food_empty', 'hud_air'] + ['destroy_stage_%d' % _s for _s in range(10)]
 
 # leaves our game shows as painted while a reference pack has them grey (tinted by its game): the
 # source colours take that game's fixed tint
@@ -77,6 +82,9 @@ def main():
         else:
             args.append(a)
     style, out = args[0], args[1]
+    if 'variant' in opts:
+        import core
+        core.VARIANT = int(opts['variant'])
     only = set(args[2:])
     own_dir = opts.get('self', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'tex'))
     own = Source('self', own_dir)

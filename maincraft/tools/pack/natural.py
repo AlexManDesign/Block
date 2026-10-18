@@ -1,10 +1,10 @@
 """Ground and rock: gravel, sand, dirt, grass, stone and its kin, clay, snow, concrete..."""
-from core import (N, at, fbm, white, mix, cells, rims, rng, COLOURS, Canvas, select, lum)
+from core import (N, at, fbm, white, mix, cells, rims, rng, COLOURS, Canvas, select, lum, P)
 
 
 def gravel_f(rnd):
     """loose pebbles: each its own tone, lit on top, shaded below, dark gaps between"""
-    ids, d1, d2, n = cells(rnd, 12, 0.95)
+    ids, d1, d2, n = cells(rnd, P(12, 9, 16), 0.95)
     tone = [rnd.uniform(0.3, 0.9) for _ in range(n)]
     r, w = rims(ids, 0.35, 0.45), white(rnd)
     return [-1.0 if d2[i] - d1[i] < 1.0 else tone[ids[i]] + r[i] + 0.1 * (w[i] - 0.5) for i in range(N * N)]
@@ -13,10 +13,17 @@ def gravel_f(rnd):
 def sand_f(rnd):
     """fine even grain with a few clearly darker and lighter grains"""
     f = mix((0.45, fbm(rnd, [(8, 8, 0.3), (4, 4, 0.3), (2, 2, 0.4)])), (0.55, white(rnd)))
+    big = P(1, 2, 1)                         # the bold variant: grains in pairs
     for i in rnd.sample(range(N * N), 14):
-        f[i] = -0.5
+        for k in range(big):
+            f[(i + k) % (N * N)] = -0.5
     for i in rnd.sample(range(N * N), 10):
-        f[i] = 1.5
+        for k in range(big):
+            f[(i + k * N) % (N * N)] = 1.5
+    if P(0, 0, 1):                           # the fine variant: wind ripples across
+        for i in range(N * N):
+            if (i % N + 2 * (i // N)) % 7 == 0:
+                f[i] += 0.25
     return f
 
 
@@ -53,7 +60,9 @@ def blades_f(rnd, count, h=N):
 
 def stone_f(rnd):
     """soft blotches drawn out sideways, a fine grain over them"""
-    return mix((0.75, fbm(rnd, [(16, 4, 0.35), (8, 2, 0.3), (4, 2, 0.2), (2, 1, 0.15)])), (0.25, white(rnd)))
+    return mix((0.75, fbm(rnd, P([(16, 4, 0.35), (8, 2, 0.3), (4, 2, 0.2), (2, 1, 0.15)],
+                                 [(8, 8, 0.4), (8, 4, 0.3), (4, 2, 0.3)],
+                                 [(16, 2, 0.4), (8, 2, 0.3), (4, 1, 0.3)]))), (0.25, white(rnd)))
 
 
 def blotch_f(contrast, n=20):

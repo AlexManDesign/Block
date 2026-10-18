@@ -1,7 +1,7 @@
 """Masonry: bricks of all kinds, cobblestone, polished stone, ores, metal and gem blocks, sandstone,
 quartz, purpur, prismarine, copper."""
 import math
-from core import (N, at, fbm, white, mix, cells, rims, rng, Canvas, select, lum)
+from core import (N, at, fbm, white, mix, cells, rims, rng, Canvas, select, lum, P)
 import natural
 
 # brick layouts: (course height, brick length, row offset, mortar width)
@@ -55,6 +55,8 @@ def moss_mask(rnd, amount):
 
 def brickwork(name, base_src=None):
     course, length, offset, _ = BRICKS[name]
+    if name == 'bricks':                     # the fine variant staggers the courses by a quarter
+        offset = P(offset, offset, 2)
 
     def gen(ctx):
         rnd = rng(name)
@@ -89,7 +91,7 @@ def cobblestone(name, n=9):
         rnd = rng(name)
         src = ctx.px(name, 'cobblestone')
         c = Canvas(ctx.style, name, ref=ctx.ref(name))
-        f = cobble_f(rnd, n)
+        f = cobble_f(rnd, P(n, n - 2, n + 3))
         if name.startswith('mossy'):
             moss = moss_mask(rnd, 0.35)
             green = select(src, lambda p: p[1] > p[0] + 6 and p[1] > p[2])
@@ -161,7 +163,7 @@ def ore(name, kind, base):
         src = ctx.px(name)
         pick = ORE_PICK[kind]
         orepx = select(src, pick) if src else None
-        m = ore_mask(rnd)
+        m = ore_mask(rnd, P(5, 4, 6))
         ids = [1 if m[i] else 0 for i in range(N * N)]
         r, w = rims(ids, 0.4, 0.4), white(rnd)
         c.part([0.5 + r[i] + 0.25 * w[i] for i in range(N * N)], orepx if orepx and len(orepx) >= 4 else src, m)

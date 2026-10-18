@@ -21,7 +21,19 @@ def lum(c):
     return c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11
 
 
+# which of our variants is being painted (0: the styles' pack; 1, 2, 3: the variants, each its own
+# patterns and shapes)
+VARIANT = 0
+
+
+def P(*vals):
+    """a pattern parameter by variant: P(v1, v2, v3); the styles' pack takes the first"""
+    return vals[max(0, min(len(vals), VARIANT) - 1)]
+
+
 def rng(*key):
+    if VARIANT:
+        key = key + ('v%d' % VARIANT,)
     return random.Random(zlib.crc32(':'.join(str(k) for k in key).encode()))
 
 
@@ -51,8 +63,19 @@ def value_noise(px, py, rnd, w=N, h=N):
     return out
 
 
+def scaled(p, lim):
+    """a pattern period in the variant's scale (2: twice as coarse, 3: half as fine), a power of two"""
+    k = P(1, 2, 0.5)
+    v = 1
+    while v * 2 <= max(1, p * k) and v * 2 <= lim:
+        v *= 2
+    return v
+
+
 def fbm(rnd, octaves, w=N, h=N):
     acc, tot = [0.0] * (w * h), 0.0
+    if VARIANT:
+        octaves = [(scaled(px, w), scaled(py, h), wt) for px, py, wt in octaves]
     for px, py, wt in octaves:
         acc = [a + wt * v for a, v in zip(acc, value_noise(px, py, rnd, w, h))]
         tot += wt
@@ -71,7 +94,7 @@ def mix(*parts):
 def cells(rnd, n, jitter=0.9, w=N, h=N):
     """tileable Voronoi cells around jittered grid points: cell per pixel, the distances to the two
     nearest points, the number of cells"""
-    k = max(2, round(math.sqrt(n)))
+    k = max(2, round(math.sqrt(n) / P(1, 1.5, 0.75)))
     pts = [((gx + 0.5 + (rnd.random() - 0.5) * jitter) * w / k, (gy + 0.5 + (rnd.random() - 0.5) * jitter) * h / k)
            for gy in range(k) for gx in range(k)]
     ids, d1, d2 = [], [], []
@@ -85,6 +108,7 @@ def cells(rnd, n, jitter=0.9, w=N, h=N):
 def rims(ids, lit, dark, w=N, h=N, wrap=True):
     """light from the top left: + where a region starts above or left of a pixel, - where it ends"""
     out = [0.0] * (w * h)
+    lit, dark = lit * P(1, 1.5, 0.7), dark * P(1, 1.5, 0.7)
 
     def get(x, y):
         if wrap:
@@ -224,6 +248,9 @@ ENTITY = {
 }
 
 
+HUD_JAVA = {'hud_heart': 'gui/sprites/hud/heart/full.png', 'hud_food': 'gui/sprites/hud/food_full.png',
+            'hud_air': 'gui/sprites/hud/air.png'}
+
 BEDROCK_ENTITY = {
     'entity_creeper': 'entity/creeper/creeper', 'entity_enderman': 'entity/enderman/enderman',
     'entity_skeleton': 'entity/skeleton/skeleton', 'entity_slime': 'entity/slime/slime',
@@ -243,6 +270,8 @@ class Source:
     def path(self, name):
         cands = []
         if self.kind == 'java':
+            if name in HUD_JAVA:
+                cands.append(HUD_JAVA[name])
             if name in ENTITY:
                 cands.append(ENTITY[name])
             cands.append('block/%s.png' % name)
@@ -325,7 +354,7 @@ class Canvas:
         self.style, self.name, self.w, self.h = style, name, w, h
         self.px = [(0, 0, 0, 0)] * (w * h)
         self.ref = ref                   # the reference picture's pixels at the same size, if any
-        self.seed = zlib.crc32(name.encode())
+        self.seed = zlib.crc32((name + ('#%d' % VARIANT if VARIANT else '')).encode())
 
     def part(self, field, src_px, mask=None, alpha=255, grain=0.02, flat=False):
         """lays field (over mask) onto the ramp of src_px by rank; flat: pixels of one field value
@@ -339,6 +368,10 @@ class Canvas:
             grain = 0
         order = sorted(idx, key=lambda i: field[i])
         rp = ramp(src_px, len(order), 4 if clean and not flat else 0)
+        k = P(1.0, 1.25, 0.85)
+        if k != 1.0:                       # the variant's contrast, round the mean tone
+            mean = [sum(c[t] for c in rp) / len(rp) for t in range(3)]
+            rp = [tuple(max(0, min(255, mean[t] + (c[t] - mean[t]) * k)) for t in range(3)) for c in rp]
         if flat:
             groups = {}
             for r, i in enumerate(order):

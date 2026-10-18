@@ -8,7 +8,7 @@ its colours from the source item's pixels that belong to it (a test per part), b
 import math
 import os
 import sys
-from core import (N, at, white, rng, Canvas, select, lum, COLOURS)
+from core import (N, at, white, rng, Canvas, select, lum, COLOURS, P)
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import paint_items  # noqa: E402  (our hand-drawn armour, emerald, eye and seed masks)
@@ -74,7 +74,7 @@ def tool_cells(kind):
     c = {}
     if kind == 'sword':
         for k in range(10):
-            for dx, dy in ((0, 0), (1, 0), (0, -1)):
+            for dx, dy in P(((0, 0), (1, 0), (0, -1)), ((0, 0), (1, 0)), ((0, 0), (1, 0), (0, -1), (1, -1))):
                 c[at(5 + k + dx, 10 - k + dy)] = 'a'
         c[at(15, 0)] = 'a'
         for j in range(-2, 3):
@@ -91,12 +91,12 @@ def tool_cells(kind):
             for x in range(N):
                 d = math.hypot(x + 0.5 - 1, y + 0.5 - 15)
                 ang = math.degrees(math.atan2(15 - (y + 0.5), x + 0.5 - 1))
-                if 6 <= ang <= 84 and abs(d - 12.6) <= 1.25 * (1 - abs(ang - 45) / 60) + 0.45:
+                if 6 <= ang <= 84 and abs(d - P(12.6, 11.8, 13.2)) <= P(1.25, 1.6, 1.0) * (1 - abs(ang - 45) / 60) + 0.45:
                     c[at(x, y)] = 'a'
     elif kind == 'axe':             # a broad blade on the handle's left near its top
         for y in range(N):
             for x in range(N):
-                if math.hypot(x + 0.5 - 8.5, y + 0.5 - 4) <= 4.2 and x + y <= 14:
+                if math.hypot(x + 0.5 - P(8.5, 9, 8), y + 0.5 - 4) <= P(4.2, 3.7, 4.6) and x + y <= 14:
                     c[at(x, y)] = 'a'
     elif kind == 'shovel':
         for y in range(N):
@@ -104,13 +104,15 @@ def tool_cells(kind):
                 px, py = x + 0.5, y + 0.5
                 t = max(0, min(1, ((px - 10.5) * 1 + (py - 5.5) * -1) / 2 / 3))
                 qx, qy = 10.5 + 3 * t, 5.5 - 3 * t
-                if math.hypot(px - qx, py - qy) <= 2.3:
+                if math.hypot(px - qx, py - qy) <= P(2.3, 2.0, 2.6):
                     c[at(x, y)] = 'a'
     elif kind == 'hoe':
-        for x in range(7, 13):
+        for x in range(P(7, 8, 6), 13):
             c[at(x, 2)] = 'a'
             c[at(x, 3)] = 'a'
         c[at(12, 4)] = 'a'
+        if P(0, 1, 0):
+            c[at(8, 4)] = 'a'
     return c
 
 
@@ -797,9 +799,21 @@ for col in COLOURS:
     ITEMS[col + '_dye'] = ('pile', {})
 
 
+def varied(cells_):
+    """the variants draw the same things turned: mirrored (2) or moved a pixel (3)"""
+    if P(0, 1, 0):
+        return {at(N - 1 - i % N, i // N): v for i, v in cells_.items()}
+    if P(0, 0, 1):
+        xs, ys = [i % N for i in cells_], [i // N for i in cells_]
+        dx = 1 if max(xs) < N - 1 else -1 if min(xs) > 0 else 0
+        dy = -1 if min(ys) > 0 else 1 if max(ys) < N - 1 else 0
+        return {at(i % N + dx, i // N + dy): v for i, v in cells_.items()}
+    return cells_
+
+
 def masked(name, mask):
     def gen(ctx):
-        cells_ = grid(MASKS[mask])
+        cells_ = varied(grid(MASKS[mask]))
         src = ctx.px(name) or ctx.px('item_stick')
         parts = set(cells_.values())
         cols = {'a': src}

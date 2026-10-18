@@ -1,6 +1,6 @@
 """Wood: planks, bark, log ends, stripped wood, leaves, saplings, doors and trapdoors."""
 import math
-from core import (N, at, fbm, white, mix, cells, rims, rng, Canvas, select, lum, value_noise)
+from core import (N, at, fbm, white, mix, cells, rims, rng, Canvas, select, lum, value_noise, P)
 
 TREES = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak']
 STEMS = ['crimson', 'warped']
@@ -14,24 +14,26 @@ def planks_f(rnd, boards=4):
     f = [0.0] * (N * N)
     grain = fbm(rnd, [(16, 1, 0.4), (8, 1, 0.35), (4, 1, 0.25)])
     w = white(rnd)
-    joints = []
     for b in range(boards):
         tone = rnd.uniform(0.35, 0.7)
-        j = (rnd.randrange(3, 13) + b * 8) % N
-        joints.append(j)
+        j0 = (rnd.randrange(3, 13) + b * 8) % N
+        js = {j0} if P(1, 1, 2) == 1 else {j0, (j0 + 8) % N}       # the fine variant: shorter boards
+        knot = (rnd.randrange(N), b * h + 1) if P(0, 1, 0) else None   # the bold variant: a knot per board
         for y in range(b * h, b * h + h):
             for x in range(N):
                 i = at(x, y)
                 v = tone + 0.35 * grain[i] + 0.12 * w[i]
                 if y == b * h:
                     v += 0.18
+                if knot and abs(x - knot[0]) <= 1 and y == knot[1]:
+                    v -= 0.45
                 if y == b * h + h - 1:
                     v = -1.0
-                elif x == j:
+                elif x in js:
                     v = -0.8
-                elif x == (j - 1) % N:
+                elif (x + 1) % N in js:
                     v -= 0.15
-                elif x == (j + 1) % N:
+                elif (x - 1) % N in js:
                     v += 0.1
                 f[i] = v
     return f
@@ -119,7 +121,7 @@ def planks(name):
 
 
 def leaves_mask(rnd, holes=0.2):
-    ids, d1, d2, n = cells(rnd, 14, 1.0)
+    ids, d1, d2, n = cells(rnd, P(14, 9, 20), 1.0)
     w = white(rnd)
     order = sorted(range(N * N), key=lambda i: (d2[i] - d1[i]) + 1.5 * w[i])
     gone = set(order[:int(holes * N * N)])

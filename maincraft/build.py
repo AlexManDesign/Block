@@ -33,7 +33,7 @@ TINT = {
 BIOME_TINTED = {'grass_block_top', 'short_grass', 'fern', 'tall_grass_top', 'tall_grass_bottom',
                 'large_fern_top', 'large_fern_bottom', 'oak_leaves', 'vine', 'dark_oak_leaves',
                 'jungle_leaves', 'acacia_leaves', 'water_still'}   # + mangrove_leaves (synthesised)
-SKIP_PREFIX = ('entity_', 'ui_')
+SKIP_PREFIX = ('entity_', 'ui_', 'hud_')
 SKIP = {'sun', 'moon_phases', 'bobber'}
 FIRST_FRAME_ONLY = {'short_grass', 'seagrass', 'tall_seagrass_top', 'tall_seagrass_bottom', 'kelp', 'kelp_plant'}
 ANIM_TICKS = {'water_still': 2, 'seagrass': 3, 'kelp': 3, 'sea_lantern': 5, 'magma': 8,
@@ -505,6 +505,8 @@ def collect():
     # a picture of the pack (a painted style) wins over the drawing of the same name
     extra.update({k: v for k, v in drawn.items() if k not in names})
     drawn_anim = {k: v for k, v in drawn_anim.items() if k not in names}
+    # what the pack paints itself it keeps; the rest is synthesised above
+    extra = {k: v for k, v in extra.items() if k not in names}
     # a drawing replaces the pack's tile of the same name (no unused layer left behind)
     tiles = [t for t in tiles if t[0] not in extra]
     for k, frames in drawn_anim.items():
@@ -512,7 +514,8 @@ def collect():
     for k, v in extra.items():
         tiles.append((k, [v], 0))
     for s in range(10):
-        tiles.append(('destroy_stage_%d' % s, [crack_stage(s)], 0))
+        if 'destroy_stage_%d' % s not in names:
+            tiles.append(('destroy_stage_%d' % s, [crack_stage(s)], 0))
     # opaque variants of the leaves (and of their untinted copies) for the fast leaves setting
     for name, frames, _ in list(tiles):
         base = name[:-3] if name.endswith('_bt') else name
@@ -554,6 +557,8 @@ def main():
         'atlas': b64png(atlas), 'cols': 32, 'count': count, 'layers': layers, 'anim': anim,
         'sun': b64png(load('sun')), 'moon': b64png(load('moon_phases')),
         'entities': {},
+        # the HUD icons (hearts, food, air) of a painted pack; the game draws its own without them
+        'hud': {fn[4:-4]: b64png(load(fn[:-4])) for fn in sorted(os.listdir(TEX)) if fn.startswith('hud_')},
     }
     for fn in sorted(os.listdir(TEX)):
         if fn.startswith('entity_') and fn.endswith('.png'):
