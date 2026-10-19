@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build maincraft.html: packs textures into one embedded atlas and inlines all sources.
+"""Build maincraft_90.html (the game we work on): packs textures into one embedded atlas and inlines all sources.
 
 usage: python3 build.py [out.html]
 requires: Pillow
@@ -18,7 +18,7 @@ if '--tex' in _args:
     TEX = os.path.abspath(_args[k + 1])
     del _args[k:k + 2]
 SRC = os.path.join(ROOT, 'src')
-OUT = _args[0] if _args else os.path.join(ROOT, '..', 'maincraft.html')
+OUT = _args[0] if _args else os.path.join(ROOT, '..', 'maincraft_90.html')
 
 GRASS = (145, 189, 89)
 FOLIAGE = (119, 171, 47)
