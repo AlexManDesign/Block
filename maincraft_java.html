@@ -949,7 +949,10 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
       [0, 0, 0, 0, [tex, u[0], u[1], u[2], u[3], 0, -1, 1], [tex, u[2], u[1], u[0], u[3], 0, -1, 1]]];
   };
   const cross = (x0, y0, x1, y1, tex, uv) => [plane(x0, y0, x1, y1, tex, 45, uv), plane(x0, y0, x1, y1, tex, -45, uv)];
-  const add = (els) => { MODEL_LIST.push(els); return MODEL_LIST.length - 1; };
+  // hull: the block's shape as Minecraft's (collision and outline: [from, to]) where it is not the
+  // bounds of the model's own elements
+  const HULL = [];
+  const add = (els, hull) => { MODEL_LIST.push(els); if (hull) HULL[MODEL_LIST.length - 1] = hull; return MODEL_LIST.length - 1; };
   const FACING_Y = [180, 270, 0, 90];
   const facing = (key, model, metas) => { MODEL_VAR[key] = []; for (let m = 0; m < (metas || 4); m++) MODEL_VAR[key][m] = [[model, 0, FACING_Y[m & 3]]]; };
   const single = (key, model) => { MODEL_VAR[key] = [[[model, 0, 0]]]; };
@@ -966,37 +969,42 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   }
   // lectern: base, post and a sloped reading board
   facing('LECTERN', add([
-    box([0, 0, 0], [16, 2, 16], { u: 'lectern_base', d: 'oak_planks', side: 'lectern_base' }),
+    box([1, 0, 1], [15, 2, 15], { u: 'lectern_base', d: 'oak_planks', side: 'lectern_base' }),
     box([4, 2, 4], [12, 13, 12], { side: 'lectern_sides', n: 'lectern_front' }, { skip: ['u', 'd'] }),
     box([0.5, 12, 2], [15.5, 15, 15], { u: 'lectern_top', d: 'oak_planks', side: 'lectern_sides' }, { r: [[8, 13, 8], 0, -22.5, 0] }),
-  ]));
+  ], [[0, 0, 0], [16, 15, 16]]));
   // grindstone: two legs with pivots holding the wheel (meta: facing, +4 wall, +8 ceiling)
   {
+    // (slim legs under wider pivot blocks; the wheel a pixel lower and narrower, its face the tile's 12x12)
     const parts = (y) => [
-      box([2, y, 6], [4, y + 7, 10], 'grindstone_pivot'), box([12, y, 6], [14, y + 7, 10], 'grindstone_pivot'),
-      box([2, y + 7, 5], [4, y + 13, 11], 'grindstone_pivot'), box([12, y + 7, 5], [14, y + 13, 11], 'grindstone_pivot'),
-      box([4, y + 4, 2], [12, y + 16, 14], { side: 'grindstone_round', e: 'grindstone_side', w: 'grindstone_side', u: 'grindstone_round', d: 'grindstone_round' }),
+      box([2, y, 6.5], [4, y + 6, 9.5], 'grindstone_pivot'), box([12, y, 6.5], [14, y + 6, 9.5], 'grindstone_pivot'),
+      box([1.5, y + 6, 5.5], [4, y + 12, 10.5], 'grindstone_pivot'), box([12, y + 6, 5.5], [14.5, y + 12, 10.5], 'grindstone_pivot'),
+      box([4, y + 3, 2.5], [12, y + 15, 13.5], { side: 'grindstone_round', e: 'grindstone_side', w: 'grindstone_side', u: 'grindstone_round', d: 'grindstone_round' },
+        { uv: { e: [2, 0, 14, 12], w: [2, 0, 14, 12] } }),
     ];
-    const floor = add(parts(0));
+    const floor = add(parts(0), [[2, 0, 2], [14, 16, 14]]);
     MODEL_VAR.GRINDSTONE = [];
     for (let m = 0; m < 12; m++) {
       const face = m >> 2, y = FACING_Y[m & 3];
       MODEL_VAR.GRINDSTONE[m] = [face === 0 ? [floor, 0, y] : face === 2 ? [floor, 180, (y + 180) % 360] : [floor, 90, y]];
     }
   }
-  // stonecutter: a low block with the saw blade standing in the middle
+  // stonecutter: a low block with a raised table and the saw blade standing in the middle (the
+  // blade drawn at the bottom of its tile)
   facing('STONECUTTER', add([
-    box([0, 0, 0], [16, 9, 16], { u: 'stonecutter_top', d: 'stonecutter_bottom', side: 'stonecutter_side' }),
-    plane(1, 9, 15, 16, 'stonecutter_saw', 0, [1, 9, 15, 16]),          // (stonecutter.json: the blade at the bottom of the tile)
-  ]));
+    box([0, 0, 0], [16, 8, 16], { u: 'stonecutter_top', d: 'stonecutter_bottom', side: 'stonecutter_side' }),
+    box([0.5, 8, 0.5], [15.5, 9, 15.5], { u: 'stonecutter_top', side: 'stonecutter_side' }, { skip: ['d'] }),
+    plane(1.5, 9, 14.5, 15.5, 'stonecutter_saw', 0, [1.5, 9.5, 14.5, 16]),
+  ], [[0, 0, 0], [16, 9, 16]]));
   // bell: stone posts and a beam (floor), a short hanger (ceiling) or a wall bracket, and the bell
   {
-    const bell = [box([5, 6, 5], [11, 13, 11], 'bell_body'), box([4, 4, 4], [12, 6, 12], 'bell_body')];
-    const floor = add([box([0, 0, 6], [2, 16, 10], 'stone'), box([14, 0, 6], [16, 16, 10], 'stone'),
-      box([2, 13, 7], [14, 15, 9], 'dark_oak_planks'), ...bell]);
-    const ceiling = add([box([7, 13, 7], [9, 16, 9], 'dark_oak_planks'), ...bell]);
-    const wall = add([box([7, 13, 3], [9, 15, 16], 'dark_oak_planks'), ...bell]);
-    const both = add([box([7, 13, 0], [9, 15, 16], 'dark_oak_planks'), ...bell]);
+    // (the bell: a body with a narrower crown and a flared rim; slim posts, a thin beam)
+    const bell = [box([5, 6, 5], [11, 12, 11], 'bell_body'), box([6, 12, 6], [10, 13, 10], 'bell_body'), box([4.5, 4, 4.5], [11.5, 6, 11.5], 'bell_body')];
+    const floor = add([box([0.5, 0, 6.5], [2.5, 16, 9.5], 'stone'), box([13.5, 0, 6.5], [15.5, 16, 9.5], 'stone'),
+      box([2.5, 13, 7.25], [13.5, 14.5, 8.75], 'dark_oak_planks'), ...bell], [[0, 0, 4], [16, 16, 12]]);
+    const ceiling = add([box([7.25, 13, 7.25], [8.75, 16, 8.75], 'dark_oak_planks'), ...bell], [[4, 4, 4], [12, 16, 12]]);
+    const wall = add([box([7.25, 13, 3], [8.75, 14.5, 16], 'dark_oak_planks'), ...bell], [[4, 4, 3], [12, 15, 16]]);
+    const both = add([box([7.25, 13, 0], [8.75, 14.5, 16], 'dark_oak_planks'), ...bell], [[4, 4, 0], [12, 15, 16]]);
     MODEL_VAR.BELL = [];
     for (let m = 0; m < 16; m++) {
       const at = m >> 2, y = FACING_Y[m & 3];
@@ -1006,56 +1014,60 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   // lantern: iron cage with a cap and a handle; hanging (meta 1) one block higher on a chain
   {
     const L = (y, chain) => {
+      // (a squatter cage under a taller cap)
       const els = [
-        box([5, y, 5], [11, y + 7, 11], { side: 'lantern', u: 'lantern', d: 'lantern' }, { uv: { e: [0, 2, 6, 9], w: [0, 2, 6, 9], s: [0, 2, 6, 9], n: [0, 2, 6, 9], u: [0, 9, 6, 15], d: [0, 9, 6, 15] } }),
-        box([6, y + 7, 6], [10, y + 9, 10], 'lantern', { uv: { e: [0, 0, 4, 2], w: [0, 0, 4, 2], s: [0, 0, 4, 2], n: [0, 0, 4, 2], u: [0, 9, 4, 13], d: [0, 9, 4, 13] } }),
+        box([5, y, 5], [11, y + 6.5, 11], { side: 'lantern', u: 'lantern', d: 'lantern' }, { uv: { e: [0, 2.5, 6, 9], w: [0, 2.5, 6, 9], s: [0, 2.5, 6, 9], n: [0, 2.5, 6, 9], u: [0, 9, 6, 15], d: [0, 9, 6, 15] } }),
+        box([6, y + 6.5, 6], [10, y + 8.5, 10], 'lantern', { uv: { e: [0, 0, 4, 2], w: [0, 0, 4, 2], s: [0, 0, 4, 2], n: [0, 0, 4, 2], u: [0, 9, 4, 13], d: [0, 9, 4, 13] } }),
       ];
-      els.push(...cross(6.5, y + 9, 9.5, y + (chain ? 16 - y : 11), 'lantern', [11, 1, 14, 3]));
+      els.push(...cross(6.5, y + 8.5, 9.5, chain ? 16 : y + 10.5, 'lantern', [11, 1, 14, 3]));
       return els;
     };
-    MODEL_VAR.LANTERN = [[[add(L(0, false)), 0, 0]], [[add(L(1, true)), 0, 0]]];
+    MODEL_VAR.LANTERN = [[[add(L(0, false), [[5, 0, 5], [11, 9, 11]]), 0, 0]], [[add(L(1, true), [[5, 1, 5], [11, 10, 11]]), 0, 0]]];
   }
   // campfire: two logs on the ground, two crossing on top, embers and flames (meta: facing, +4 out)
   {
+    // (the logs a pixel further in, the embers a narrower bed between them)
     const logs = (lit) => [
-      box([1, 0, 0], [5, 4, 16], { side: 'campfire_log', u: 'campfire_log' }), box([11, 0, 0], [15, 4, 16], { side: 'campfire_log', u: 'campfire_log' }),
-      box([0, 3, 1], [16, 7, 5], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
-      box([0, 3, 11], [16, 7, 15], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
-      box([5, 0, 0], [11, 1, 16], lit ? 'campfire_log_lit' : 'campfire_log'),
+      box([2, 0, 0], [6, 4, 16], { side: 'campfire_log', u: 'campfire_log' }), box([10, 0, 0], [14, 4, 16], { side: 'campfire_log', u: 'campfire_log' }),
+      box([0, 3, 2], [16, 7, 6], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
+      box([0, 3, 10], [16, 7, 14], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
+      box([6, 0, 1], [10, 1, 15], lit ? 'campfire_log_lit' : 'campfire_log'),
     ];
-    const lit = add([...logs(true), ...cross(1, 1, 15, 16, 'campfire_fire', [0, 0, 16, 15])]);
-    const out = add(logs(false));
+    const lit = add([...logs(true), ...cross(1, 1, 15, 16, 'campfire_fire', [0, 0, 16, 15])], [[0, 0, 0], [16, 7, 16]]);
+    const out = add(logs(false), [[0, 0, 0], [16, 7, 16]]);
     MODEL_VAR.CAMPFIRE = [];
     for (let m = 0; m < 8; m++) MODEL_VAR.CAMPFIRE[m] = [[m & 4 ? out : lit, 0, FACING_Y[m & 3]]];
   }
   // brewing stand: rod on three feet with up to three bottles (meta bits)
   {
     const base = add([
-      box([7, 0, 7], [9, 14, 9], 'brewing_stand', { uv: { e: [7, 2, 9, 16], w: [7, 2, 9, 16], s: [7, 2, 9, 16], n: [7, 2, 9, 16], u: [7, 2, 9, 4], d: [7, 2, 9, 4] } }),
-      box([9, 0, 5], [15, 2, 11], 'brewing_stand_base'), box([1, 0, 1], [7, 2, 7], 'brewing_stand_base'), box([1, 0, 9], [7, 2, 15], 'brewing_stand_base'),
-    ]);
-    const bottle = (a) => add([plane(8, 0, 16, 16, 'brewing_stand', a, [8, 0, 16, 16])]);
+      // (a shorter rod on smaller feet; the bottles a little smaller)
+      box([7, 0, 7], [9, 13, 9], 'brewing_stand', { uv: { e: [7, 3, 9, 16], w: [7, 3, 9, 16], s: [7, 3, 9, 16], n: [7, 3, 9, 16], u: [7, 3, 9, 5], d: [7, 3, 9, 5] } }),
+      box([9, 0, 6], [14, 2, 10], 'brewing_stand_base'), box([2, 0, 2], [7, 2, 7], 'brewing_stand_base'), box([2, 0, 9], [7, 2, 14], 'brewing_stand_base'),
+    ], [[1, 0, 1], [15, 14, 15]]);
+    const bottle = (a) => add([plane(8.5, 0, 15.5, 15, 'brewing_stand', a, [8.5, 1, 15.5, 16])], [[7, 0, 7], [9, 14, 9]]);
     const b = [bottle(0), bottle(120), bottle(240)];
     MODEL_VAR.BREWING_STAND = [];
     for (let m = 0; m < 8; m++) { const parts = [[base, 0, 0]]; for (let i = 0; i < 3; i++) if (m & (1 << i)) parts.push([b[i], 0, 0]); MODEL_VAR.BREWING_STAND[m] = parts; }
   }
-  // cauldron: four walls on corner legs; water at three levels (meta 1-3)
+  // cauldron: four walls on square corner feet, a thick floor; water at three levels (meta 1-3)
   {
     const S = { side: 'cauldron_side', u: 'cauldron_top', d: 'cauldron_bottom' };
     const shell = [
-      box([0, 3, 0], [2, 16, 16], S), box([14, 3, 0], [16, 16, 16], S), box([2, 3, 0], [14, 16, 2], S), box([2, 3, 14], [14, 16, 16], S),
-      box([2, 3, 2], [14, 4, 14], { u: 'cauldron_inner', d: 'cauldron_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
-      box([0, 0, 0], [4, 3, 2], S), box([0, 0, 2], [2, 3, 4], S), box([12, 0, 0], [16, 3, 2], S), box([14, 0, 2], [16, 3, 4], S),
-      box([0, 0, 14], [4, 3, 16], S), box([0, 0, 12], [2, 3, 14], S), box([12, 0, 14], [16, 3, 16], S), box([14, 0, 12], [16, 3, 14], S),
+      box([0, 2, 0], [2, 16, 16], S), box([14, 2, 0], [16, 16, 16], S), box([2, 2, 0], [14, 16, 2], S), box([2, 2, 14], [14, 16, 16], S),
+      box([2, 2, 2], [14, 4, 14], { u: 'cauldron_inner', d: 'cauldron_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
+      box([0, 0, 0], [3, 2, 3], S), box([13, 0, 0], [16, 2, 3], S), box([0, 0, 13], [3, 2, 16], S), box([13, 0, 13], [16, 2, 16], S),
     ];
-    MODEL_VAR.CAULDRON = [0, 9, 12, 15].map((h) => [[add(h ? [...shell, box([2, 4, 2], [14, h, 14], { u: 'water_still' }, { skip: ['e', 'w', 's', 'n', 'd'] })] : shell), 0, 0]]);
+    MODEL_VAR.CAULDRON = [0, 8.5, 11.5, 14.5].map((h) => [[add(h ? [...shell, box([2, 4, 2], [14, h, 14], { u: 'water_still' }, { skip: ['e', 'w', 's', 'n', 'd'] })] : shell), 0, 0]]);
   }
   // composter: a box of planks, filled by level (meta 0-8)
   {
     const W = { side: 'composter_side', u: 'composter_top', d: 'composter_bottom' };
     // (composter.json: the floor's top is #inside = composter_bottom; the top tile only on the rims)
-    const shell = [box([0, 0, 0], [16, 2, 16], { u: 'composter_bottom', d: 'composter_bottom' }, { skip: ['e', 'w', 's', 'n'] }), box([0, 0, 0], [2, 16, 16], W), box([14, 0, 0], [16, 16, 16], W),
-      box([2, 0, 0], [14, 16, 2], W), box([2, 0, 14], [14, 16, 16], W)];
+    // (corner posts standing a pixel above the walls between them, the floor laid inside)
+    const shell = [box([2, 0, 2], [14, 2, 14], { u: 'composter_bottom', d: 'composter_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
+      box([0, 0, 0], [2, 16, 2], W), box([14, 0, 0], [16, 16, 2], W), box([0, 0, 14], [2, 16, 16], W), box([14, 0, 14], [16, 16, 16], W),
+      box([2, 0, 0], [14, 15, 2], W), box([2, 0, 14], [14, 15, 16], W), box([0, 0, 2], [2, 15, 14], W), box([14, 0, 2], [16, 15, 14], W)];
     MODEL_VAR.COMPOSTER = [];
     for (let m = 0; m < 9; m++) {
       const h = m === 0 ? 0 : Math.min(15, 1 + m * 2);
@@ -1087,7 +1099,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   single('SCULK_SENSOR', add([box([0, 0, 0], [16, 8, 16], { u: 'sculk_sensor_top', d: 'sculk_sensor_bottom', side: 'sculk_sensor_side' }),
     plane(3, 8, 7, 16, 'sculk_sensor_tendril_inactive', 45, [4, 0, 12, 16]), plane(9, 8, 13, 16, 'sculk_sensor_tendril_inactive', -45, [4, 0, 12, 16])]));
   single('SCULK_SHRIEKER', add([box([0, 0, 0], [16, 8, 16], { u: 'sculk_shrieker_inner_top', d: 'sculk_shrieker_bottom', side: 'sculk_shrieker_side' }),
-    box([1, 8, 1], [15, 15, 15], { u: 'sculk_shrieker_top', side: 'sculk_shrieker_side' }, { skip: ['d'] })]));
+    box([1, 8, 1], [15, 15, 15], { u: 'sculk_shrieker_top', side: 'sculk_shrieker_side' }, { skip: ['d'] })], [[0, 0, 0], [16, 8, 16]]));
 
   // ship wheel: a turned post with a spoked wheel on its north face, handles past the rim
   {
@@ -1118,16 +1130,17 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   }
 
   // ---- redstone ----
-  // the stub of a redstone torch standing on a base at height y0 (top 5 pixels of the torch texture)
-  const stub = (x, z, y0, tex) => box([x, y0, z], [x + 2, y0 + 5, z + 2], tex,
-    { uv: { e: [7, 6, 9, 11], w: [7, 6, 9, 11], s: [7, 6, 9, 11], n: [7, 6, 9, 11], u: [7, 6, 9, 8], d: [7, 13, 9, 15] } });
+  // the stub of a redstone torch standing on a base at height y0
+  // (a stub a pixel lower than a whole torch's top: the top 4 pixels)
+  const stub = (x, z, y0, tex) => box([x, y0, z], [x + 2, y0 + 4, z + 2], tex,
+    { uv: { e: [7, 6, 9, 10], w: [7, 6, 9, 10], s: [7, 6, 9, 10], n: [7, 6, 9, 10], u: [7, 6, 9, 8], d: [7, 13, 9, 15] } });
   // lever (meta: face 0 floor / 1 wall / 2 ceiling << 2 | facing, +16 on): a stone base and a handle
   // tilted one way or the other; built on the floor, turned onto walls and ceilings
   {
     const lever = [0, 1].map(on => add([
-      box([5, 0, 4], [11, 3, 12], 'cobblestone'),
-      box([7, 1, 7], [9, 11, 9], 'lever_handle', { r: [[8, 1, 8], 0, on ? -40 : 40, 0] }),
-    ]));
+      box([5, 0, 4.5], [11, 2.5, 11.5], 'cobblestone'),
+      box([7, 1, 7], [9, 10, 9], 'lever_handle', { r: [[8, 1, 8], 0, on ? -40 : 40, 0] }),
+    ], [[5, 0, 4], [11, 6, 12]]));
     MODEL_VAR.LEVER = [];
     for (let m = 0; m < 32; m++) {
       const face = (m >> 2) & 3, f = m & 3, M = lever[(m >> 4) & 1];
@@ -1141,7 +1154,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     for (let k = 0; k < 8; k++) {
       const delay = k & 3, on = k >> 2, t = on ? 'redstone_torch' : 'redstone_torch_off';
       rep.push(add([box([0, 0, 0], [16, 2, 16], { u: on ? 'repeater_on' : 'repeater', d: 'smooth_stone', side: 'smooth_stone' }),
-        stub(7, 11, 2, t), stub(7, 2 + delay * 2, 2, t)]));
+        stub(7, 11, 2, t), stub(7, 2 + delay * 2, 2, t)], [[0, 0, 0], [16, 2, 16]]));
     }
     MODEL_VAR.REPEATER = [];
     for (let m = 0; m < 64; m++) MODEL_VAR.REPEATER[m] = [[rep[((m >> 2) & 3) | (((m >> 4) & 1) << 2)], 0, FACING_Y[m & 3]]];
@@ -1154,7 +1167,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
       const sub = k & 1, on = k >> 1;
       cmp.push(add([box([0, 0, 0], [16, 2, 16], { u: on ? 'comparator_on' : 'comparator', d: 'smooth_stone', side: 'smooth_stone' }),
         stub(3, 11, 2, on ? 'redstone_torch' : 'redstone_torch_off'), stub(11, 11, 2, on ? 'redstone_torch' : 'redstone_torch_off'),
-        stub(7, 2, 0, sub ? 'redstone_torch' : 'redstone_torch_off')]));
+        stub(7, 2, 0, sub ? 'redstone_torch' : 'redstone_torch_off')], [[0, 0, 0], [16, 2, 16]]));
     }
     MODEL_VAR.COMPARATOR = [];
     for (let m = 0; m < 128; m++) MODEL_VAR.COMPARATOR[m] = [[cmp[((m >> 2) & 1) | ((m >> 3) ? 2 : 0)], 0, FACING_Y[m & 3]]];
@@ -1186,7 +1199,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     for (let m = 0; m < 16; m++) MODEL_VAR.PISTON_HEAD[m] = [six(H[(m >> 3) & 1], m & 7)];
   }
 
-  // selection boxes: the bounds of each variant's elements, turned like the parts
+  // selection boxes: the bounds of each variant's elements (or its hull), turned like the parts
   const turn = (p, rx, ry) => {
     let [x, y, z] = [p[0] - 8, p[1] - 8, p[2] - 8], t;
     const cx = Math.cos(rx * Math.PI / 180), sx = Math.sin(rx * Math.PI / 180), cy = Math.cos(ry * Math.PI / 180), sy = Math.sin(ry * Math.PI / 180);
@@ -1197,7 +1210,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   for (const k in MODEL_VAR) {
     MODEL_BOX[k] = MODEL_VAR[k].map((parts) => {
       const lo = [16, 16, 16], hi = [0, 0, 0];
-      for (const [mi, rx, ry] of parts) for (const E of MODEL_LIST[mi]) for (let c = 0; c < 8; c++) {
+      for (const [mi, rx, ry] of parts) for (const E of HULL[mi] ? [HULL[mi]] : MODEL_LIST[mi]) for (let c = 0; c < 8; c++) {
         const q = turn([c & 1 ? E[1][0] : E[0][0], c & 2 ? E[1][1] : E[0][1], c & 4 ? E[1][2] : E[0][2]], rx, ry);
         for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], Math.max(0, q[i])); hi[i] = Math.max(hi[i], Math.min(16, q[i])); }
       }
@@ -5773,15 +5786,15 @@ class Mesher {
         // (template_torch / template_torch_wall: the top from rows 6-8, the bottom from 13-15; the
         // wall torch's sides from the stick's rows 6-16 like the standing one, not from where its
         // raised box happens to be)
-        const uvo = [null, null, [7, 6, 9, 8], [7, 13, 9, 15], null, null];
+        // (our torch half a pixel shorter than the tile's stick, which it is drawn from whole)
         const uvw = [[7, 6, 9, 16], [7, 6, 9, 16], [7, 6, 9, 8], [7, 13, 9, 15], [7, 6, 9, 16], [7, 6, 9, 16]];
         if (m === 0 || m > 4) {
-          this.box(p, id, x, y, z, 7, 0, 7, 9, 10, 9, texs[0], 0, buf, { uvOverride: uvo });
+          this.box(p, id, x, y, z, 7, 0, 7, 9, 9.5, 9, texs[0], 0, buf, { uvOverride: uvw });
         } else {
           const d = m - 1; // wall direction: 0 S,1 W,2 N,3 E (wall is on that side)
           const dx = DIRX[d], dz = DIRZ[d];
           const ox = dx * 5.5, oz = dz * 5.5;
-          this.box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13.5, 9 + oz, texs[0], 0, buf,
+          this.box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13, 9 + oz, texs[0], 0, buf,
             { uvOverride: uvw, shear: [-dx * 0.42, -dz * 0.42] });
         }
         return;
@@ -5815,18 +5828,21 @@ class Mesher {
         // (the tile's top row, the pillow, at the head's far end: toward the facing)
         const rot = [0, 0, (2 - f) & 3, 0, 0, 0];
         this.box(p, id, x, y, z, 0, 3, 0, 16, 9, 16, t, 0, buf, { rot });
-        // legs
+        // legs (ours: slim posts a pixel in from the corners)
         const lg = BED_LEG;
-        this.box(p, id, x, y, z, 0, 0, 0, 3, 3, 3, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 0, 16, 3, 3, lg, 0, buf);
-        this.box(p, id, x, y, z, 0, 0, 13, 3, 3, 16, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 13, 16, 3, 16, lg, 0, buf);
+        this.box(p, id, x, y, z, 1, 0, 1, 3, 3, 3, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 1, 15, 3, 3, lg, 0, buf);
+        this.box(p, id, x, y, z, 1, 0, 13, 3, 3, 15, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 13, 15, 3, 15, lg, 0, buf);
         return;
       }
       case SH.BAMBOO: this.box(p, id, x, y, z, 7, 0, 7, 9, 16, 9, texs[0], 0, buf); return;
-      case SH.POT: this.box(p, id, x, y, z, 5, 0, 5, 11, 6, 11, texs, 0, buf); return;
+      case SH.POT:   // (ours: a narrower body under a rim)
+        this.box(p, id, x, y, z, 5.5, 0, 5.5, 10.5, 5, 10.5, texs, 0, buf);
+        this.box(p, id, x, y, z, 5, 5, 5, 11, 6, 11, texs, 0, buf);
+        return;
       case SH.PICKLE: {
         this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
         const n = (m & 3) + 1, pos = [[6, 6], [3, 4], [10, 9], [5, 11]];
-        for (let i = 0; i < n; i++) this.box(p, id, x, y, z, pos[i][0], 0, pos[i][1], pos[i][0] + 4, 6, pos[i][1] + 4, texs, 0, buf);
+        for (let i = 0; i < n; i++) this.box(p, id, x, y, z, pos[i][0], 0, pos[i][1], pos[i][0] + 4, 5.5, pos[i][1] + 4, texs, 0, buf);
         return;
       }
       case SH.LILY: {
@@ -7057,7 +7073,10 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
       [0, 0, 0, 0, [tex, u[0], u[1], u[2], u[3], 0, -1, 1], [tex, u[2], u[1], u[0], u[3], 0, -1, 1]]];
   };
   const cross = (x0, y0, x1, y1, tex, uv) => [plane(x0, y0, x1, y1, tex, 45, uv), plane(x0, y0, x1, y1, tex, -45, uv)];
-  const add = (els) => { MODEL_LIST.push(els); return MODEL_LIST.length - 1; };
+  // hull: the block's shape as Minecraft's (collision and outline: [from, to]) where it is not the
+  // bounds of the model's own elements
+  const HULL = [];
+  const add = (els, hull) => { MODEL_LIST.push(els); if (hull) HULL[MODEL_LIST.length - 1] = hull; return MODEL_LIST.length - 1; };
   const FACING_Y = [180, 270, 0, 90];
   const facing = (key, model, metas) => { MODEL_VAR[key] = []; for (let m = 0; m < (metas || 4); m++) MODEL_VAR[key][m] = [[model, 0, FACING_Y[m & 3]]]; };
   const single = (key, model) => { MODEL_VAR[key] = [[[model, 0, 0]]]; };
@@ -7074,37 +7093,42 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   }
   // lectern: base, post and a sloped reading board
   facing('LECTERN', add([
-    box([0, 0, 0], [16, 2, 16], { u: 'lectern_base', d: 'oak_planks', side: 'lectern_base' }),
+    box([1, 0, 1], [15, 2, 15], { u: 'lectern_base', d: 'oak_planks', side: 'lectern_base' }),
     box([4, 2, 4], [12, 13, 12], { side: 'lectern_sides', n: 'lectern_front' }, { skip: ['u', 'd'] }),
     box([0.5, 12, 2], [15.5, 15, 15], { u: 'lectern_top', d: 'oak_planks', side: 'lectern_sides' }, { r: [[8, 13, 8], 0, -22.5, 0] }),
-  ]));
+  ], [[0, 0, 0], [16, 15, 16]]));
   // grindstone: two legs with pivots holding the wheel (meta: facing, +4 wall, +8 ceiling)
   {
+    // (slim legs under wider pivot blocks; the wheel a pixel lower and narrower, its face the tile's 12x12)
     const parts = (y) => [
-      box([2, y, 6], [4, y + 7, 10], 'grindstone_pivot'), box([12, y, 6], [14, y + 7, 10], 'grindstone_pivot'),
-      box([2, y + 7, 5], [4, y + 13, 11], 'grindstone_pivot'), box([12, y + 7, 5], [14, y + 13, 11], 'grindstone_pivot'),
-      box([4, y + 4, 2], [12, y + 16, 14], { side: 'grindstone_round', e: 'grindstone_side', w: 'grindstone_side', u: 'grindstone_round', d: 'grindstone_round' }),
+      box([2, y, 6.5], [4, y + 6, 9.5], 'grindstone_pivot'), box([12, y, 6.5], [14, y + 6, 9.5], 'grindstone_pivot'),
+      box([1.5, y + 6, 5.5], [4, y + 12, 10.5], 'grindstone_pivot'), box([12, y + 6, 5.5], [14.5, y + 12, 10.5], 'grindstone_pivot'),
+      box([4, y + 3, 2.5], [12, y + 15, 13.5], { side: 'grindstone_round', e: 'grindstone_side', w: 'grindstone_side', u: 'grindstone_round', d: 'grindstone_round' },
+        { uv: { e: [2, 0, 14, 12], w: [2, 0, 14, 12] } }),
     ];
-    const floor = add(parts(0));
+    const floor = add(parts(0), [[2, 0, 2], [14, 16, 14]]);
     MODEL_VAR.GRINDSTONE = [];
     for (let m = 0; m < 12; m++) {
       const face = m >> 2, y = FACING_Y[m & 3];
       MODEL_VAR.GRINDSTONE[m] = [face === 0 ? [floor, 0, y] : face === 2 ? [floor, 180, (y + 180) % 360] : [floor, 90, y]];
     }
   }
-  // stonecutter: a low block with the saw blade standing in the middle
+  // stonecutter: a low block with a raised table and the saw blade standing in the middle (the
+  // blade drawn at the bottom of its tile)
   facing('STONECUTTER', add([
-    box([0, 0, 0], [16, 9, 16], { u: 'stonecutter_top', d: 'stonecutter_bottom', side: 'stonecutter_side' }),
-    plane(1, 9, 15, 16, 'stonecutter_saw', 0, [1, 9, 15, 16]),          // (stonecutter.json: the blade at the bottom of the tile)
-  ]));
+    box([0, 0, 0], [16, 8, 16], { u: 'stonecutter_top', d: 'stonecutter_bottom', side: 'stonecutter_side' }),
+    box([0.5, 8, 0.5], [15.5, 9, 15.5], { u: 'stonecutter_top', side: 'stonecutter_side' }, { skip: ['d'] }),
+    plane(1.5, 9, 14.5, 15.5, 'stonecutter_saw', 0, [1.5, 9.5, 14.5, 16]),
+  ], [[0, 0, 0], [16, 9, 16]]));
   // bell: stone posts and a beam (floor), a short hanger (ceiling) or a wall bracket, and the bell
   {
-    const bell = [box([5, 6, 5], [11, 13, 11], 'bell_body'), box([4, 4, 4], [12, 6, 12], 'bell_body')];
-    const floor = add([box([0, 0, 6], [2, 16, 10], 'stone'), box([14, 0, 6], [16, 16, 10], 'stone'),
-      box([2, 13, 7], [14, 15, 9], 'dark_oak_planks'), ...bell]);
-    const ceiling = add([box([7, 13, 7], [9, 16, 9], 'dark_oak_planks'), ...bell]);
-    const wall = add([box([7, 13, 3], [9, 15, 16], 'dark_oak_planks'), ...bell]);
-    const both = add([box([7, 13, 0], [9, 15, 16], 'dark_oak_planks'), ...bell]);
+    // (the bell: a body with a narrower crown and a flared rim; slim posts, a thin beam)
+    const bell = [box([5, 6, 5], [11, 12, 11], 'bell_body'), box([6, 12, 6], [10, 13, 10], 'bell_body'), box([4.5, 4, 4.5], [11.5, 6, 11.5], 'bell_body')];
+    const floor = add([box([0.5, 0, 6.5], [2.5, 16, 9.5], 'stone'), box([13.5, 0, 6.5], [15.5, 16, 9.5], 'stone'),
+      box([2.5, 13, 7.25], [13.5, 14.5, 8.75], 'dark_oak_planks'), ...bell], [[0, 0, 4], [16, 16, 12]]);
+    const ceiling = add([box([7.25, 13, 7.25], [8.75, 16, 8.75], 'dark_oak_planks'), ...bell], [[4, 4, 4], [12, 16, 12]]);
+    const wall = add([box([7.25, 13, 3], [8.75, 14.5, 16], 'dark_oak_planks'), ...bell], [[4, 4, 3], [12, 15, 16]]);
+    const both = add([box([7.25, 13, 0], [8.75, 14.5, 16], 'dark_oak_planks'), ...bell], [[4, 4, 0], [12, 15, 16]]);
     MODEL_VAR.BELL = [];
     for (let m = 0; m < 16; m++) {
       const at = m >> 2, y = FACING_Y[m & 3];
@@ -7114,56 +7138,60 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   // lantern: iron cage with a cap and a handle; hanging (meta 1) one block higher on a chain
   {
     const L = (y, chain) => {
+      // (a squatter cage under a taller cap)
       const els = [
-        box([5, y, 5], [11, y + 7, 11], { side: 'lantern', u: 'lantern', d: 'lantern' }, { uv: { e: [0, 2, 6, 9], w: [0, 2, 6, 9], s: [0, 2, 6, 9], n: [0, 2, 6, 9], u: [0, 9, 6, 15], d: [0, 9, 6, 15] } }),
-        box([6, y + 7, 6], [10, y + 9, 10], 'lantern', { uv: { e: [0, 0, 4, 2], w: [0, 0, 4, 2], s: [0, 0, 4, 2], n: [0, 0, 4, 2], u: [0, 9, 4, 13], d: [0, 9, 4, 13] } }),
+        box([5, y, 5], [11, y + 6.5, 11], { side: 'lantern', u: 'lantern', d: 'lantern' }, { uv: { e: [0, 2.5, 6, 9], w: [0, 2.5, 6, 9], s: [0, 2.5, 6, 9], n: [0, 2.5, 6, 9], u: [0, 9, 6, 15], d: [0, 9, 6, 15] } }),
+        box([6, y + 6.5, 6], [10, y + 8.5, 10], 'lantern', { uv: { e: [0, 0, 4, 2], w: [0, 0, 4, 2], s: [0, 0, 4, 2], n: [0, 0, 4, 2], u: [0, 9, 4, 13], d: [0, 9, 4, 13] } }),
       ];
-      els.push(...cross(6.5, y + 9, 9.5, y + (chain ? 16 - y : 11), 'lantern', [11, 1, 14, 3]));
+      els.push(...cross(6.5, y + 8.5, 9.5, chain ? 16 : y + 10.5, 'lantern', [11, 1, 14, 3]));
       return els;
     };
-    MODEL_VAR.LANTERN = [[[add(L(0, false)), 0, 0]], [[add(L(1, true)), 0, 0]]];
+    MODEL_VAR.LANTERN = [[[add(L(0, false), [[5, 0, 5], [11, 9, 11]]), 0, 0]], [[add(L(1, true), [[5, 1, 5], [11, 10, 11]]), 0, 0]]];
   }
   // campfire: two logs on the ground, two crossing on top, embers and flames (meta: facing, +4 out)
   {
+    // (the logs a pixel further in, the embers a narrower bed between them)
     const logs = (lit) => [
-      box([1, 0, 0], [5, 4, 16], { side: 'campfire_log', u: 'campfire_log' }), box([11, 0, 0], [15, 4, 16], { side: 'campfire_log', u: 'campfire_log' }),
-      box([0, 3, 1], [16, 7, 5], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
-      box([0, 3, 11], [16, 7, 15], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
-      box([5, 0, 0], [11, 1, 16], lit ? 'campfire_log_lit' : 'campfire_log'),
+      box([2, 0, 0], [6, 4, 16], { side: 'campfire_log', u: 'campfire_log' }), box([10, 0, 0], [14, 4, 16], { side: 'campfire_log', u: 'campfire_log' }),
+      box([0, 3, 2], [16, 7, 6], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
+      box([0, 3, 10], [16, 7, 14], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
+      box([6, 0, 1], [10, 1, 15], lit ? 'campfire_log_lit' : 'campfire_log'),
     ];
-    const lit = add([...logs(true), ...cross(1, 1, 15, 16, 'campfire_fire', [0, 0, 16, 15])]);
-    const out = add(logs(false));
+    const lit = add([...logs(true), ...cross(1, 1, 15, 16, 'campfire_fire', [0, 0, 16, 15])], [[0, 0, 0], [16, 7, 16]]);
+    const out = add(logs(false), [[0, 0, 0], [16, 7, 16]]);
     MODEL_VAR.CAMPFIRE = [];
     for (let m = 0; m < 8; m++) MODEL_VAR.CAMPFIRE[m] = [[m & 4 ? out : lit, 0, FACING_Y[m & 3]]];
   }
   // brewing stand: rod on three feet with up to three bottles (meta bits)
   {
     const base = add([
-      box([7, 0, 7], [9, 14, 9], 'brewing_stand', { uv: { e: [7, 2, 9, 16], w: [7, 2, 9, 16], s: [7, 2, 9, 16], n: [7, 2, 9, 16], u: [7, 2, 9, 4], d: [7, 2, 9, 4] } }),
-      box([9, 0, 5], [15, 2, 11], 'brewing_stand_base'), box([1, 0, 1], [7, 2, 7], 'brewing_stand_base'), box([1, 0, 9], [7, 2, 15], 'brewing_stand_base'),
-    ]);
-    const bottle = (a) => add([plane(8, 0, 16, 16, 'brewing_stand', a, [8, 0, 16, 16])]);
+      // (a shorter rod on smaller feet; the bottles a little smaller)
+      box([7, 0, 7], [9, 13, 9], 'brewing_stand', { uv: { e: [7, 3, 9, 16], w: [7, 3, 9, 16], s: [7, 3, 9, 16], n: [7, 3, 9, 16], u: [7, 3, 9, 5], d: [7, 3, 9, 5] } }),
+      box([9, 0, 6], [14, 2, 10], 'brewing_stand_base'), box([2, 0, 2], [7, 2, 7], 'brewing_stand_base'), box([2, 0, 9], [7, 2, 14], 'brewing_stand_base'),
+    ], [[1, 0, 1], [15, 14, 15]]);
+    const bottle = (a) => add([plane(8.5, 0, 15.5, 15, 'brewing_stand', a, [8.5, 1, 15.5, 16])], [[7, 0, 7], [9, 14, 9]]);
     const b = [bottle(0), bottle(120), bottle(240)];
     MODEL_VAR.BREWING_STAND = [];
     for (let m = 0; m < 8; m++) { const parts = [[base, 0, 0]]; for (let i = 0; i < 3; i++) if (m & (1 << i)) parts.push([b[i], 0, 0]); MODEL_VAR.BREWING_STAND[m] = parts; }
   }
-  // cauldron: four walls on corner legs; water at three levels (meta 1-3)
+  // cauldron: four walls on square corner feet, a thick floor; water at three levels (meta 1-3)
   {
     const S = { side: 'cauldron_side', u: 'cauldron_top', d: 'cauldron_bottom' };
     const shell = [
-      box([0, 3, 0], [2, 16, 16], S), box([14, 3, 0], [16, 16, 16], S), box([2, 3, 0], [14, 16, 2], S), box([2, 3, 14], [14, 16, 16], S),
-      box([2, 3, 2], [14, 4, 14], { u: 'cauldron_inner', d: 'cauldron_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
-      box([0, 0, 0], [4, 3, 2], S), box([0, 0, 2], [2, 3, 4], S), box([12, 0, 0], [16, 3, 2], S), box([14, 0, 2], [16, 3, 4], S),
-      box([0, 0, 14], [4, 3, 16], S), box([0, 0, 12], [2, 3, 14], S), box([12, 0, 14], [16, 3, 16], S), box([14, 0, 12], [16, 3, 14], S),
+      box([0, 2, 0], [2, 16, 16], S), box([14, 2, 0], [16, 16, 16], S), box([2, 2, 0], [14, 16, 2], S), box([2, 2, 14], [14, 16, 16], S),
+      box([2, 2, 2], [14, 4, 14], { u: 'cauldron_inner', d: 'cauldron_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
+      box([0, 0, 0], [3, 2, 3], S), box([13, 0, 0], [16, 2, 3], S), box([0, 0, 13], [3, 2, 16], S), box([13, 0, 13], [16, 2, 16], S),
     ];
-    MODEL_VAR.CAULDRON = [0, 9, 12, 15].map((h) => [[add(h ? [...shell, box([2, 4, 2], [14, h, 14], { u: 'water_still' }, { skip: ['e', 'w', 's', 'n', 'd'] })] : shell), 0, 0]]);
+    MODEL_VAR.CAULDRON = [0, 8.5, 11.5, 14.5].map((h) => [[add(h ? [...shell, box([2, 4, 2], [14, h, 14], { u: 'water_still' }, { skip: ['e', 'w', 's', 'n', 'd'] })] : shell), 0, 0]]);
   }
   // composter: a box of planks, filled by level (meta 0-8)
   {
     const W = { side: 'composter_side', u: 'composter_top', d: 'composter_bottom' };
     // (composter.json: the floor's top is #inside = composter_bottom; the top tile only on the rims)
-    const shell = [box([0, 0, 0], [16, 2, 16], { u: 'composter_bottom', d: 'composter_bottom' }, { skip: ['e', 'w', 's', 'n'] }), box([0, 0, 0], [2, 16, 16], W), box([14, 0, 0], [16, 16, 16], W),
-      box([2, 0, 0], [14, 16, 2], W), box([2, 0, 14], [14, 16, 16], W)];
+    // (corner posts standing a pixel above the walls between them, the floor laid inside)
+    const shell = [box([2, 0, 2], [14, 2, 14], { u: 'composter_bottom', d: 'composter_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
+      box([0, 0, 0], [2, 16, 2], W), box([14, 0, 0], [16, 16, 2], W), box([0, 0, 14], [2, 16, 16], W), box([14, 0, 14], [16, 16, 16], W),
+      box([2, 0, 0], [14, 15, 2], W), box([2, 0, 14], [14, 15, 16], W), box([0, 0, 2], [2, 15, 14], W), box([14, 0, 2], [16, 15, 14], W)];
     MODEL_VAR.COMPOSTER = [];
     for (let m = 0; m < 9; m++) {
       const h = m === 0 ? 0 : Math.min(15, 1 + m * 2);
@@ -7195,7 +7223,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   single('SCULK_SENSOR', add([box([0, 0, 0], [16, 8, 16], { u: 'sculk_sensor_top', d: 'sculk_sensor_bottom', side: 'sculk_sensor_side' }),
     plane(3, 8, 7, 16, 'sculk_sensor_tendril_inactive', 45, [4, 0, 12, 16]), plane(9, 8, 13, 16, 'sculk_sensor_tendril_inactive', -45, [4, 0, 12, 16])]));
   single('SCULK_SHRIEKER', add([box([0, 0, 0], [16, 8, 16], { u: 'sculk_shrieker_inner_top', d: 'sculk_shrieker_bottom', side: 'sculk_shrieker_side' }),
-    box([1, 8, 1], [15, 15, 15], { u: 'sculk_shrieker_top', side: 'sculk_shrieker_side' }, { skip: ['d'] })]));
+    box([1, 8, 1], [15, 15, 15], { u: 'sculk_shrieker_top', side: 'sculk_shrieker_side' }, { skip: ['d'] })], [[0, 0, 0], [16, 8, 16]]));
 
   // ship wheel: a turned post with a spoked wheel on its north face, handles past the rim
   {
@@ -7226,16 +7254,17 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   }
 
   // ---- redstone ----
-  // the stub of a redstone torch standing on a base at height y0 (top 5 pixels of the torch texture)
-  const stub = (x, z, y0, tex) => box([x, y0, z], [x + 2, y0 + 5, z + 2], tex,
-    { uv: { e: [7, 6, 9, 11], w: [7, 6, 9, 11], s: [7, 6, 9, 11], n: [7, 6, 9, 11], u: [7, 6, 9, 8], d: [7, 13, 9, 15] } });
+  // the stub of a redstone torch standing on a base at height y0
+  // (a stub a pixel lower than a whole torch's top: the top 4 pixels)
+  const stub = (x, z, y0, tex) => box([x, y0, z], [x + 2, y0 + 4, z + 2], tex,
+    { uv: { e: [7, 6, 9, 10], w: [7, 6, 9, 10], s: [7, 6, 9, 10], n: [7, 6, 9, 10], u: [7, 6, 9, 8], d: [7, 13, 9, 15] } });
   // lever (meta: face 0 floor / 1 wall / 2 ceiling << 2 | facing, +16 on): a stone base and a handle
   // tilted one way or the other; built on the floor, turned onto walls and ceilings
   {
     const lever = [0, 1].map(on => add([
-      box([5, 0, 4], [11, 3, 12], 'cobblestone'),
-      box([7, 1, 7], [9, 11, 9], 'lever_handle', { r: [[8, 1, 8], 0, on ? -40 : 40, 0] }),
-    ]));
+      box([5, 0, 4.5], [11, 2.5, 11.5], 'cobblestone'),
+      box([7, 1, 7], [9, 10, 9], 'lever_handle', { r: [[8, 1, 8], 0, on ? -40 : 40, 0] }),
+    ], [[5, 0, 4], [11, 6, 12]]));
     MODEL_VAR.LEVER = [];
     for (let m = 0; m < 32; m++) {
       const face = (m >> 2) & 3, f = m & 3, M = lever[(m >> 4) & 1];
@@ -7249,7 +7278,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     for (let k = 0; k < 8; k++) {
       const delay = k & 3, on = k >> 2, t = on ? 'redstone_torch' : 'redstone_torch_off';
       rep.push(add([box([0, 0, 0], [16, 2, 16], { u: on ? 'repeater_on' : 'repeater', d: 'smooth_stone', side: 'smooth_stone' }),
-        stub(7, 11, 2, t), stub(7, 2 + delay * 2, 2, t)]));
+        stub(7, 11, 2, t), stub(7, 2 + delay * 2, 2, t)], [[0, 0, 0], [16, 2, 16]]));
     }
     MODEL_VAR.REPEATER = [];
     for (let m = 0; m < 64; m++) MODEL_VAR.REPEATER[m] = [[rep[((m >> 2) & 3) | (((m >> 4) & 1) << 2)], 0, FACING_Y[m & 3]]];
@@ -7262,7 +7291,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
       const sub = k & 1, on = k >> 1;
       cmp.push(add([box([0, 0, 0], [16, 2, 16], { u: on ? 'comparator_on' : 'comparator', d: 'smooth_stone', side: 'smooth_stone' }),
         stub(3, 11, 2, on ? 'redstone_torch' : 'redstone_torch_off'), stub(11, 11, 2, on ? 'redstone_torch' : 'redstone_torch_off'),
-        stub(7, 2, 0, sub ? 'redstone_torch' : 'redstone_torch_off')]));
+        stub(7, 2, 0, sub ? 'redstone_torch' : 'redstone_torch_off')], [[0, 0, 0], [16, 2, 16]]));
     }
     MODEL_VAR.COMPARATOR = [];
     for (let m = 0; m < 128; m++) MODEL_VAR.COMPARATOR[m] = [[cmp[((m >> 2) & 1) | ((m >> 3) ? 2 : 0)], 0, FACING_Y[m & 3]]];
@@ -7294,7 +7323,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     for (let m = 0; m < 16; m++) MODEL_VAR.PISTON_HEAD[m] = [six(H[(m >> 3) & 1], m & 7)];
   }
 
-  // selection boxes: the bounds of each variant's elements, turned like the parts
+  // selection boxes: the bounds of each variant's elements (or its hull), turned like the parts
   const turn = (p, rx, ry) => {
     let [x, y, z] = [p[0] - 8, p[1] - 8, p[2] - 8], t;
     const cx = Math.cos(rx * Math.PI / 180), sx = Math.sin(rx * Math.PI / 180), cy = Math.cos(ry * Math.PI / 180), sy = Math.sin(ry * Math.PI / 180);
@@ -7305,7 +7334,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   for (const k in MODEL_VAR) {
     MODEL_BOX[k] = MODEL_VAR[k].map((parts) => {
       const lo = [16, 16, 16], hi = [0, 0, 0];
-      for (const [mi, rx, ry] of parts) for (const E of MODEL_LIST[mi]) for (let c = 0; c < 8; c++) {
+      for (const [mi, rx, ry] of parts) for (const E of HULL[mi] ? [HULL[mi]] : MODEL_LIST[mi]) for (let c = 0; c < 8; c++) {
         const q = turn([c & 1 ? E[1][0] : E[0][0], c & 2 ? E[1][1] : E[0][1], c & 4 ? E[1][2] : E[0][2]], rx, ry);
         for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], Math.max(0, q[i])); hi[i] = Math.max(hi[i], Math.min(16, q[i])); }
       }
@@ -11095,15 +11124,15 @@ class Mesher {
         // (template_torch / template_torch_wall: the top from rows 6-8, the bottom from 13-15; the
         // wall torch's sides from the stick's rows 6-16 like the standing one, not from where its
         // raised box happens to be)
-        const uvo = [null, null, [7, 6, 9, 8], [7, 13, 9, 15], null, null];
+        // (our torch half a pixel shorter than the tile's stick, which it is drawn from whole)
         const uvw = [[7, 6, 9, 16], [7, 6, 9, 16], [7, 6, 9, 8], [7, 13, 9, 15], [7, 6, 9, 16], [7, 6, 9, 16]];
         if (m === 0 || m > 4) {
-          this.box(p, id, x, y, z, 7, 0, 7, 9, 10, 9, texs[0], 0, buf, { uvOverride: uvo });
+          this.box(p, id, x, y, z, 7, 0, 7, 9, 9.5, 9, texs[0], 0, buf, { uvOverride: uvw });
         } else {
           const d = m - 1; // wall direction: 0 S,1 W,2 N,3 E (wall is on that side)
           const dx = DIRX[d], dz = DIRZ[d];
           const ox = dx * 5.5, oz = dz * 5.5;
-          this.box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13.5, 9 + oz, texs[0], 0, buf,
+          this.box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13, 9 + oz, texs[0], 0, buf,
             { uvOverride: uvw, shear: [-dx * 0.42, -dz * 0.42] });
         }
         return;
@@ -11137,18 +11166,21 @@ class Mesher {
         // (the tile's top row, the pillow, at the head's far end: toward the facing)
         const rot = [0, 0, (2 - f) & 3, 0, 0, 0];
         this.box(p, id, x, y, z, 0, 3, 0, 16, 9, 16, t, 0, buf, { rot });
-        // legs
+        // legs (ours: slim posts a pixel in from the corners)
         const lg = BED_LEG;
-        this.box(p, id, x, y, z, 0, 0, 0, 3, 3, 3, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 0, 16, 3, 3, lg, 0, buf);
-        this.box(p, id, x, y, z, 0, 0, 13, 3, 3, 16, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 13, 16, 3, 16, lg, 0, buf);
+        this.box(p, id, x, y, z, 1, 0, 1, 3, 3, 3, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 1, 15, 3, 3, lg, 0, buf);
+        this.box(p, id, x, y, z, 1, 0, 13, 3, 3, 15, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 13, 15, 3, 15, lg, 0, buf);
         return;
       }
       case SH.BAMBOO: this.box(p, id, x, y, z, 7, 0, 7, 9, 16, 9, texs[0], 0, buf); return;
-      case SH.POT: this.box(p, id, x, y, z, 5, 0, 5, 11, 6, 11, texs, 0, buf); return;
+      case SH.POT:   // (ours: a narrower body under a rim)
+        this.box(p, id, x, y, z, 5.5, 0, 5.5, 10.5, 5, 10.5, texs, 0, buf);
+        this.box(p, id, x, y, z, 5, 5, 5, 11, 6, 11, texs, 0, buf);
+        return;
       case SH.PICKLE: {
         this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
         const n = (m & 3) + 1, pos = [[6, 6], [3, 4], [10, 9], [5, 11]];
-        for (let i = 0; i < n; i++) this.box(p, id, x, y, z, pos[i][0], 0, pos[i][1], pos[i][0] + 4, 6, pos[i][1] + 4, texs, 0, buf);
+        for (let i = 0; i < n; i++) this.box(p, id, x, y, z, pos[i][0], 0, pos[i][1], pos[i][0] + 4, 5.5, pos[i][1] + 4, texs, 0, buf);
         return;
       }
       case SH.LILY: {
@@ -15253,80 +15285,89 @@ class Player {
 
 // ---- entities.js ----
 'use strict';
-// Mobs, item drops, arrows: models (Minecraft Java geometry), AI, spawning, physics, rendering.
+// Mobs, item drops, arrows: models (own proportions on Minecraft's skin layout), AI, spawning,
+// physics, rendering.
 
-// Part: { box:[x,y,z,w,h,d] (MC y-down pixel space, relative to pivot), pivot:[x,y,z], uv:[u,v], rot:[rx,ry,rz], anim, mirror, inflate }
+// Part: { box:[x,y,z,w,h,d] (MC y-down pixel space, relative to pivot), pivot:[x,y,z], uv:[u,v], rot:[rx,ry,rz], anim, mirror, inflate,
+//   tbox:[w,h,d] }: tbox is the size the skin is laid out for when the box is drawn at another size
+//   (the skin then stretches over it), so the skins keep their layout while the models are our own
 // anim: 'head', 'legA', 'legB', 'armA', 'armB', 'body90', 'zarmR','zarmL','wingL','wingR', 'spiderL'...
 const MODELS = {
+  // pig: a shorter body on longer legs, the head lower and set back, a longer snout
   pig: { tex: 'pig', tw: 64, th: 32, parts: [
-    { box: [-4, -4, -8, 8, 8, 8], pivot: [0, 12, -6], uv: [0, 0], anim: 'head' },
-    { box: [-2, 0, -9, 4, 3, 1], pivot: [0, 12, -6], uv: [16, 16], anim: 'head' },
-    { box: [-5, -10, -7, 10, 16, 8], pivot: [0, 11, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0] },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-3, 18, 7], uv: [0, 16], anim: 'legA' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [3, 18, 7], uv: [0, 16], anim: 'legB', mirror: true },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-3, 18, -5], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [3, 18, -5], uv: [0, 16], anim: 'legA', mirror: true },
+    { box: [-4, -4.5, -7.5, 8, 8, 8], pivot: [0, 12, -6.5], uv: [0, 0], anim: 'head' },
+    { box: [-2, -0.5, -9, 4, 3, 1.5], pivot: [0, 12, -6.5], uv: [16, 16], anim: 'head', tbox: [4, 3, 1] },
+    { box: [-5, -9.5, -7, 10, 15, 8], pivot: [0, 11, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0], tbox: [10, 16, 8] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [-3, 17.5, 6.5], uv: [0, 16], anim: 'legA', tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [3, 17.5, 6.5], uv: [0, 16], anim: 'legB', mirror: true, tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [-3, 17.5, -4.5], uv: [0, 16], anim: 'legB', tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [3, 17.5, -4.5], uv: [0, 16], anim: 'legA', mirror: true, tbox: [4, 6, 4] },
   ] },
+  // cow: a deeper, shorter barrel of a body, a longer head, horns set further back and higher
   cow: { tex: 'cow', tw: 64, th: 32, parts: [
-    { box: [-4, -4, -6, 8, 8, 6], pivot: [0, 4, -8], uv: [0, 0], anim: 'head' },
-    { box: [-5, -5, -4, 1, 3, 1], pivot: [0, 4, -8], uv: [22, 0], anim: 'head' },
-    { box: [4, -5, -4, 1, 3, 1], pivot: [0, 4, -8], uv: [22, 0], anim: 'head' },
-    { box: [-6, -10, -7, 12, 18, 10], pivot: [0, 5, 2], uv: [18, 4], rot: [Math.PI / 2, 0, 0] },
-    { box: [-2, 2, -8, 4, 6, 1], pivot: [0, 5, 2], uv: [52, 0], rot: [Math.PI / 2, 0, 0] },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [-4, 12, 7], uv: [0, 16], anim: 'legA' },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [4, 12, 7], uv: [0, 16], anim: 'legB', mirror: true },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [-4, 12, -6], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [4, 12, -6], uv: [0, 16], anim: 'legA', mirror: true },
+    { box: [-4, -4, -6, 8, 8, 6.5], pivot: [0, 4.5, -8], uv: [0, 0], anim: 'head', tbox: [8, 8, 6] },
+    { box: [-5, -5.5, -3.5, 1, 3, 1], pivot: [0, 4.5, -8], uv: [22, 0], anim: 'head' },
+    { box: [4, -5.5, -3.5, 1, 3, 1], pivot: [0, 4.5, -8], uv: [22, 0], anim: 'head' },
+    { box: [-6, -9.5, -7.5, 12, 17, 10.5], pivot: [0, 5, 2], uv: [18, 4], rot: [Math.PI / 2, 0, 0], tbox: [12, 18, 10] },
+    { box: [-2, 2, -8.5, 4, 5, 1], pivot: [0, 5, 2], uv: [52, 0], rot: [Math.PI / 2, 0, 0], tbox: [4, 6, 1] },
+    { box: [-2, 0, -2, 4, 11.5, 4], pivot: [-4, 12.5, 6.5], uv: [0, 16], anim: 'legA', tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 11.5, 4], pivot: [4, 12.5, 6.5], uv: [0, 16], anim: 'legB', mirror: true, tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 11.5, 4], pivot: [-4, 12.5, -5.5], uv: [0, 16], anim: 'legB', tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 11.5, 4], pivot: [4, 12.5, -5.5], uv: [0, 16], anim: 'legA', mirror: true, tbox: [4, 12, 4] },
   ] },
+  // sheep: a shorter body, the head carried higher and further out, legs a little longer
   sheep: { tex: 'sheep', tw: 64, th: 32, parts: [
-    { box: [-3, -4, -6, 6, 6, 8], pivot: [0, 6, -8], uv: [0, 0], anim: 'head' },
-    { box: [-4, -10, -7, 8, 16, 6], pivot: [0, 5, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0] },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [-3, 12, 7], uv: [0, 16], anim: 'legA' },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [3, 12, 7], uv: [0, 16], anim: 'legB', mirror: true },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [-3, 12, -5], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [3, 12, -5], uv: [0, 16], anim: 'legA', mirror: true },
+    { box: [-3, -4.5, -6.5, 6, 6, 8], pivot: [0, 6, -8], uv: [0, 0], anim: 'head' },
+    { box: [-4, -9.5, -7, 8, 15, 6.5], pivot: [0, 5, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0], tbox: [8, 16, 6] },
+    { box: [-2, 0, -2, 4, 12.5, 4], pivot: [-3, 11.5, 6.5], uv: [0, 16], anim: 'legA', tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 12.5, 4], pivot: [3, 11.5, 6.5], uv: [0, 16], anim: 'legB', mirror: true, tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 12.5, 4], pivot: [-3, 11.5, -4.5], uv: [0, 16], anim: 'legB', tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 12.5, 4], pivot: [3, 11.5, -4.5], uv: [0, 16], anim: 'legA', mirror: true, tbox: [4, 12, 4] },
   ], fur: { tex: 'sheep_fur', tw: 64, th: 32, parts: [
-    { box: [-3, -4, -4, 6, 6, 6], pivot: [0, 6, -8], uv: [0, 0], anim: 'head', inflate: 0.6 },
-    { box: [-4, -10, -7, 8, 16, 6], pivot: [0, 5, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0], inflate: 1.75 },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-3, 12, 7], uv: [0, 16], anim: 'legA', inflate: 0.5 },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [3, 12, 7], uv: [0, 16], anim: 'legB', inflate: 0.5, mirror: true },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-3, 12, -5], uv: [0, 16], anim: 'legB', inflate: 0.5 },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [3, 12, -5], uv: [0, 16], anim: 'legA', inflate: 0.5, mirror: true },
+    { box: [-3, -4.5, -4.5, 6, 6, 6], pivot: [0, 6, -8], uv: [0, 0], anim: 'head', inflate: 0.55 },
+    { box: [-4, -9.5, -7, 8, 15, 6.5], pivot: [0, 5, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0], inflate: 1.6, tbox: [8, 16, 6] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [-3, 11.5, 6.5], uv: [0, 16], anim: 'legA', inflate: 0.45, tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [3, 11.5, 6.5], uv: [0, 16], anim: 'legB', inflate: 0.45, mirror: true, tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [-3, 11.5, -4.5], uv: [0, 16], anim: 'legB', inflate: 0.45, tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [3, 11.5, -4.5], uv: [0, 16], anim: 'legA', inflate: 0.45, mirror: true, tbox: [4, 6, 4] },
   ] } },
+  // chicken: a plumper body set lower on shorter legs, the head up on a longer neck, a longer beak
   chicken: { tex: 'chicken', tw: 64, th: 32, parts: [
-    { box: [-2, -6, -2, 4, 6, 3], pivot: [0, 15, -4], uv: [0, 0], anim: 'head' },
-    { box: [-2, -4, -4, 4, 2, 2], pivot: [0, 15, -4], uv: [14, 0], anim: 'head' },
-    { box: [-1, -2, -3, 2, 2, 2], pivot: [0, 15, -4], uv: [14, 4], anim: 'head' },
-    { box: [-3, -4, -3, 6, 8, 6], pivot: [0, 16, 0], uv: [0, 9], rot: [Math.PI / 2, 0, 0] },
-    { box: [-1, 0, -3, 3, 5, 3], pivot: [-2, 19, 1], uv: [26, 0], anim: 'legA' },
-    { box: [-1, 0, -3, 3, 5, 3], pivot: [1, 19, 1], uv: [26, 0], anim: 'legB', mirror: true },
-    { box: [0, 0, -3, 1, 4, 6], pivot: [-4, 13, 0], uv: [24, 13], anim: 'wingR' },
-    { box: [-1, 0, -3, 1, 4, 6], pivot: [4, 13, 0], uv: [24, 13], anim: 'wingL', mirror: true },
+    { box: [-2, -6.5, -2, 4, 6.5, 3], pivot: [0, 15, -4.5], uv: [0, 0], anim: 'head', tbox: [4, 6, 3] },
+    { box: [-2, -4.5, -4.5, 4, 2, 2.5], pivot: [0, 15, -4.5], uv: [14, 0], anim: 'head', tbox: [4, 2, 2] },
+    { box: [-1, -2.5, -3, 2, 2, 2], pivot: [0, 15, -4.5], uv: [14, 4], anim: 'head' },
+    { box: [-3.25, -4, -3, 6.5, 8.5, 6], pivot: [0, 16.5, 0], uv: [0, 9], rot: [Math.PI / 2, 0, 0], tbox: [6, 8, 6] },
+    { box: [-1, 0, -3, 3, 4.5, 3], pivot: [-2, 19.5, 1], uv: [26, 0], anim: 'legA', tbox: [3, 5, 3] },
+    { box: [-1, 0, -3, 3, 4.5, 3], pivot: [1, 19.5, 1], uv: [26, 0], anim: 'legB', mirror: true, tbox: [3, 5, 3] },
+    { box: [0, 0, -3, 1, 4.5, 6.5], pivot: [-4.25, 13.5, 0], uv: [24, 13], anim: 'wingR', tbox: [1, 4, 6] },
+    { box: [-1, 0, -3, 1, 4.5, 6.5], pivot: [4.25, 13.5, 0], uv: [24, 13], anim: 'wingL', mirror: true, tbox: [1, 4, 6] },
   ] },
-  // zombie: Minecraft's HumanoidModel, left limbs mirrored from the right ones (only the player's
-  // model has separate left limbs on its skin)
+  // zombie: our humanoid (humanoid() below), left limbs mirrored from the right ones (only the
+  // player's model has separate left limbs on its skin)
   zombie: { tex: 'zombie', tw: 64, th: 64, parts: humanoid(4, false, true) },
   drowned: { tex: 'drowned', tw: 64, th: 64, parts: humanoid(4, false, true) },
   skeleton: { tex: 'skeleton', tw: 64, th: 32, parts: humanoid(2, false), heldItem: 'item_bow' },
   player: { tex: 'player', tw: 64, th: 64, parts: humanoid(4, true, true) },
+  // creeper: the head sunk a little into a deeper trunk, the feet set wider apart
   creeper: { tex: 'creeper', tw: 64, th: 32, parts: [
-    { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 6, 0], uv: [0, 0], anim: 'head' },
-    { box: [-4, 0, -2, 8, 12, 4], pivot: [0, 6, 0], uv: [16, 16] },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-2, 18, 4], uv: [0, 16], anim: 'legA' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [2, 18, 4], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-2, 18, -4], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [2, 18, -4], uv: [0, 16], anim: 'legA' },
+    { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 6.5, 0], uv: [0, 0], anim: 'head' },
+    { box: [-4, 0, -2.25, 8, 12, 4.5], pivot: [0, 6, 0], uv: [16, 16], tbox: [8, 12, 4] },
+    { box: [-2, 0, -2, 4, 6, 4], pivot: [-2, 18, 4.25], uv: [0, 16], anim: 'legA' },
+    { box: [-2, 0, -2, 4, 6, 4], pivot: [2, 18, 4.25], uv: [0, 16], anim: 'legB' },
+    { box: [-2, 0, -2, 4, 6, 4], pivot: [-2, 18, -4.25], uv: [0, 16], anim: 'legB' },
+    { box: [-2, 0, -2, 4, 6, 4], pivot: [2, 18, -4.25], uv: [0, 16], anim: 'legA' },
   ] },
   spider: { tex: 'spider', tw: 64, th: 32, parts: (function () {
     const p = [
-      { box: [-4, -4, -8, 8, 8, 8], pivot: [0, 15, -3], uv: [32, 4], anim: 'head' },
-      { box: [-3, -3, -3, 6, 6, 6], pivot: [0, 15, 0], uv: [0, 0] },
-      { box: [-5, -4, -6, 10, 8, 12], pivot: [0, 15, 9], uv: [0, 12] },
+      // spider: the head a little lower, a slimmer waist, a taller abdomen, legs a pixel shorter
+      { box: [-4, -3.5, -7.5, 8, 8, 8], pivot: [0, 15, -3.5], uv: [32, 4], anim: 'head' },
+      { box: [-3, -2.75, -3, 6, 5.5, 6], pivot: [0, 15, 0], uv: [0, 0], tbox: [6, 6, 6] },
+      { box: [-5, -4.75, -6, 10, 8.75, 12.5], pivot: [0, 15, 9], uv: [0, 12], tbox: [10, 8, 12] },
     ];
     const ys = [0.785, 0.393, -0.393, -0.785], zs = [2, 1, 0, -1];
     for (let i = 0; i < 4; i++) {
-      p.push({ box: [-15, -1, -1, 16, 2, 2], pivot: [-4, 15, zs[i]], uv: [18, 0], rot: [0, ys[i], -0.785], anim: 'spiderR' + i });
-      p.push({ box: [-1, -1, -1, 16, 2, 2], pivot: [4, 15, zs[i]], uv: [18, 0], rot: [0, -ys[i], 0.785], anim: 'spiderL' + i, mirror: true });
+      p.push({ box: [-14, -1, -1, 15, 2, 2], pivot: [-4, 15, zs[i]], uv: [18, 0], rot: [0, ys[i], -0.785], anim: 'spiderR' + i, tbox: [16, 2, 2] });
+      p.push({ box: [-1, -1, -1, 15, 2, 2], pivot: [4, 15, zs[i]], uv: [18, 0], rot: [0, -ys[i], 0.785], anim: 'spiderL' + i, mirror: true, tbox: [16, 2, 2] });
     }
     return p;
   })() },
@@ -15345,22 +15386,24 @@ function opart(b, at, uv, o) {
   if (o.rot) p.rot = [o.rot[0], -o.rot[1], -o.rot[2]];
   return p;
 }
+// enderman: a narrower chest, the arms a little shorter and the legs set a little wider
 MODELS.enderman = { tex: 'enderman', tw: 64, th: 32, halfSwing: true, parts: [
-  { box: [-4, -8, -4, 8, 8, 8], pivot: [0, -14, 0], uv: [0, 0], anim: 'head', creepy: true },
-  { box: [-4, -8, -4, 8, 8, 8], pivot: [0, -14, 0], uv: [0, 16], anim: 'head', inflate: -0.5 },
-  { box: [-4, 0, -2, 8, 12, 4], pivot: [0, -15, 0], uv: [32, 16] },
-  { box: [-1, -2, -1, 2, 30, 2], pivot: [-5, -13, 0], uv: [56, 0], anim: 'armR' },
-  { box: [-1, -2, -1, 2, 30, 2], pivot: [5, -13, 0], uv: [56, 0], anim: 'armL', mirror: true },
-  { box: [-1, 0, -1, 2, 30, 2], pivot: [-2, -6, 0], uv: [56, 0], anim: 'legA' },
-  { box: [-1, 0, -1, 2, 30, 2], pivot: [2, -6, 0], uv: [56, 0], anim: 'legB', mirror: true },
+  { box: [-4, -8, -4, 8, 8, 8], pivot: [0, -14.5, 0], uv: [0, 0], anim: 'head', creepy: true },
+  { box: [-4, -8, -4, 8, 8, 8], pivot: [0, -14.5, 0], uv: [0, 16], anim: 'head', inflate: -0.5 },
+  { box: [-3.75, 0, -2, 7.5, 12, 3.5], pivot: [0, -15, 0], uv: [32, 16], tbox: [8, 12, 4] },
+  { box: [-1, -2, -1, 2, 29, 2], pivot: [-4.75, -13, 0], uv: [56, 0], anim: 'armR', tbox: [2, 30, 2] },
+  { box: [-1, -2, -1, 2, 29, 2], pivot: [4.75, -13, 0], uv: [56, 0], anim: 'armL', mirror: true, tbox: [2, 30, 2] },
+  { box: [-1, 0, -1, 2, 30, 2], pivot: [-2.25, -6, 0], uv: [56, 0], anim: 'legA' },
+  { box: [-1, 0, -1, 2, 30, 2], pivot: [2.25, -6, 0], uv: [56, 0], anim: 'legB', mirror: true },
 ] };
 // slime: opaque core, eyes and mouth; the outer jelly cube is drawn translucent afterwards
+// (our own: a smaller core resting lower, the eyes closer together and lower, a wider mouth)
 MODELS.slime = { tex: 'slime', tw: 64, th: 32, parts: [
-  { box: [-3, 17, -3, 6, 6, 6], pivot: [0, 0, 0], uv: [0, 16] },
-  { box: [-3.25, 18, -3.5, 2, 2, 2], pivot: [0, 0, 0], uv: [32, 0] },
-  { box: [1.25, 18, -3.5, 2, 2, 2], pivot: [0, 0, 0], uv: [32, 4] },
-  { box: [0, 21, -3.5, 1, 1, 1], pivot: [0, 0, 0], uv: [32, 8] },
-  { box: [-4, 16, -4, 8, 8, 8], pivot: [0, 0, 0], uv: [0, 0], trans: true },
+  { box: [-2.75, 17.75, -2.75, 5.5, 5.5, 5.5], pivot: [0, 0, 0], uv: [0, 16], tbox: [6, 6, 6] },
+  { box: [-3, 18.5, -3.25, 2, 2, 2], pivot: [0, 0, 0], uv: [32, 0] },
+  { box: [1, 18.5, -3.25, 2, 2, 2], pivot: [0, 0, 0], uv: [32, 4] },
+  { box: [-0.75, 21.25, -3.25, 1.5, 1, 1], pivot: [0, 0, 0], uv: [32, 8], tbox: [1, 1, 1] },
+  { box: [-4.125, 15.75, -4.125, 8.25, 8.25, 8.25], pivot: [0, 0, 0], uv: [0, 0], trans: true, tbox: [8, 8, 8] },
 ] };
 MODELS.salmon = { tex: 'salmon', tw: 32, th: 32, pitchY: 2.5, parts: [
   opart([2, 4, 3], [0, 0.5, 1.5], [22, 0]),
@@ -15379,20 +15422,23 @@ MODELS.shark = { tex: 'shark', tw: 64, th: 64, scale: 1.25, pitchY: 5.5, parts: 
   opart([1, 10, 6], [0, 1, -21], [28, 36], { piv: [0, 5.5, -8], anim: 'tail' }),
 ] };
 
+// our humanoid: the head sunk half a pixel into a deeper chest, the arms half a pixel shorter, the
+// legs side by side without overlapping
 function humanoid(armW, wide, hat) {
   const a4 = armW === 4;
-  const arm = a4 ? [-3, -2, -2, 4, 12, 4] : [-1, -2, -1, 2, 12, 2];
-  const armL = a4 ? [-1, -2, -2, 4, 12, 4] : [-1, -2, -1, 2, 12, 2];
+  const arm = a4 ? [-3, -2, -2, 4, 11.5, 4] : [-1, -2, -1, 2, 11.5, 2];
+  const armL = a4 ? [-1, -2, -2, 4, 11.5, 4] : [-1, -2, -1, 2, 11.5, 2];
   const leg = a4 ? [-2, 0, -2, 4, 12, 4] : [-1, 0, -1, 2, 12, 2];
+  const armT = a4 ? [4, 12, 4] : [2, 12, 2];
   const parts = [
-    { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0, 0], uv: [0, 0], anim: 'head' },
-    { box: [-4, 0, -2, 8, 12, 4], pivot: [0, 0, 0], uv: [16, 16], anim: 'body' },
-    { box: arm, pivot: [-5, 2, 0], uv: [40, 16], anim: 'armR' },
-    { box: armL, pivot: [5, 2, 0], uv: wide ? [32, 48] : [40, 16], mirror: !wide, anim: 'armL' },
-    { box: leg, pivot: [-1.9, 12, 0], uv: [0, 16], anim: 'legA' },
-    { box: leg, pivot: [1.9, 12, 0], uv: wide ? [16, 48] : [0, 16], mirror: !wide, anim: 'legB' },
+    { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0.5, 0], uv: [0, 0], anim: 'head' },
+    { box: [-4, 0, -2.25, 8, 12, 4.5], pivot: [0, 0, 0], uv: [16, 16], anim: 'body', tbox: [8, 12, 4] },
+    { box: arm, pivot: [-5, 2, 0], uv: [40, 16], anim: 'armR', tbox: armT },
+    { box: armL, pivot: [5, 2, 0], uv: wide ? [32, 48] : [40, 16], mirror: !wide, anim: 'armL', tbox: armT },
+    { box: leg, pivot: [-2, 12, 0], uv: [0, 16], anim: 'legA' },
+    { box: leg, pivot: [2, 12, 0], uv: wide ? [16, 48] : [0, 16], mirror: !wide, anim: 'legB' },
   ];
-  if (hat) parts.push({ box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0, 0], uv: [32, 0], anim: 'head', inflate: 0.5 });
+  if (hat) parts.push({ box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0.5, 0], uv: [32, 0], anim: 'head', inflate: 0.5 });
   return parts;
 }
 
@@ -18087,7 +18133,7 @@ class Entities {
       else if (an === 'tail') ry += tail;
       else if (an && an.startsWith('spider')) { const k = +an.slice(-1); ry += Math.cos(wpos * 1.3324 + k * 1.5708) * 0.4 * wamt; rz += Math.abs(Math.sin(wpos * 0.6662 + k * 1.5708)) * 0.4 * wamt * (an[6] === 'R' ? 1 : -1); }
       const inf = part.inflate || 0;
-      const [bx, byy, bz, bw, bh, bd] = part.box;
+      const [bx, byy, bz, bw, bh, bd] = part.box, tb = part.tbox || part.box.slice(3);
       // y-up space
       let x0 = -(bx + bw) - inf, x1 = -bx + inf, y0 = -(byy + bh) - inf, y1 = -byy + inf, z0 = bz - inf, z1 = bz + bd + inf;
       // babies: half-size body with a relatively big head (the head grows around its pivot)
@@ -18104,7 +18150,7 @@ class Entities {
       XP[9] = scaleY * S * syy; XP[10] = S * sxz * scaleXZ; XP[11] = sp ? 1 : 0; XP[12] = cpt; XP[13] = spt; XP[14] = pY;
       XP[15] = sneakBody ? 1 : 0; XP[16] = death; XP[17] = cy; XP[18] = sy;
       XP[19] = EP[0]; XP[20] = EP[1]; XP[21] = EP[2]; XP[22] = cam[0]; XP[23] = cam[1]; XP[24] = cam[2];
-      g.pushModelBox(dst, modelXform, XP, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
+      g.pushModelBox(dst, modelXform, XP, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], tb[0], tb[1], tb[2], m.tw, m.th, li, tint, part.mirror);
       // the skeleton's bow in its right hand: the item sprite (0.9 block) held at the hand,
       // across the arm, so it points forward with the arm down and stands upright when aiming
       if (heldOut && an === 'armR' && m.heldItem) {
@@ -19267,7 +19313,7 @@ function leafLod(d2, cur) {
   if (cur === 1 && t === 3 && d2 <= 49) return 1;
   return t;
 }
-const BUILD_ID = '0ba83d4';   // filled in by build.py
+const BUILD_ID = '8c72cfc';   // filled in by build.py
 const SPAWN_RADIUS = 5;       // respawn spread round the world spawn (Bedrock's spawnradius)
 const WATER_FOG = { WARM_OCEAN: 0x041F33, LUKEWARM_OCEAN: 0x041633, DEEP_LUKEWARM_OCEAN: 0x041633, SWAMP: 0x232317, MANGROVE_SWAMP: 0x4D7A60 }; // seconds
 // model box faces (+x, -x, top, bottom, back, front) as corner indices (bit0 x1, bit1 y1, bit2 z1)
@@ -21387,7 +21433,7 @@ class Game {
       pmT(M, -5 / 16, 2 / 16, 0); pmZ(M, 0.1); pmS(M, -1, -1, 1);
       const ev = this.handVB || (this.handVB = new VBuf());
       ev.n = 0;
-      this.pushModelBox(ev, pmApply, M, -1 / 16, -10 / 16, -2 / 16, 3 / 16, 2 / 16, 2 / 16, 40, 16, 4, 12, 4, 64, 64, li);
+      this.pushModelBox(ev, pmApply, M, -1 / 16, -9.5 / 16, -2 / 16, 3 / 16, 2 / 16, 2 / 16, 40, 16, 4, 12, 4, 64, 64, li);
       gl.enable(gl.CULL_FACE);
       const saveVP = r.vp; r.vp = proj;
       r.drawEnt(ev.view(), ev.n / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });
