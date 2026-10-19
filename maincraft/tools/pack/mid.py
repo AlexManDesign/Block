@@ -79,7 +79,8 @@ def apart(new, old, name):
 
 def resynth_names(measured):
     """the tiling materials drawn again from our first pack's own drawing: the measured materials
-    but the slabs with bevelled rims and seams, and the ores and the sides of the topped soils"""
+    but the slabs with bevelled rims and seams, and the sides of the topped soils (and, by their
+    names, the ores and the leaves)"""
     flat = {k for k, v in structure.PLAIN.items() if 'plate' in v}
     names = {k for k in measured if k not in flat}
     names |= {'grass_block_side', 'grass_block_snow', 'mycelium_side', 'podzol_side', 'dirt_path_side',
@@ -93,7 +94,7 @@ def drawn_anew(n, im, first, painted, measured):
     else the painted one (None when neither has it)"""
     import resynth
     old = first.get(n)
-    if old is not None and (n in resynth_names(measured) or n.endswith('_ore')):
+    if old is not None and (n in resynth_names(measured) or n.endswith(('_ore', '_leaves'))):
         old = Image.open(old) if isinstance(old, str) else old
         if old.size == (N, N):
             r = resynth.resynth(old, n)

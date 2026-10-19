@@ -41,14 +41,16 @@ def resynth(im, name, seed=0):
     if im.size != (n, n) or n < 8:
         return None
     src = list(im.get_flattened_data())
-    if sum(1 for p in src if p[3] < 128) > n * n // 10:      # see-through: a cut-out drawing
+    holes = 'leaves' in name               # a tile with holes in it: the holes are drawn again too
+    if not holes and sum(1 for p in src if p[3] < 128) > n * n // 10:      # see-through: a cut-out drawing
         return None
-    side, up = tiling(src, n)
+    side, up = (True, True) if holes else tiling(src, n)
     if not side:
         return None
     rows = not up                                            # keep each pixel near its own height
     rnd = rng(name, 'resynth', seed) if seed is not None else random.Random(0)
-    S = [(p[0], p[1], p[2]) for p in src]
+    # a hole counts as a colour far from every leaf colour
+    S = [(p[0], p[1], p[2], 255 if p[3] >= 128 else 0) for p in src]
     out = [None] * (n * n)
     # the order: row by row; the first row's left part is seeded from a random place
     for y in range(n):
@@ -72,7 +74,7 @@ def resynth(im, name, seed=0):
                         d = 0.0
                         for dx, dy, c in known:
                             q = S[((sy + dy) % n) * n + (sx + dx) % n]
-                            d += (q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 + (q[2] - c[2]) ** 2
+                            d += (q[0] - c[0]) ** 2 + (q[1] - c[1]) ** 2 + (q[2] - c[2]) ** 2 + 3 * (q[3] - c[3]) ** 2
                         d /= len(known)
                     else:
                         d = 0.0
@@ -85,5 +87,5 @@ def resynth(im, name, seed=0):
             pick = [i for d, i in cands if d <= lim]
             out[y * n + x] = S[rnd.choice(pick)]
     res = Image.new('RGBA', (n, n))
-    res.putdata([c + (src[i][3],) for i, c in enumerate(out)])
+    res.putdata([c if holes else c[:3] + (src[i][3],) for i, c in enumerate(out)])
     return res
