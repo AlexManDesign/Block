@@ -1,12 +1,16 @@
 """Paints our whole texture pack anew in one of three styles.
 
-    python3 tools/pack/main.py STYLE OUT_DIR [--java DIR] [--bedrock DIR] [--self DIR] [name ...]
+    python3 tools/pack/main.py STYLE OUT_DIR [--java DIR] [--bedrock DIR] [--self DIR] [--first DIR]
+                               [--structure FILE] [name ...]
 
 STYLE is java (tones of the Java pack), bedrock (tones of the Bedrock pack) or clean (flat, few
 tones, soft shapes, like the simplified packs players like). --java is a Java pack's
 assets/minecraft/textures folder, --bedrock a Bedrock pack's resource_pack/textures folder; they
 give colours only. --self (our tex/ folder by default) is the last colour source, for pictures
-the reference packs do not have. Every picture is drawn by our own generators.
+the reference packs do not have. --first (the tex/ folder of our first pack) takes the colours from
+our first pack instead, and keeps every pixel off it; --structure is the store of measured looks
+the materials are painted to (structure.json by default; tools/pack/mid.py keeps ones between our
+first pack's look and Minecraft's). Every picture is drawn by our own generators.
 """
 import os
 import sys
@@ -50,6 +54,7 @@ class Ctx:
     def __init__(self, style, src, own, has_ref):
         self.style, self.src, self.own, self.has_ref = style, src, own, has_ref
         self.reg, self.done = {}, {}
+        self.drawn = {}             # the drawings of tools/art.py: the last colour source
         for fam in FAMILIES:
             fam.register(self.reg)
 
@@ -67,6 +72,9 @@ class Ctx:
             if t and sum(max(q[:3]) - min(q[:3]) for q in p) / len(p) < 12:
                 p = [(q[0] * t[0] // 255, q[1] * t[1] // 255, q[2] * t[2] // 255, q[3]) for q in p]
             return p
+        for n in names:
+            if n in self.drawn and self.drawn[n].size == (16, 16):
+                return list(self.drawn[n].get_flattened_data())
         return None
 
     def out(self, name):
@@ -88,6 +96,8 @@ def main():
         else:
             args.append(a)
     style, out = args[0], args[1]
+    if 'structure' in opts:
+        structure.STORE = opts['structure']
     if 'variant' in opts:
         import core
         core.VARIANT = int(opts['variant'])
@@ -96,11 +106,30 @@ def main():
     own = Source('self', own_dir)
     if style == 'bedrock':
         src = Source('bedrock', opts['bedrock'], Source('java', opts['java'], own) if 'java' in opts else own)
+    elif 'first' in opts:
+        src = Source('self', opts['first'], own)
     elif 'java' in opts:
         src = Source('java', opts['java'], own)
     else:
         src = own
     ctx = Ctx(style, src, own, src is not own)
+    # the drawings of tools/art.py (blocks whose models read set spots of the picture), from the
+    # pictures of the colour source where it has them
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    import art
+    import relayout
+    from PIL import Image
+    if 'first' in opts:
+        load = lambda n: src.image(n).copy()   # noqa: E731
+    else:
+        load = lambda n: Image.open(os.path.join(own_dir, n + '.png')).convert('RGBA')   # noqa: E731
+    drawn, drawn_anim = art.all_textures(load)
+    for k, frames in drawn_anim.items():
+        s = Image.new('RGBA', (16, 16 * len(frames)))
+        for j, f in enumerate(frames):
+            s.paste(f, (0, 16 * j))
+        drawn[k] = s
+    ctx.drawn = drawn
     os.makedirs(out, exist_ok=True)
     names = sorted(set(f[:-4] for f in os.listdir(own_dir) if f.endswith('.png')) | set(EXTRA))
     made = missing = 0
@@ -113,18 +142,7 @@ def main():
             continue
         im.save(os.path.join(out, n + '.png'))
         made += 1
-    # the drawings of tools/art.py (blocks whose models read set spots of the picture): redrawn
-    # region by region in this style (tools/pack/relayout.py)
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-    import art
-    import relayout
-    from PIL import Image
-    drawn, drawn_anim = art.all_textures(lambda n: Image.open(os.path.join(own_dir, n + '.png')).convert('RGBA'))
-    for k, frames in drawn_anim.items():
-        s = Image.new('RGBA', (16, 16 * len(frames)))
-        for j, f in enumerate(frames):
-            s.paste(f, (0, 16 * j))
-        drawn[k] = s
+    # the drawings of tools/art.py: redrawn region by region in this style (tools/pack/relayout.py)
     ratios = relayout.kind_ratios(ctx)
     for n, im in sorted(drawn.items()):
         if (only and n not in only) or n in names:

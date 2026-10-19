@@ -1,7 +1,7 @@
 """A pack between our first pack (packs/classic) and Minecraft's look.
 
     python3 tools/pack/mid.py CLASSIC_DIR JAVA_TEXTURES_DIR OUT_DIR [--mc SHARE] [--first FIRST_TEX_DIR]
-                              [--fit] [name ...]
+                              [--painted PAINTED_DIR] [--fit] [name ...]
 
 SHARE is how far towards Minecraft (0.5, the default: halfway; 0.1: nine tenths our first pack).
 
@@ -15,6 +15,13 @@ SHARE is how far towards Minecraft (0.5, the default: halfway; 0.1: nine tenths 
 Every pixel is our own; nothing of the reference pack is written out. With --first (the tex/ folder of
 our first pack, git archive 8bcf596 maincraft/tex) no pixel is left as the first pack had it either:
 one that came out within APART of the first pack's at the same place is stepped APART off it.
+
+With --painted (our whole pack painted anew in our first pack's colours: tools/pack/main.py java DIR
+--first FIRST_TEX_DIR --structure tools/pack/structure_mid_SHARE.json) and --first, every picture is
+a new drawing rather than the first pack's redrawn: a tiling material (stone, dirt, sand, ores, a
+grass block's side) is our first pack's drawn again with its own specks and stones put in other
+places (tools/pack/resynth.py), anything else is the painted one; both then toned SHARE of the way
+to the Java pack's colours.
 """
 import json
 import os
@@ -70,6 +77,35 @@ def apart(new, old, name):
     return out
 
 
+def resynth_names(measured):
+    """the tiling materials drawn again from our first pack's own drawing: the measured materials
+    but the slabs with bevelled rims and seams, and the ores and the sides of the topped soils"""
+    flat = {k for k, v in structure.PLAIN.items() if 'plate' in v}
+    names = {k for k in measured if k not in flat}
+    names |= {'grass_block_side', 'grass_block_snow', 'mycelium_side', 'podzol_side', 'dirt_path_side',
+              'crimson_nylium_side', 'warped_nylium_side'}
+    return names
+
+
+def drawn_anew(n, im, first, painted, measured):
+    """the picture drawn anew: a tiling material from our first pack's drawing, rearranged; anything
+    else the painted one (None when neither has it)"""
+    import resynth
+    old = first.get(n)
+    if old is not None and (n in resynth_names(measured) or n.endswith('_ore')):
+        old = Image.open(old) if isinstance(old, str) else old
+        if old.size == (N, N):
+            r = resynth.resynth(old, n)
+            if r is not None:
+                return r
+    p = os.path.join(painted, n + '.png')
+    if os.path.exists(p):
+        q = Image.open(p).convert('RGBA')
+        if q.size == im.size:
+            return q
+    return None
+
+
 def fit_mid(a_px, b_px, name, kinds):
     target = [x * (1 - SHARE) + y * SHARE for x, y in zip(structure.measure(a_px), structure.measure(b_px))]
     cols = mid_colours(a_px, b_px)
@@ -100,6 +136,11 @@ def main():
         import classic
         first = {f[:-4]: os.path.join(first_dir, f) for f in os.listdir(first_dir) if f.endswith('.png')}
         first.update(classic.originals(first_dir))
+    painted = None
+    if '--painted' in argv:
+        k = argv.index('--painted')
+        painted = argv[k + 1]
+        del argv[k:k + 2]
     args = [a for a in argv if not a.startswith('--')]
     refit = '--fit' in argv
     STORE = store_path()
@@ -123,6 +164,17 @@ def main():
             continue
         im = Image.open(os.path.join(classic_dir, fn)).convert('RGBA')
         ref = java.image(n)
+        if painted and first:
+            new = drawn_anew(n, im, first, painted, measured)
+            if new is not None:
+                if ref is not None:
+                    new = tone.tone(new, ref, n)[0] or new
+                old = first.get(n)
+                if old is not None:
+                    new = apart(new, Image.open(old) if isinstance(old, str) else old, n)
+                new.save(os.path.join(out, fn))
+                made += 1
+                continue
         a_px, b_px = classic.px(n), java.px(n)
         drawn_closer = False
         if n in measured and b_px and im.size == (N, N):
