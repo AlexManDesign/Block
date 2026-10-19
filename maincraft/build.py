@@ -8,10 +8,11 @@ import hashlib, base64, io, json, os, random, re, sys
 from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-# python3 build.py [OUT_HTML] [--tex DIR]: the pack folder (packs/java by default; packs/bedrock,
-# packs/clean are the other painted styles; tex/ is our base pack the painter takes layouts from)
+# python3 build.py [OUT_HTML] [--tex DIR]: the pack folder (packs/near90 by default, nine tenths our first
+# pack and one tenth Minecraft's look; packs/java, packs/bedrock, packs/clean, packs/mc1..3, packs/classic
+# and packs/mid are the other painted packs; tex/ is our base pack the painter takes layouts from)
 _args = [a for a in sys.argv[1:]]
-TEX = os.path.join(ROOT, 'packs', 'java')     # our pack painted in the Java style (tools/pack)
+TEX = os.path.join(ROOT, 'packs', 'near90')   # our first pack, a tenth of the way to Minecraft (tools/pack/mid.py)
 if '--tex' in _args:
     k = _args.index('--tex')
     TEX = os.path.abspath(_args[k + 1])
