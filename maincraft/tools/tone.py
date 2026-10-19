@@ -21,6 +21,7 @@ from redraw import lum, palette, dist2, frames_of  # noqa: E402
 ALPHA = 0.75        # how far a colour moves towards the reference tone
 MUDDLE = 38         # luminance spread of the reference under one colour beyond which it is left alone
 ALIGNED = 0.35      # lightness correlation with the reference above which the drawings line up
+DESAT = 40          # a colour this saturated is not turned grey by a reference (a leaf over a grey stalk)
 HUE = 45            # hue change (degrees) beyond which a colour is left alone
 APART = 5           # the least step (most changed channel) a pixel keeps from the reference's
 GREY = 12           # mean (max - min channel) under which a picture counts as grey
@@ -147,7 +148,7 @@ def tone(im, ref, name):
         m = [sum(q[t] for q in under) / len(under) for t in range(3)]
         if grey_ours:                       # tinted in game: only the lightness counts
             m = [ml] * 3
-        elif hue_gap(c, m) > HUE or chroma(c) > 40 and chroma(m) < 24:
+        elif hue_gap(c, m) > HUE or chroma(c) > DESAT and chroma(m) < 24:
             # a petal over a stem, a leaf over a grey stalk: the drawings do not line up here
             delta.append((0, 0, 0)); continue
         delta.append(tuple(ALPHA * (m[t] - c[t]) for t in range(3)))

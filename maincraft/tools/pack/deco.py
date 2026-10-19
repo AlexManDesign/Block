@@ -514,13 +514,29 @@ def torch(name):
 
 
 def flower_pot(name):
+    """the pot: its sides on the bottom six rows (x 5..10), its top round the soil in the middle
+    (the spots the pot model reads); the icon is the pot seen from the side, wider at the rim"""
     def gen(ctx):
         src = ctx.px('flower_pot', name)
-        m = [5 <= i % N <= 10 and 10 <= i // N <= 15 for i in range(N * N)]
-        rimm = [5 <= i % N <= 10 and i // N == 10 for i in range(N * N)]
+        soil = ctx.px('dirt')
+        w = white(rng(name))
         c = canvas(ctx, name)
-        c.part([0.6 - 0.08 * (i % N - 5) for i in range(N * N)], src, m)
-        c.part([0.3 for _ in range(N * N)], sorted(src, key=lum)[:20], rimm)
+        if name.endswith('_icon'):
+            pot = [False] * (N * N)
+            for y in range(7, 16):
+                half = 4 if y <= 8 else 3 if y < 15 else 2
+                for x in range(8 - half, 8 + half):
+                    pot[at(x, y)] = True
+            rim = [pot[i] and i // N in (7, 8) for i in range(N * N)]
+            c.part([0.6 - 0.07 * (i % N - 4) + 0.1 * w[i] for i in range(N * N)], src, [p and not r for p, r in zip(pot, rim)])
+            c.part([0.8 - 0.05 * (i % N - 4) + 0.1 * w[i] - 0.3 * (i // N == 8) for i in range(N * N)], src, rim)
+            return c.image()
+        side = [5 <= i % N <= 10 and 10 <= i // N <= 15 for i in range(N * N)]
+        top = [5 <= i % N <= 10 and 5 <= i // N <= 9 for i in range(N * N)]
+        inner = [6 <= i % N <= 9 and 6 <= i // N <= 9 for i in range(N * N)]
+        c.part([0.6 - 0.06 * (i % N - 5) + 0.1 * w[i] + 0.25 * (i // N == 10) for i in range(N * N)], src, side)
+        c.part([0.7 + 0.1 * w[i] for i in range(N * N)], src, [t and not n for t, n in zip(top, inner)])
+        c.part([0.3 * w[i] for i in range(N * N)], soil, inner)
         return c.image()
     return gen
 

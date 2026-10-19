@@ -93,15 +93,46 @@ def fields(rnd, w, h):
     return out
 
 
+def lines_up(px, ref, w, h):
+    """is the reference skin drawn on our layout? (lightness of the two agrees where both are drawn)"""
+    rp = list(ref.convert('RGBA').crop((0, 0, w, h)).get_flattened_data())
+    both = [i for i in range(w * h) if px[i][3] > 127 and rp[i][3] > 127]
+    if len(both) < w * h // 8:
+        return False
+    return tone.correlation([lum(px[i]) for i in both], [lum(rp[i]) for i in both]) > 0.3
+
+
+def rank_colours(px, ref):
+    """for a reference skin on another layout: a part takes the reference's colour of the same rank
+    of lightness, unless that would turn its hue (a pink snout into a brown hide)"""
+    mine = sorted(lum(p) for p in px if p[3] > 127)
+    theirs = sorted((p for p in ref.convert('RGBA').get_flattened_data() if p[3] > 127), key=lum)
+    if not mine or not theirs:
+        return None
+
+    def col(mean):
+        r = sum(1 for v in mine if v < lum(mean)) / len(mine)
+        k = int(r * len(theirs))
+        win = theirs[max(0, k - len(theirs) // 40):k + len(theirs) // 40 + 1]
+        c = tuple(sum(p[t] for p in win) / len(win) for t in range(3))
+        if tone.hue_gap(mean, c) > 45 or (max(mean[:3]) - min(mean[:3]) > 60 and max(c) - min(c) < 20):
+            return mean[:3]
+        return c
+    return col
+
+
 def paint(style, name, own, ref):
     own = own.convert('RGBA')
     w, h = own.size
     px = list(own.get_flattened_data())
     toned = None
-    if ref is not None:
-        tone.ALPHA = 1.0
+    same_layout = ref is not None and ref.width == w and ref.height >= h and lines_up(px, ref, w, h)
+    if same_layout:
+        tone.ALPHA, tone.DESAT = 1.0, 60     # a skin may go from cream to white (the chicken)
         toned, _ = tone.tone(own, ref, name)
+        tone.DESAT = 40
     tp = list(toned.get_flattened_data()) if toned is not None else px
+    by_rank = rank_colours(px, ref) if ref is not None and not same_layout else None
     rid, info = regions(px, w, h)
     rnd = rng(name)
     fl = fields(rnd, w, h)
@@ -111,6 +142,8 @@ def paint(style, name, own, ref):
     for members in info:
         mean = tuple(sum(px[i][t] for i in members) / len(members) for t in range(4))
         col = tuple(sum(tp[i][t] for i in members) / len(members) for t in range(3))
+        if by_rank:
+            col = by_rank(mean)
         kd = part_kind(main, mean, len(members))
         con = CONTRAST[kd]
         ramp_src = [tuple(max(0, min(255, round(col[t] * (1 - con / 2 + con * j / 15)))) for t in range(3)) + (255,)
@@ -130,7 +163,7 @@ def skin(name):
         if own is None:
             return None
         ref = ctx.src.image(name) if ctx.has_ref else None
-        if ref is not None and (ref is own or ref.width != own.width or ref.height < own.height):
+        if ref is own:
             ref = None
         return paint(ctx.style, name, own, ref)
     return gen

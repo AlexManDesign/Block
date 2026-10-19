@@ -37,6 +37,8 @@ EXTRA = ['oak_door_bottom', 'spruce_door_top', 'spruce_door_bottom', 'mangrove_l
 # leaves our game shows as painted while a reference pack has them grey (tinted by its game): the
 # source colours take that game's fixed tint
 GREY_TINT = {'birch_leaves': (128, 167, 85), 'spruce_leaves': (97, 153, 97), 'pale_oak_leaves': (160, 166, 160)}
+for _p in ('helmet', 'chestplate', 'leggings', 'boots'):     # leather armour: the leather's own brown
+    GREY_TINT['item_leather_' + _p] = (160, 101, 64)
 for _k in range(4):     # melon and pumpkin stems ripen from green to yellow-brown
     _t = _k / 3
     for _p in ('melon', 'pumpkin'):
