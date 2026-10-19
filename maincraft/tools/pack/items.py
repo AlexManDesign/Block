@@ -923,6 +923,65 @@ def own_mask(name, rows_fn, colour_names):
     return gen
 
 
+def shape_of(px, w, h, k=5):
+    """a drawing's shape: its drawn pixels (in a 16x16 frame, top left) -> part letter, the parts
+    being its few main colours (tools/redraw.py k-means)"""
+    import redraw
+    drawn = [i for i in range(w * h) if px[i][3] > 40]
+    if not drawn:
+        return {}, {}
+    k = max(1, min(k, len(set(px[i][:3] for i in drawn)) // 2))
+    cents = redraw.kmeans([tuple(px[i]) for i in drawn], k)[0]
+    cells_, cols = {}, {}
+    for i in drawn:
+        j = min(range(len(cents)), key=lambda c: redraw.dist2(px[i], cents[c]))
+        part = 'abcdefgh'[j]
+        cells_[at(i % w, i // w)] = part
+        cols.setdefault(part, []).append(px[i])
+    return cells_, cols
+
+
+def from_shape(ctx, name, im):
+    """a drawn picture painted anew in the shape it has in the colour source (our first pack): the
+    same outline and parts, shaded our way (a dark outline round it, each part lit on its top left
+    and shaded on its bottom right where it meets another part or the edge), its colours by rank"""
+    w, h = im.size
+    px = list(im.convert('RGBA').get_flattened_data())
+    cells_, cols = shape_of(px, w, h)
+    if not cells_:
+        return None
+    rnd = rng(name, 'shape')
+    wn = white(rnd)
+    f = {}
+    for i, part in cells_.items():
+        x, y = i % N, i // N
+
+        def nb(dx, dy):
+            xx, yy = x + dx, y + dy
+            return cells_.get(at(xx, yy)) if 0 <= xx < N and 0 <= yy < N else None
+        if any(nb(dx, dy) is None for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+            v = 0.0
+        else:
+            v = 0.52 - 0.01 * (x + y)
+            if nb(-1, 0) != part or nb(0, -1) != part:
+                v += 0.28
+            elif nb(1, 0) != part or nb(0, 1) != part:
+                v -= 0.18
+        f[i] = v + 0.06 * wn[i]
+    c = Canvas(ctx.style, name, ref=ctx.ref(name))
+    for part in sorted(set(cells_.values())):
+        mask = [cells_.get(i) == part for i in range(N * N)]
+        c.part([f.get(i, 0) for i in range(N * N)], cols[part], mask)
+    out = c.image()
+    alpha = {i: px[(i // N) * w + i % N][3] for i in cells_}
+    res = out.load()
+    for i, a in alpha.items():          # see-through drawings (cracks) keep their see-through
+        if a < 250:
+            r, g, b, _ = res[i % N, i // N]
+            res[i % N, i // N] = (r, g, b, a)
+    return out.crop((0, 0, w, h)) if (w, h) != (N, N) else out
+
+
 def register(reg):
     for mat in TOOL_MAT:
         for kind in ('sword', 'pickaxe', 'axe', 'shovel', 'hoe'):

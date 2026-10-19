@@ -50,11 +50,18 @@ for _k in range(4):     # melon and pumpkin stems ripen from green to yellow-bro
         GREY_TINT['%s_stem_stage%d' % (_p, _k)] = (round(80 + 120 * _t), round(190 - 30 * _t), round(40 + 10 * _t))
 
 
+# drawn pictures whose painting does not follow the first pack's shape: tiles with holes, flat
+# panels, animated ones
+SHAPE_SKIP = ('leaves', 'glass', 'pane', 'door', 'rail', 'ladder', 'vine', 'lichen', 'water', 'lava', 'fire',
+              'sun', 'moon', 'iron_bars', 'scaffolding')
+
+
 class Ctx:
     def __init__(self, style, src, own, has_ref):
         self.style, self.src, self.own, self.has_ref = style, src, own, has_ref
         self.reg, self.done = {}, {}
         self.drawn = {}             # the drawings of tools/art.py: the last colour source
+        self.shapes = None          # with --first: drawn pictures keep the first pack's shapes (name -> picture)
         for fam in FAMILIES:
             fam.register(self.reg)
 
@@ -77,10 +84,28 @@ class Ctx:
                 return list(self.drawn[n].get_flattened_data())
         return None
 
+    def shape_source(self, name):
+        """with --first, the first pack's picture of a drawn thing (an item, a flower, a crack, a HUD
+        icon: mostly see-through, one frame) whose shape the painting keeps, else None"""
+        if self.shapes is None or name in self.drawn or any(k in name for k in SHAPE_SKIP):
+            return None
+        im = self.src.image(name)
+        if im is None:
+            im = self.shapes.get(name)
+        if im is None or im.size not in ((16, 16), (9, 9)):
+            return None
+        clear = sum(1 for p in im.get_flattened_data() if p[3] < 128)
+        return im if clear > 0.25 * im.size[0] * im.size[1] else None
+
     def out(self, name):
         if name not in self.done:
             gen = self.reg.get(name)
             im = None
+            shaped = self.shape_source(name)
+            if shaped is not None:
+                import items
+                self.done[name] = items.from_shape(self, name, shaped)
+                return self.done[name]
             if name in structure.PLAIN:          # a plain material: painted to its measured look
                 im = structure.paint(self, name, self.px(name))
             self.done[name] = im or (gen(self) if gen else None)
@@ -130,6 +155,9 @@ def main():
             s.paste(f, (0, 16 * j))
         drawn[k] = s
     ctx.drawn = drawn
+    if 'first' in opts:
+        import classic
+        ctx.shapes = classic.originals(opts['first'])
     os.makedirs(out, exist_ok=True)
     names = sorted(set(f[:-4] for f in os.listdir(own_dir) if f.endswith('.png')) | set(EXTRA))
     made = missing = 0

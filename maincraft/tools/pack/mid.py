@@ -83,7 +83,8 @@ def resynth_names(measured):
     flat = {k for k, v in structure.PLAIN.items() if 'plate' in v}
     names = {k for k in measured if k not in flat}
     names |= {'grass_block_side', 'grass_block_snow', 'mycelium_side', 'podzol_side', 'dirt_path_side',
-              'crimson_nylium_side', 'warped_nylium_side'}
+              'crimson_nylium_side', 'warped_nylium_side', 'sculk', 'sculk_catalyst_bottom', 'azalea_top',
+              'flowering_azalea_top'}
     return names
 
 
