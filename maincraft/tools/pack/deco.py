@@ -631,7 +631,81 @@ def creaking(name, top):
     return gen
 
 
+def barrel_side(name):
+    """staves running up, bound by two iron hoops"""
+    def gen(ctx):
+        rnd = rng(name)
+        src = ctx.px(name, 'oak_planks')
+        wood_px = [p for p in src if p[0] > p[2] + 15] or src
+        iron = [p for p in src if abs(p[0] - p[2]) < 20] or ctx.px('iron_block')
+        f = wood.planks_f(rnd)
+        f = [f[(i % N) * N + i // N] for i in range(N * N)]          # boards turned upright
+        hoops = [i // N in (2, 3, 12, 13) for i in range(N * N)]
+        w = white(rnd)
+        c = canvas(ctx, name)
+        c.part(f, wood_px, [not h for h in hoops])
+        c.part([0.7 - 0.4 * (i // N in (3, 13)) + 0.1 * w[i] + (0.5 if i % N in (4, 11) and i // N in (2, 12) else 0)
+                for i in range(N * N)], iron, hoops)
+        return c.image()
+    return gen
+
+
+def cartography(name, part):
+    """dark boards with maps and charts laid on them"""
+    def gen(ctx):
+        rnd = rng(name)
+        planks = ctx.px('dark_oak_planks')
+        paper = ctx.px('item_paper') or [(232, 222, 190, 255), (210, 196, 160, 255)]
+        land = [(88, 140, 60, 255), (64, 112, 48, 255), (120, 164, 80, 255)]
+        sea = [(60, 96, 170, 255), (44, 76, 140, 255)]
+        ink = [(70, 46, 30, 255), (40, 28, 20, 255)]
+        c = canvas(ctx, name)
+        c.part(wood.planks_f(rnd), planks)
+        w = white(rnd)
+        if part == 'top':
+            sheet = [2 <= i % N <= 13 and 2 <= i // N <= 13 for i in range(N * N)]
+        elif part == 'side1':
+            sheet = [3 <= i % N <= 12 and 4 <= i // N <= 11 for i in range(N * N)]
+        else:
+            sheet = [2 <= i % N <= 8 and 3 <= i // N <= 12 for i in range(N * N)]
+        c.part([0.6 + 0.2 * w[i] - 0.2 * (i % N + i // N) / 30 for i in range(N * N)], paper, sheet)
+        if part in ('top', 'side1'):          # a map: land and sea
+            nz = fbm(rnd, [(4, 4, 0.6), (2, 2, 0.4)])
+            inner = [sheet[i] and i % N not in (2, 3, 12, 13) and i // N not in (2, 3, 4, 11, 12, 13) for i in range(N * N)]
+            landm = [inner[i] and nz[i] > 0.5 for i in range(N * N)]
+            seam = [inner[i] and nz[i] <= 0.5 for i in range(N * N)]
+            c.part([nz[i] for i in range(N * N)], land, landm)
+            c.part([nz[i] for i in range(N * N)], sea, seam)
+        else:                                 # a chart: inked lines
+            lines = [sheet[i] and (i // N) % 3 == 0 and 3 <= i % N <= 7 for i in range(N * N)]
+            c.part([0.3 * w[i] for i in range(N * N)], ink, lines)
+        return c.image()
+    return gen
+
+
+def loom_top(name):
+    """the loom from above: a frame with threads stretched across"""
+    def gen(ctx):
+        rnd = rng(name)
+        planks = ctx.px('oak_planks')
+        thread = [(236, 232, 220, 255), (210, 204, 190, 255)]
+        frame = [i % N in (0, 1, 14, 15) or i // N in (0, 1, 14, 15) for i in range(N * N)]
+        threads = [not frame[i] and (i % N) % 2 == 0 for i in range(N * N)]
+        gaps = [not frame[i] and not threads[i] for i in range(N * N)]
+        c = canvas(ctx, name)
+        c.part(wood.planks_f(rnd), planks, frame)
+        c.part([0.6 + 0.1 * white(rnd)[i] for i in range(N * N)], thread, threads)
+        c.part([0.2 for _ in range(N * N)], sorted(planks, key=lum)[:len(planks) // 4], gaps)
+        return c.image()
+    return gen
+
+
 def register(reg):
+    reg['barrel_side'] = barrel_side('barrel_side')
+    reg['cartography_table_top'] = cartography('cartography_table_top', 'top')
+    reg['cartography_table_side1'] = cartography('cartography_table_side1', 'side1')
+    reg['cartography_table_side3'] = cartography('cartography_table_side3', 'side3')
+    reg['loom_top'] = loom_top('loom_top')
     reg['composter_side'] = composter_side('composter_side')
     reg['barrel_top_open'] = barrel_open('barrel_top_open')
     reg['redstone_lamp'] = lamp('redstone_lamp', False)

@@ -800,7 +800,8 @@ for col in COLOURS:
 
 
 def varied(cells_):
-    """the variants draw the same things turned: mirrored (2) or moved a pixel (3)"""
+    """the variants draw items the way Minecraft holds them (no turning): only their drawings differ"""
+    return cells_
     if P(0, 1, 0):
         return {at(N - 1 - i % N, i // N): v for i, v in cells_.items()}
     if P(0, 0, 1):
