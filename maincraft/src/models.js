@@ -40,7 +40,10 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
       [0, 0, 0, 0, [tex, u[0], u[1], u[2], u[3], 0, -1, 1], [tex, u[2], u[1], u[0], u[3], 0, -1, 1]]];
   };
   const cross = (x0, y0, x1, y1, tex, uv) => [plane(x0, y0, x1, y1, tex, 45, uv), plane(x0, y0, x1, y1, tex, -45, uv)];
-  const add = (els) => { MODEL_LIST.push(els); return MODEL_LIST.length - 1; };
+  // hull: the block's shape as Minecraft's (collision and outline: [from, to]) where it is not the
+  // bounds of the model's own elements
+  const HULL = [];
+  const add = (els, hull) => { MODEL_LIST.push(els); if (hull) HULL[MODEL_LIST.length - 1] = hull; return MODEL_LIST.length - 1; };
   const FACING_Y = [180, 270, 0, 90];
   const facing = (key, model, metas) => { MODEL_VAR[key] = []; for (let m = 0; m < (metas || 4); m++) MODEL_VAR[key][m] = [[model, 0, FACING_Y[m & 3]]]; };
   const single = (key, model) => { MODEL_VAR[key] = [[[model, 0, 0]]]; };
@@ -57,37 +60,42 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   }
   // lectern: base, post and a sloped reading board
   facing('LECTERN', add([
-    box([0, 0, 0], [16, 2, 16], { u: 'lectern_base', d: 'oak_planks', side: 'lectern_base' }),
+    box([1, 0, 1], [15, 2, 15], { u: 'lectern_base', d: 'oak_planks', side: 'lectern_base' }),
     box([4, 2, 4], [12, 13, 12], { side: 'lectern_sides', n: 'lectern_front' }, { skip: ['u', 'd'] }),
     box([0.5, 12, 2], [15.5, 15, 15], { u: 'lectern_top', d: 'oak_planks', side: 'lectern_sides' }, { r: [[8, 13, 8], 0, -22.5, 0] }),
-  ]));
+  ], [[0, 0, 0], [16, 15, 16]]));
   // grindstone: two legs with pivots holding the wheel (meta: facing, +4 wall, +8 ceiling)
   {
+    // (slim legs under wider pivot blocks; the wheel a pixel lower and narrower, its face the tile's 12x12)
     const parts = (y) => [
-      box([2, y, 6], [4, y + 7, 10], 'grindstone_pivot'), box([12, y, 6], [14, y + 7, 10], 'grindstone_pivot'),
-      box([2, y + 7, 5], [4, y + 13, 11], 'grindstone_pivot'), box([12, y + 7, 5], [14, y + 13, 11], 'grindstone_pivot'),
-      box([4, y + 4, 2], [12, y + 16, 14], { side: 'grindstone_round', e: 'grindstone_side', w: 'grindstone_side', u: 'grindstone_round', d: 'grindstone_round' }),
+      box([2, y, 6.5], [4, y + 6, 9.5], 'grindstone_pivot'), box([12, y, 6.5], [14, y + 6, 9.5], 'grindstone_pivot'),
+      box([1.5, y + 6, 5.5], [4, y + 12, 10.5], 'grindstone_pivot'), box([12, y + 6, 5.5], [14.5, y + 12, 10.5], 'grindstone_pivot'),
+      box([4, y + 3, 2.5], [12, y + 15, 13.5], { side: 'grindstone_round', e: 'grindstone_side', w: 'grindstone_side', u: 'grindstone_round', d: 'grindstone_round' },
+        { uv: { e: [2, 0, 14, 12], w: [2, 0, 14, 12] } }),
     ];
-    const floor = add(parts(0));
+    const floor = add(parts(0), [[2, 0, 2], [14, 16, 14]]);
     MODEL_VAR.GRINDSTONE = [];
     for (let m = 0; m < 12; m++) {
       const face = m >> 2, y = FACING_Y[m & 3];
       MODEL_VAR.GRINDSTONE[m] = [face === 0 ? [floor, 0, y] : face === 2 ? [floor, 180, (y + 180) % 360] : [floor, 90, y]];
     }
   }
-  // stonecutter: a low block with the saw blade standing in the middle
+  // stonecutter: a low block with a raised table and the saw blade standing in the middle (the
+  // blade drawn at the bottom of its tile)
   facing('STONECUTTER', add([
-    box([0, 0, 0], [16, 9, 16], { u: 'stonecutter_top', d: 'stonecutter_bottom', side: 'stonecutter_side' }),
-    plane(1, 9, 15, 16, 'stonecutter_saw', 0, [1, 9, 15, 16]),          // (stonecutter.json: the blade at the bottom of the tile)
-  ]));
+    box([0, 0, 0], [16, 8, 16], { u: 'stonecutter_top', d: 'stonecutter_bottom', side: 'stonecutter_side' }),
+    box([0.5, 8, 0.5], [15.5, 9, 15.5], { u: 'stonecutter_top', side: 'stonecutter_side' }, { skip: ['d'] }),
+    plane(1.5, 9, 14.5, 15.5, 'stonecutter_saw', 0, [1.5, 9.5, 14.5, 16]),
+  ], [[0, 0, 0], [16, 9, 16]]));
   // bell: stone posts and a beam (floor), a short hanger (ceiling) or a wall bracket, and the bell
   {
-    const bell = [box([5, 6, 5], [11, 13, 11], 'bell_body'), box([4, 4, 4], [12, 6, 12], 'bell_body')];
-    const floor = add([box([0, 0, 6], [2, 16, 10], 'stone'), box([14, 0, 6], [16, 16, 10], 'stone'),
-      box([2, 13, 7], [14, 15, 9], 'dark_oak_planks'), ...bell]);
-    const ceiling = add([box([7, 13, 7], [9, 16, 9], 'dark_oak_planks'), ...bell]);
-    const wall = add([box([7, 13, 3], [9, 15, 16], 'dark_oak_planks'), ...bell]);
-    const both = add([box([7, 13, 0], [9, 15, 16], 'dark_oak_planks'), ...bell]);
+    // (the bell: a body with a narrower crown and a flared rim; slim posts, a thin beam)
+    const bell = [box([5, 6, 5], [11, 12, 11], 'bell_body'), box([6, 12, 6], [10, 13, 10], 'bell_body'), box([4.5, 4, 4.5], [11.5, 6, 11.5], 'bell_body')];
+    const floor = add([box([0.5, 0, 6.5], [2.5, 16, 9.5], 'stone'), box([13.5, 0, 6.5], [15.5, 16, 9.5], 'stone'),
+      box([2.5, 13, 7.25], [13.5, 14.5, 8.75], 'dark_oak_planks'), ...bell], [[0, 0, 4], [16, 16, 12]]);
+    const ceiling = add([box([7.25, 13, 7.25], [8.75, 16, 8.75], 'dark_oak_planks'), ...bell], [[4, 4, 4], [12, 16, 12]]);
+    const wall = add([box([7.25, 13, 3], [8.75, 14.5, 16], 'dark_oak_planks'), ...bell], [[4, 4, 3], [12, 15, 16]]);
+    const both = add([box([7.25, 13, 0], [8.75, 14.5, 16], 'dark_oak_planks'), ...bell], [[4, 4, 0], [12, 15, 16]]);
     MODEL_VAR.BELL = [];
     for (let m = 0; m < 16; m++) {
       const at = m >> 2, y = FACING_Y[m & 3];
@@ -97,56 +105,60 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   // lantern: iron cage with a cap and a handle; hanging (meta 1) one block higher on a chain
   {
     const L = (y, chain) => {
+      // (a squatter cage under a taller cap)
       const els = [
-        box([5, y, 5], [11, y + 7, 11], { side: 'lantern', u: 'lantern', d: 'lantern' }, { uv: { e: [0, 2, 6, 9], w: [0, 2, 6, 9], s: [0, 2, 6, 9], n: [0, 2, 6, 9], u: [0, 9, 6, 15], d: [0, 9, 6, 15] } }),
-        box([6, y + 7, 6], [10, y + 9, 10], 'lantern', { uv: { e: [0, 0, 4, 2], w: [0, 0, 4, 2], s: [0, 0, 4, 2], n: [0, 0, 4, 2], u: [0, 9, 4, 13], d: [0, 9, 4, 13] } }),
+        box([5, y, 5], [11, y + 6.5, 11], { side: 'lantern', u: 'lantern', d: 'lantern' }, { uv: { e: [0, 2.5, 6, 9], w: [0, 2.5, 6, 9], s: [0, 2.5, 6, 9], n: [0, 2.5, 6, 9], u: [0, 9, 6, 15], d: [0, 9, 6, 15] } }),
+        box([6, y + 6.5, 6], [10, y + 8.5, 10], 'lantern', { uv: { e: [0, 0, 4, 2], w: [0, 0, 4, 2], s: [0, 0, 4, 2], n: [0, 0, 4, 2], u: [0, 9, 4, 13], d: [0, 9, 4, 13] } }),
       ];
-      els.push(...cross(6.5, y + 9, 9.5, y + (chain ? 16 - y : 11), 'lantern', [11, 1, 14, 3]));
+      els.push(...cross(6.5, y + 8.5, 9.5, chain ? 16 : y + 10.5, 'lantern', [11, 1, 14, 3]));
       return els;
     };
-    MODEL_VAR.LANTERN = [[[add(L(0, false)), 0, 0]], [[add(L(1, true)), 0, 0]]];
+    MODEL_VAR.LANTERN = [[[add(L(0, false), [[5, 0, 5], [11, 9, 11]]), 0, 0]], [[add(L(1, true), [[5, 1, 5], [11, 10, 11]]), 0, 0]]];
   }
   // campfire: two logs on the ground, two crossing on top, embers and flames (meta: facing, +4 out)
   {
+    // (the logs a pixel further in, the embers a narrower bed between them)
     const logs = (lit) => [
-      box([1, 0, 0], [5, 4, 16], { side: 'campfire_log', u: 'campfire_log' }), box([11, 0, 0], [15, 4, 16], { side: 'campfire_log', u: 'campfire_log' }),
-      box([0, 3, 1], [16, 7, 5], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
-      box([0, 3, 11], [16, 7, 15], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
-      box([5, 0, 0], [11, 1, 16], lit ? 'campfire_log_lit' : 'campfire_log'),
+      box([2, 0, 0], [6, 4, 16], { side: 'campfire_log', u: 'campfire_log' }), box([10, 0, 0], [14, 4, 16], { side: 'campfire_log', u: 'campfire_log' }),
+      box([0, 3, 2], [16, 7, 6], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
+      box([0, 3, 10], [16, 7, 14], { side: lit ? 'campfire_log_lit' : 'campfire_log', u: 'campfire_log' }),
+      box([6, 0, 1], [10, 1, 15], lit ? 'campfire_log_lit' : 'campfire_log'),
     ];
-    const lit = add([...logs(true), ...cross(1, 1, 15, 16, 'campfire_fire', [0, 0, 16, 15])]);
-    const out = add(logs(false));
+    const lit = add([...logs(true), ...cross(1, 1, 15, 16, 'campfire_fire', [0, 0, 16, 15])], [[0, 0, 0], [16, 7, 16]]);
+    const out = add(logs(false), [[0, 0, 0], [16, 7, 16]]);
     MODEL_VAR.CAMPFIRE = [];
     for (let m = 0; m < 8; m++) MODEL_VAR.CAMPFIRE[m] = [[m & 4 ? out : lit, 0, FACING_Y[m & 3]]];
   }
   // brewing stand: rod on three feet with up to three bottles (meta bits)
   {
     const base = add([
-      box([7, 0, 7], [9, 14, 9], 'brewing_stand', { uv: { e: [7, 2, 9, 16], w: [7, 2, 9, 16], s: [7, 2, 9, 16], n: [7, 2, 9, 16], u: [7, 2, 9, 4], d: [7, 2, 9, 4] } }),
-      box([9, 0, 5], [15, 2, 11], 'brewing_stand_base'), box([1, 0, 1], [7, 2, 7], 'brewing_stand_base'), box([1, 0, 9], [7, 2, 15], 'brewing_stand_base'),
-    ]);
-    const bottle = (a) => add([plane(8, 0, 16, 16, 'brewing_stand', a, [8, 0, 16, 16])]);
+      // (a shorter rod on smaller feet; the bottles a little smaller)
+      box([7, 0, 7], [9, 13, 9], 'brewing_stand', { uv: { e: [7, 3, 9, 16], w: [7, 3, 9, 16], s: [7, 3, 9, 16], n: [7, 3, 9, 16], u: [7, 3, 9, 5], d: [7, 3, 9, 5] } }),
+      box([9, 0, 6], [14, 2, 10], 'brewing_stand_base'), box([2, 0, 2], [7, 2, 7], 'brewing_stand_base'), box([2, 0, 9], [7, 2, 14], 'brewing_stand_base'),
+    ], [[1, 0, 1], [15, 14, 15]]);
+    const bottle = (a) => add([plane(8.5, 0, 15.5, 15, 'brewing_stand', a, [8.5, 1, 15.5, 16])], [[7, 0, 7], [9, 14, 9]]);
     const b = [bottle(0), bottle(120), bottle(240)];
     MODEL_VAR.BREWING_STAND = [];
     for (let m = 0; m < 8; m++) { const parts = [[base, 0, 0]]; for (let i = 0; i < 3; i++) if (m & (1 << i)) parts.push([b[i], 0, 0]); MODEL_VAR.BREWING_STAND[m] = parts; }
   }
-  // cauldron: four walls on corner legs; water at three levels (meta 1-3)
+  // cauldron: four walls on square corner feet, a thick floor; water at three levels (meta 1-3)
   {
     const S = { side: 'cauldron_side', u: 'cauldron_top', d: 'cauldron_bottom' };
     const shell = [
-      box([0, 3, 0], [2, 16, 16], S), box([14, 3, 0], [16, 16, 16], S), box([2, 3, 0], [14, 16, 2], S), box([2, 3, 14], [14, 16, 16], S),
-      box([2, 3, 2], [14, 4, 14], { u: 'cauldron_inner', d: 'cauldron_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
-      box([0, 0, 0], [4, 3, 2], S), box([0, 0, 2], [2, 3, 4], S), box([12, 0, 0], [16, 3, 2], S), box([14, 0, 2], [16, 3, 4], S),
-      box([0, 0, 14], [4, 3, 16], S), box([0, 0, 12], [2, 3, 14], S), box([12, 0, 14], [16, 3, 16], S), box([14, 0, 12], [16, 3, 14], S),
+      box([0, 2, 0], [2, 16, 16], S), box([14, 2, 0], [16, 16, 16], S), box([2, 2, 0], [14, 16, 2], S), box([2, 2, 14], [14, 16, 16], S),
+      box([2, 2, 2], [14, 4, 14], { u: 'cauldron_inner', d: 'cauldron_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
+      box([0, 0, 0], [3, 2, 3], S), box([13, 0, 0], [16, 2, 3], S), box([0, 0, 13], [3, 2, 16], S), box([13, 0, 13], [16, 2, 16], S),
     ];
-    MODEL_VAR.CAULDRON = [0, 9, 12, 15].map((h) => [[add(h ? [...shell, box([2, 4, 2], [14, h, 14], { u: 'water_still' }, { skip: ['e', 'w', 's', 'n', 'd'] })] : shell), 0, 0]]);
+    MODEL_VAR.CAULDRON = [0, 8.5, 11.5, 14.5].map((h) => [[add(h ? [...shell, box([2, 4, 2], [14, h, 14], { u: 'water_still' }, { skip: ['e', 'w', 's', 'n', 'd'] })] : shell), 0, 0]]);
   }
   // composter: a box of planks, filled by level (meta 0-8)
   {
     const W = { side: 'composter_side', u: 'composter_top', d: 'composter_bottom' };
     // (composter.json: the floor's top is #inside = composter_bottom; the top tile only on the rims)
-    const shell = [box([0, 0, 0], [16, 2, 16], { u: 'composter_bottom', d: 'composter_bottom' }, { skip: ['e', 'w', 's', 'n'] }), box([0, 0, 0], [2, 16, 16], W), box([14, 0, 0], [16, 16, 16], W),
-      box([2, 0, 0], [14, 16, 2], W), box([2, 0, 14], [14, 16, 16], W)];
+    // (corner posts standing a pixel above the walls between them, the floor laid inside)
+    const shell = [box([2, 0, 2], [14, 2, 14], { u: 'composter_bottom', d: 'composter_bottom' }, { skip: ['e', 'w', 's', 'n'] }),
+      box([0, 0, 0], [2, 16, 2], W), box([14, 0, 0], [16, 16, 2], W), box([0, 0, 14], [2, 16, 16], W), box([14, 0, 14], [16, 16, 16], W),
+      box([2, 0, 0], [14, 15, 2], W), box([2, 0, 14], [14, 15, 16], W), box([0, 0, 2], [2, 15, 14], W), box([14, 0, 2], [16, 15, 14], W)];
     MODEL_VAR.COMPOSTER = [];
     for (let m = 0; m < 9; m++) {
       const h = m === 0 ? 0 : Math.min(15, 1 + m * 2);
@@ -178,7 +190,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   single('SCULK_SENSOR', add([box([0, 0, 0], [16, 8, 16], { u: 'sculk_sensor_top', d: 'sculk_sensor_bottom', side: 'sculk_sensor_side' }),
     plane(3, 8, 7, 16, 'sculk_sensor_tendril_inactive', 45, [4, 0, 12, 16]), plane(9, 8, 13, 16, 'sculk_sensor_tendril_inactive', -45, [4, 0, 12, 16])]));
   single('SCULK_SHRIEKER', add([box([0, 0, 0], [16, 8, 16], { u: 'sculk_shrieker_inner_top', d: 'sculk_shrieker_bottom', side: 'sculk_shrieker_side' }),
-    box([1, 8, 1], [15, 15, 15], { u: 'sculk_shrieker_top', side: 'sculk_shrieker_side' }, { skip: ['d'] })]));
+    box([1, 8, 1], [15, 15, 15], { u: 'sculk_shrieker_top', side: 'sculk_shrieker_side' }, { skip: ['d'] })], [[0, 0, 0], [16, 8, 16]]));
 
   // ship wheel: a turned post with a spoked wheel on its north face, handles past the rim
   {
@@ -209,16 +221,17 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   }
 
   // ---- redstone ----
-  // the stub of a redstone torch standing on a base at height y0 (top 5 pixels of the torch texture)
-  const stub = (x, z, y0, tex) => box([x, y0, z], [x + 2, y0 + 5, z + 2], tex,
-    { uv: { e: [7, 6, 9, 11], w: [7, 6, 9, 11], s: [7, 6, 9, 11], n: [7, 6, 9, 11], u: [7, 6, 9, 8], d: [7, 13, 9, 15] } });
+  // the stub of a redstone torch standing on a base at height y0
+  // (a stub a pixel lower than a whole torch's top: the top 4 pixels)
+  const stub = (x, z, y0, tex) => box([x, y0, z], [x + 2, y0 + 4, z + 2], tex,
+    { uv: { e: [7, 6, 9, 10], w: [7, 6, 9, 10], s: [7, 6, 9, 10], n: [7, 6, 9, 10], u: [7, 6, 9, 8], d: [7, 13, 9, 15] } });
   // lever (meta: face 0 floor / 1 wall / 2 ceiling << 2 | facing, +16 on): a stone base and a handle
   // tilted one way or the other; built on the floor, turned onto walls and ceilings
   {
     const lever = [0, 1].map(on => add([
-      box([5, 0, 4], [11, 3, 12], 'cobblestone'),
-      box([7, 1, 7], [9, 11, 9], 'lever_handle', { r: [[8, 1, 8], 0, on ? -40 : 40, 0] }),
-    ]));
+      box([5, 0, 4.5], [11, 2.5, 11.5], 'cobblestone'),
+      box([7, 1, 7], [9, 10, 9], 'lever_handle', { r: [[8, 1, 8], 0, on ? -40 : 40, 0] }),
+    ], [[5, 0, 4], [11, 6, 12]]));
     MODEL_VAR.LEVER = [];
     for (let m = 0; m < 32; m++) {
       const face = (m >> 2) & 3, f = m & 3, M = lever[(m >> 4) & 1];
@@ -232,7 +245,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     for (let k = 0; k < 8; k++) {
       const delay = k & 3, on = k >> 2, t = on ? 'redstone_torch' : 'redstone_torch_off';
       rep.push(add([box([0, 0, 0], [16, 2, 16], { u: on ? 'repeater_on' : 'repeater', d: 'smooth_stone', side: 'smooth_stone' }),
-        stub(7, 11, 2, t), stub(7, 2 + delay * 2, 2, t)]));
+        stub(7, 11, 2, t), stub(7, 2 + delay * 2, 2, t)], [[0, 0, 0], [16, 2, 16]]));
     }
     MODEL_VAR.REPEATER = [];
     for (let m = 0; m < 64; m++) MODEL_VAR.REPEATER[m] = [[rep[((m >> 2) & 3) | (((m >> 4) & 1) << 2)], 0, FACING_Y[m & 3]]];
@@ -245,7 +258,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
       const sub = k & 1, on = k >> 1;
       cmp.push(add([box([0, 0, 0], [16, 2, 16], { u: on ? 'comparator_on' : 'comparator', d: 'smooth_stone', side: 'smooth_stone' }),
         stub(3, 11, 2, on ? 'redstone_torch' : 'redstone_torch_off'), stub(11, 11, 2, on ? 'redstone_torch' : 'redstone_torch_off'),
-        stub(7, 2, 0, sub ? 'redstone_torch' : 'redstone_torch_off')]));
+        stub(7, 2, 0, sub ? 'redstone_torch' : 'redstone_torch_off')], [[0, 0, 0], [16, 2, 16]]));
     }
     MODEL_VAR.COMPARATOR = [];
     for (let m = 0; m < 128; m++) MODEL_VAR.COMPARATOR[m] = [[cmp[((m >> 2) & 1) | ((m >> 3) ? 2 : 0)], 0, FACING_Y[m & 3]]];
@@ -277,7 +290,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
     for (let m = 0; m < 16; m++) MODEL_VAR.PISTON_HEAD[m] = [six(H[(m >> 3) & 1], m & 7)];
   }
 
-  // selection boxes: the bounds of each variant's elements, turned like the parts
+  // selection boxes: the bounds of each variant's elements (or its hull), turned like the parts
   const turn = (p, rx, ry) => {
     let [x, y, z] = [p[0] - 8, p[1] - 8, p[2] - 8], t;
     const cx = Math.cos(rx * Math.PI / 180), sx = Math.sin(rx * Math.PI / 180), cy = Math.cos(ry * Math.PI / 180), sy = Math.sin(ry * Math.PI / 180);
@@ -288,7 +301,7 @@ const MODEL_LIST = [], MODEL_VAR = {}, MODEL_BOX = {};
   for (const k in MODEL_VAR) {
     MODEL_BOX[k] = MODEL_VAR[k].map((parts) => {
       const lo = [16, 16, 16], hi = [0, 0, 0];
-      for (const [mi, rx, ry] of parts) for (const E of MODEL_LIST[mi]) for (let c = 0; c < 8; c++) {
+      for (const [mi, rx, ry] of parts) for (const E of HULL[mi] ? [HULL[mi]] : MODEL_LIST[mi]) for (let c = 0; c < 8; c++) {
         const q = turn([c & 1 ? E[1][0] : E[0][0], c & 2 ? E[1][1] : E[0][1], c & 4 ? E[1][2] : E[0][2]], rx, ry);
         for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], Math.max(0, q[i])); hi[i] = Math.max(hi[i], Math.min(16, q[i])); }
       }

@@ -1,78 +1,87 @@
 'use strict';
-// Mobs, item drops, arrows: models (Minecraft Java geometry), AI, spawning, physics, rendering.
+// Mobs, item drops, arrows: models (own proportions on Minecraft's skin layout), AI, spawning,
+// physics, rendering.
 
-// Part: { box:[x,y,z,w,h,d] (MC y-down pixel space, relative to pivot), pivot:[x,y,z], uv:[u,v], rot:[rx,ry,rz], anim, mirror, inflate }
+// Part: { box:[x,y,z,w,h,d] (MC y-down pixel space, relative to pivot), pivot:[x,y,z], uv:[u,v], rot:[rx,ry,rz], anim, mirror, inflate,
+//   tbox:[w,h,d] }: tbox is the size the skin is laid out for when the box is drawn at another size
+//   (the skin then stretches over it), so the skins keep their layout while the models are our own
 // anim: 'head', 'legA', 'legB', 'armA', 'armB', 'body90', 'zarmR','zarmL','wingL','wingR', 'spiderL'...
 const MODELS = {
+  // pig: a shorter body on longer legs, the head lower and set back, a longer snout
   pig: { tex: 'pig', tw: 64, th: 32, parts: [
-    { box: [-4, -4, -8, 8, 8, 8], pivot: [0, 12, -6], uv: [0, 0], anim: 'head' },
-    { box: [-2, 0, -9, 4, 3, 1], pivot: [0, 12, -6], uv: [16, 16], anim: 'head' },
-    { box: [-5, -10, -7, 10, 16, 8], pivot: [0, 11, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0] },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-3, 18, 7], uv: [0, 16], anim: 'legA' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [3, 18, 7], uv: [0, 16], anim: 'legB', mirror: true },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-3, 18, -5], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [3, 18, -5], uv: [0, 16], anim: 'legA', mirror: true },
+    { box: [-4, -4.5, -7.5, 8, 8, 8], pivot: [0, 12, -6.5], uv: [0, 0], anim: 'head' },
+    { box: [-2, -0.5, -9, 4, 3, 1.5], pivot: [0, 12, -6.5], uv: [16, 16], anim: 'head', tbox: [4, 3, 1] },
+    { box: [-5, -9.5, -7, 10, 15, 8], pivot: [0, 11, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0], tbox: [10, 16, 8] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [-3, 17.5, 6.5], uv: [0, 16], anim: 'legA', tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [3, 17.5, 6.5], uv: [0, 16], anim: 'legB', mirror: true, tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [-3, 17.5, -4.5], uv: [0, 16], anim: 'legB', tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [3, 17.5, -4.5], uv: [0, 16], anim: 'legA', mirror: true, tbox: [4, 6, 4] },
   ] },
+  // cow: a deeper, shorter barrel of a body, a longer head, horns set further back and higher
   cow: { tex: 'cow', tw: 64, th: 32, parts: [
-    { box: [-4, -4, -6, 8, 8, 6], pivot: [0, 4, -8], uv: [0, 0], anim: 'head' },
-    { box: [-5, -5, -4, 1, 3, 1], pivot: [0, 4, -8], uv: [22, 0], anim: 'head' },
-    { box: [4, -5, -4, 1, 3, 1], pivot: [0, 4, -8], uv: [22, 0], anim: 'head' },
-    { box: [-6, -10, -7, 12, 18, 10], pivot: [0, 5, 2], uv: [18, 4], rot: [Math.PI / 2, 0, 0] },
-    { box: [-2, 2, -8, 4, 6, 1], pivot: [0, 5, 2], uv: [52, 0], rot: [Math.PI / 2, 0, 0] },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [-4, 12, 7], uv: [0, 16], anim: 'legA' },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [4, 12, 7], uv: [0, 16], anim: 'legB', mirror: true },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [-4, 12, -6], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [4, 12, -6], uv: [0, 16], anim: 'legA', mirror: true },
+    { box: [-4, -4, -6, 8, 8, 6.5], pivot: [0, 4.5, -8], uv: [0, 0], anim: 'head', tbox: [8, 8, 6] },
+    { box: [-5, -5.5, -3.5, 1, 3, 1], pivot: [0, 4.5, -8], uv: [22, 0], anim: 'head' },
+    { box: [4, -5.5, -3.5, 1, 3, 1], pivot: [0, 4.5, -8], uv: [22, 0], anim: 'head' },
+    { box: [-6, -9.5, -7.5, 12, 17, 10.5], pivot: [0, 5, 2], uv: [18, 4], rot: [Math.PI / 2, 0, 0], tbox: [12, 18, 10] },
+    { box: [-2, 2, -8.5, 4, 5, 1], pivot: [0, 5, 2], uv: [52, 0], rot: [Math.PI / 2, 0, 0], tbox: [4, 6, 1] },
+    { box: [-2, 0, -2, 4, 11.5, 4], pivot: [-4, 12.5, 6.5], uv: [0, 16], anim: 'legA', tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 11.5, 4], pivot: [4, 12.5, 6.5], uv: [0, 16], anim: 'legB', mirror: true, tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 11.5, 4], pivot: [-4, 12.5, -5.5], uv: [0, 16], anim: 'legB', tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 11.5, 4], pivot: [4, 12.5, -5.5], uv: [0, 16], anim: 'legA', mirror: true, tbox: [4, 12, 4] },
   ] },
+  // sheep: a shorter body, the head carried higher and further out, legs a little longer
   sheep: { tex: 'sheep', tw: 64, th: 32, parts: [
-    { box: [-3, -4, -6, 6, 6, 8], pivot: [0, 6, -8], uv: [0, 0], anim: 'head' },
-    { box: [-4, -10, -7, 8, 16, 6], pivot: [0, 5, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0] },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [-3, 12, 7], uv: [0, 16], anim: 'legA' },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [3, 12, 7], uv: [0, 16], anim: 'legB', mirror: true },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [-3, 12, -5], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 12, 4], pivot: [3, 12, -5], uv: [0, 16], anim: 'legA', mirror: true },
+    { box: [-3, -4.5, -6.5, 6, 6, 8], pivot: [0, 6, -8], uv: [0, 0], anim: 'head' },
+    { box: [-4, -9.5, -7, 8, 15, 6.5], pivot: [0, 5, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0], tbox: [8, 16, 6] },
+    { box: [-2, 0, -2, 4, 12.5, 4], pivot: [-3, 11.5, 6.5], uv: [0, 16], anim: 'legA', tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 12.5, 4], pivot: [3, 11.5, 6.5], uv: [0, 16], anim: 'legB', mirror: true, tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 12.5, 4], pivot: [-3, 11.5, -4.5], uv: [0, 16], anim: 'legB', tbox: [4, 12, 4] },
+    { box: [-2, 0, -2, 4, 12.5, 4], pivot: [3, 11.5, -4.5], uv: [0, 16], anim: 'legA', mirror: true, tbox: [4, 12, 4] },
   ], fur: { tex: 'sheep_fur', tw: 64, th: 32, parts: [
-    { box: [-3, -4, -4, 6, 6, 6], pivot: [0, 6, -8], uv: [0, 0], anim: 'head', inflate: 0.6 },
-    { box: [-4, -10, -7, 8, 16, 6], pivot: [0, 5, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0], inflate: 1.75 },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-3, 12, 7], uv: [0, 16], anim: 'legA', inflate: 0.5 },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [3, 12, 7], uv: [0, 16], anim: 'legB', inflate: 0.5, mirror: true },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-3, 12, -5], uv: [0, 16], anim: 'legB', inflate: 0.5 },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [3, 12, -5], uv: [0, 16], anim: 'legA', inflate: 0.5, mirror: true },
+    { box: [-3, -4.5, -4.5, 6, 6, 6], pivot: [0, 6, -8], uv: [0, 0], anim: 'head', inflate: 0.55 },
+    { box: [-4, -9.5, -7, 8, 15, 6.5], pivot: [0, 5, 2], uv: [28, 8], rot: [Math.PI / 2, 0, 0], inflate: 1.6, tbox: [8, 16, 6] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [-3, 11.5, 6.5], uv: [0, 16], anim: 'legA', inflate: 0.45, tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [3, 11.5, 6.5], uv: [0, 16], anim: 'legB', inflate: 0.45, mirror: true, tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [-3, 11.5, -4.5], uv: [0, 16], anim: 'legB', inflate: 0.45, tbox: [4, 6, 4] },
+    { box: [-2, 0, -2, 4, 6.5, 4], pivot: [3, 11.5, -4.5], uv: [0, 16], anim: 'legA', inflate: 0.45, mirror: true, tbox: [4, 6, 4] },
   ] } },
+  // chicken: a plumper body set lower on shorter legs, the head up on a longer neck, a longer beak
   chicken: { tex: 'chicken', tw: 64, th: 32, parts: [
-    { box: [-2, -6, -2, 4, 6, 3], pivot: [0, 15, -4], uv: [0, 0], anim: 'head' },
-    { box: [-2, -4, -4, 4, 2, 2], pivot: [0, 15, -4], uv: [14, 0], anim: 'head' },
-    { box: [-1, -2, -3, 2, 2, 2], pivot: [0, 15, -4], uv: [14, 4], anim: 'head' },
-    { box: [-3, -4, -3, 6, 8, 6], pivot: [0, 16, 0], uv: [0, 9], rot: [Math.PI / 2, 0, 0] },
-    { box: [-1, 0, -3, 3, 5, 3], pivot: [-2, 19, 1], uv: [26, 0], anim: 'legA' },
-    { box: [-1, 0, -3, 3, 5, 3], pivot: [1, 19, 1], uv: [26, 0], anim: 'legB', mirror: true },
-    { box: [0, 0, -3, 1, 4, 6], pivot: [-4, 13, 0], uv: [24, 13], anim: 'wingR' },
-    { box: [-1, 0, -3, 1, 4, 6], pivot: [4, 13, 0], uv: [24, 13], anim: 'wingL', mirror: true },
+    { box: [-2, -6.5, -2, 4, 6.5, 3], pivot: [0, 15, -4.5], uv: [0, 0], anim: 'head', tbox: [4, 6, 3] },
+    { box: [-2, -4.5, -4.5, 4, 2, 2.5], pivot: [0, 15, -4.5], uv: [14, 0], anim: 'head', tbox: [4, 2, 2] },
+    { box: [-1, -2.5, -3, 2, 2, 2], pivot: [0, 15, -4.5], uv: [14, 4], anim: 'head' },
+    { box: [-3.25, -4, -3, 6.5, 8.5, 6], pivot: [0, 16.5, 0], uv: [0, 9], rot: [Math.PI / 2, 0, 0], tbox: [6, 8, 6] },
+    { box: [-1, 0, -3, 3, 4.5, 3], pivot: [-2, 19.5, 1], uv: [26, 0], anim: 'legA', tbox: [3, 5, 3] },
+    { box: [-1, 0, -3, 3, 4.5, 3], pivot: [1, 19.5, 1], uv: [26, 0], anim: 'legB', mirror: true, tbox: [3, 5, 3] },
+    { box: [0, 0, -3, 1, 4.5, 6.5], pivot: [-4.25, 13.5, 0], uv: [24, 13], anim: 'wingR', tbox: [1, 4, 6] },
+    { box: [-1, 0, -3, 1, 4.5, 6.5], pivot: [4.25, 13.5, 0], uv: [24, 13], anim: 'wingL', mirror: true, tbox: [1, 4, 6] },
   ] },
-  // zombie: Minecraft's HumanoidModel, left limbs mirrored from the right ones (only the player's
-  // model has separate left limbs on its skin)
+  // zombie: our humanoid (humanoid() below), left limbs mirrored from the right ones (only the
+  // player's model has separate left limbs on its skin)
   zombie: { tex: 'zombie', tw: 64, th: 64, parts: humanoid(4, false, true) },
   drowned: { tex: 'drowned', tw: 64, th: 64, parts: humanoid(4, false, true) },
   skeleton: { tex: 'skeleton', tw: 64, th: 32, parts: humanoid(2, false), heldItem: 'item_bow' },
   player: { tex: 'player', tw: 64, th: 64, parts: humanoid(4, true, true) },
+  // creeper: the head sunk a little into a deeper trunk, the feet set wider apart
   creeper: { tex: 'creeper', tw: 64, th: 32, parts: [
-    { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 6, 0], uv: [0, 0], anim: 'head' },
-    { box: [-4, 0, -2, 8, 12, 4], pivot: [0, 6, 0], uv: [16, 16] },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-2, 18, 4], uv: [0, 16], anim: 'legA' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [2, 18, 4], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [-2, 18, -4], uv: [0, 16], anim: 'legB' },
-    { box: [-2, 0, -2, 4, 6, 4], pivot: [2, 18, -4], uv: [0, 16], anim: 'legA' },
+    { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 6.5, 0], uv: [0, 0], anim: 'head' },
+    { box: [-4, 0, -2.25, 8, 12, 4.5], pivot: [0, 6, 0], uv: [16, 16], tbox: [8, 12, 4] },
+    { box: [-2, 0, -2, 4, 6, 4], pivot: [-2, 18, 4.25], uv: [0, 16], anim: 'legA' },
+    { box: [-2, 0, -2, 4, 6, 4], pivot: [2, 18, 4.25], uv: [0, 16], anim: 'legB' },
+    { box: [-2, 0, -2, 4, 6, 4], pivot: [-2, 18, -4.25], uv: [0, 16], anim: 'legB' },
+    { box: [-2, 0, -2, 4, 6, 4], pivot: [2, 18, -4.25], uv: [0, 16], anim: 'legA' },
   ] },
   spider: { tex: 'spider', tw: 64, th: 32, parts: (function () {
     const p = [
-      { box: [-4, -4, -8, 8, 8, 8], pivot: [0, 15, -3], uv: [32, 4], anim: 'head' },
-      { box: [-3, -3, -3, 6, 6, 6], pivot: [0, 15, 0], uv: [0, 0] },
-      { box: [-5, -4, -6, 10, 8, 12], pivot: [0, 15, 9], uv: [0, 12] },
+      // spider: the head a little lower, a slimmer waist, a taller abdomen, legs a pixel shorter
+      { box: [-4, -3.5, -7.5, 8, 8, 8], pivot: [0, 15, -3.5], uv: [32, 4], anim: 'head' },
+      { box: [-3, -2.75, -3, 6, 5.5, 6], pivot: [0, 15, 0], uv: [0, 0], tbox: [6, 6, 6] },
+      { box: [-5, -4.75, -6, 10, 8.75, 12.5], pivot: [0, 15, 9], uv: [0, 12], tbox: [10, 8, 12] },
     ];
     const ys = [0.785, 0.393, -0.393, -0.785], zs = [2, 1, 0, -1];
     for (let i = 0; i < 4; i++) {
-      p.push({ box: [-15, -1, -1, 16, 2, 2], pivot: [-4, 15, zs[i]], uv: [18, 0], rot: [0, ys[i], -0.785], anim: 'spiderR' + i });
-      p.push({ box: [-1, -1, -1, 16, 2, 2], pivot: [4, 15, zs[i]], uv: [18, 0], rot: [0, -ys[i], 0.785], anim: 'spiderL' + i, mirror: true });
+      p.push({ box: [-14, -1, -1, 15, 2, 2], pivot: [-4, 15, zs[i]], uv: [18, 0], rot: [0, ys[i], -0.785], anim: 'spiderR' + i, tbox: [16, 2, 2] });
+      p.push({ box: [-1, -1, -1, 15, 2, 2], pivot: [4, 15, zs[i]], uv: [18, 0], rot: [0, -ys[i], 0.785], anim: 'spiderL' + i, mirror: true, tbox: [16, 2, 2] });
     }
     return p;
   })() },
@@ -91,22 +100,24 @@ function opart(b, at, uv, o) {
   if (o.rot) p.rot = [o.rot[0], -o.rot[1], -o.rot[2]];
   return p;
 }
+// enderman: a narrower chest, the arms a little shorter and the legs set a little wider
 MODELS.enderman = { tex: 'enderman', tw: 64, th: 32, halfSwing: true, parts: [
-  { box: [-4, -8, -4, 8, 8, 8], pivot: [0, -14, 0], uv: [0, 0], anim: 'head', creepy: true },
-  { box: [-4, -8, -4, 8, 8, 8], pivot: [0, -14, 0], uv: [0, 16], anim: 'head', inflate: -0.5 },
-  { box: [-4, 0, -2, 8, 12, 4], pivot: [0, -15, 0], uv: [32, 16] },
-  { box: [-1, -2, -1, 2, 30, 2], pivot: [-5, -13, 0], uv: [56, 0], anim: 'armR' },
-  { box: [-1, -2, -1, 2, 30, 2], pivot: [5, -13, 0], uv: [56, 0], anim: 'armL', mirror: true },
-  { box: [-1, 0, -1, 2, 30, 2], pivot: [-2, -6, 0], uv: [56, 0], anim: 'legA' },
-  { box: [-1, 0, -1, 2, 30, 2], pivot: [2, -6, 0], uv: [56, 0], anim: 'legB', mirror: true },
+  { box: [-4, -8, -4, 8, 8, 8], pivot: [0, -14.5, 0], uv: [0, 0], anim: 'head', creepy: true },
+  { box: [-4, -8, -4, 8, 8, 8], pivot: [0, -14.5, 0], uv: [0, 16], anim: 'head', inflate: -0.5 },
+  { box: [-3.75, 0, -2, 7.5, 12, 3.5], pivot: [0, -15, 0], uv: [32, 16], tbox: [8, 12, 4] },
+  { box: [-1, -2, -1, 2, 29, 2], pivot: [-4.75, -13, 0], uv: [56, 0], anim: 'armR', tbox: [2, 30, 2] },
+  { box: [-1, -2, -1, 2, 29, 2], pivot: [4.75, -13, 0], uv: [56, 0], anim: 'armL', mirror: true, tbox: [2, 30, 2] },
+  { box: [-1, 0, -1, 2, 30, 2], pivot: [-2.25, -6, 0], uv: [56, 0], anim: 'legA' },
+  { box: [-1, 0, -1, 2, 30, 2], pivot: [2.25, -6, 0], uv: [56, 0], anim: 'legB', mirror: true },
 ] };
 // slime: opaque core, eyes and mouth; the outer jelly cube is drawn translucent afterwards
+// (our own: a smaller core resting lower, the eyes closer together and lower, a wider mouth)
 MODELS.slime = { tex: 'slime', tw: 64, th: 32, parts: [
-  { box: [-3, 17, -3, 6, 6, 6], pivot: [0, 0, 0], uv: [0, 16] },
-  { box: [-3.25, 18, -3.5, 2, 2, 2], pivot: [0, 0, 0], uv: [32, 0] },
-  { box: [1.25, 18, -3.5, 2, 2, 2], pivot: [0, 0, 0], uv: [32, 4] },
-  { box: [0, 21, -3.5, 1, 1, 1], pivot: [0, 0, 0], uv: [32, 8] },
-  { box: [-4, 16, -4, 8, 8, 8], pivot: [0, 0, 0], uv: [0, 0], trans: true },
+  { box: [-2.75, 17.75, -2.75, 5.5, 5.5, 5.5], pivot: [0, 0, 0], uv: [0, 16], tbox: [6, 6, 6] },
+  { box: [-3, 18.5, -3.25, 2, 2, 2], pivot: [0, 0, 0], uv: [32, 0] },
+  { box: [1, 18.5, -3.25, 2, 2, 2], pivot: [0, 0, 0], uv: [32, 4] },
+  { box: [-0.75, 21.25, -3.25, 1.5, 1, 1], pivot: [0, 0, 0], uv: [32, 8], tbox: [1, 1, 1] },
+  { box: [-4.125, 15.75, -4.125, 8.25, 8.25, 8.25], pivot: [0, 0, 0], uv: [0, 0], trans: true, tbox: [8, 8, 8] },
 ] };
 MODELS.salmon = { tex: 'salmon', tw: 32, th: 32, pitchY: 2.5, parts: [
   opart([2, 4, 3], [0, 0.5, 1.5], [22, 0]),
@@ -125,20 +136,23 @@ MODELS.shark = { tex: 'shark', tw: 64, th: 64, scale: 1.25, pitchY: 5.5, parts: 
   opart([1, 10, 6], [0, 1, -21], [28, 36], { piv: [0, 5.5, -8], anim: 'tail' }),
 ] };
 
+// our humanoid: the head sunk half a pixel into a deeper chest, the arms half a pixel shorter, the
+// legs side by side without overlapping
 function humanoid(armW, wide, hat) {
   const a4 = armW === 4;
-  const arm = a4 ? [-3, -2, -2, 4, 12, 4] : [-1, -2, -1, 2, 12, 2];
-  const armL = a4 ? [-1, -2, -2, 4, 12, 4] : [-1, -2, -1, 2, 12, 2];
+  const arm = a4 ? [-3, -2, -2, 4, 11.5, 4] : [-1, -2, -1, 2, 11.5, 2];
+  const armL = a4 ? [-1, -2, -2, 4, 11.5, 4] : [-1, -2, -1, 2, 11.5, 2];
   const leg = a4 ? [-2, 0, -2, 4, 12, 4] : [-1, 0, -1, 2, 12, 2];
+  const armT = a4 ? [4, 12, 4] : [2, 12, 2];
   const parts = [
-    { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0, 0], uv: [0, 0], anim: 'head' },
-    { box: [-4, 0, -2, 8, 12, 4], pivot: [0, 0, 0], uv: [16, 16], anim: 'body' },
-    { box: arm, pivot: [-5, 2, 0], uv: [40, 16], anim: 'armR' },
-    { box: armL, pivot: [5, 2, 0], uv: wide ? [32, 48] : [40, 16], mirror: !wide, anim: 'armL' },
-    { box: leg, pivot: [-1.9, 12, 0], uv: [0, 16], anim: 'legA' },
-    { box: leg, pivot: [1.9, 12, 0], uv: wide ? [16, 48] : [0, 16], mirror: !wide, anim: 'legB' },
+    { box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0.5, 0], uv: [0, 0], anim: 'head' },
+    { box: [-4, 0, -2.25, 8, 12, 4.5], pivot: [0, 0, 0], uv: [16, 16], anim: 'body', tbox: [8, 12, 4] },
+    { box: arm, pivot: [-5, 2, 0], uv: [40, 16], anim: 'armR', tbox: armT },
+    { box: armL, pivot: [5, 2, 0], uv: wide ? [32, 48] : [40, 16], mirror: !wide, anim: 'armL', tbox: armT },
+    { box: leg, pivot: [-2, 12, 0], uv: [0, 16], anim: 'legA' },
+    { box: leg, pivot: [2, 12, 0], uv: wide ? [16, 48] : [0, 16], mirror: !wide, anim: 'legB' },
   ];
-  if (hat) parts.push({ box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0, 0], uv: [32, 0], anim: 'head', inflate: 0.5 });
+  if (hat) parts.push({ box: [-4, -8, -4, 8, 8, 8], pivot: [0, 0.5, 0], uv: [32, 0], anim: 'head', inflate: 0.5 });
   return parts;
 }
 
@@ -2833,7 +2847,7 @@ class Entities {
       else if (an === 'tail') ry += tail;
       else if (an && an.startsWith('spider')) { const k = +an.slice(-1); ry += Math.cos(wpos * 1.3324 + k * 1.5708) * 0.4 * wamt; rz += Math.abs(Math.sin(wpos * 0.6662 + k * 1.5708)) * 0.4 * wamt * (an[6] === 'R' ? 1 : -1); }
       const inf = part.inflate || 0;
-      const [bx, byy, bz, bw, bh, bd] = part.box;
+      const [bx, byy, bz, bw, bh, bd] = part.box, tb = part.tbox || part.box.slice(3);
       // y-up space
       let x0 = -(bx + bw) - inf, x1 = -bx + inf, y0 = -(byy + bh) - inf, y1 = -byy + inf, z0 = bz - inf, z1 = bz + bd + inf;
       // babies: half-size body with a relatively big head (the head grows around its pivot)
@@ -2850,7 +2864,7 @@ class Entities {
       XP[9] = scaleY * S * syy; XP[10] = S * sxz * scaleXZ; XP[11] = sp ? 1 : 0; XP[12] = cpt; XP[13] = spt; XP[14] = pY;
       XP[15] = sneakBody ? 1 : 0; XP[16] = death; XP[17] = cy; XP[18] = sy;
       XP[19] = EP[0]; XP[20] = EP[1]; XP[21] = EP[2]; XP[22] = cam[0]; XP[23] = cam[1]; XP[24] = cam[2];
-      g.pushModelBox(dst, modelXform, XP, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], bw, bh, bd, m.tw, m.th, li, tint, part.mirror);
+      g.pushModelBox(dst, modelXform, XP, x0, y0, z0, x1, y1, z1, part.uv[0], part.uv[1], tb[0], tb[1], tb[2], m.tw, m.th, li, tint, part.mirror);
       // the skeleton's bow in its right hand: the item sprite (0.9 block) held at the hand,
       // across the arm, so it points forward with the arm down and stands upright when aiming
       if (heldOut && an === 'armR' && m.heldItem) {

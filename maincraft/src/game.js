@@ -2187,7 +2187,7 @@ class Game {
       pmT(M, -5 / 16, 2 / 16, 0); pmZ(M, 0.1); pmS(M, -1, -1, 1);
       const ev = this.handVB || (this.handVB = new VBuf());
       ev.n = 0;
-      this.pushModelBox(ev, pmApply, M, -1 / 16, -10 / 16, -2 / 16, 3 / 16, 2 / 16, 2 / 16, 40, 16, 4, 12, 4, 64, 64, li);
+      this.pushModelBox(ev, pmApply, M, -1 / 16, -9.5 / 16, -2 / 16, 3 / 16, 2 / 16, 2 / 16, 40, 16, 4, 12, 4, 64, 64, li);
       gl.enable(gl.CULL_FACE);
       const saveVP = r.vp; r.vp = proj;
       r.drawEnt(ev.view(), ev.n / 10, tex, { fogStart: 1e9, fogEnd: 1e9 + 1, fogColor: [0, 0, 0] });

@@ -555,15 +555,15 @@ class Mesher {
         // (template_torch / template_torch_wall: the top from rows 6-8, the bottom from 13-15; the
         // wall torch's sides from the stick's rows 6-16 like the standing one, not from where its
         // raised box happens to be)
-        const uvo = [null, null, [7, 6, 9, 8], [7, 13, 9, 15], null, null];
+        // (our torch half a pixel shorter than the tile's stick, which it is drawn from whole)
         const uvw = [[7, 6, 9, 16], [7, 6, 9, 16], [7, 6, 9, 8], [7, 13, 9, 15], [7, 6, 9, 16], [7, 6, 9, 16]];
         if (m === 0 || m > 4) {
-          this.box(p, id, x, y, z, 7, 0, 7, 9, 10, 9, texs[0], 0, buf, { uvOverride: uvo });
+          this.box(p, id, x, y, z, 7, 0, 7, 9, 9.5, 9, texs[0], 0, buf, { uvOverride: uvw });
         } else {
           const d = m - 1; // wall direction: 0 S,1 W,2 N,3 E (wall is on that side)
           const dx = DIRX[d], dz = DIRZ[d];
           const ox = dx * 5.5, oz = dz * 5.5;
-          this.box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13.5, 9 + oz, texs[0], 0, buf,
+          this.box(p, id, x, y, z, 7 + ox, 3.5, 7 + oz, 9 + ox, 13, 9 + oz, texs[0], 0, buf,
             { uvOverride: uvw, shear: [-dx * 0.42, -dz * 0.42] });
         }
         return;
@@ -597,18 +597,21 @@ class Mesher {
         // (the tile's top row, the pillow, at the head's far end: toward the facing)
         const rot = [0, 0, (2 - f) & 3, 0, 0, 0];
         this.box(p, id, x, y, z, 0, 3, 0, 16, 9, 16, t, 0, buf, { rot });
-        // legs
+        // legs (ours: slim posts a pixel in from the corners)
         const lg = BED_LEG;
-        this.box(p, id, x, y, z, 0, 0, 0, 3, 3, 3, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 0, 16, 3, 3, lg, 0, buf);
-        this.box(p, id, x, y, z, 0, 0, 13, 3, 3, 16, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 13, 16, 3, 16, lg, 0, buf);
+        this.box(p, id, x, y, z, 1, 0, 1, 3, 3, 3, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 1, 15, 3, 3, lg, 0, buf);
+        this.box(p, id, x, y, z, 1, 0, 13, 3, 3, 15, lg, 0, buf); this.box(p, id, x, y, z, 13, 0, 13, 15, 3, 15, lg, 0, buf);
         return;
       }
       case SH.BAMBOO: this.box(p, id, x, y, z, 7, 0, 7, 9, 16, 9, texs[0], 0, buf); return;
-      case SH.POT: this.box(p, id, x, y, z, 5, 0, 5, 11, 6, 11, texs, 0, buf); return;
+      case SH.POT:   // (ours: a narrower body under a rim)
+        this.box(p, id, x, y, z, 5.5, 0, 5.5, 10.5, 5, 10.5, texs, 0, buf);
+        this.box(p, id, x, y, z, 5, 5, 5, 11, 6, 11, texs, 0, buf);
+        return;
       case SH.PICKLE: {
         this.fluid(ids, meta, light, p, B.WATER, x, y, z, true);
         const n = (m & 3) + 1, pos = [[6, 6], [3, 4], [10, 9], [5, 11]];
-        for (let i = 0; i < n; i++) this.box(p, id, x, y, z, pos[i][0], 0, pos[i][1], pos[i][0] + 4, 6, pos[i][1] + 4, texs, 0, buf);
+        for (let i = 0; i < n; i++) this.box(p, id, x, y, z, pos[i][0], 0, pos[i][1], pos[i][0] + 4, 5.5, pos[i][1] + 4, texs, 0, buf);
         return;
       }
       case SH.LILY: {
