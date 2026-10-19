@@ -24,6 +24,9 @@ def lum(c):
 # which of our variants is being painted (0: the styles' pack; 1, 2, 3: the variants, each its own
 # patterns and shapes)
 VARIANT = 0
+# while a material is painted to the measured look of its Minecraft texture (tools/pack/structure.py),
+# the variants keep their own drawings but not their own scale and contrast
+KEEP_SCALE = False
 
 
 def P(*vals):
@@ -65,7 +68,7 @@ def value_noise(px, py, rnd, w=N, h=N):
 
 def scaled(p, lim):
     """a pattern period in the variant's scale (2: twice as coarse, 3: half as fine), a power of two"""
-    k = P(1, 2, 0.5)
+    k = P(1, 1.5, 0.75)
     v = 1
     while v * 2 <= max(1, p * k) and v * 2 <= lim:
         v *= 2
@@ -74,7 +77,7 @@ def scaled(p, lim):
 
 def fbm(rnd, octaves, w=N, h=N):
     acc, tot = [0.0] * (w * h), 0.0
-    if VARIANT:
+    if VARIANT and not KEEP_SCALE:
         octaves = [(scaled(px, w), scaled(py, h), wt) for px, py, wt in octaves]
     for px, py, wt in octaves:
         acc = [a + wt * v for a, v in zip(acc, value_noise(px, py, rnd, w, h))]
@@ -94,7 +97,7 @@ def mix(*parts):
 def cells(rnd, n, jitter=0.9, w=N, h=N):
     """tileable Voronoi cells around jittered grid points: cell per pixel, the distances to the two
     nearest points, the number of cells"""
-    k = max(2, round(math.sqrt(n) / P(1, 1.5, 0.75)))
+    k = max(2, round(math.sqrt(n) / (1 if KEEP_SCALE else P(1, 1.25, 0.85))))
     pts = [((gx + 0.5 + (rnd.random() - 0.5) * jitter) * w / k, (gy + 0.5 + (rnd.random() - 0.5) * jitter) * h / k)
            for gy in range(k) for gx in range(k)]
     ids, d1, d2 = [], [], []
@@ -108,7 +111,8 @@ def cells(rnd, n, jitter=0.9, w=N, h=N):
 def rims(ids, lit, dark, w=N, h=N, wrap=True):
     """light from the top left: + where a region starts above or left of a pixel, - where it ends"""
     out = [0.0] * (w * h)
-    lit, dark = lit * P(1, 1.5, 0.7), dark * P(1, 1.5, 0.7)
+    if not KEEP_SCALE:
+        lit, dark = lit * P(1, 1.5, 0.7), dark * P(1, 1.5, 0.7)
 
     def get(x, y):
         if wrap:
@@ -364,11 +368,12 @@ class Canvas:
             return self
         clean = self.style == 'clean'
         if clean and not flat:
-            field = blur(field, self.w, self.h, wrap=False)
+            if not KEEP_SCALE:         # a material keeps its measured look; only its tones are fewer
+                field = blur(field, self.w, self.h, wrap=False)
             grain = 0
         order = sorted(idx, key=lambda i: field[i])
         rp = ramp(src_px, len(order), 4 if clean and not flat else 0)
-        k = P(1.0, 1.25, 0.85)
+        k = 1.0 if KEEP_SCALE else P(1.0, 1.25, 0.85)
         if k != 1.0:                       # the variant's contrast, round the mean tone
             mean = [sum(c[t] for c in rp) / len(rp) for t in range(3)]
             rp = [tuple(max(0, min(255, mean[t] + (c[t] - mean[t]) * k)) for t in range(3)) for c in rp]

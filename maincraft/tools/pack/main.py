@@ -22,6 +22,7 @@ import anim  # noqa: E402
 import items  # noqa: E402
 import sky  # noqa: E402
 import extras  # noqa: E402
+import structure  # noqa: E402
 
 FAMILIES = [natural, wood, masonry, deco, plants, anim, items, sky, extras]
 
@@ -71,7 +72,10 @@ class Ctx:
     def out(self, name):
         if name not in self.done:
             gen = self.reg.get(name)
-            self.done[name] = gen(self) if gen else None
+            im = None
+            if name in structure.PLAIN:          # a plain material: painted to its measured look
+                im = structure.paint(self, name, self.px(name))
+            self.done[name] = im or (gen(self) if gen else None)
         return self.done[name]
 
 

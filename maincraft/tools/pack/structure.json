@@ -1,0 +1,1579 @@
+{
+ "acacia_log": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.4,
+   "grain": 0.25,
+   "period": 1
+  },
+  "score": 2.081
+ },
+ "amethyst_block": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.3,
+   "period": 4,
+   "specks": 0
+  },
+  "score": 1.877
+ },
+ "ancient_debris_top": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 100,
+   "rim": 0.15
+  },
+  "score": 0.612
+ },
+ "andesite": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 8,
+   "py": 1
+  },
+  "score": 2.486
+ },
+ "bamboo_block": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.4,
+   "grain": 0.25,
+   "period": 1
+  },
+  "score": 2.387
+ },
+ "basalt_side": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 2,
+   "py": 8
+  },
+  "score": 1.634
+ },
+ "basalt_top": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0.5,
+   "grain": 0.45,
+   "n": 9,
+   "rim": 0.3
+  },
+  "score": 1.034
+ },
+ "bedrock": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 8,
+   "py": 1
+  },
+  "score": 2.29
+ },
+ "birch_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 16,
+   "py": 2
+  },
+  "score": 2.268
+ },
+ "black_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 16,
+   "specks": 24
+  },
+  "score": 0.787
+ },
+ "black_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 2,
+   "specks": 14
+  },
+  "score": 0.626
+ },
+ "black_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 16,
+   "py": 2
+  },
+  "score": 1.23
+ },
+ "blackstone": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 9,
+   "rim": 0
+  },
+  "score": 2.03
+ },
+ "blue_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 4,
+   "specks": 0
+  },
+  "score": 0.438
+ },
+ "blue_concrete_powder": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 8,
+   "py": 2
+  },
+  "score": 0.457
+ },
+ "blue_ice": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 36,
+   "rim": 0
+  },
+  "score": 1.66
+ },
+ "blue_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 16,
+   "py": 2
+  },
+  "score": 1.198
+ },
+ "bone_block_side": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.0,
+   "grain": 0.1,
+   "period": 2
+  },
+  "score": 3.326
+ },
+ "brain_coral_block": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 16,
+   "py": 4
+  },
+  "score": 1.12
+ },
+ "brown_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 4,
+   "specks": 24
+  },
+  "score": 0.48
+ },
+ "brown_concrete_powder": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 64,
+   "rim": 0.3
+  },
+  "score": 0.45
+ },
+ "brown_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.38
+ },
+ "bubble_coral_block": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 16,
+   "rim": 0
+  },
+  "score": 1.316
+ },
+ "budding_amethyst": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0,
+   "n": 25,
+   "rim": 0.3
+  },
+  "score": 0.912
+ },
+ "calcite": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0,
+   "period": 4,
+   "specks": 6
+  },
+  "score": 1.18
+ },
+ "cherry_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 8,
+   "py": 1
+  },
+  "score": 1.185
+ },
+ "clay": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 16,
+   "specks": 0
+  },
+  "score": 2.084
+ },
+ "coal_block": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.2,
+   "border": 2,
+   "grain": 0.3,
+   "seams": 3
+  },
+  "score": 1.161
+ },
+ "coarse_dirt": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 16,
+   "py": 4
+  },
+  "score": 0.552
+ },
+ "cobbled_deepslate": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 49,
+   "rim": 0.15
+  },
+  "score": 1.229
+ },
+ "cobblestone": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0.5,
+   "grain": 0.45,
+   "n": 9,
+   "rim": 0.3
+  },
+  "score": 1.401
+ },
+ "copper_block": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 2,
+   "grain": 0.6,
+   "seams": 0
+  },
+  "score": 1.484
+ },
+ "crimson_nylium": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 100,
+   "rim": 0.3
+  },
+  "score": 0.943
+ },
+ "crying_obsidian": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.7,
+   "period": 8,
+   "specks": 6
+  },
+  "score": 0.53
+ },
+ "cyan_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 8,
+   "specks": 24
+  },
+  "score": 0.55
+ },
+ "cyan_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 16,
+   "specks": 14
+  },
+  "score": 0.523
+ },
+ "cyan_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 1
+  },
+  "score": 1.299
+ },
+ "dark_oak_log": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.4,
+   "grain": 0.25,
+   "period": 1
+  },
+  "score": 2.559
+ },
+ "dead_brain_coral_block": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.15,
+   "period": 8,
+   "specks": 24
+  },
+  "score": 1.117
+ },
+ "dead_bubble_coral_block": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 36,
+   "rim": 0
+  },
+  "score": 1.339
+ },
+ "dead_fire_coral_block": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 1,
+   "py": 8
+  },
+  "score": 1.263
+ },
+ "dead_horn_coral_block": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 16,
+   "rim": 0.3
+  },
+  "score": 1.016
+ },
+ "dead_tube_coral_block": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 2,
+   "specks": 6
+  },
+  "score": 1.199
+ },
+ "deepslate": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0,
+   "n": 25,
+   "rim": 0.3
+  },
+  "score": 1.966
+ },
+ "diamond_block": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 2,
+   "grain": 0.3,
+   "seams": 0
+  },
+  "score": 0.995
+ },
+ "diorite": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 16,
+   "py": 4
+  },
+  "score": 1.092
+ },
+ "dirt": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 2,
+   "specks": 6
+  },
+  "score": 0.743
+ },
+ "dirt_path_top": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 49,
+   "rim": 0.3
+  },
+  "score": 1.034
+ },
+ "dried_kelp_side": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.0,
+   "grain": 0.25,
+   "period": 1
+  },
+  "score": 3.308
+ },
+ "dried_kelp_top": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 36,
+   "rim": 0
+  },
+  "score": 1.591
+ },
+ "dripstone_block": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.647
+ },
+ "emerald_block": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 2,
+   "grain": 0.6,
+   "seams": 0
+  },
+  "score": 1.233
+ },
+ "end_stone": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 100,
+   "rim": 0.3
+  },
+  "score": 1.029
+ },
+ "exposed_copper": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 1,
+   "grain": 0.3,
+   "seams": 0
+  },
+  "score": 1.34
+ },
+ "farmland": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0,
+   "period": 8,
+   "specks": 14
+  },
+  "score": 1.939
+ },
+ "farmland_moist": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 4,
+   "py": 16
+  },
+  "score": 1.239
+ },
+ "fire_coral_block": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 1,
+   "py": 8
+  },
+  "score": 1.565
+ },
+ "glowstone": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 49,
+   "rim": 0.15
+  },
+  "score": 2.105
+ },
+ "gold_block": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.15,
+   "period": 8,
+   "specks": 0
+  },
+  "score": 1.042
+ },
+ "granite": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0.5,
+   "grain": 0.2,
+   "n": 64,
+   "rim": 0.3
+  },
+  "score": 1.467
+ },
+ "grass_block_top": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.7,
+   "period": 2,
+   "specks": 6
+  },
+  "score": 1.339
+ },
+ "gravel": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 25,
+   "rim": 0.3
+  },
+  "score": 0.905
+ },
+ "gray_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 2,
+   "specks": 24
+  },
+  "score": 0.483
+ },
+ "gray_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 8,
+   "specks": 6
+  },
+  "score": 0.512
+ },
+ "gray_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.017
+ },
+ "green_concrete": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 2,
+   "py": 16
+  },
+  "score": 0.878
+ },
+ "green_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.7,
+   "period": 16,
+   "specks": 0
+  },
+  "score": 0.403
+ },
+ "green_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.189
+ },
+ "hay_block_side": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.0,
+   "grain": 0.25,
+   "period": 2
+  },
+  "score": 1.467
+ },
+ "honeycomb_block": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 49,
+   "rim": 0.15
+  },
+  "score": 1.66
+ },
+ "horn_coral_block": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0,
+   "n": 36,
+   "rim": 0.3
+  },
+  "score": 0.814
+ },
+ "iron_block": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 2,
+   "grain": 0.1,
+   "seams": 2
+  },
+  "score": 2.314
+ },
+ "jungle_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 1
+  },
+  "score": 3.146
+ },
+ "lapis_block": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 2,
+   "grain": 0.6,
+   "seams": 1
+  },
+  "score": 0.917
+ },
+ "light_blue_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 8,
+   "specks": 24
+  },
+  "score": 0.58
+ },
+ "light_blue_concrete_powder": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 2,
+   "py": 16
+  },
+  "score": 0.677
+ },
+ "light_blue_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 0.954
+ },
+ "light_gray_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 16,
+   "specks": 0
+  },
+  "score": 0.995
+ },
+ "light_gray_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 2,
+   "specks": 24
+  },
+  "score": 0.395
+ },
+ "light_gray_terracotta": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 36,
+   "rim": 0
+  },
+  "score": 1.563
+ },
+ "lime_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 2,
+   "specks": 24
+  },
+  "score": 0.499
+ },
+ "lime_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 4,
+   "specks": 6
+  },
+  "score": 0.901
+ },
+ "lime_terracotta": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0,
+   "period": 2,
+   "specks": 6
+  },
+  "score": 1.475
+ },
+ "magenta_concrete": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 100,
+   "rim": 0.3
+  },
+  "score": 0.565
+ },
+ "magenta_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 4,
+   "specks": 14
+  },
+  "score": 0.497
+ },
+ "magenta_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.575
+ },
+ "magma": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 36,
+   "rim": 0
+  },
+  "score": 1.022
+ },
+ "mangrove_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 8,
+   "py": 2
+  },
+  "score": 2.042
+ },
+ "moss_block": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 2,
+   "specks": 24
+  },
+  "score": 1.185
+ },
+ "mud": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.005
+ },
+ "mushroom_stem": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 16,
+   "py": 4
+  },
+  "score": 1.443
+ },
+ "mycelium_top": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 8,
+   "specks": 6
+  },
+  "score": 0.841
+ },
+ "nether_wart_block": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 1,
+   "py": 8
+  },
+  "score": 1.631
+ },
+ "netherite_block": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 2,
+   "grain": 0.3,
+   "seams": 0
+  },
+  "score": 1.205
+ },
+ "netherrack": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 49,
+   "rim": 0
+  },
+  "score": 1.531
+ },
+ "oak_log": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.0,
+   "grain": 0.25,
+   "period": 1
+  },
+  "score": 2.245
+ },
+ "obsidian": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0.5,
+   "grain": 0.2,
+   "n": 25,
+   "rim": 0.3
+  },
+  "score": 1.043
+ },
+ "orange_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.7,
+   "period": 4,
+   "specks": 24
+  },
+  "score": 0.466
+ },
+ "orange_concrete_powder": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 4,
+   "py": 16
+  },
+  "score": 0.586
+ },
+ "orange_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 8,
+   "py": 1
+  },
+  "score": 1.496
+ },
+ "oxidized_copper": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 1,
+   "grain": 0.1,
+   "seams": 0
+  },
+  "score": 1.089
+ },
+ "packed_ice": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 36,
+   "rim": 0
+  },
+  "score": 1.123
+ },
+ "pale_oak_log": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.3,
+   "grain": 0.45,
+   "period": 1
+  },
+  "score": 2.199
+ },
+ "pink_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 4,
+   "specks": 14
+  },
+  "score": 0.531
+ },
+ "pink_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 16,
+   "specks": 6
+  },
+  "score": 0.681
+ },
+ "pink_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.553
+ },
+ "podzol_top": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.3,
+   "period": 2,
+   "specks": 6
+  },
+  "score": 0.553
+ },
+ "polished_andesite": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 1,
+   "grain": 0.3,
+   "seams": 2
+  },
+  "score": 0.808
+ },
+ "polished_basalt_side": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 4,
+   "py": 16
+  },
+  "score": 1.137
+ },
+ "polished_basalt_top": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.15,
+   "period": 2,
+   "specks": 6
+  },
+  "score": 1.009
+ },
+ "polished_blackstone": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 1,
+   "grain": 0.3,
+   "seams": 0
+  },
+  "score": 0.933
+ },
+ "polished_deepslate": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 1,
+   "grain": 0.1,
+   "seams": 1
+  },
+  "score": 0.865
+ },
+ "polished_diorite": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 1,
+   "grain": 0.6,
+   "seams": 0
+  },
+  "score": 0.948
+ },
+ "polished_granite": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 1,
+   "grain": 0.6,
+   "seams": 3
+  },
+  "score": 0.523
+ },
+ "polished_tuff": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 1,
+   "grain": 0.1,
+   "seams": 1
+  },
+  "score": 1.055
+ },
+ "purple_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 2,
+   "specks": 0
+  },
+  "score": 0.601
+ },
+ "purple_concrete_powder": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 2,
+   "py": 8
+  },
+  "score": 0.803
+ },
+ "purple_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.122
+ },
+ "purpur_block": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 1,
+   "grain": 0.1,
+   "seams": 0
+  },
+  "score": 1.431
+ },
+ "purpur_pillar": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.4,
+   "grain": 0.25,
+   "period": 4
+  },
+  "score": 1.439
+ },
+ "quartz_block_bottom": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 2,
+   "grain": 0.3,
+   "seams": 3
+  },
+  "score": 1.256
+ },
+ "quartz_block_side": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 1,
+   "grain": 0.1,
+   "seams": 3
+  },
+  "score": 1.153
+ },
+ "quartz_pillar": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.3,
+   "grain": 0.25,
+   "period": 1
+  },
+  "score": 5.128
+ },
+ "raw_copper_block": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 16,
+   "py": 4
+  },
+  "score": 1.518
+ },
+ "raw_gold_block": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 36,
+   "rim": 0.15
+  },
+  "score": 1.744
+ },
+ "raw_iron_block": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 9,
+   "rim": 0.3
+  },
+  "score": 1.304
+ },
+ "red_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 4,
+   "specks": 24
+  },
+  "score": 1.049
+ },
+ "red_concrete_powder": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.45,
+   "n": 64,
+   "rim": 0.3
+  },
+  "score": 0.751
+ },
+ "red_sand": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 8,
+   "specks": 6
+  },
+  "score": 2.484
+ },
+ "red_sandstone_top": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 36,
+   "rim": 0.3
+  },
+  "score": 0.913
+ },
+ "red_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.152
+ },
+ "redstone_block": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.15,
+   "period": 8,
+   "specks": 6
+  },
+  "score": 0.597
+ },
+ "rooted_dirt": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.9,
+   "period": 2,
+   "specks": 14
+  },
+  "score": 0.611
+ },
+ "sand": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 16,
+   "py": 4
+  },
+  "score": 2.114
+ },
+ "sandstone_top": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.3,
+   "period": 2,
+   "specks": 0
+  },
+  "score": 0.724
+ },
+ "sea_lantern": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0,
+   "period": 8,
+   "specks": 0
+  },
+  "score": 0.942
+ },
+ "shroomlight": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.15,
+   "period": 4,
+   "specks": 6
+  },
+  "score": 0.693
+ },
+ "smooth_basalt": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0,
+   "n": 36,
+   "rim": 0.15
+  },
+  "score": 1.669
+ },
+ "smooth_stone": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.7,
+   "border": 2,
+   "grain": 0.6,
+   "seams": 1
+  },
+  "score": 1.144
+ },
+ "snow": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 64,
+   "rim": 0
+  },
+  "score": 0.771
+ },
+ "soul_sand": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.3,
+   "period": 8,
+   "specks": 14
+  },
+  "score": 1.02
+ },
+ "soul_soil": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.15,
+   "period": 4,
+   "specks": 0
+  },
+  "score": 0.667
+ },
+ "sponge": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0,
+   "n": 64,
+   "rim": 0.3
+  },
+  "score": 0.689
+ },
+ "spruce_log": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.4,
+   "grain": 0.45,
+   "period": 4
+  },
+  "score": 2.849
+ },
+ "stone": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 1
+  },
+  "score": 1.196
+ },
+ "stripped_acacia_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 2,
+   "py": 8
+  },
+  "score": 1.284
+ },
+ "stripped_birch_log": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.0,
+   "grain": 0.25,
+   "period": 4
+  },
+  "score": 0.804
+ },
+ "stripped_cherry_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 8,
+   "py": 2
+  },
+  "score": 1.817
+ },
+ "stripped_crimson_stem": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.3,
+   "grain": 0.25,
+   "period": 1
+  },
+  "score": 1.122
+ },
+ "stripped_dark_oak_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 4,
+   "py": 16
+  },
+  "score": 1.391
+ },
+ "stripped_jungle_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 1
+  },
+  "score": 1.928
+ },
+ "stripped_mangrove_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 1
+  },
+  "score": 1.738
+ },
+ "stripped_oak_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 4,
+   "py": 16
+  },
+  "score": 1.085
+ },
+ "stripped_pale_oak_log": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.3,
+   "grain": 0.45,
+   "period": 4
+  },
+  "score": 1.486
+ },
+ "stripped_spruce_log": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.1,
+   "px": 2,
+   "py": 8
+  },
+  "score": 1.005
+ },
+ "stripped_warped_stem": {
+  "kind": "bark",
+  "p": {
+   "furrow": 0.3,
+   "grain": 0.25,
+   "period": 2
+  },
+  "score": 0.597
+ },
+ "terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 1
+  },
+  "score": 1.244
+ },
+ "tube_coral_block": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 64,
+   "rim": 0.3
+  },
+  "score": 0.998
+ },
+ "tuff": {
+  "kind": "pebbles",
+  "p": {
+   "gap": 0,
+   "grain": 0.2,
+   "n": 100,
+   "rim": 0
+  },
+  "score": 1.519
+ },
+ "warped_nylium": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 16,
+   "py": 2
+  },
+  "score": 0.869
+ },
+ "warped_wart_block": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 2,
+   "py": 16
+  },
+  "score": 1.493
+ },
+ "weathered_copper": {
+  "kind": "plate",
+  "p": {
+   "bevel": 0.4,
+   "border": 1,
+   "grain": 0.1,
+   "seams": 0
+  },
+  "score": 1.395
+ },
+ "wet_sponge": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.15,
+   "period": 2,
+   "specks": 0
+  },
+  "score": 0.56
+ },
+ "white_concrete": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.4,
+   "px": 16,
+   "py": 4
+  },
+  "score": 0.521
+ },
+ "white_concrete_powder": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.5,
+   "period": 4,
+   "specks": 24
+  },
+  "score": 0.688
+ },
+ "white_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 0.908
+ },
+ "yellow_concrete": {
+  "kind": "clouds",
+  "p": {
+   "grain": 0.7,
+   "period": 8,
+   "specks": 6
+  },
+  "score": 0.611
+ },
+ "yellow_concrete_powder": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.6,
+   "px": 8,
+   "py": 1
+  },
+  "score": 0.658
+ },
+ "yellow_terracotta": {
+  "kind": "streaks",
+  "p": {
+   "grain": 0.25,
+   "px": 8,
+   "py": 2
+  },
+  "score": 0.712
+ }
+}

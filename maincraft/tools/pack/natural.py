@@ -148,8 +148,18 @@ for c in COLOURS:
     FIELDS[c + '_terracotta'] = smooth_f(12)
 
 
+# the materials painted to the measured look of their Minecraft texture (tools/pack/structure.py)
+MATCHED = set()
+
+
 def make_simple(name, fieldf):
+    MATCHED.add(name)
+
     def gen(ctx):
+        import structure
+        im = structure.paint(ctx, name, ctx.src.px(name))
+        if im is not None:
+            return im
         c = Canvas(ctx.style, name, ref=ctx.ref(name))
         c.part(fieldf(rng(name)), ctx.src.px(name))
         return c.image()

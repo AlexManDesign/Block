@@ -560,7 +560,84 @@ def mushroom_block(name, kind):
     return gen
 
 
+def composter_side(name):
+    """a crate of boards laid across inside a frame"""
+    def gen(ctx):
+        rnd = rng(name)
+        src = ctx.px(name, 'oak_planks')
+        frame = [i % N in (0, 1, N - 2, N - 1) or i // N in (0, N - 1) for i in range(N * N)]
+        c = canvas(ctx, name)
+        c.part(wood.planks_f(rnd), src, [not f for f in frame])
+        fr = rims([1 if f else 0 for f in frame], 0.3, 0.3, wrap=False)
+        c.part([0.35 + fr[i] + 0.15 * white(rnd, N * N)[i] for i in range(N * N)], sorted(src, key=lum)[:len(src) // 2], frame)
+        return c.image()
+    return gen
+
+
+def barrel_open(name):
+    """the barrel's lid ring round a round dark opening"""
+    def gen(ctx):
+        rnd = rng(name)
+        src = ctx.px(name, 'barrel_top', 'oak_planks')
+        hole = [math.hypot(i % N - 7.5, i // N - 7.5) < 5.6 for i in range(N * N)]
+        rim = [i % N in (0, N - 1) or i // N in (0, N - 1) for i in range(N * N)]
+        c = canvas(ctx, name)
+        c.part(wood.planks_f(rnd), src, [not h and not r for h, r in zip(hole, rim)])
+        c.part([0.2 * white(rnd)[i] for i in range(N * N)], sorted(src, key=lum)[:len(src) // 3], rim)
+        c.part([0.25 - 0.15 * (i // N < 8) + 0.1 * white(rnd)[i] for i in range(N * N)],
+               [tuple(int(v * 0.35) for v in p[:3]) + (255,) for p in sorted(src, key=lum)[:len(src) // 2]], hole)
+        return c.image()
+    return gen
+
+
+def lamp(name, lit):
+    """a lamp in a dark frame: four panes of glass round a cross of the frame, glowing when lit"""
+    def gen(ctx):
+        rnd = rng(name)
+        src = ctx.px(name, 'redstone_lamp')
+        dark = sorted(src, key=lum)[:len(src) // 3]
+        glow = sorted(src, key=lum)[len(src) // 3:]
+        frame = [i % N in (0, N - 1) or i // N in (0, N - 1) or i % N in (7, 8) or i // N in (7, 8) for i in range(N * N)]
+        panes = [not f for f in frame]
+        w = white(rnd)
+        f = []
+        for i in range(N * N):
+            x, y = i % N, i // N
+            cx, cy = (3.5 if x < 8 else 11.5), (3.5 if y < 8 else 11.5)
+            d = abs(x - cx) + abs(y - cy)                 # a diamond of light in each pane
+            f.append((1.2 - 0.25 * d) + 0.15 * w[i] if lit else (0.8 - 0.12 * d) + 0.2 * w[i])
+        c = canvas(ctx, name)
+        fr = rims([1 if v else 0 for v in frame], 0.3, 0.3, wrap=False)
+        c.part([0.5 + fr[i] + 0.2 * w[i] for i in range(N * N)], dark, frame)
+        c.part(f, glow, panes)
+        return c.image()
+    return gen
+
+
+def creaking(name, top):
+    """bark (or growth rings on top) with a glowing seam down the middle"""
+    def gen(ctx):
+        rnd = rng(name)
+        src = ctx.px(name, 'pale_oak_log', 'oak_log')
+        wood_px = [p for p in src if max(p[:3]) - min(p[:3]) < 60] or src
+        ember = [p for p in src if p[0] > p[2] + 60] or [(230, 120, 40, 255), (255, 170, 60, 255), (150, 60, 20, 255)]
+        seam = [abs(i % N - 7.5) < 1 and (top or 3 <= i // N <= 12) if not top else
+                math.hypot(i % N - 7.5, i // N - 7.5) < 2.2 for i in range(N * N)]
+        c = canvas(ctx, name)
+        base = wood.rings_f(rnd) if top else wood.bark_f(rnd)
+        c.part(base, wood_px, [not s for s in seam])
+        c.part([1 - 0.15 * abs(i // N - 7.5) / 4 + 0.1 * white(rnd)[i] for i in range(N * N)], ember, seam)
+        return c.image()
+    return gen
+
+
 def register(reg):
+    reg['composter_side'] = composter_side('composter_side')
+    reg['barrel_top_open'] = barrel_open('barrel_top_open')
+    reg['redstone_lamp'] = lamp('redstone_lamp', False)
+    reg['redstone_lamp_on'] = lamp('redstone_lamp_on', True)
+    reg['creaking_heart'] = creaking('creaking_heart', False)
+    reg['creaking_heart_top'] = creaking('creaking_heart_top', True)
     for col in COLOURS:
         reg[col + '_wool'] = wool(col + '_wool')
         reg[col + '_stained_glass'] = glass(col + '_stained_glass', True)
