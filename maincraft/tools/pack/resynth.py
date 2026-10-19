@@ -89,3 +89,49 @@ def resynth(im, name, seed=0):
     res = Image.new('RGBA', (n, n))
     res.putdata([c if holes else c[:3] + (src[i][3],) for i, c in enumerate(out)])
     return res
+
+
+def resynth_anim(im, name, samples=16):
+    """an animation strip (frames one under another) drawn anew the same way: the place each new
+    pixel is copied from is chosen once, by how its neighbourhood looks over the whole run (a few
+    frames spread over it), and kept for every frame, so the new animation moves as the old one does"""
+    import numpy as np
+    im = im.convert('RGBA')
+    n = im.size[0]
+    if im.size[1] % n or im.size[1] == n:
+        return None
+    k = im.size[1] // n
+    a = np.asarray(im, dtype=np.float64).reshape(k, n, n, 4)
+    pick = sorted(set(round(i * (k - 1) / max(1, samples - 1)) for i in range(samples)))
+    feat = np.concatenate([a[f, :, :, :3] for f in pick], axis=2)          # n x n x C
+    rnd = rng(name, 'resynth-anim')
+    src_of = -np.ones((n, n, 2), dtype=int)
+    out_feat = np.zeros_like(feat)
+    done = np.zeros((n, n), dtype=bool)
+    ys, xs = np.mgrid[0:n, 0:n]
+    for y in range(n):
+        for x in range(n):
+            d = np.zeros((n, n))
+            cnt = 0
+            for dy in range(-R, R + 1):
+                for dx in range(-R, R + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    yy, xx = (y + dy) % n, (x + dx) % n
+                    if not done[yy, xx]:
+                        continue
+                    # every candidate place (sy, sx): its neighbour at (sy + dy, sx + dx)
+                    sh = np.roll(np.roll(feat, -dy, axis=0), -dx, axis=1)
+                    d += ((sh - out_feat[yy, xx]) ** 2).sum(axis=2)
+                    cnt += 1
+            if cnt:
+                d /= cnt
+            d[y, x] = np.inf                                                   # never from its own place
+            best = d.min()
+            cand = np.argwhere(d <= best * (1 + EPS) + 30 * feat.shape[2] / 3)
+            sy, sx = cand[rnd.randrange(len(cand))]
+            src_of[y, x] = (sy, sx)
+            out_feat[y, x] = feat[sy, sx]
+            done[y, x] = True
+    out = a[:, src_of[:, :, 0], src_of[:, :, 1], :]
+    return Image.fromarray(np.clip(np.round(out), 0, 255).astype(np.uint8).reshape(k * n, n, 4), 'RGBA')

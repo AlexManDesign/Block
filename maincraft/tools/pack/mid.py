@@ -77,6 +77,10 @@ def apart(new, old, name):
     return out
 
 
+# animations drawn again from our first pack's, so they move as its do
+ANIM_RESYNTH = ('water_still',)
+
+
 def resynth_names(measured):
     """the tiling materials drawn again from our first pack's own drawing: the measured materials
     but the slabs with bevelled rims and seams, and the sides of the topped soils (and, by their
@@ -94,6 +98,10 @@ def drawn_anew(n, im, first, painted, measured):
     else the painted one (None when neither has it)"""
     import resynth
     old = first.get(n)
+    if old is not None and n in ANIM_RESYNTH:      # an animation: drawn anew, moving as the first pack's
+        r = resynth.resynth_anim(Image.open(old) if isinstance(old, str) else old, n)
+        if r is not None and r.size == im.size:
+            return r
     if old is not None and (n in resynth_names(measured) or n.endswith(('_ore', '_leaves'))):
         old = Image.open(old) if isinstance(old, str) else old
         if old.size == (N, N):
