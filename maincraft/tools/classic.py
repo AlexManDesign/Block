@@ -41,20 +41,10 @@ def hud_icon(rows, col, hi):
     return im
 
 
-def main():
-    src, out = sys.argv[1:3]
-    os.makedirs(out, exist_ok=True)
+def originals(src):
+    """everything the first pack's game showed that the pack's own files do not hold: the drawings of
+    tools/art.py, the pictures build.py draws in code, the HUD icons; name -> picture"""
     load = lambda n: Image.open(os.path.join(src, n + '.png')).convert('RGBA')   # noqa: E731
-    made = 0
-    for fn in sorted(os.listdir(src)):
-        if not fn.endswith('.png'):
-            continue
-        n = fn[:-4]
-        im = Image.open(os.path.join(src, fn))
-        new = redraw.redraw_glow(im, n, redraw.GLOW[n])[0] if n in redraw.GLOW else redraw.redraw(im, n)[0]
-        new.save(os.path.join(out, fn))
-        made += 1
-    # the drawings of tools/art.py, as the first pack's game had them
     import art
     drawn, drawn_anim = art.all_textures(load)
     for k, frames in drawn_anim.items():
@@ -86,9 +76,23 @@ def main():
         coded['destroy_stage_%d' % s] = build.crack_stage(s)
     for n, rows in HUD.items():
         coded[n] = hud_icon(*rows)
-    for n, im in sorted(list(drawn.items()) + list(coded.items())):
-        if os.path.exists(os.path.join(src, n + '.png')):
+    return {n: im for n, im in list(drawn.items()) + list(coded.items())
+            if not os.path.exists(os.path.join(src, n + '.png'))}
+
+
+def main():
+    src, out = sys.argv[1:3]
+    os.makedirs(out, exist_ok=True)
+    made = 0
+    for fn in sorted(os.listdir(src)):
+        if not fn.endswith('.png'):
             continue
+        n = fn[:-4]
+        im = Image.open(os.path.join(src, fn))
+        new = redraw.redraw_glow(im, n, redraw.GLOW[n])[0] if n in redraw.GLOW else redraw.redraw(im, n)[0]
+        new.save(os.path.join(out, fn))
+        made += 1
+    for n, im in sorted(originals(src).items()):
         if n.startswith('destroy_stage_'):
             # a crack keeps its see-through dark lines; the stage's line tone is stepped off the old
             px = [(28, 26, 24, 190) if p[3] else p for p in im.get_flattened_data()]
