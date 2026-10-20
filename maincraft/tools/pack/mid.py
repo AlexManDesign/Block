@@ -77,6 +77,34 @@ def apart(new, old, name):
     return out
 
 
+# soils whose grey and bluish specks (little stones) take the soil's own colour
+DESPECK = ('dirt', 'coarse_dirt', 'rooted_dirt', 'grass_block_side', 'grass_block_snow', 'podzol_side',
+           'dirt_path_side', 'farmland', 'farmland_moist')
+
+
+def despeck(im):
+    """the picture with its grey specks in a coloured soil turned to the soil's colour: each takes
+    the colour of the soil pixel nearest to it in lightness"""
+    import colorsys
+    px = list(im.get_flattened_data())
+
+    def sat(p):
+        return colorsys.rgb_to_hsv(p[0] / 255, p[1] / 255, p[2] / 255)[1]
+    soil = [p for p in px if p[3] > 127 and p[0] > p[2] + 8 and p[1] <= p[0] + 8 and sat(p) > 0.2]   # browns
+    if len(soil) < 32:
+        return im
+    med = sorted(sat(p) for p in soil)[len(soil) // 2]
+    out = []
+    for p in px:
+        if p[3] > 127 and (sat(p) < 0.45 * med or p[2] >= p[0]) and not (p[1] > p[0] + 8):   # grey, bluish (not grass)
+            q = min(soil, key=lambda c: abs(lum(c) - lum(p)))
+            p = q[:3] + (p[3],)
+        out.append(p)
+    res = Image.new('RGBA', im.size)
+    res.putdata(out)
+    return res
+
+
 # animations drawn again from our first pack's, so they move as its do
 ANIM_RESYNTH = ('water_still',)
 
@@ -179,6 +207,8 @@ def main():
             if new is not None:
                 if ref is not None:
                     new = tone.tone(new, ref, n)[0] or new
+                if n in DESPECK:
+                    new = despeck(new)
                 old = first.get(n)
                 if old is not None:
                     new = apart(new, Image.open(old) if isinstance(old, str) else old, n)
