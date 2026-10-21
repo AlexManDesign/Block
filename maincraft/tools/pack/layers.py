@@ -96,6 +96,55 @@ def nuggets(rnd, clusters, gap=6):
     return m
 
 
+def blobs(px, pick):
+    """the sizes of the ore's flecks in a picture (4-connected pixels the pick takes)"""
+    m = [bool(p[3] > 127 and pick(p)) for p in px]
+    seen, sizes = set(), []
+    for s in range(N * N):
+        if not m[s] or s in seen:
+            continue
+        st, k = [s], 0
+        seen.add(s)
+        while st:
+            i = st.pop(); k += 1
+            x, y = i % N, i // N
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                j = at(x + dx, y + dy)
+                if 0 <= x + dx < N and 0 <= y + dy < N and m[j] and j not in seen:
+                    seen.add(j); st.append(j)
+        sizes.append(k)
+    return sizes
+
+
+def flecks(rnd, sizes):
+    """our own flecks of the given sizes, drawn out sideways, a pixel of rock round each"""
+    m = [False] * (N * N)
+    taken = [False] * (N * N)
+    for size in sorted(sizes, reverse=True):
+        for _ in range(60):
+            x, y = rnd.randrange(N), rnd.randrange(1, N - 1)
+            if taken[at(x, y)]:
+                continue
+            pts = [(x, y)]
+            while len(pts) < size:
+                bx, by = rnd.choice(pts)
+                dx, dy = rnd.choice(((1, 0), (-1, 0), (1, 0), (-1, 0), (1, 0), (0, 1), (0, -1)))
+                q = ((bx + dx) % N, by + dy)
+                if 0 <= q[1] < N and q not in pts and not taken[at(*q)]:
+                    pts.append(q)
+                elif rnd.random() < 0.05:
+                    break
+            for qx, qy in pts:
+                m[at(qx, qy)] = True
+            for qx, qy in pts:            # keep the next fleck a pixel away
+                for ex in (-1, 0, 1):
+                    for ey in (-1, 0, 1):
+                        if 0 <= qy + ey < N:
+                            taken[at((qx + ex) % N, qy + ey)] = True
+            break
+    return m
+
+
 def ore(name, kind, base):
     """the base rock with the ore's nuggets over it: the nuggets of a kind are the same in stone and
     in deepslate (one overlay, two rocks)"""
@@ -107,21 +156,20 @@ def ore(name, kind, base):
         src = ctx.px(name, kind + '_ore')
         orepx = select(src, masonry.ORE_PICK[kind]) if src else None
         m = nuggets(rnd, P(5, 4, 6))
-        if ctx.shapes is not None and src and orepx:
-            # after our first pack: as much of the face ore as in its picture
-            want = len(orepx) / max(1, sum(1 for p in src if p[3] > 127))
-            k = P(5, 4, 6)
-            while sum(m) < 0.85 * want * N * N and k < 12:
-                k += 1
-                m = nuggets(rng(kind + '_ore', 'nuggets'), k, 4)
+        first_src = ctx.src.px(kind + '_ore') if ctx.shapes is not None else None
+        if first_src:
+            # after our first pack: flecks as many and as big as in its picture, laid out our way
+            sizes = blobs(first_src, masonry.ORE_PICK[kind])
+            if sizes:
+                m = flecks(rng(kind + '_ore', 'flecks'), sizes)
         ids = [1 if m[i] else 0 for i in range(N * N)]
         r, w = rims(ids, 0.4, 0.4), white(rnd)
         c.part([0.5 + r[i] + 0.25 * w[i] for i in range(N * N)], orepx if orepx and len(orepx) >= 4 else src, m)
-        ring = ctx.shapes is not None          # after our first pack: a dark ring all round each nugget
+        ring = ctx.shapes is not None          # after our first pack: dark rock left of and above each fleck
         for i in range(N * N):                 # the rock darkened under each nugget
             x, y = i % N, i // N
             if ring and not m[i] and any(0 <= x + dx < N and 0 <= y + dy < N and m[at(x + dx, y + dy)]
-                                         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                                         for dx, dy in ((1, 0), (0, 1), (1, 1))) and rnd.random() < 0.8:
                 p = c.px[i]
                 c.px[i] = (int(p[0] * 0.55), int(p[1] * 0.55), int(p[2] * 0.55), p[3])
             elif not ring and not m[i] and m[at(x - 1, y - 1)] and kind != 'coal':
@@ -185,6 +233,34 @@ def _water(ctx):
     return ctx.reg['water_still'](ctx)
 
 
+def log_top(name):
+    """after our first pack: square rings a pixel wide, light and dark in turn, a little uneven, in a
+    rim of bark; else our generator's"""
+    def gen(ctx):
+        if ctx.shapes is None or ctx.src.image(name) is None:
+            return ctx.reg[name](ctx)
+        from core import fbm
+        rnd = rng(name, 'rings')
+        wob = fbm(rnd, [(8, 8, 0.6), (4, 4, 0.4)])
+        w = white(rnd)
+        f = []
+        for i in range(N * N):
+            x, y = i % N, i // N
+            d = max(abs(x - 7.5), abs(y - 7.5))
+            if d >= 7:
+                f.append(0.05 + 0.1 * w[i])            # the bark round the rings
+                continue
+            r = int(d + 0.9 * (wob[i] - 0.5))
+            f.append((0.78 if r % 2 == 0 else 0.42) + 0.12 * (w[i] - 0.5))
+        c = Canvas(ctx.style, name, ref=ctx.ref(name))
+        c.part(f, ctx.px(name))
+        return c.image()
+    return gen
+
+
+for _w in ('oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'pale_oak'):
+    for _n in (_w + '_log_top', 'stripped_%s_log_top' % _w):
+        LAYERED[_n] = log_top(_n)
 LAYERED['grass_block_side'] = _grass_side
 LAYERED['water_still'] = _water
 

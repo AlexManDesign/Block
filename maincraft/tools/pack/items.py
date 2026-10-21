@@ -829,7 +829,10 @@ def masked(name, mask):
             metal = ctx.px('item_bucket') if mask == 'bucket' else ctx.px('item_bowl')
             cols['a'] = select(metal or src, lambda p: True)
             cols['c'] = cols['a']
-            fill = {'water_bucket': ctx.px('water_still'), 'lava_bucket': ctx.px('lava_still'),
+            water = select(src, lambda p: p[2] > p[0] + 30) or [   # a bucket's water is blue (the still water is
+                (q[0] * 63 // 255, q[1] * 118 // 255, q[2] * 228 // 255, q[3])   # grey until the biome tints it)
+                for q in (ctx.px('water_still') or [])]
+            fill = {'water_bucket': water, 'lava_bucket': ctx.px('lava_still'),
                     'mushroom_stew': select(src, lambda p: p[0] > p[2] + 30)}.get(name[5:])
             cols['b'] = fill or cols['a']
             cols['d'] = fill or cols['a']

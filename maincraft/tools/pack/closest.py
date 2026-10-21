@@ -2,6 +2,7 @@
 like the first pack's.
 
     python3 tools/pack/closest.py FIRST_TEX_DIR JAVA_TEXTURES_DIR OUT_DIR PAINTED_DIR [PAINTED_DIR ...]
+                                  [--plain PLAIN_DIR]
 
 PAINTED_DIRs are our whole pack painted in the first pack's colours, a drawing each (tools/pack/main.py
 java DIR --first FIRST_TEX_DIR --structure tools/pack/structure_first.json --layers [--variant K]).
@@ -9,6 +10,10 @@ A further candidate for a face with a made-up layout (a bed, a door, a chiseled 
 is the first pack's own layout of parts, each part painted anew (tools/pack/relayout.py); but only
 where the first pack's picture is not Minecraft's drawing recoloured (its pattern is checked against
 the Java pack's: a picture whose lightness runs as Minecraft's does keeps our own drawings only).
+
+A drawn thing (an item, a flower...) whose first-pack shape is Minecraft's own (tested the same way)
+is taken from PLAIN_DIR, our pack painted with our own masks for every drawn thing (main.py ...
+--no-shapes), so no Minecraft outline comes in by way of our first pack.
 
 A tile is judged by how its pattern looks (tools/pack/structure.py measure: patch size, grain,
 specks, streaks) and by its run of tones from dark to light, both against the first pack's picture.
@@ -82,13 +87,54 @@ def corr(a, b):
     return sum((x - ma) * (y - mb) for x, y in zip(la, lb)) / sa / sb
 
 
+def near(a, b):
+    """how far apart two pictures are pixel by pixel: the mean colour gap where both are drawn, the
+    full gap where only one is (over the pixels either draws), scaled to about 0..10"""
+    pa, pb = list(a.get_flattened_data()), list(b.get_flattened_data())
+    t = s = 0
+    for p, q in zip(pa, pb):
+        if p[3] < 128 and q[3] < 128:
+            continue
+        t += 1
+        s += 255 if (p[3] < 128) != (q[3] < 128) else max(abs(p[c] - q[c]) for c in range(3))
+    return s / max(1, t) / 25
+
+
+CODED = set()     # the first pack's pictures drawn by our own code (tools/classic.py originals)
+
+
+def from_minecraft(n, f, mc):
+    """is our first pack's picture Minecraft's drawing recoloured? (its lightness runs as the Java
+    pack's does at the same places, and it is drawn where that is)"""
+    if n in CODED:                                 # drawn by our own code, not taken from anywhere
+        return False
+    r = mc.image(n)
+    if r is None or r.size[0] != f.size[0]:
+        return False
+    a = list(f.convert('RGBA').crop((0, 0, f.size[0], f.size[0])).get_flattened_data())
+    b = list(r.convert('RGBA').crop((0, 0, f.size[0], f.size[0])).get_flattened_data())
+    both = [(p, q) for p, q in zip(a, b) if p[3] > 127 and q[3] > 127]
+    either = sum(1 for p, q in zip(a, b) if p[3] > 127 or q[3] > 127)
+    if len(both) < 8:
+        return False
+    if len(both) / max(1, either) < 0.7:
+        return False
+    return corr([p for p, _ in both], [q for _, q in both]) >= 0.45
+
+
 def main():
-    first_dir, java_dir, out = sys.argv[1:4]
-    painted = sys.argv[4:]
+    args = sys.argv[1:]
+    plain = None
+    if '--plain' in args:              # a painting with our own masks for every drawn thing
+        k = args.index('--plain'); plain = args[k + 1]; del args[k:k + 2]
+    first_dir, java_dir, out = args[:3]
+    painted = args[3:]
     os.makedirs(out, exist_ok=True)
     import classic
     first = {f[:-4]: Image.open(os.path.join(first_dir, f)).convert('RGBA') for f in os.listdir(first_dir) if f.endswith('.png')}
-    first.update({n: im.convert('RGBA') for n, im in classic.originals(first_dir).items()})
+    coded = classic.originals(first_dir)
+    CODED.update(coded)
+    first.update({n: im.convert('RGBA') for n, im in coded.items()})
     mc = Source('java', java_dir)
     names = sorted(set(f[:-4] for f in os.listdir(painted[0]) if f.endswith('.png')))
     choice, why = {}, {}
@@ -97,22 +143,27 @@ def main():
         cands = [Image.open(os.path.join(d, n + '.png')).convert('RGBA') for d in painted if os.path.exists(os.path.join(d, n + '.png'))]
         f = first.get(n)
         b = base_of(n)
-        if b in choice and isinstance(choice[b], int) and choice[b] < len(cands):
-            choice[n] = choice[b]
-            why[n] = 'as ' + b
+        if f is None:
+            choice[n] = choice[b] if isinstance(choice.get(b), int) else 0
             continue
-        ft = tile(f) if f is not None else None
-        if ft is None:
-            choice[n] = 0
+        ft = tile(f)
+        if plain and ft is None and from_minecraft(n, f, mc) and os.path.exists(os.path.join(plain, n + '.png')):
+            # a drawn thing whose first-pack shape is Minecraft's: our own mask, not that shape
+            choice[n] = ('plain', Image.open(os.path.join(plain, n + '.png')).convert('RGBA'))
+            why[n] = 'our own mask (the first pack has Minecraft\'s shape)'
             continue
-        scored = [(score(ft, tile(c)), k) for k, c in enumerate(cands) if c.size == f.size and tile(c)]
-        if any(k in n for k in DESIGNED):
-            r = mc.image(n)
-            rt = tile(r) if r is not None else None
-            if rt is None or corr(ft, rt) < 0.45:      # not Minecraft's drawing: its layout may be ours
-                rp = relayout.repaint('java', n, f, {}, ft)          # every frame of a strip
-                cands.append(rp)
-                scored.append((score(ft, tile(rp)), len(cands) - 1))
+        scored = []
+        for k, c in enumerate(cands):
+            if c.size == f.size:
+                s = near(f, c) + (score(ft, tile(c)) if ft and tile(c) else 0)
+                if isinstance(choice.get(b), int) and k == choice[b]:
+                    s -= 1.0                     # built on its base's painting: the layers stay one
+                scored.append((s, k))
+        if f.size[0] == 16 and f.size[1] % 16 == 0 and not from_minecraft(n, f, mc):
+            # not Minecraft's drawing recoloured: our first pack's own layout, its parts painted anew
+            rp = relayout.repaint('java', n, f, {}, list(f.crop((0, 0, 16, 16)).get_flattened_data()))
+            cands.append(rp)
+            scored.append((near(f, rp) + (score(ft, tile(rp)) if ft and tile(rp) else 0), len(cands) - 1))
         best = min(scored) if scored else (0, 0)
         choice[n] = best[1] if best[1] < len(painted) else ('relayout', cands[best[1]])
         why[n] = 'painting %s' % best[1] if best[1] < len(painted) else 'first pack layout, parts painted anew'
@@ -129,7 +180,8 @@ def main():
         im.save(os.path.join(out, n + '.png'))
         made += 1
     json.dump(why, open(os.path.join(out, '..', os.path.basename(out.rstrip('/')) + '_choices.json'), 'w'), indent=1, sort_keys=True)
-    print('made', made, ' relayout', sum(1 for v in choice.values() if isinstance(v, tuple)),
+    print('made', made, ' relayout', sum(1 for v in choice.values() if isinstance(v, tuple) and v[0] == 'relayout'),
+          ' own masks', sum(1 for v in choice.values() if isinstance(v, tuple) and v[0] == 'plain'),
           ' by painting', {k: sum(1 for v in choice.values() if v == k) for k in range(len(painted))})
 
 

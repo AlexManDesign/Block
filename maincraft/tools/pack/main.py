@@ -1,7 +1,7 @@
 """Paints our whole texture pack anew in one of three styles.
 
     python3 tools/pack/main.py STYLE OUT_DIR [--java DIR] [--bedrock DIR] [--self DIR] [--first DIR]
-                               [--structure FILE] [--layers] [name ...]
+                               [--structure FILE] [--layers] [--no-shapes] [name ...]
 
 STYLE is java (tones of the Java pack), bedrock (tones of the Bedrock pack) or clean (flat, few
 tones, soft shapes, like the simplified packs players like). --java is a Java pack's
@@ -64,6 +64,7 @@ class Ctx:
         self.drawn = {}             # the drawings of tools/art.py: the last colour source
         self.shapes = None          # with --first: drawn pictures keep the first pack's shapes (name -> picture)
         self.layers = False         # with --layers: block families built from layers (tools/pack/layers.py)
+        self.use_shapes = True      # --no-shapes: with --first, drawn pictures by our own masks all the same
         for fam in FAMILIES:
             fam.register(self.reg)
 
@@ -110,6 +111,10 @@ class Ctx:
         """the colour source pixels of the first of names that has a picture"""
         for n in names:
             p = self.src.px(n)
+            if self.shapes is not None and n in self.shapes and self.src.path(n) is None:
+                # (the first pack drew it in code: its own picture before our base pack's)
+                p = list(self.shapes[n].convert('RGBA').crop((0, 0, 16, 16)).get_flattened_data()) \
+                    if self.shapes[n].size[0] >= 16 else p
             if p is None:
                 continue
             t = GREY_TINT.get(n)
@@ -124,7 +129,7 @@ class Ctx:
     def shape_source(self, name):
         """with --first, the first pack's picture of a drawn thing (an item, a flower, a crack, a HUD
         icon: mostly see-through, one frame) whose shape the painting keeps, else None"""
-        if self.shapes is None or name in self.drawn or any(k in name for k in SHAPE_SKIP):
+        if self.shapes is None or not self.use_shapes or name in self.drawn or any(k in name for k in SHAPE_SKIP):
             return None
         im = self.src.image(name)
         if im is None:
@@ -163,8 +168,8 @@ def main():
     args, opts = [], {}
     it = iter(sys.argv[1:])
     for a in it:
-        if a == '--layers':
-            opts['layers'] = True
+        if a in ('--layers', '--no-shapes'):
+            opts[a[2:]] = True
         elif a.startswith('--'):
             opts[a[2:]] = next(it)
         else:
@@ -205,6 +210,7 @@ def main():
         drawn[k] = s
     ctx.drawn = drawn
     ctx.layers = bool(opts.get('layers'))
+    ctx.use_shapes = not opts.get('no-shapes')
     if 'first' in opts:
         import classic
         ctx.shapes = classic.originals(opts['first'])
