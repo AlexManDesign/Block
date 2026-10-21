@@ -1,7 +1,7 @@
 """A pack between our first pack (packs/classic) and Minecraft's look.
 
     python3 tools/pack/mid.py CLASSIC_DIR JAVA_TEXTURES_DIR OUT_DIR [--mc SHARE] [--first FIRST_TEX_DIR]
-                              [--painted PAINTED_DIR] [--fit] [name ...]
+                              [--painted PAINTED_DIR] [--plain PLAIN_DIR] [--fit] [name ...]
 
 SHARE is how far towards Minecraft (0.5, the default: halfway; 0.1: nine tenths our first pack).
 
@@ -21,7 +21,8 @@ With --painted (our whole pack painted anew in our first pack's colours: tools/p
 a new drawing rather than the first pack's redrawn: a tiling material (stone, dirt, sand, ores, a
 grass block's side) is our first pack's drawn again with its own specks and stones put in other
 places (tools/pack/resynth.py), anything else is the painted one; both then toned SHARE of the way
-to the Java pack's colours.
+to the Java pack's colours. With --plain (the same painted with --no-shapes), a drawn thing whose
+first-pack outline is Minecraft's (tools/pack/closest.py from_minecraft) is that one, our own mask.
 """
 import json
 import os
@@ -121,7 +122,7 @@ def resynth_names(measured):
     return names
 
 
-def drawn_anew(n, im, first, painted, measured):
+def drawn_anew(n, im, first, painted, measured, plain=None, java=None):
     """the picture drawn anew: a tiling material from our first pack's drawing, rearranged; anything
     else the painted one (None when neither has it)"""
     import resynth
@@ -136,6 +137,16 @@ def drawn_anew(n, im, first, painted, measured):
             r = resynth.resynth(old, n)
             if r is not None:
                 return r
+    if plain and java is not None and old is not None:
+        import closest
+        o = Image.open(old) if isinstance(old, str) else old
+        if not isinstance(first.get(n), str):
+            closest.CODED.add(n)              # drawn by our own code
+        if closest.tile(o.convert('RGBA')) is None and closest.from_minecraft(n, o.convert('RGBA'), java):
+            # a drawn thing whose first-pack outline is Minecraft's: our own mask instead
+            q = os.path.join(plain, n + '.png')
+            if os.path.exists(q) and Image.open(q).size == im.size:
+                return Image.open(q).convert('RGBA')
     p = os.path.join(painted, n + '.png')
     if os.path.exists(p):
         q = Image.open(p).convert('RGBA')
@@ -174,6 +185,11 @@ def main():
         import classic
         first = {f[:-4]: os.path.join(first_dir, f) for f in os.listdir(first_dir) if f.endswith('.png')}
         first.update(classic.originals(first_dir))
+    plain = None
+    if '--plain' in argv:
+        k = argv.index('--plain')
+        plain = argv[k + 1]
+        del argv[k:k + 2]
     painted = None
     if '--painted' in argv:
         k = argv.index('--painted')
@@ -203,7 +219,7 @@ def main():
         im = Image.open(os.path.join(classic_dir, fn)).convert('RGBA')
         ref = java.image(n)
         if painted and first:
-            new = drawn_anew(n, im, first, painted, measured)
+            new = drawn_anew(n, im, first, painted, measured, plain, java)
             if new is not None:
                 if ref is not None:
                     new = tone.tone(new, ref, n)[0] or new
