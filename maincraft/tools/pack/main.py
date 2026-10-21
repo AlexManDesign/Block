@@ -71,6 +71,23 @@ class Ctx:
         """the reference picture a painted one must not equal pixel for pixel"""
         return self.src.px(name) if self.has_ref else None
 
+    def seamless(self, name, im):
+        """with --layers: the picture tiling without a seam wherever its reference does"""
+        if not self.layers or im is None or not self.has_ref:
+            return im
+        import layers
+        # the drawings models read by set spots: only their frame's rims evened, nothing moved
+        return layers.seamless(im, name, self.src.image(name), face_only=name in self.drawn)
+
+    def tiles_seamless(self, name):
+        """does the reference tile without a seam both ways?"""
+        import layers
+        r = self.src.image(name) if self.has_ref else None
+        if r is None or r.size[0] != 16 or r.size[1] % 16:
+            return False
+        rx, ry = layers.seam_ratio(list(r.convert('RGBA').crop((0, 0, 16, 16)).get_flattened_data()), 16)
+        return rx < 1.7 and ry < 1.7
+
     def kept_off(self, name, im):
         """the picture with no pixel left as the reference's at the same place (whole picture, any size)"""
         import layers
@@ -114,7 +131,7 @@ class Ctx:
             if self.layers:
                 import layers
                 if name in layers.LAYERED:
-                    self.done[name] = self.kept_off(name, layers.LAYERED[name](self))
+                    self.done[name] = self.kept_off(name, self.seamless(name, layers.LAYERED[name](self)))
                     return self.done[name]
             shaped = self.shape_source(name)
             if shaped is not None:
@@ -122,9 +139,13 @@ class Ctx:
                 self.done[name] = items.from_shape(self, name, shaped)
                 return self.done[name]
             if name in structure.PLAIN:          # a plain material: painted to its measured look
-                im = structure.paint(self, name, self.px(name))
+                params = structure.load().get(name)
+                if self.layers and params and params['kind'] == 'plate' and self.tiles_seamless(name):
+                    # a slab that tiles without a seam in Minecraft: no bevelled rim round it
+                    params = dict(params, p=dict(params['p'], border=0))
+                im = structure.paint(self, name, self.px(name), params)
             self.done[name] = im or (gen(self) if gen else None)
-            self.done[name] = self.kept_off(name, self.done[name])     # every picture off the reference's pixels
+            self.done[name] = self.kept_off(name, self.seamless(name, self.done[name]))     # off the reference's pixels
         return self.done[name]
 
 
@@ -200,7 +221,7 @@ def main():
             continue
         ref = ctx.ref(n)
         new = relayout.repaint(style, n, im, ratios, ref if ref and len(ref) == 256 else None)
-        new = ctx.kept_off(n, new)
+        new = ctx.kept_off(n, ctx.seamless(n, new))
         new.save(os.path.join(out, n + '.png'))
         made += 1
     print('painted', made, 'not yet drawn', missing)

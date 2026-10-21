@@ -199,9 +199,9 @@ for _n in ('hay_block_side', 'bamboo_block', 'mushroom_stem', 'bone_block_side',
     PLAIN[_n] = ('streaks', 'bark', 'plate')
 
 
-def paint(ctx, name, src_px):
+def paint(ctx, name, src_px, params=None):
     """the picture painted to its measured look, or None when it has none"""
-    params = load().get(name)
+    params = params or load().get(name)
     if not params:
         return None
     import core

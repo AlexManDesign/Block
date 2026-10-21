@@ -156,3 +156,119 @@ def _grass_side():
 
 
 LAYERED['grass_block_side'] = lambda ctx: _grass_side()(ctx)
+
+
+# ---- seamless tiles ---------------------------------------------------------------------------------
+# Minecraft's materials tile without a seam: the edge of one block runs on into the next as smoothly
+# as the pattern runs inside it. A picture of ours is made so along each way its reference is.
+
+FACES = ('furnace', 'smithing', 'loom', 'stonecutter', 'bookshelf', 'barrel', 'composter', 'trapdoor', 'table',
+         'chiseled', 'pillar_top', 'bone_block_top', 'log_top', 'glazed', 'door', 'tnt', 'pumpkin', 'melon',
+         'lamp', 'observer', 'piston', 'lectern', 'smoker', 'jukebox', 'note_block', 'target', 'honey',
+         'shulker', 'portal_frame', 'respawn', 'lodestone', 'beehive', 'bee_nest', 'mushroom_block',
+         'command_block', 'dispenser', 'dropper', 'hopper', 'bed_', 'cake', 'sculk_s', 'crafter', 'vault',
+         'spawner', 'trial', 'decorated', 'bell', 'campfire', 'repeater', 'comparator', 'daylight', 'enchanting',
+         'anvil', 'lectern', 'grindstone', 'cauldron', 'brewing', 'cactus', 'carved')
+
+
+def seam_ratio(px, w):
+    """(sideways, upwards): the step across the tile's edge over the step between neighbours inside"""
+    def step(a, b):
+        return max(abs(a[t] - b[t]) for t in range(3))
+    ix = sum(step(px[y * w + x], px[y * w + x + 1]) for y in range(w) for x in range(w - 1)) / (w * (w - 1))
+    iy = sum(step(px[y * w + x], px[(y + 1) * w + x]) for y in range(w - 1) for x in range(w)) / (w * (w - 1))
+    ex = sum(step(px[y * w + w - 1], px[y * w]) for y in range(w)) / w
+    ey = sum(step(px[(w - 1) * w + x], px[x]) for x in range(w)) / w
+    return ex / max(ix, 1.0), ey / max(iy, 1.0)
+
+
+def _frame_even(px, w, sx, sy):
+    """a face with a frame: the opposite rims made one, so two such faces side by side meet evenly"""
+    px = list(px)
+    if sx:
+        for y in range(w):
+            a, b = px[y * w], px[y * w + w - 1]
+            m = tuple((a[t] + b[t]) // 2 for t in range(3)) + (a[3],)
+            px[y * w] = px[y * w + w - 1] = m
+    if sy:
+        for x in range(w):
+            a, b = px[x], px[(w - 1) * w + x]
+            m = tuple((a[t] + b[t]) // 2 for t in range(3)) + (a[3],)
+            px[x] = px[(w - 1) * w + x] = m
+    return px
+
+
+def _roll(px, w, dx, dy):
+    return [px[((y + dy) % w) * w + (x + dx) % w] for y in range(w) for x in range(w)]
+
+
+def _smoothest(px, w, axis):
+    """where the tile changes least from one column (axis 0) or row (axis 1) to the next: the shift
+    that puts that place on the tile's edge"""
+    def step(a, b):
+        return max(abs(a[t] - b[t]) for t in range(3))
+    best = None
+    for s in range(1, w):
+        if axis == 0:
+            v = sum(step(px[y * w + s - 1], px[y * w + s]) for y in range(w))
+        else:
+            v = sum(step(px[(s - 1) * w + x], px[s * w + x]) for x in range(w))
+        if best is None or v < best[0]:
+            best = (v, s)
+    return best[1]
+
+
+def _wrap(px, w, sx, sy):
+    """a material: first the tile shifted round so its smoothest column and row fall on its edges
+    (a tile of ours runs on across its edges, so this changes nothing but where they are); if that
+    still leaves a seam, near the edges the tile's own pattern shifted that way, which runs on across
+    the edge, blended in towards the edge, each pixel snapped back to the tile's own colours"""
+    import math
+    dx = _smoothest(px, w, 0) if sx else 0
+    dy = _smoothest(px, w, 1) if sy else 0
+    rolled = _roll(px, w, dx, dy)
+    rx, ry = seam_ratio(rolled, w)
+    if (not sx or rx <= 1.3) and (not sy or ry <= 1.3):
+        return rolled
+    pal = sorted(set(p[:3] for p in px if p[3] > 127))
+    out = []
+    for i, (p, q) in enumerate(zip(px, rolled)):
+        x, y = i % w, i // w
+        # the weight of the tile itself: 1 in the middle, 0 at the edges it is made seamless along
+        wx = math.sin(math.pi * (x + 0.5) / w) if sx else 1.0
+        wy = math.sin(math.pi * (y + 0.5) / w) if sy else 1.0
+        k = min(1.0, max(0.0, 1.6 * wx * wy - 0.25))
+        c = tuple(p[t] * k + q[t] * (1 - k) for t in range(3))
+        best = min(pal, key=lambda s: (s[0] - c[0]) ** 2 + (s[1] - c[1]) ** 2 + (s[2] - c[2]) ** 2) if pal else c
+        out.append(tuple(int(v) for v in best) + (p[3] if k >= 0.5 else q[3],))
+    return out
+
+
+def seamless(im, name, ref, face_only=False):
+    """the picture tiling without a seam along each way its reference (Minecraft's own) does
+    (face_only: only the frame's rims evened, nothing moved: a drawing models read by set spots)"""
+    if ref is None:
+        return im
+    w = im.size[0]
+    if im.size[1] % w or ref.size[0] != w or ref.size[1] % w:
+        return im
+    rp = list(ref.convert('RGBA').crop((0, 0, w, w)).get_flattened_data())
+    if sum(1 for p in rp if p[3] < 128) > w * w // 20:
+        return im                                      # a see-through drawing: not a tile
+    rx, ry = seam_ratio(rp, w)
+    out = im.copy()
+    face = face_only or any(k in name for k in FACES)
+    for f in range(im.size[1] // w):
+        fr = im.crop((0, f * w, w, (f + 1) * w)).convert('RGBA')
+        px = list(fr.get_flattened_data())
+        if sum(1 for p in px if p[3] < 128) > w * w // 20:
+            return im
+        ox, oy = seam_ratio(px, w)
+        sx = rx < 1.7 and ox > max(1.3, rx + 0.3)
+        sy = ry < 1.7 and oy > max(1.3, ry + 0.3)
+        if not (sx or sy):
+            continue
+        new = _frame_even(px, w, sx, sy) if face else _wrap(px, w, sx, sy)
+        fr.putdata(new)
+        out.paste(fr, (0, f * w))
+    return out
