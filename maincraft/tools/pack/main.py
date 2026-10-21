@@ -1,7 +1,7 @@
 """Paints our whole texture pack anew in one of three styles.
 
     python3 tools/pack/main.py STYLE OUT_DIR [--java DIR] [--bedrock DIR] [--self DIR] [--first DIR]
-                               [--structure FILE] [name ...]
+                               [--structure FILE] [--layers] [name ...]
 
 STYLE is java (tones of the Java pack), bedrock (tones of the Bedrock pack) or clean (flat, few
 tones, soft shapes, like the simplified packs players like). --java is a Java pack's
@@ -10,7 +10,8 @@ give colours only. --self (our tex/ folder by default) is the last colour source
 the reference packs do not have. --first (the tex/ folder of our first pack) takes the colours from
 our first pack instead, and keeps every pixel off it; --structure is the store of measured looks
 the materials are painted to (structure.json by default; tools/pack/mid.py keeps ones between our
-first pack's look and Minecraft's). Every picture is drawn by our own generators.
+first pack's look and Minecraft's). --layers builds the block families the way Minecraft does, from
+layers of our own base drawings (tools/pack/layers.py). Every picture is drawn by our own generators.
 """
 import os
 import sys
@@ -62,12 +63,21 @@ class Ctx:
         self.reg, self.done = {}, {}
         self.drawn = {}             # the drawings of tools/art.py: the last colour source
         self.shapes = None          # with --first: drawn pictures keep the first pack's shapes (name -> picture)
+        self.layers = False         # with --layers: block families built from layers (tools/pack/layers.py)
         for fam in FAMILIES:
             fam.register(self.reg)
 
     def ref(self, name):
         """the reference picture a painted one must not equal pixel for pixel"""
         return self.src.px(name) if self.has_ref else None
+
+    def kept_off(self, name, im):
+        """the picture with no pixel left as the reference's at the same place (whole picture, any size)"""
+        import layers
+        r = self.src.image(name) if self.has_ref else None
+        if im is None or r is None or r.size != im.size:
+            return im
+        return layers.apart(im, list(r.convert('RGBA').get_flattened_data()))
 
     def px(self, *names):
         """the colour source pixels of the first of names that has a picture"""
@@ -101,6 +111,11 @@ class Ctx:
         if name not in self.done:
             gen = self.reg.get(name)
             im = None
+            if self.layers:
+                import layers
+                if name in layers.LAYERED:
+                    self.done[name] = self.kept_off(name, layers.LAYERED[name](self))
+                    return self.done[name]
             shaped = self.shape_source(name)
             if shaped is not None:
                 import items
@@ -109,6 +124,7 @@ class Ctx:
             if name in structure.PLAIN:          # a plain material: painted to its measured look
                 im = structure.paint(self, name, self.px(name))
             self.done[name] = im or (gen(self) if gen else None)
+            self.done[name] = self.kept_off(name, self.done[name])     # every picture off the reference's pixels
         return self.done[name]
 
 
@@ -116,7 +132,9 @@ def main():
     args, opts = [], {}
     it = iter(sys.argv[1:])
     for a in it:
-        if a.startswith('--'):
+        if a == '--layers':
+            opts['layers'] = True
+        elif a.startswith('--'):
             opts[a[2:]] = next(it)
         else:
             args.append(a)
@@ -155,6 +173,7 @@ def main():
             s.paste(f, (0, 16 * j))
         drawn[k] = s
     ctx.drawn = drawn
+    ctx.layers = bool(opts.get('layers'))
     if 'first' in opts:
         import classic
         ctx.shapes = classic.originals(opts['first'])
@@ -180,8 +199,9 @@ def main():
             made += 1
             continue
         ref = ctx.ref(n)
-        relayout.repaint(style, n, im, ratios, ref if ref and len(ref) == 256 else None).save(
-            os.path.join(out, n + '.png'))
+        new = relayout.repaint(style, n, im, ratios, ref if ref and len(ref) == 256 else None)
+        new = ctx.kept_off(n, new)
+        new.save(os.path.join(out, n + '.png'))
         made += 1
     print('painted', made, 'not yet drawn', missing)
 
