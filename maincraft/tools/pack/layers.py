@@ -75,7 +75,7 @@ def cracked(name, base):
     return gen
 
 
-def nuggets(rnd, clusters):
+def nuggets(rnd, clusters, gap=6):
     """Minecraft-sized ore clumps: a few irregular lumps of about 6 to 14 pixels, spread over the face"""
     import math
     m = [False] * (N * N)
@@ -84,7 +84,7 @@ def nuggets(rnd, clusters):
         if len(pts) == clusters:
             break
         x, y = rnd.randrange(1, N - 2), rnd.randrange(1, N - 2)
-        if all(abs(x - a) + abs(y - b) > 6 for a, b in pts):
+        if all(abs(x - a) + abs(y - b) > gap for a, b in pts):
             pts.append((x, y))
     for x, y in pts:
         r = rnd.uniform(1.7, 2.5)
@@ -107,25 +107,39 @@ def ore(name, kind, base):
         src = ctx.px(name, kind + '_ore')
         orepx = select(src, masonry.ORE_PICK[kind]) if src else None
         m = nuggets(rnd, P(5, 4, 6))
+        if ctx.shapes is not None and src and orepx:
+            # after our first pack: as much of the face ore as in its picture
+            want = len(orepx) / max(1, sum(1 for p in src if p[3] > 127))
+            k = P(5, 4, 6)
+            while sum(m) < 0.85 * want * N * N and k < 12:
+                k += 1
+                m = nuggets(rng(kind + '_ore', 'nuggets'), k, 4)
         ids = [1 if m[i] else 0 for i in range(N * N)]
         r, w = rims(ids, 0.4, 0.4), white(rnd)
         c.part([0.5 + r[i] + 0.25 * w[i] for i in range(N * N)], orepx if orepx and len(orepx) >= 4 else src, m)
+        ring = ctx.shapes is not None          # after our first pack: a dark ring all round each nugget
         for i in range(N * N):                 # the rock darkened under each nugget
             x, y = i % N, i // N
-            if not m[i] and m[at(x - 1, y - 1)] and kind != 'coal':
+            if ring and not m[i] and any(0 <= x + dx < N and 0 <= y + dy < N and m[at(x + dx, y + dy)]
+                                         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                p = c.px[i]
+                c.px[i] = (int(p[0] * 0.55), int(p[1] * 0.55), int(p[2] * 0.55), p[3])
+            elif not ring and not m[i] and m[at(x - 1, y - 1)] and kind != 'coal':
                 p = c.px[i]
                 c.px[i] = (int(p[0] * 0.7), int(p[1] * 0.7), int(p[2] * 0.7), p[3])
         return c.image()
     return gen
 
 
-def apart(im, ref, step=5):
+def apart(im, ref, step=5, keep_black=False):
     """no pixel left as the reference pack has it at the same place: one within step of it is moved
     step away (a dark colour lighter, a light one darker)"""
     if not ref or len(ref) != im.size[0] * im.size[1]:
         return im
     px = list(im.get_flattened_data())
     for i, (p, q) in enumerate(zip(px, ref)):
+        if keep_black and not any(p[:3]):
+            continue                              # the sky seen through the sun and moon stays black
         if p[3] and q[3] and max(abs(p[t] - q[t]) for t in range(3)) < step:
             d = step if lum(q) < 128 else -step
             px[i] = tuple(min(255, max(0, q[t] + d)) for t in range(3)) + (p[3],)
@@ -149,13 +163,30 @@ for _k in ('coal', 'iron', 'copper', 'gold', 'diamond', 'emerald', 'lapis', 'red
     LAYERED['deepslate_%s_ore' % _k] = ore('deepslate_%s_ore' % _k, _k, 'deepslate')
 
 
-def _grass_side():
+def _grass_side(ctx):
     import natural
-    # Minecraft's grass hangs one to four pixels down the side, a few blades lower
-    return natural.side_with_top('grass_block_side', 'dirt', 'grass_block_top', (2, 4), 4)
+    depth = (2, 4)          # Minecraft's grass hangs one to four pixels down the side, a few blades lower
+    side = ctx.src.image('grass_block_side') if ctx.shapes is not None else None
+    if side is not None:    # after our first pack: as deep as its grass hangs
+        px = list(side.convert('RGBA').crop((0, 0, N, N)).get_flattened_data())
+        cols = [sum(1 for y in range(N) if px[y * N + x][1] > px[y * N + x][0] + 8) for x in range(N)]
+        depth = (max(1, min(cols)), max(cols))
+    return natural.side_with_top('grass_block_side', 'dirt', 'grass_block_top', depth, 4)(ctx)
 
 
-LAYERED['grass_block_side'] = lambda ctx: _grass_side()(ctx)
+def _water(ctx):
+    """after our first pack: its water's run of light drawn anew (tools/pack/resynth.py), moving as
+    its does; else our generator's"""
+    if ctx.shapes is not None and ctx.src.image('water_still') is not None:
+        import resynth
+        r = resynth.resynth_anim(ctx.src.image('water_still'), 'water_still')
+        if r is not None:
+            return r
+    return ctx.reg['water_still'](ctx)
+
+
+LAYERED['grass_block_side'] = _grass_side
+LAYERED['water_still'] = _water
 
 
 # ---- seamless tiles ---------------------------------------------------------------------------------

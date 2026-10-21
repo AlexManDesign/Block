@@ -77,12 +77,22 @@ class Ctx:
             return im
         import layers
         # the drawings models read by set spots: only their frame's rims evened, nothing moved
-        return layers.seamless(im, name, self.src.image(name), face_only=name in self.drawn)
+        return layers.seamless(im, name, self.reference(name), face_only=name in self.drawn)
+
+    def reference(self, name):
+        """the reference picture whole: the colour source's, or (with --first) the first pack's
+        pictures that were drawn in code (HUD icons, cracks...)"""
+        if not self.has_ref:
+            return None
+        r = self.src.image(name)
+        if r is None and self.shapes:
+            r = self.shapes.get(name)
+        return r
 
     def tiles_seamless(self, name):
         """does the reference tile without a seam both ways?"""
         import layers
-        r = self.src.image(name) if self.has_ref else None
+        r = self.reference(name)
         if r is None or r.size[0] != 16 or r.size[1] % 16:
             return False
         rx, ry = layers.seam_ratio(list(r.convert('RGBA').crop((0, 0, 16, 16)).get_flattened_data()), 16)
@@ -91,10 +101,10 @@ class Ctx:
     def kept_off(self, name, im):
         """the picture with no pixel left as the reference's at the same place (whole picture, any size)"""
         import layers
-        r = self.src.image(name) if self.has_ref else None
+        r = self.reference(name)
         if im is None or r is None or r.size != im.size:
             return im
-        return layers.apart(im, list(r.convert('RGBA').get_flattened_data()))
+        return layers.apart(im, list(r.convert('RGBA').get_flattened_data()), keep_black=name in ('sun', 'moon_phases'))
 
     def px(self, *names):
         """the colour source pixels of the first of names that has a picture"""
@@ -136,7 +146,7 @@ class Ctx:
             shaped = self.shape_source(name)
             if shaped is not None:
                 import items
-                self.done[name] = items.from_shape(self, name, shaped)
+                self.done[name] = self.kept_off(name, items.from_shape(self, name, shaped))
                 return self.done[name]
             if name in structure.PLAIN:          # a plain material: painted to its measured look
                 params = structure.load().get(name)
