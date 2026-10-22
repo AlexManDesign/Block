@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from core import Source  # noqa: E402
 import natural  # noqa: E402
 import wood  # noqa: E402
+import doors  # noqa: E402
+import designs  # noqa: E402
 import masonry  # noqa: E402
 import deco  # noqa: E402
 import plants  # noqa: E402
@@ -29,7 +31,7 @@ import sky  # noqa: E402
 import extras  # noqa: E402
 import structure  # noqa: E402
 
-FAMILIES = [natural, wood, masonry, deco, plants, anim, items, sky, extras]
+FAMILIES = [natural, wood, doors, masonry, deco, plants, anim, items, sky, extras, designs]
 
 # pictures build.py makes itself when the pack lacks them, and the drawings of tools/art.py: painted
 # here too, so each style has them in its own tones
@@ -143,6 +145,9 @@ class Ctx:
         if name not in self.done:
             gen = self.reg.get(name)
             im = None
+            if name in designs.DESIGN:           # known by its drawing: that drawing, ours (it tiles as drawn)
+                self.done[name] = self.kept_off(name, gen(self))
+                return self.done[name]
             if self.layers:
                 import layers
                 if name in layers.LAYERED:

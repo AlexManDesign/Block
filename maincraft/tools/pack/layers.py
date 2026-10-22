@@ -196,6 +196,30 @@ def apart(im, ref, step=5, keep_black=False):
     return out
 
 
+def apart_all(im, refs, step=5, keep_black=False):
+    """no pixel left within step of any of the references at its place: one that is gets the
+    nearest shift of its own colour that clears them all"""
+    refs = [r for r in refs if r and len(r) == im.size[0] * im.size[1]]
+    if not refs:
+        return im
+    px = list(im.get_flattened_data())
+    near = lambda c, q: q[3] and max(abs(c[t] - q[t]) for t in range(3)) < step   # noqa: E731
+    for i, p in enumerate(px):
+        if not p[3] or (keep_black and not any(p[:3])):
+            continue
+        qs = [r[i] for r in refs]
+        if not any(near(p, q) for q in qs):
+            continue
+        for k in (1, -1, 2, -2, 3, -3, 4, -4):
+            c = tuple(min(255, max(0, p[t] + k * step)) for t in range(3))
+            if not any(near(c, q) for q in qs):
+                px[i] = c + (p[3],)
+                break
+    out = im.copy()
+    out.putdata(px)
+    return out
+
+
 LAYERED = {}
 for _col in COLOURS:
     if _col != 'white':

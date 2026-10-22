@@ -121,7 +121,7 @@ def planks(name):
 
 
 def leaves_mask(rnd, holes=0.2):
-    ids, d1, d2, n = cells(rnd, P(14, 9, 20), 1.0)
+    ids, d1, d2, n = cells(rnd, P(22, 16, 28), 1.0)
     w = white(rnd)
     order = sorted(range(N * N), key=lambda i: (d2[i] - d1[i]) + 1.5 * w[i])
     gone = set(order[:int(holes * N * N)])
@@ -132,7 +132,12 @@ def leaves(name, holes=0.2, flowers=False):
     """clusters of leaves, each lit on its top left, with gaps showing through"""
     def gen(ctx):
         rnd = rng(name)
-        ids, mask = leaves_mask(rnd, holes)
+        r0 = ctx.reference(name)
+        h = holes
+        if r0 is not None and r0.size[0] == 16:     # as see-through as the reference is
+            a = [q[3] for q in r0.convert('RGBA').crop((0, 0, 16, 16)).get_flattened_data()]
+            h = max(0.08, min(0.5, sum(1 for v in a if v < 128) / len(a)))
+        ids, mask = leaves_mask(rnd, h)
         tone = [rnd.uniform(0.3, 0.9) for _ in range(max(ids) + 1)]
         r, w = rims(ids, 0.25, 0.3), white(rnd)
         f = [tone[ids[i]] + r[i] + 0.25 * w[i] for i in range(N * N)]

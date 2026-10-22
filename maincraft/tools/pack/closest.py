@@ -8,7 +8,8 @@ PAINTED_DIRs are our whole pack painted in the first pack's colours, a drawing e
 java DIR --first FIRST_TEX_DIR --structure tools/pack/structure_first.json --layers [--variant K]).
 A further candidate for a face with a made-up layout (a bed, a door, a chiseled block, a workstation)
 is the first pack's own layout of parts, each part painted anew (tools/pack/relayout.py); but only
-where the first pack's picture is not Minecraft's drawing recoloured (its pattern is checked against
+where the first pack's picture is not Minecraft's drawing recoloured, and not for a door, a trapdoor
+or a block of tools/pack/designs.py, which keep our own plan of them (its pattern is checked against
 the Java pack's: a picture whose lightness runs as Minecraft's does keeps our own drawings only).
 
 A drawn thing (an item, a flower...) whose first-pack shape is Minecraft's own (tested the same way)
@@ -33,6 +34,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 import structure  # noqa: E402
 import layers  # noqa: E402
 import relayout  # noqa: E402
+import designs  # noqa: E402
 from core import Source, COLOURS, lum  # noqa: E402
 
 DESIGNED = layers.FACES + ('bed_', 'door', 'trapdoor', 'glazed', 'chiseled', 'stem', 'log_top', 'netherite',
@@ -159,7 +161,8 @@ def main():
                 if isinstance(choice.get(b), int) and k == choice[b]:
                     s -= 1.0                     # built on its base's painting: the layers stay one
                 scored.append((s, k))
-        if f.size[0] == 16 and f.size[1] % 16 == 0 and not from_minecraft(n, f, mc):
+        own_plan = n in designs.DESIGN or n.endswith(('_door_top', '_door_bottom', '_trapdoor'))
+        if f.size[0] == 16 and f.size[1] % 16 == 0 and not own_plan and not from_minecraft(n, f, mc):
             # not Minecraft's drawing recoloured: our first pack's own layout, its parts painted anew
             rp = relayout.repaint('java', n, f, {}, list(f.crop((0, 0, 16, 16)).get_flattened_data()))
             cands.append(rp)
@@ -175,8 +178,9 @@ def main():
         else:
             im = Image.open(os.path.join(painted[ch], n + '.png')).convert('RGBA')
         f = first.get(n)
-        if f is not None and f.size == im.size:
-            im = layers.apart(im, list(f.get_flattened_data()), keep_black=n in ('sun', 'moon_phases'))
+        r = mc.image(n)                 # nor as Minecraft's own, where a pixel happens to fall on it
+        refs = [list(x.convert('RGBA').get_flattened_data()) for x in (f, r) if x is not None and x.size == im.size]
+        im = layers.apart_all(im, refs, keep_black=n in ('sun', 'moon_phases'))
         im.save(os.path.join(out, n + '.png'))
         made += 1
     json.dump(why, open(os.path.join(out, '..', os.path.basename(out.rstrip('/')) + '_choices.json'), 'w'), indent=1, sort_keys=True)
